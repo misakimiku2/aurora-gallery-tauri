@@ -1734,6 +1734,12 @@ private class FileGridAdapter(
                 val image = (items.getOrNull(position) as? GridItem.Photo)?.image ?: return
                 holder.refs.cover.applyCoverHeight(coverHeightFor(image))
                 holder.refs.name.setCellWidth(cellWidthPx)
+                // 选中态一并刷：applyCellWidth 的批量 payload 与选中变更可能落在同一批
+                // 更新里，payload 分支不回全量 bind，漏刷会留下过期的边框/勾/名字胶囊
+                val selected = image.id in selectedIds
+                holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
+                holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
+                holder.refs.name.applySelectedName(selected, textPrimaryColor)
                 forceMeasureOnRebind(holder)
             }
             return
@@ -1800,6 +1806,8 @@ private class FileGridAdapter(
         val selected = image.id in selectedIds
         holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
         holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
+        // 选中文件名胶囊（对齐桌面 bg-[#2563EB] 白字）
+        holder.refs.name.applySelectedName(selected, textPrimaryColor)
 
         // 瀑布流按宽高比推导封面高度；网格用正方形（React 版 itemHeight = colWidth + 40）；
         // adaptive 用行高（宽度由行装箱给出，LM 测量时约束）。
@@ -1883,6 +1891,13 @@ private class FileGridAdapter(
             if (image != null) {
                 holder.refs.cover.applyCoverHeight(coverHeightFor(image))
                 holder.refs.name.setCellWidth(cellWidthPx)
+                // 选中态归一（2026-09-20 用户复现「部分选中卡无高亮」）：mCachedViews
+                // 同位置复用**不走 bind**，边框/勾/名字胶囊可能停留在选中变化前的状态，
+                // 这里按当前 selectedIds 归一（与封面高度归一同一款防御）
+                val selected = image.id in selectedIds
+                holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
+                holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
+                holder.refs.name.applySelectedName(selected, textPrimaryColor)
                 holder.itemView.forceLayout()
             }
         }

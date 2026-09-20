@@ -147,7 +147,6 @@ fun FoldersOverview(
             surfaceColor = colors.surface.toArgb(),
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
-            primaryColor = colors.primary.toArgb(),
             onClick = onFolderClick,
             onLongClick = { currentOnFolderLongClick.value(it) },
         ).also { it.pinchFlip = pinchFlip }
@@ -448,7 +447,6 @@ private class FolderAdapter(
     private val surfaceColor: Int,
     private val textPrimaryColor: Int,
     private val textSecondaryColor: Int,
-    private val primaryColor: Int,
     private val onClick: (Folder) -> Unit,
     private val onLongClick: (Folder) -> Unit,
 ) : RecyclerView.Adapter<FolderAdapter.VH>() {
@@ -542,29 +540,9 @@ private class FolderAdapter(
             }
         }
 
-        // 选中态：蓝描边 + 左上角蓝底白勾（对齐图片卡片，2026-09-20 用户报障补齐）
-        val border = View(context).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(android.graphics.Color.TRANSPARENT)
-                setStroke(context.dp(3), primaryColor)
-                cornerRadius = radius
-            }
-            visibility = View.GONE
-        }
-
-        val check = TextView(context).apply {
-            text = "✓"
-            setTextColor(android.graphics.Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(primaryColor)
-            }
-            visibility = View.GONE
-        }
+        // 选中态：blue-400 描边 + 蓝圆白勾角标（对齐桌面 FoldersOverview isSelected 分支）
+        val border = buildSelectBorder(context, radiusDp = 8)
+        val check = buildCheckBadge(context)
 
         val count = TextView(context).apply {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
@@ -665,11 +643,12 @@ private class FolderAdapter(
             holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
             holder.name.setCellWidth(cellWidthPx)
             // 选中态一并刷（applyCellWidth 的 payload 与 updateSelection 的变更可能落在
-            // 同一批布局里，payload 分支不回 bind，漏刷会留下过期边框/勾）
+            // 同一批布局里，payload 分支不回 bind，漏刷会留下过期边框/勾/名字胶囊）
             val f = folders.getOrNull(position)
             val selected = f != null && f.id in selectedIds
             holder.border.visibility = if (selected) View.VISIBLE else View.GONE
             holder.check.visibility = if (selected) View.VISIBLE else View.GONE
+            holder.name.applySelectedName(selected, textPrimaryColor)
             forceMeasureOnRebind(holder)
             return
         }
@@ -687,10 +666,11 @@ private class FolderAdapter(
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
 
-        // 选中态（4.1）：蓝描边 + 左上角白勾
+        // 选中态（4.1）：blue-400 描边 + 蓝圆白勾 + 名字胶囊
         val selected = folder.id in selectedIds
         holder.border.visibility = if (selected) View.VISIBLE else View.GONE
         holder.check.visibility = if (selected) View.VISIBLE else View.GONE
+        holder.name.applySelectedName(selected, textPrimaryColor)
 
         // 封面高度固定 WRAP_CONTENT：SquareImageView 在 onMeasure 里按宽定高，高度与宽度
         // 同一轮测量对齐——侧栏开合逐帧推挤宽度时封面全程正方形、零滞后零 notify
@@ -748,6 +728,15 @@ private class FolderAdapter(
         // 这里归一回 WRAP_CONTENT（按宽自动正方形），兜住所有不经 bind 的复用路径
         //（同 FileGrid.onViewAttachedToWindow）。
         holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
+        // 选中态归一（2026-09-20 用户复现「部分选中文件夹无高亮」）：同位置缓存复用
+        // 不走 bind，边框/勾/名字胶囊可能停留在选中变化前的状态，按当前 selectedIds 归一
+        val folder = folders.getOrNull(holder.bindingAdapterPosition)
+        if (folder != null) {
+            val selected = folder.id in selectedIds
+            holder.border.visibility = if (selected) View.VISIBLE else View.GONE
+            holder.check.visibility = if (selected) View.VISIBLE else View.GONE
+            holder.name.applySelectedName(selected, textPrimaryColor)
+        }
         holder.itemView.forceLayout()
     }
 }

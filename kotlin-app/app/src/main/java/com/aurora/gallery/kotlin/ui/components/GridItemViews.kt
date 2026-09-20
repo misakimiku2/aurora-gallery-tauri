@@ -77,6 +77,64 @@ internal class CoverFrame @JvmOverloads constructor(
 }
 
 /** 图片卡片（三种布局模式一图一项，共用同一结构）：封面 + 文件名 + 选中态（边框 + 角标）。 */
+
+// ---- 选中态（对齐桌面 FileGrid.tsx / FoldersOverview.tsx 的 isSelected 分支）----
+// 边框 = after:border-[3px] border-blue-400；勾标 = w-6 h-6 bg-blue-600 rounded-full
+// border-2 border-white shadow-lg ring-2 ring-blue-400/50（外环在 box 外，这里用
+// LayerDrawable 三层近似：外圈 blue-400/50 → 白圈 → blue-600 圆心）；选中文件名 =
+// bg-[#2563EB] text-white 圆角胶囊。
+internal const val SELECT_BORDER_BLUE = 0xFF60A5FA.toInt() // blue-400
+internal const val SELECT_PILL_BLUE = 0xFF2563EB.toInt() // blue-600（#2563EB）
+
+/** 选中描边层（3dp blue-400 圆角矩形，透明填充）。 */
+internal fun buildSelectBorder(context: Context, radiusDp: Int): View = View(context).apply {
+    background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(android.graphics.Color.TRANSPARENT)
+        setStroke(context.dp(3), SELECT_BORDER_BLUE)
+        cornerRadius = context.dp(radiusDp).toFloat()
+    }
+    visibility = View.GONE
+}
+
+/** 勾标：blue-600 圆 + 2dp 白描边 + blue-400/50 外环（ring）+ 投影，居中白色粗勾。 */
+internal fun buildCheckBadge(context: Context): TextView = TextView(context).apply {
+    text = "✓"
+    setTextColor(android.graphics.Color.WHITE)
+    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+    typeface = Typeface.DEFAULT_BOLD
+    gravity = Gravity.CENTER
+    val inset = context.dp(2)
+    background = android.graphics.drawable.LayerDrawable(
+        arrayOf(
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x8060A5FA.toInt()) },
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(android.graphics.Color.WHITE) },
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(SELECT_PILL_BLUE) },
+        ),
+    ).apply {
+        setLayerInset(1, inset, inset, inset, inset)
+        setLayerInset(2, inset * 2, inset * 2, inset * 2, inset * 2)
+    }
+    // shadow-lg：外圈有实底 → outline 呈圆形，elevation 投影即可
+    elevation = context.dp(6).toFloat()
+    visibility = View.GONE
+}
+
+/** 选中文件名胶囊（bg-[#2563EB] 白字圆角），未选中回退常规色。 */
+internal fun TextView.applySelectedName(selected: Boolean, normalTextColor: Int) {
+    background = if (selected) {
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(SELECT_PILL_BLUE)
+            cornerRadius = dp(8).toFloat()
+        }
+    } else {
+        null
+    }
+    setTextColor(if (selected) android.graphics.Color.WHITE else normalTextColor)
+}
+
+private fun android.view.View.dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 internal class PhotoRefs(
     val root: View,
     val cover: ImageView,
@@ -103,7 +161,7 @@ internal fun buildPhotoView(
     context: Context,
     surfaceColor: Int,
     textPrimaryColor: Int,
-    primaryColor: Int,
+    @Suppress("UNUSED_PARAMETER") primaryColor: Int,
 ): PhotoRefs {
     val radius = context.dp(12).toFloat()
 
@@ -118,28 +176,8 @@ internal fun buildPhotoView(
         }
     }
 
-    val border = View(context).apply {
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(android.graphics.Color.TRANSPARENT)
-            setStroke(context.dp(3), primaryColor)
-            cornerRadius = radius
-        }
-        visibility = View.GONE
-    }
-
-    val check = TextView(context).apply {
-        text = "✓"
-        setTextColor(android.graphics.Color.WHITE)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(primaryColor)
-        }
-        visibility = View.GONE
-    }
+    val border = buildSelectBorder(context, radiusDp = 12)
+    val check = buildCheckBadge(context)
 
     val name = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
