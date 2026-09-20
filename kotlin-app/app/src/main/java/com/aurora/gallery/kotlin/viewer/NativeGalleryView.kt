@@ -1226,8 +1226,19 @@ class NativeGalleryView @JvmOverloads constructor(
     /** 抽屉是否打开（供 MainActivity onBackPressed 查询）。 */
     fun isDrawerOpen(): Boolean = isOpen && drawerOpen
 
+    /** 当前序列里第 [index] 张的 fileId（宿主用它把 viewingFileId 跟到正在看的那张）。 */
+    fun fileIdAt(index: Int): String? = images.getOrNull(index)?.fileId
+
     /** 幻灯片是否正在播放（供 MainActivity onBackPressed 查询）。 */
     fun isSlideshowPlaying(): Boolean = slideshowView != null
+
+    /**
+     * 退出幻灯片。走 SlideshowView 自己的 exit 而不是 [setSlideshow]`(false)`：
+     * 后者只摘覆盖层，会把幻灯片已经翻到的位置丢掉。
+     */
+    fun exitSlideshow() {
+        slideshowView?.exit()
+    }
 
     /** 收起抽屉（供外部调用）。 */
     fun closeDrawer() {

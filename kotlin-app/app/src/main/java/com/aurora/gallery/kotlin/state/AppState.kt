@@ -365,6 +365,15 @@ class AppState(
         updateActiveTab { it.copy(viewingFileId = null) }
     }
 
+    /**
+     * 查看器内翻页：把挂载点跟到当前这张。字段非空即「查看器开着」，所以改值不会让层
+     * 退出组合；进入动作是一次性的（见 `NativeViewerLayer`），这里写它不会重开查看器。
+     * 值钱的后果是转屏重建 Activity 后能回到正在看的那一张，而不是进入那一张。
+     */
+    fun viewerNavigated(fileId: String) {
+        updateActiveTab { it.copy(viewingFileId = fileId) }
+    }
+
     // —— 搜索与日期筛选（3.2 TopBar 消费）——
 
     fun setSearchQuery(query: String) {

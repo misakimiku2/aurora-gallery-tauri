@@ -4,7 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aurora.gallery.kotlin.state.AppState
@@ -30,9 +32,6 @@ fun ViewerLayerHost(
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
     val items = remember(displayImages, parentName) { displayImages.map { it.toViewerItem(parentName) } }
-    // 只在进入这一次求值：翻页不回写 viewingFileId（否则 startIndex 变了会重跑
-    // LaunchedEffect → 重新 open，正看着的图被拉回进入那张）。2.3 的「关闭后网格停在
-    // 当前张」另有通道，靠 Listener.onNavigate 记下的当前位置。
     val startIndex = displayImages.indexOfFirst { it.id == fileId }.coerceAtLeast(0)
     NativeViewerLayer(
         viewer = viewer,
@@ -48,8 +47,9 @@ fun ViewerLayerHost(
  * 只在有图在看时进入组合；[viewer] 实例由 Activity 持有、在其生命周期内复用——Coil 的
  * 内存/磁盘缓存跟着实例走，随进出组合重建会把缓存整体丢掉（4.2 压测要盯的内存台阶正来自这里）。
  *
- * 返回键：查看器自己实现了 `dispatchKeyEvent`（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层
- * 消化；[BackHandler] 是拿不到焦点时的兜底，避免系统返回直接 finish Activity。
+ * `open()` 只在**进入组合时**跑一次：后台重扫会让 [items] 换一份，若把它作为
+ * `LaunchedEffect` 的键，用户刚删掉一张图就会触发重新 open、被拉回进入的那一张
+ * （3.2 的验收要的正是「删完停在下一张」）。序列在打开时已拷进查看器自己的列表。
  */
 @Composable
 fun NativeViewerLayer(
@@ -62,8 +62,19 @@ fun NativeViewerLayer(
         factory = { viewer },
         modifier = Modifier.fillMaxSize(),
     )
-    LaunchedEffect(items, startIndex) { viewer.open(items, startIndex, viewerOptions) }
-    BackHandler(onBack = onRequestClose)
+    val latestItems by rememberUpdatedState(items)
+    val latestStart by rememberUpdatedState(startIndex)
+    val latestClose by rememberUpdatedState(onRequestClose)
+    LaunchedEffect(Unit) { viewer.open(latestItems, latestStart, viewerOptions) }
+    // 查看器自己实现了 dispatchKeyEvent（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层消化；
+    // 这条 BackHandler 是拿不到焦点时的兜底，兜底也要走同一把梯子，否则会一次 back 关掉整个查看器。
+    BackHandler {
+        when {
+            viewer.isSlideshowPlaying() -> viewer.exitSlideshow()
+            viewer.isDrawerOpen() -> viewer.closeDrawer()
+            else -> latestClose()
+        }
+    }
 }
 
 /**

@@ -16,7 +16,9 @@ import java.util.Locale
  * 抽屉里这些区段显示空态。
  */
 internal fun Image.toViewerItem(parentName: String = "") = NativeGalleryView.ImageItem(
-    path = "",
+    // 与 contentUri 同值：`Listener.onShare(filePath)` 只带这一个串，宿主要靠它拉起分享面板；
+    // 取图不受影响（resolveLoadData 优先走 contentUri，File 分支只在 contentUri 为空时才碰）。
+    path = contentUri,
     fileId = id,
     name = name,
     width = width?.toInt() ?: 0,

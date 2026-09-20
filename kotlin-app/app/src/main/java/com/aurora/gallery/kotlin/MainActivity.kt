@@ -20,6 +20,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,6 +56,7 @@ import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import android.view.View
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.state.AppState
@@ -120,62 +122,101 @@ class MainActivity : ComponentActivity() {
             viewModel.appState.closeViewer()
         }
 
-        // 以下回调 M3-3.x 逐个落地（3.1 返回链、3.2 删除/分享、3.3 其余占位）
+        /**
+         * 3.3：翻页跟到当前这张。不回写的话转屏重建 Activity 后会回到「进入时那张」，
+         * 而不是用户正在看的那张。
+         */
         override fun onNavigate(index: Int) {
-            Log.i("AuroraViewer", "onNavigate index=$index")
+            view.fileIdAt(index)?.let { viewModel.appState.viewerNavigated(it) }
         }
 
-        override fun onMore(fileId: String) {
-            Log.i("AuroraViewer", "onMore fileId=$fileId")
-        }
+        /** 3.3：沉浸是纯系统 UI 控制，M3 就做。 */
+        override fun onImmersiveToggle(immersive: Boolean) = setImmersiveMode(immersive)
 
+        /**
+         * 3.2 删除：查看器自己已经把这张从它的序列里摘掉并前进到下一张（confirmDelete），
+         * 宿主只负责发起真正的删除请求。确认弹窗是查看器内的 `DeleteConfirmDialog`
+         * （与网格 4.2 的应用内确认同一形态），不走 [onDeleteSelection] 那条网格链路。
+         * 删完的索引对账交给既有 ContentObserver 重扫。
+         */
         override fun onDelete(fileId: String) {
-            Log.i("AuroraViewer", "onDelete fileId=$fileId")
+            viewModel.resolveSelectionUris(setOf(fileId)) { uris -> requestDelete(uris) }
         }
 
-        override fun onCopyToFolder(fileId: String) {
-            Log.i("AuroraViewer", "onCopyToFolder fileId=$fileId")
-        }
-
-        override fun onMoveToFolder(fileId: String) {
-            Log.i("AuroraViewer", "onMoveToFolder fileId=$fileId")
-        }
-
-        override fun onEditTags(fileId: String) {
-            Log.i("AuroraViewer", "onEditTags fileId=$fileId")
-        }
-
-        override fun onLongPress(fileId: String) {
-            Log.i("AuroraViewer", "onLongPress fileId=$fileId")
-        }
-
-        override fun onImmersiveToggle(immersive: Boolean) {
-            Log.i("AuroraViewer", "onImmersiveToggle immersive=$immersive")
-        }
-
-        override fun onUpdateFile(fileId: String, updatesJson: String) {
-            Log.i("AuroraViewer", "onUpdateFile fileId=$fileId updates=$updatesJson")
-        }
-
-        override fun onColorSearch(colorHex: String) {
-            Log.i("AuroraViewer", "onColorSearch color=$colorHex")
-        }
-
-        override fun onExtractPalette(fileId: String, filePath: String) {
-            Log.i("AuroraViewer", "onExtractPalette fileId=$fileId path=$filePath")
-        }
-
+        /** 3.2 分享：单图版，复用网格那套 ACTION_SEND_MULTIPLE。 */
         override fun onShare(filePath: String) {
-            Log.i("AuroraViewer", "onShare path=$filePath")
+            if (filePath.isEmpty()) {
+                toastSoon("分享", "M4")
+                return
+            }
+            shareUris(listOf(Uri.parse(filePath)))
         }
 
+        /** 3.3：幻灯片配置查看器已就地生效（能播、能设间隔），M3 没有设置持久层可写。 */
         override fun onUpdateSlideshowConfig(configJson: String) {
-            Log.i("AuroraViewer", "onUpdateSlideshowConfig $configJson")
+            Log.i("AuroraViewer", "slideshow config applied: $configJson")
         }
 
-        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
-            Log.i("AuroraViewer", "onFolderPickerConfirm fileId=$fileId target=$targetFolderId type=$type")
+        // —— 以下入口的能力属 M4/M6，M3 只保证「点下去有确定反应」——
+        override fun onMore(fileId: String) = toastSoon("更多操作", "M4")
+        override fun onLongPress(fileId: String) = toastSoon("长按上下文菜单", "M4")
+        override fun onEditTags(fileId: String) = toastSoon("标签保存", "M4")
+        override fun onUpdateFile(fileId: String, updatesJson: String) = toastSoon("元数据保存", "M4")
+        override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M4")
+        override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
+        override fun onCopyToFolder(fileId: String) = toastSoon("复制到文件夹", "M4")
+        override fun onMoveToFolder(fileId: String) = toastSoon("移动到文件夹", "M4")
+        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) =
+            toastSoon("文件夹选择", "M4")
+    }
+
+    /** 未落地能力的可见占位（M3 3.3：静默无响应在真机上会被当成 bug 报回来）。 */
+    private fun toastSoon(feature: String, milestone: String) {
+        Toast.makeText(this, "$feature 将随 $milestone 提供", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 3.3 沉浸：从 React 壳 `setImmersiveMode` 平移（那边是 overlay 的窗口标志，这里是
+     * Activity 窗口——D7 ③ 下查看器就在 Activity 的视图树里，系统栏控制天然归到窗口层）。
+     * 首次进入前记下状态栏原色，退出时还原。
+     */
+    private var savedStatusBarColor: Int? = null
+
+    private fun setImmersiveMode(immersive: Boolean) {
+        val window = this.window
+        if (immersive) {
+            if (savedStatusBarColor == null) savedStatusBarColor = window.statusBarColor
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        } else {
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            savedStatusBarColor?.let { window.statusBarColor = it }
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.let { controller ->
+                if (immersive) {
+                    controller.hide(android.view.WindowInsets.Type.systemBars())
+                    controller.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                } else {
+                    controller.show(android.view.WindowInsets.Type.systemBars())
+                }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (immersive) {
+                @Suppress("DEPRECATION")
+                (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
+            } else {
+                @Suppress("DEPRECATION")
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            }
+        }
+        if (immersive) window.statusBarColor = android.graphics.Color.TRANSPARENT
     }
 
     override fun onDestroy() {
@@ -424,8 +465,11 @@ fun App(
 
     // —— 4.3 返回手势链（D5 后：关弹层→关搜索→退选择→返回上级→总览再退=系统默认）。
     // 排序菜单/日期弹层/标签弹层是独立窗口（Dialog/BottomSheet），系统返回先被它们
-    // 自己消费，不进本链；全屏查看器（M3）接入后插在选择模式之前。
-    BackHandler(enabled = searchOpen || state.selectionMode || tab.history.canBack) {
+    // 自己消费，不进本链。
+    // M3 3.1：查看器插在「退选择模式」之前。它自带 dispatchKeyEvent 的梯子（幻灯片→抽屉→
+    // 关闭）与 NativeViewerLayer 的 BackHandler，本链在查看器开着时整条让位——
+    // 一次 back 只退一层，退的是查看器，不是 goBack()。
+    BackHandler(enabled = tab.viewingFileId == null && (searchOpen || state.selectionMode || tab.history.canBack)) {
         when {
             searchOpen -> {
                 // 对齐 React close-android-search：清词 + 关胶囊
