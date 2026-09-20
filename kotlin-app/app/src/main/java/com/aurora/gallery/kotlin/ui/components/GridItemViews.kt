@@ -10,6 +10,7 @@ import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.View.MeasureSpec
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
@@ -72,6 +73,21 @@ internal class CoverFrame @JvmOverloads constructor(
         val capped = anchor.measuredHeight + paddingTop + paddingBottom
         if (measuredHeight > capped) {
             setMeasuredDimension(measuredWidth, capped)
+            // 关键（2026-09-20 用户复测「选中框缺下边」）：MATCH 子项（选中边框）在 super
+            // 里已按**未钳制**的高度量过（有界 spec 下 = EXACTLY 整行高），布局按该测量值
+            // 摆放 → 底边描边落在钳制后的容器外、被 clipChildren 裁掉（左/右/上都在、
+            // 独缺下边）。按钳制后的尺寸重量 MATCH 子项，让边框与容器同高、底边回到容器内。
+            val wSpec = MeasureSpec.makeMeasureSpec(measuredWidth, MeasureSpec.EXACTLY)
+            val hSpec = MeasureSpec.makeMeasureSpec(capped, MeasureSpec.EXACTLY)
+            for (i in 0 until childCount) {
+                val child = getChildAt(i) ?: continue
+                val lp = child.layoutParams as? MarginLayoutParams ?: continue
+                if (lp.width == ViewGroup.LayoutParams.MATCH_PARENT ||
+                    lp.height == ViewGroup.LayoutParams.MATCH_PARENT
+                ) {
+                    measureChildWithMargins(child, wSpec, 0, hSpec, 0)
+                }
+            }
         }
     }
 }
