@@ -351,6 +351,20 @@ class AppState(
         }
     }
 
+    // —— 全屏查看器（M3）——
+
+    /**
+     * 打开全屏查看器。写 [TabState.viewingFileId] 既是返回链「关查看器」的判断依据
+     * （4.3 链），也是关闭后让网格停在原来那张图的锚点（2.3）。
+     */
+    fun openViewer(fileId: String) {
+        updateActiveTab { it.copy(viewingFileId = fileId) }
+    }
+
+    fun closeViewer() {
+        updateActiveTab { it.copy(viewingFileId = null) }
+    }
+
     // —— 搜索与日期筛选（3.2 TopBar 消费）——
 
     fun setSearchQuery(query: String) {

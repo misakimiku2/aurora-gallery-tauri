@@ -25,7 +25,12 @@ import androidx.compose.ui.unit.sp
  * 来源：docs/Android/Kotlin版/设计约定.md。
  */
 
-/** 语义化颜色 token（设计约定 §1）。 */
+/**
+ * 语义化颜色 token（设计约定 §1）。
+ *
+ * 值不再写在这里——唯一的色值表是 [AuroraPalette]（Int ARGB），因为纯 View 体系的
+ * 查看器/弹窗取不到 `@Composable` 的 token。本类只是它的 Compose 换算层。
+ */
 data class AuroraColorScheme(
     val main: Color,          // 应用主背景
     val content: Color,       // 内容区（卡片/网格所在层）
@@ -36,33 +41,13 @@ data class AuroraColorScheme(
     val primaryWeak: Color,   // 选中框描边/拖拽描边（primary @ 0.8）
     val textPrimary: Color,   // 正文
     val textSecondary: Color, // 说明/占位
+    /** 原始 Int 档，供 View 体系组件（查看器/弹窗）同一张表取色 */
+    val palette: AuroraPalette,
 )
 
-val LightAuroraColors = AuroraColorScheme(
-    main = Color(0xFFE5E5E5),
-    content = Color(0xFFFFFFFF),
-    // 2026-09-20 曾按用户要求提深到 #E5E5E5，实测观感突兀后用户要求改回
-    // 桌面 bg-panel 同款 #F7F7F7
-    panel = Color(0xFFF7F7F7),
-    surface = Color(0xFFE5E7EB),
-    subtle = Color(0xFFE5E7EB),
-    primary = Color(0xFF3B82F6),
-    primaryWeak = Color(0xCC3B82F6), // rgba(59,130,246,0.8)
-    textPrimary = Color(0xFF1E293B),
-    textSecondary = Color(0xFF737373),
-)
+val LightAuroraColors = AuroraPalettes.light.toComposeColorScheme()
 
-val DarkAuroraColors = AuroraColorScheme(
-    main = Color(0xFF1A1A1A),
-    content = Color(0xFF262626),
-    panel = Color(0xFF2A2A2A),
-    surface = Color(0xFF3A3A3A),
-    subtle = Color(0xFF404040),
-    primary = Color(0xFF3B82F6),
-    primaryWeak = Color(0xCC60A5FA), // rgba(96,165,250,0.8)
-    textPrimary = Color(0xFFE5E5E5),
-    textSecondary = Color(0xFFA3A3A3),
-)
+val DarkAuroraColors = AuroraPalettes.dark.toComposeColorScheme()
 
 val LocalAuroraColors = staticCompositionLocalOf { LightAuroraColors }
 
@@ -96,7 +81,7 @@ fun AuroraTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colors = if (darkTheme) DarkAuroraColors else LightAuroraColors
+    val colors = AuroraPalettes.of(darkTheme).toComposeColorScheme()
     val scheme = if (darkTheme) {
         darkColorScheme(
             primary = colors.primary,

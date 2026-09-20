@@ -54,9 +54,13 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     // RecyclerView + GridLayoutManager（网格滑动用原生 View 体系，对齐系统相册性能基线）
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // M3 查看器：ZoomableImageView 继承 AppCompatImageView（矢量 drawable 在低版本上的兼容路径）
+    implementation("androidx.appcompat:appcompat:1.6.1")
     // UniFFI 生成的 Kotlin 绑定运行时依赖（JNA 加载 .so）
     implementation("net.java.dev.jna:jna:5.14.0@aar")
     // 缩略图加载（支持 content:// MediaStore URI）
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // M3 查看器：GifDecoder / ImageDecoderDecoder（动画 GIF 与动画 WebP）
+    implementation("io.coil-kt:coil-gif:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

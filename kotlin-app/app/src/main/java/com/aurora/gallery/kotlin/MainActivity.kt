@@ -56,6 +56,8 @@ import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.aurora.gallery.kotlin.viewer.NativeGalleryView
+import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -99,6 +101,90 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // —— M3 查看器（D7：Compose 条件层承载，实例由本 Activity 持有）——
+
+    /**
+     * 查看器实例跟 Activity 走、不跟组合走：它的 Coil ImageLoader 挂着 30% 内存缓存与
+     * 200MB 磁盘缓存，`destroy()` 会把它 shutdown，所以每次进出查看器重建实例等于每次
+     * 清空缓存（4.2 要盯的内存台阶正来自这种重建）。
+     */
+    private var viewer: NativeGalleryView? = null
+
+    private fun ensureViewer(): NativeGalleryView = viewer ?: NativeGalleryView(this).also {
+        it.listener = viewerListener(it)
+        viewer = it
+    }
+
+    private fun viewerListener(view: NativeGalleryView) = object : NativeGalleryView.Listener {
+        override fun onClose() {
+            view.close()
+            viewModel.appState.closeViewer()
+        }
+
+        // 以下回调 M3-3.x 逐个落地（3.1 返回链、3.2 删除/分享、3.3 其余占位）
+        override fun onNavigate(index: Int) {
+            Log.i("AuroraViewer", "onNavigate index=$index")
+        }
+
+        override fun onMore(fileId: String) {
+            Log.i("AuroraViewer", "onMore fileId=$fileId")
+        }
+
+        override fun onDelete(fileId: String) {
+            Log.i("AuroraViewer", "onDelete fileId=$fileId")
+        }
+
+        override fun onCopyToFolder(fileId: String) {
+            Log.i("AuroraViewer", "onCopyToFolder fileId=$fileId")
+        }
+
+        override fun onMoveToFolder(fileId: String) {
+            Log.i("AuroraViewer", "onMoveToFolder fileId=$fileId")
+        }
+
+        override fun onEditTags(fileId: String) {
+            Log.i("AuroraViewer", "onEditTags fileId=$fileId")
+        }
+
+        override fun onLongPress(fileId: String) {
+            Log.i("AuroraViewer", "onLongPress fileId=$fileId")
+        }
+
+        override fun onImmersiveToggle(immersive: Boolean) {
+            Log.i("AuroraViewer", "onImmersiveToggle immersive=$immersive")
+        }
+
+        override fun onUpdateFile(fileId: String, updatesJson: String) {
+            Log.i("AuroraViewer", "onUpdateFile fileId=$fileId updates=$updatesJson")
+        }
+
+        override fun onColorSearch(colorHex: String) {
+            Log.i("AuroraViewer", "onColorSearch color=$colorHex")
+        }
+
+        override fun onExtractPalette(fileId: String, filePath: String) {
+            Log.i("AuroraViewer", "onExtractPalette fileId=$fileId path=$filePath")
+        }
+
+        override fun onShare(filePath: String) {
+            Log.i("AuroraViewer", "onShare path=$filePath")
+        }
+
+        override fun onUpdateSlideshowConfig(configJson: String) {
+            Log.i("AuroraViewer", "onUpdateSlideshowConfig $configJson")
+        }
+
+        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
+            Log.i("AuroraViewer", "onFolderPickerConfirm fileId=$fileId target=$targetFolderId type=$type")
+        }
+    }
+
+    override fun onDestroy() {
+        viewer?.destroy()
+        viewer = null
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -106,25 +192,33 @@ class MainActivity : ComponentActivity() {
             // 必须与窗口 XML 主题（Theme.AuroraKotlin = Material.Light，固定浅色）一致：
             // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
             AuroraTheme(darkTheme = false) {
-                App(
-                    state = viewModel.appState,
-                    folders = viewModel.folders.value,
-                    images = viewModel.images.value,
-                    scanning = viewModel.scanning.value,
-                    thumbnailLoader = viewModel.thumbnailLoader,
-                    onFolderClick = { viewModel.openFolder(it) },
-                    onShareSelection = { ids ->
-                        viewModel.resolveSelectionUris(ids) { uris ->
-                            if (uris.isNotEmpty()) shareUris(uris)
-                        }
-                    },
-                    onDeleteSelection = { ids ->
-                        viewModel.resolveSelectionUris(ids) { uris ->
-                            if (uris.isNotEmpty()) requestDelete(uris)
-                        }
-                    },
-                    onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
-                )
+                Box(Modifier.fillMaxSize()) {
+                    App(
+                        state = viewModel.appState,
+                        folders = viewModel.folders.value,
+                        images = viewModel.images.value,
+                        scanning = viewModel.scanning.value,
+                        thumbnailLoader = viewModel.thumbnailLoader,
+                        onFolderClick = { viewModel.openFolder(it) },
+                        onShareSelection = { ids ->
+                            viewModel.resolveSelectionUris(ids) { uris ->
+                                if (uris.isNotEmpty()) shareUris(uris)
+                            }
+                        },
+                        onDeleteSelection = { ids ->
+                            viewModel.resolveSelectionUris(ids) { uris ->
+                                if (uris.isNotEmpty()) requestDelete(uris)
+                            }
+                        },
+                        onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
+                    )
+                    // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
+                    ViewerLayerHost(
+                        state = viewModel.appState,
+                        images = viewModel.images.value,
+                        viewerProvider = ::ensureViewer,
+                    )
+                }
             }
         }
 
@@ -297,8 +391,7 @@ fun App(
     // —— 4.1 编辑模式的操作语义（对齐 React useFileSelection 的安卓分支 + App.tsx 的
     //    handleFolder* 系列；框选按 2026-09-20 用户决定平板不做）——
     val onImageClick: (Image) -> Unit = { img ->
-        if (state.selectionMode) state.toggleSelectedInMode(img.id)
-        // 非编辑模式：点图是打开查看器（M3 接入），当前无操作
+        if (state.selectionMode) state.toggleSelectedInMode(img.id) else state.openViewer(img.id)
     }
     val onImageLongPress: (Image) -> Unit = { img ->
         when {
