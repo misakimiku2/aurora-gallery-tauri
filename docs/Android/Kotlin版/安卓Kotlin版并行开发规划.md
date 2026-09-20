@@ -195,7 +195,7 @@ LAN 浏览桌面文件时，桌面 API 顺带返回该图的标签/人物/专题
 | 里程碑 | 范围 | 验收标准 |
 |---|---|---|
 | **M0 前置与验证** | §4 四项下沉启动；UniFFI PoC（零改动验证 Kotlin → UniFFI → Rust 管道，分步见 [启动指南](./启动指南.md)）；平台开关集中化 | Kotlin demo 经 UniFFI 读取导出库数据，与导出源快照一致（交付物是通信管道，列表仅为验证载荷） |
-| **M1 应用骨架 + FileGrid** ✅（2026-09-21 收口，仅 L6 主观手感待签） | 前置： 设计约定文档（桌面端颜色 token/间距/组件样式提取，见 [§2.3](#23-视觉对齐原则)）；workspace 拆分（`lib.rs` 解耦，基于 M0 评估）；TopBar / TabBar / 侧栏骨架；RecyclerView + GridLayoutManager；三档捏合（沿用 `src/utils/androidThumbnailSizes.ts` 三档设计，逐档切换）；分组标题；虚拟滚动；编辑模式/多选/范围选择 | 9.8 万张图库滚动与捏合换档稳定 60fps（对照 React 版实测）；返回手势链（关菜单→退全屏→退编辑→取消选择→关标签）生效 |
+| **M1 应用骨架 + FileGrid** ✅ **已封版（2026-09-21）** | 前置： 设计约定文档（桌面端颜色 token/间距/组件样式提取，见 [§2.3](#23-视觉对齐原则)）；workspace 拆分（`lib.rs` 解耦，基于 M0 评估）；TopBar / TabBar / 侧栏骨架；RecyclerView + GridLayoutManager；三档捏合（沿用 `src/utils/androidThumbnailSizes.ts` 三档设计，逐档切换）；分组标题；虚拟滚动；编辑模式/多选/范围选择 | 9.8 万张图库滚动与捏合换档稳定 60fps（对照 React 版实测）；返回手势链（关菜单→退全屏→退编辑→取消选择→关标签）生效 |
 | **M2 FoldersOverview + 侧栏** | 文件夹总览视图、侧栏六个 Section（含各自排序） | [三端功能矩阵](./三端功能矩阵.md) 中标注 M2 的目标条目全部达成 |
 | **M3 查看器并入** | NativeGalleryView / SlideshowView / ZoomableImageView 从 WindowManager 桥接模式并入新应用壳 | 全部手势行为不回退（对照 [安卓端手势适配修改记录.md](../安卓端手势适配修改记录.md) 的基线） |
 | **M4 管理界面 + 系统集成** | 标签/人物/专题管理界面；设置面板；系统分享/任务通知/全屏/沉浸模式 | 矩阵中标注 M4 的目标条目全部达成 |
