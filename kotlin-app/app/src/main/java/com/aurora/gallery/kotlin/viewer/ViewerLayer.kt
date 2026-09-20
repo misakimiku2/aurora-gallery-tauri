@@ -21,20 +21,23 @@ import uniffi.aurora_core.Image
 @Composable
 fun ViewerLayerHost(
     state: AppState,
-    images: List<Image>,
+    /** **网格的展示序列**（过滤+排序后），不是全库序列——2.2 的硬要求。 */
+    displayImages: List<Image>,
     viewerProvider: () -> NativeGalleryView,
     /** 抽屉「位置」一行显示的上级文件夹名；BROWSER 视图下即当前文件夹名。 */
     parentName: String = "",
 ) {
-    if (state.activeTab.viewingFileId == null) return
+    val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
-    // 1.3 脚手架：固定取扫描结果的前 3 张、从第 0 张进入，只为验证宿主通了。
-    // 「startIndex 落在过滤后的展示序列上」的进入语义在 2.2 落地。
-    val items = remember(images) { images.take(3).map { it.toViewerItem(parentName) } }
+    val items = remember(displayImages, parentName) { displayImages.map { it.toViewerItem(parentName) } }
+    // 只在进入这一次求值：翻页不回写 viewingFileId（否则 startIndex 变了会重跑
+    // LaunchedEffect → 重新 open，正看着的图被拉回进入那张）。2.3 的「关闭后网格停在
+    // 当前张」另有通道，靠 Listener.onNavigate 记下的当前位置。
+    val startIndex = displayImages.indexOfFirst { it.id == fileId }.coerceAtLeast(0)
     NativeViewerLayer(
         viewer = viewer,
         items = items,
-        startIndex = 0,
+        startIndex = startIndex,
         onRequestClose = { state.closeViewer() },
     )
 }

@@ -48,9 +48,8 @@ import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
 import com.aurora.gallery.kotlin.ui.components.filterFolders
-import com.aurora.gallery.kotlin.ui.components.filterImages
+import com.aurora.gallery.kotlin.ui.components.rememberDisplayImages
 import com.aurora.gallery.kotlin.ui.components.sortFolders
-import com.aurora.gallery.kotlin.ui.components.sortImages
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
@@ -192,11 +191,24 @@ class MainActivity : ComponentActivity() {
             // 必须与窗口 XML 主题（Theme.AuroraKotlin = Material.Light，固定浅色）一致：
             // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
             AuroraTheme(darkTheme = false) {
+                val appState = viewModel.appState
+                // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
+                // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）
+                val displayImages = rememberDisplayImages(
+                    viewModel.images.value,
+                    appState.activeTab,
+                    appState.sortBy,
+                    appState.sortDirection,
+                )
+                val currentFolderName = appState.activeTab.folderId?.let { id ->
+                    viewModel.folders.value.firstOrNull { it.id == id }?.name
+                }.orEmpty()
                 Box(Modifier.fillMaxSize()) {
                     App(
-                        state = viewModel.appState,
+                        state = appState,
                         folders = viewModel.folders.value,
                         images = viewModel.images.value,
+                        displayImages = displayImages,
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
                         onFolderClick = { viewModel.openFolder(it) },
@@ -214,9 +226,10 @@ class MainActivity : ComponentActivity() {
                     )
                     // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                     ViewerLayerHost(
-                        state = viewModel.appState,
-                        images = viewModel.images.value,
+                        state = appState,
+                        displayImages = displayImages,
                         viewerProvider = ::ensureViewer,
+                        parentName = currentFolderName,
                     )
                 }
             }
@@ -328,6 +341,8 @@ fun App(
     state: AppState,
     folders: List<Folder>,
     images: List<Image>,
+    /** 展示序列（过滤+排序后）由组合根算好传入：查看器的进入序列必须是同一条（M3 2.2）。 */
+    displayImages: List<Image>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
@@ -377,12 +392,9 @@ fun App(
         )
     }
 
-    // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。提前到这里：
+    // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。提前到组合根算：
     // 4.1/4.2 的选择处理与选择栏计数在两个分支外就要用（展示序列 = 范围选择/全选的
-    // 输入，选择栏 total = 当前展示数量）。
-    val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
-        sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
-    }
+    // 输入，选择栏 total = 当前展示数量），M3 查看器的进入序列也共用这一条。
     // 范围选择/全选的输入（当前展示顺序）。rememberUpdatedState：长按回调经 adapter 的
     // 首帧闭包转发，这里保证它读到的是最新展示序列
     val currentImageIds = rememberUpdatedState(displayImages.map { it.id })
