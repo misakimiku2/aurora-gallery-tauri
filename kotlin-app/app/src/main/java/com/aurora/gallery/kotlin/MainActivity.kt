@@ -417,6 +417,8 @@ fun App(
                         onLevelChange = { state.gridLevel = it },
                         // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
                         sidebarVisible = state.layout.isSidebarVisible,
+                        // 4.1 选中态：总览的文件夹卡片同样高亮（边框 + 勾）
+                        selectedIds = tab.selectedFileIds,
                         // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
                         initialScrollTop = state.overviewScrollTop,
                         onScrollChanged = { state.overviewScrollTop = it },

@@ -49,6 +49,33 @@ internal fun TextView.setCellWidth(widthPx: Int) {
     lp.width = if (widthPx > 0) widthPx else ViewGroup.LayoutParams.MATCH_PARENT
 }
 
+/**
+ * 封面容器：WRAP 高度永远以封面（第 0 个子 view）为准，MATCH 子项（选中边框/角标）
+ * 不参与抬高自身。
+ *
+ * 背景（2026-09-20 真机「长按多选后部分文件名空白」）：RV/LM 的某些重绑路径给 item
+ * 的竖向 spec 是**有界**的（AT_MOST/EXACTLY 行高），此时 MATCH 边框经
+ * `ViewGroup.getChildMeasureSpec`（childLP=MATCH → EXACTLY(可用高)）被量成整行高，
+ * FrameLayout 的 WRAP 计算把它也折进 max → frame 被抬到整行高 → 名字行分到 0 高、
+ * 整段被裁（不绘制、且从无障碍树消失——正是「文件名变空白」）。实测真机复现：
+ * 重绑后 frame=451（=整行）、cover bottom=404、name 451..451（零高）。
+ * 修复 = 量完把自身高度钳回封面高度：边框/角标本就应与封面同大，封面是该容器
+ * 唯一的测量锚（masonry/adaptive/捏合预览给封面的显式高度同样生效）。
+ */
+internal class CoverFrame @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+) : FrameLayout(context, attrs) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val anchor = getChildAt(0) ?: return
+        val capped = anchor.measuredHeight + paddingTop + paddingBottom
+        if (measuredHeight > capped) {
+            setMeasuredDimension(measuredWidth, capped)
+        }
+    }
+}
+
 /** 图片卡片（三种布局模式一图一项，共用同一结构）：封面 + 文件名 + 选中态（边框 + 角标）。 */
 internal class PhotoRefs(
     val root: View,
@@ -124,7 +151,7 @@ internal fun buildPhotoView(
         setPadding(context.dp(4), context.dp(6), context.dp(4), 0)
     }
 
-    val frame = FrameLayout(context).apply {
+    val frame = CoverFrame(context).apply {
         addView(
             cover,
             FrameLayout.LayoutParams(

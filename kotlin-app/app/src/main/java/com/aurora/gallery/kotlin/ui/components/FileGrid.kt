@@ -254,10 +254,14 @@ fun FileGrid(
 
     AndroidView(
         factory = { ctx ->
-            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), level)
+            // 初始列数/行高按**内容宽**（扣除侧栏）算（同 FoldersOverview，2026-09-20
+            // 修复：整屏宽兜底使进文件夹首帧列数偏大、随后 FLIP 重排闪一下）
+            val sidebarPx = if (sidebarVisible) (SIDEBAR_WIDTH_DP.value * density).roundToInt() else 0
+            val initialWidthPx = (ctx.resources.displayMetrics.widthPixels - sidebarPx).coerceAtLeast(1)
+            val initialCols = targetCols(ctx.pxToDp(initialWidthPx), level)
             decoration.spanCount = initialCols
             val initialRowHeightPx = if (adaptiveRowHeightPx > 0) adaptiveRowHeightPx else {
-                val wDp = ctx.pxToDp(ctx.resources.displayMetrics.widthPixels)
+                val wDp = ctx.pxToDp(initialWidthPx)
                 (adaptiveTargetHeightDp(
                     wDp,
                     kotlin.math.max(1, targetCols(wDp, level)),

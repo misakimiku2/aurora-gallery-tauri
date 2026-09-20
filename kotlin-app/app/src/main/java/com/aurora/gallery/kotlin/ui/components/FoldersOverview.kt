@@ -114,6 +114,8 @@ fun FoldersOverview(
     emptyText: String = "暂无文件夹",
     /** 3.5 侧栏目标状态：用于开合动画期间的列数预测（同 FileGrid）。 */
     sidebarVisible: Boolean = false,
+    /** 选中集合（4.1/4.2）：FolderAdapter 按 id 差量刷新边框/角标。 */
+    selectedIds: Set<String> = emptySet(),
     /** 4.4 下拉刷新状态（宿主创建并渲染指示器）；null = 不启用。 */
     pullToRefreshState: PullToRefreshState? = null,
     /** 4.4 刷新动作：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
@@ -121,6 +123,7 @@ fun FoldersOverview(
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
+    val currentSelectedIds = rememberUpdatedState(selectedIds)
 
     // 进度驱动 FLIP（与 FileGrid 同一套手感：捏合 = FLIP 动画的进度条）。
     // 必须定义在 gridAdapter 之前——gridAdapter 与下面的 AndroidView 都要用。
@@ -144,6 +147,7 @@ fun FoldersOverview(
             surfaceColor = colors.surface.toArgb(),
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
+            primaryColor = colors.primary.toArgb(),
             onClick = onFolderClick,
             onLongClick = { currentOnFolderLongClick.value(it) },
         ).also { it.pinchFlip = pinchFlip }
@@ -154,6 +158,10 @@ fun FoldersOverview(
         // notifyDataSetChanged 会把 RV 打回顶部（重扫/数据替换场景），记忆同步归零；
         // 返回总览的恢复（pendingRestore>0）在其后的布局回调里执行，会覆盖这里的值
         onScrollChanged(0)
+    }
+
+    LaunchedEffect(selectedIds) {
+        gridAdapter.updateSelection(currentSelectedIds.value)
     }
 
     // 滚动位置恢复：本次组合实例消费一次。submit 之后注册 doOnLayout——首个带数据的
@@ -225,7 +233,13 @@ fun FoldersOverview(
 
     AndroidView(
         factory = { ctx ->
-            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), level)
+            // 初始列数按**内容宽**（扣除侧栏）算（2026-09-20 用户报障修复）：此前用整屏宽
+            // 兜底，侧栏展开时首帧列数偏大（6 列），进入/返回总览后先见 6 列布局、重组才
+            // 收敛到 5 列（FLIP 重排 + 滚动恢复落在错误几何上 → 位置漂移）。组合时侧栏
+            // 状态是静态的（开合动画前/后都在此值上），扣除即可首帧就对。
+            val sidebarPx = if (sidebarVisible) with(density) { SIDEBAR_WIDTH_DP.roundToPx() } else 0
+            val initialWidthPx = (ctx.resources.displayMetrics.widthPixels - sidebarPx).coerceAtLeast(1)
+            val initialCols = targetCols(ctx.pxToDp(initialWidthPx), level)
             decoration.spanCount = initialCols
             // 先建 LM 以便挂 previewRestorer：捏合期间任何布局（如换档）都会把手动的
             // 预览几何洗掉，必须在布局末尾重放（对齐 FileGrid）
@@ -434,11 +448,13 @@ private class FolderAdapter(
     private val surfaceColor: Int,
     private val textPrimaryColor: Int,
     private val textSecondaryColor: Int,
+    private val primaryColor: Int,
     private val onClick: (Folder) -> Unit,
     private val onLongClick: (Folder) -> Unit,
 ) : RecyclerView.Adapter<FolderAdapter.VH>() {
 
     private val folders = mutableListOf<Folder>()
+    private var selectedIds: Set<String> = emptySet()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     /** 进度驱动 FLIP 控制器；捏合中新绑定的 item 需要补上当前进度的 transform。 */
@@ -459,6 +475,20 @@ private class FolderAdapter(
         folders.clear()
         folders.addAll(list)
         notifyDataSetChanged()
+    }
+
+    /**
+     * 差量刷新选中态（4.1，对齐 FileGridAdapter.updateSelection）：只 notify 选中
+     * 变化的 item，避免全量刷新打断 FLIP/图片加载。
+     */
+    fun updateSelection(selection: Set<String>) {
+        val old = selectedIds
+        selectedIds = selection
+        val changed = mutableListOf<Int>()
+        for (i in folders.indices) {
+            if ((folders[i].id in old) != (folders[i].id in selection)) changed.add(i)
+        }
+        changed.forEach { notifyItemChanged(it) }
     }
 
     /**
@@ -491,6 +521,8 @@ private class FolderAdapter(
         val cover: ImageView,
         val count: TextView,
         val name: TextView,
+        val border: View,
+        val check: TextView,
     ) : RecyclerView.ViewHolder(view) {
         var job: Job? = null
     }
@@ -508,6 +540,30 @@ private class FolderAdapter(
                     outline.setRoundRect(0, 0, view.width, view.height, radius)
                 }
             }
+        }
+
+        // 选中态：蓝描边 + 左上角蓝底白勾（对齐图片卡片，2026-09-20 用户报障补齐）
+        val border = View(context).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(android.graphics.Color.TRANSPARENT)
+                setStroke(context.dp(3), primaryColor)
+                cornerRadius = radius
+            }
+            visibility = View.GONE
+        }
+
+        val check = TextView(context).apply {
+            text = "✓"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(primaryColor)
+            }
+            visibility = View.GONE
         }
 
         val count = TextView(context).apply {
@@ -532,13 +588,28 @@ private class FolderAdapter(
             setPadding(context.dp(4), context.dp(4), context.dp(4), 0)
         }
 
-        val frame = FrameLayout(context).apply {
+        val frame = CoverFrame(context).apply {
             addView(
                 cover,
                 FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
+            )
+            addView(
+                border,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                check,
+                FrameLayout.LayoutParams(
+                    context.dp(24),
+                    context.dp(24),
+                    Gravity.TOP or Gravity.START,
+                ).apply { setMargins(context.dp(8), context.dp(8), 0, 0) },
             )
             addView(
                 count,
@@ -568,7 +639,7 @@ private class FolderAdapter(
             )
         }
 
-        val vh = VH(root, cover, count, name)
+        val vh = VH(root, cover, count, name, border, check)
         root.setOnClickListener {
             val pos = vh.bindingAdapterPosition
             if (pos != RecyclerView.NO_POSITION) onClick(folders[pos])
@@ -593,6 +664,12 @@ private class FolderAdapter(
             // 自动正方形，见 onBindViewHolder），不重新 bind、不清 FLIP transform、不重载图片。
             holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
             holder.name.setCellWidth(cellWidthPx)
+            // 选中态一并刷（applyCellWidth 的 payload 与 updateSelection 的变更可能落在
+            // 同一批布局里，payload 分支不回 bind，漏刷会留下过期边框/勾）
+            val f = folders.getOrNull(position)
+            val selected = f != null && f.id in selectedIds
+            holder.border.visibility = if (selected) View.VISIBLE else View.GONE
+            holder.check.visibility = if (selected) View.VISIBLE else View.GONE
             forceMeasureOnRebind(holder)
             return
         }
@@ -609,6 +686,11 @@ private class FolderAdapter(
         holder.name.text = folder.name
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
+
+        // 选中态（4.1）：蓝描边 + 左上角白勾
+        val selected = folder.id in selectedIds
+        holder.border.visibility = if (selected) View.VISIBLE else View.GONE
+        holder.check.visibility = if (selected) View.VISIBLE else View.GONE
 
         // 封面高度固定 WRAP_CONTENT：SquareImageView 在 onMeasure 里按宽定高，高度与宽度
         // 同一轮测量对齐——侧栏开合逐帧推挤宽度时封面全程正方形、零滞后零 notify
