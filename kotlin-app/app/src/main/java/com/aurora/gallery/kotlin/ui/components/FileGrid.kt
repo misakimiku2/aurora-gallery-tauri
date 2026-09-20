@@ -648,7 +648,7 @@ fun FileGrid(
                             state = st,
                             thresholdPx = ctx.dp(80),
                             maxPullPx = ctx.dp(160),
-                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st) } },
+                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st, ctx.dp(80)) } },
                         )
                     )
                 }

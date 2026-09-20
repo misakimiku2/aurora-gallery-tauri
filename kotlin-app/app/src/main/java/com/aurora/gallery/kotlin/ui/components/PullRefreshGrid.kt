@@ -185,15 +185,29 @@ internal class PullToRefreshListener(
     }
 }
 
-/** 刷新完成：内容弹回 + 指示器打勾（isComplete 窗口 800ms，对齐 React COMPLETE_DELAY）。 */
-fun finishPullToRefresh(rv: RecyclerView, state: PullToRefreshState) {
+/**
+ * 刷新完成：指示器打勾（isComplete 窗口 800ms，对齐 React COMPLETE_DELAY），期间内容
+ * **保持下移**给指示器留空位（React 同款：complete 超时后内容才弹回）。
+ *
+ * 两个必须的状态复位（2026-09-20 用户报障「圆环卡在卡片上」的根因）：
+ *  - [PullToRefreshState.pullDistance] 归零——否则指示器在 isComplete 结束后按
+ *    「拉距/2」永久钉在阈值一半的位置，叠在图片上不消失；
+ *  - 内容回位动画放在复位回调里（此前立即弹回，打勾的 800ms 里指示器悬在内容上）。
+ */
+fun finishPullToRefresh(rv: RecyclerView, state: PullToRefreshState, thresholdPx: Int) {
     state.isRefreshing = false
     state.isComplete = true
-    rv.animate().translationY(0f)
-        .setDuration(300L)
-        .setInterpolator(PULL_SETTLE_INTERPOLATOR)
-        .start()
-    rv.postDelayed({ state.isComplete = false }, 800L)
+    state.pullDistance = thresholdPx.toFloat()
+    rv.translationY = thresholdPx.toFloat()
+    rv.animate().cancel()
+    rv.postDelayed({
+        state.isComplete = false
+        state.pullDistance = 0f
+        rv.animate().translationY(0f)
+            .setDuration(300L)
+            .setInterpolator(PULL_SETTLE_INTERPOLATOR)
+            .start()
+    }, 800L)
 }
 
 private const val DOT_COUNT = 12
@@ -238,6 +252,9 @@ fun PullToRefreshIndicator(
                     }
                 },
         ) {
+            // 空闲态直接不画：此前藏在上方的画布会从 Box 透出、叠在工具栏上
+            //（2026-09-20 用户报障「选择时圆环出现在顶部工具栏中」）
+            if (!(state.isRefreshing || state.isComplete) && state.pullDistance <= 0f) return@Canvas
             val dotColor = colors.primary
             val progress = if (thresholdPx <= 0f) 0f else (state.pullDistance / thresholdPx).coerceIn(0f, 1f)
             val activeDots = ceil(progress * DOT_COUNT)

@@ -114,26 +114,63 @@ internal fun buildSelectBorder(context: Context, radiusDp: Int): View = View(con
 }
 
 /** 勾标：blue-600 圆 + 2dp 白描边 + blue-400/50 外环（ring）+ 投影，居中白色粗勾。 */
-internal fun buildCheckBadge(context: Context): TextView = TextView(context).apply {
-    text = "✓"
-    setTextColor(android.graphics.Color.WHITE)
-    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-    typeface = Typeface.DEFAULT_BOLD
-    gravity = Gravity.CENTER
-    val inset = context.dp(2)
-    background = android.graphics.drawable.LayerDrawable(
-        arrayOf(
-            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x8060A5FA.toInt()) },
-            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(android.graphics.Color.WHITE) },
-            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(SELECT_PILL_BLUE) },
-        ),
-    ).apply {
-        setLayerInset(1, inset, inset, inset, inset)
-        setLayerInset(2, inset * 2, inset * 2, inset * 2, inset * 2)
+internal fun buildCheckBadge(context: Context): View = View(context).apply {
+    // 矢量绘制（2026-09-20 用户反馈「勾歪歪扭扭」）：此前用文本字符 ✓，随设备字体
+    // 渲染得又细又不正；桌面是 lucide Check 矢量路径（strokeWidth 3 / 14px），这里等比移植
+    background = CheckBadgeDrawable(context.resources.displayMetrics.density)
+    // 圆形 outline：elevation 投影（近似桌面 shadow-lg）需要实底 outline
+    outlineProvider = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            outline.setOval(0, 0, view.width, view.height)
+        }
     }
-    // shadow-lg：外圈有实底 → outline 呈圆形，elevation 投影即可
     elevation = context.dp(6).toFloat()
     visibility = View.GONE
+}
+
+/** 勾标绘制：外环 blue-400/50 → 白圈 2dp → blue-600 圆 → 白色圆头勾（lucide Check 等比）。 */
+private class CheckBadgeDrawable(private val density: Float) : android.graphics.drawable.Drawable() {
+    private val ringPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0x8060A5FA.toInt()
+    }
+    private val whitePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+    }
+    private val bluePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = SELECT_PILL_BLUE
+    }
+    private val checkPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = android.graphics.Paint.Style.STROKE
+        strokeCap = android.graphics.Paint.Cap.ROUND
+        strokeJoin = android.graphics.Paint.Join.ROUND
+    }
+    private val path = android.graphics.Path()
+
+    override fun draw(canvas: android.graphics.Canvas) {
+        val b = bounds
+        if (b.isEmpty) return
+        val cx = b.exactCenterX()
+        val cy = b.exactCenterY()
+        val s = minOf(b.width(), b.height()).toFloat()
+        val d = density
+        canvas.drawCircle(cx, cy, s / 2f, ringPaint)
+        canvas.drawCircle(cx, cy, s / 2f - 2f * d, whitePaint)
+        canvas.drawCircle(cx, cy, s / 2f - 4f * d, bluePaint)
+        // lucide Check（24 视口：20,6 → 9,17 → 4,12）缩放到徽标的 58% 并居中
+        val f = s * 0.583f / 24f
+        path.reset()
+        path.moveTo(cx + (20f - 12f) * f, cy + (6f - 11.5f) * f)
+        path.lineTo(cx + (9f - 12f) * f, cy + (17f - 11.5f) * f)
+        path.lineTo(cx + (4f - 12f) * f, cy + (12f - 11.5f) * f)
+        checkPaint.strokeWidth = 3f * f
+        canvas.drawPath(path, checkPaint)
+    }
+
+    override fun setAlpha(alpha: Int) {}
+    @Deprecated("Deprecated in Java")
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
 }
 
 /**
@@ -176,7 +213,7 @@ internal class PhotoRefs(
     val root: View,
     val cover: ImageView,
     val border: View,
-    val check: TextView,
+    val check: View,
     val name: TextView,
 )
 

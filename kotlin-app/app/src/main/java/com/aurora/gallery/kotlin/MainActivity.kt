@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -407,7 +408,8 @@ fun App(
                 )
             }
             if (!inBrowser) {
-                Box(Modifier.fillMaxWidth().weight(1f)) {
+                // clipToBounds：指示器空闲时藏在容器上方（负偏移），不裁剪会透出到工具栏
+                Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
                     FoldersOverview(
                         folders = displayFolders,
                         thumbnailLoader = thumbnailLoader,
@@ -445,7 +447,7 @@ fun App(
                         )
                     }
                 } else {
-                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                    Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
                         FileGrid(
                             images = displayImages,
                             selectedIds = tab.selectedFileIds,

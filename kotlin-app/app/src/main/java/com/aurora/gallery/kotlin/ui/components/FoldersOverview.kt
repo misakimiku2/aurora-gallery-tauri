@@ -407,7 +407,7 @@ fun FoldersOverview(
                             state = st,
                             thresholdPx = ctx.dp(80),
                             maxPullPx = ctx.dp(160),
-                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st) } },
+                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st, ctx.dp(80)) } },
                         )
                     )
                 }
@@ -520,7 +520,7 @@ private class FolderAdapter(
         val count: TextView,
         val name: TextView,
         val border: View,
-        val check: TextView,
+        val check: View,
     ) : RecyclerView.ViewHolder(view) {
         var job: Job? = null
     }
