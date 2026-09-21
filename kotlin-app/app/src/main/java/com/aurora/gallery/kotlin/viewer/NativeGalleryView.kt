@@ -983,6 +983,56 @@ class NativeGalleryView @JvmOverloads constructor(
 
         // Section 8: 来源网址（空时显示 hint）
         drawerSourceUrlView.text = item.sourceUrl
+        // 修复 M4a §8「抽屉延迟显示」：换图重建子树时查看器可能还没完成重新挂载后的首次
+        // 布局（退出再进的 open() 路径，实例是复用的），addView 的 requestLayout 传不到
+        // 宿主布局轮次；即便传到了，重新挂载后抽屉 specs 与上轮相同，View.measure 会整个
+        // 跳过抽屉子树（实测：drawer.onLayout 有、drawer.onMeasure 无），新格子停在 0x0
+        // ——表现为「文件信息/标签/按钮空白一拍，直到沉浸切换改了根尺寸才亮」。
+        // 兜底：自己已经量好就直接量摆一遍（幂等）；否则挂一次性布局监听，等本查看器
+        // 下一次 layout（重新挂载后的首轮必然发生）再量摆。不用 ViewTreeObserver 的
+        // PreDraw：detach/attach 边缘它在哪条 observer 上触发不可靠（实测注册了不触发）。
+        removeOnLayoutChangeListener(drawerLayoutFixer)
+        if (isLaidOut && width > 0 && height > 0 && !isLayoutRequested) {
+            measureAndLayoutDrawerNow()
+        } else {
+            addOnLayoutChangeListener(drawerLayoutFixer)
+        }
+    }
+
+    /** 抽屉子树兜底量摆的一次性监听（[updateDrawer] 尾注说明的机制）。 */
+    private val drawerLayoutFixer = object : OnLayoutChangeListener {
+        override fun onLayoutChange(
+            v: View, l: Int, t: Int, r: Int, b: Int,
+            oldL: Int, oldT: Int, oldR: Int, oldB: Int,
+        ) {
+            v.removeOnLayoutChangeListener(this)
+            measureAndLayoutDrawerNow()
+        }
+    }
+
+    /**
+     * 主动测量并摆放抽屉子树（[updateDrawer] 的兜底）。
+     * forceLayout 必须递归到每个后代：只标抽屉自己不够——中间层（ScrollView/容器/
+     * GridLayout）的 specs 与上轮相同、又没有 FORCE_LAYOUT 时，会在各自那一层把
+     * measure 跳掉，下探半路就停（实测 open.post 时格子仍 0x0）。
+     */
+    private fun measureAndLayoutDrawerNow() {
+        if (!isAttachedToWindow || width <= 0 || height <= 0) return
+        forceLayoutRecursive(metadataDrawer)
+        val drawerWidth = metadataDrawer.layoutParams.width
+        val wSpec = MeasureSpec.makeMeasureSpec(if (drawerWidth >= 0) drawerWidth else width, MeasureSpec.EXACTLY)
+        val hSpec = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
+        metadataDrawer.measure(wSpec, hSpec)
+        metadataDrawer.layout(width - metadataDrawer.measuredWidth, 0, width, metadataDrawer.measuredHeight)
+    }
+
+    private fun forceLayoutRecursive(view: View) {
+        view.forceLayout()
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                forceLayoutRecursive(view.getChildAt(i))
+            }
+        }
     }
 
     private fun formatFileSize(bytes: Long): String {
