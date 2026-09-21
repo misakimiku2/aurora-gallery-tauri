@@ -25,3 +25,5 @@ image = { version = "0.24", features = ["jpeg", "png", "gif", "webp"] }
 palette = { version = "0.7", features = ["std"] }
 uniffi = { version = "0.32", features = ["cli"] }
 thiserror = "1"
+icu_collator = "2"
+icu_locale_core = "2"

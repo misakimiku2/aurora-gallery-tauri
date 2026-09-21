@@ -5,6 +5,7 @@
 //! - Kotlin 端经 UniFFI 直调（M1 阶段 1 接入）。
 
 pub mod color_extractor;
+pub mod collate;
 pub mod color_db;
 pub mod db;
 pub mod file_types;
