@@ -34,7 +34,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
@@ -42,9 +41,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -56,8 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.wrapContentHeight
 import com.aurora.gallery.kotlin.ThumbnailLoader
+import kotlin.math.roundToInt
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Image
@@ -76,68 +72,69 @@ import uniffi.aurora_core.Image
  */
 
 /**
- * 「可收起头部 + 图片网格」的整页滚动容器。
+ * 「可收起头部 + 图片网格」的整页滚动容器（3.3fix③ overlay 架构）。
  *
- * 结构：头部槽位高度 = 头部自然高度 - 已收起量（底部对齐、顶部被裁掉），网格吃剩余
- * 空间——所以收起过程是真实的布局让位（网格逐帧长高），不是 overlay 平移。收起量由
- * [NestedScrollConnection] 驱动：上滑（dy<0）在 onPreScroll 里先收头部；网格顶到头
- * 后的下滑（dy>0 剩余）在 onPostScroll 里先展头部。
+ * 结构：网格（body）占满整个详情区、头部以 overlay 叠在其上方，收起 = 头部整体
+ * `graphicsLayer.translationY` 上移（纯绘制位移），**布局恒定不变**。收起量直接取
+ * 网格的滚动偏移（[body] 通过 [onScrolled] 回传 RV 实际滚动增量 dy，这里累计成
+ * scrollY 后夹到 [0, 头部自然高度]），所以头部收展与内容滚动严格 1:1——桌面整页
+ * 滚动的观感，且 fling 也能顺滑收展（v12 版「fling 不展头」的限制随之消失）。
  *
- * 未覆盖（记入清单 §8）：快速下滑（fling）的剩余速度不驱动头部展开——RV 的 fling
- * 剩余走 onPostFling，这里没实现，展开靠拖拽；桌面是连续滚动所以无此差异感。
+ * 为什么不能用 v12 的嵌套滚动桥接（真实布局让位）：桥接消费滚动量后收缩头部槽位，
+ * RecyclerView 的顶边逐帧被推移；RV 计算拖拽增量用的是自身局部坐标，顶边位移会折进
+ * 下一帧的 dy，再经 onPostScroll 的展头路径喂回去，形成 ±30px 的自激振荡（用户报的
+ * 「不跟手、疯狂上下抖」，模拟器 logcat 复现实锤）。overlay 下 RV 几何恒定，反馈回路
+ * 在结构上不存在。
  */
 @Composable
 fun TopicCollapsibleDetail(
-    /** 换专题时重置收起量与已测头部高度（宿主传 activeTopicId）。 */
+    /** 换专题时重置滚动累计与已测头部高度（宿主传 activeTopicId）。 */
     resetKey: Any?,
     modifier: Modifier = Modifier,
-    /** 头部内容（Hero + 子专题区 + 图片区块头）。自然高度随意，容器自适应。 */
+    /** 头部内容（Hero + 子专题区 + 图片区块头）。自然高度随意，overlay 自适应。 */
     header: @Composable () -> Unit,
-    /** 收起完成后的滚动主体（FileGrid）。 */
-    body: @Composable () -> Unit,
+    /**
+     * 滚动主体（FileGrid）。入参：① `topInsetPx`——网格顶部需额外留出头部自然高度的
+     * 空白（RV 的 contentPadding + topInset），让首行初始落在头部下缘；② `onScrolled`——
+     * 网格每帧的实际滚动增量，回传给这里累计成 scrollY 驱动头部平移。
+     */
+    body: @Composable (topInsetPx: Int, onScrolled: (Int) -> Unit) -> Unit,
 ) {
     val density = LocalDensity.current
     var headerFullPx by remember(resetKey) { mutableFloatStateOf(0f) }
-    var collapsePx by remember(resetKey) { mutableFloatStateOf(0f) }
+    var scrollYpx by remember(resetKey) { mutableFloatStateOf(0f) }
 
-    val connection = remember(resetKey) {
-        object : NestedScrollConnection {
-            private fun take(dy: Float): Offset {
-                val prev = collapsePx
-                collapsePx = (collapsePx - dy).coerceIn(0f, headerFullPx)
-                return Offset(0f, prev - collapsePx)
-            }
-
-            // 上滑：头部先收（消费 dy<0），剩余才进网格
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
-                if (available.y < 0f && collapsePx < headerFullPx) take(available.y) else Offset.Zero
-
-            // 网格已在顶部的下滑（dy>0 剩余）：先展头部
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
-                if (available.y > 0f && collapsePx > 0f) take(available.y) else Offset.Zero
+    Box(modifier.fillMaxSize()) {
+        // 滚动主体占满全高（顶部 inset 由 body 自己加 padding 实现），几何恒定
+        Box(Modifier.fillMaxSize()) {
+            body(
+                headerFullPx.roundToInt(),
+                onScrolled = { dy -> scrollYpx += dy },
+            )
         }
-    }
-
-    Column(modifier.fillMaxSize().nestedScroll(connection)) {
-        // 头部槽位：未量到自然高度前先放开量（首帧 = 自然高度，量到后高度恒等不跳变）
+        // 头部 overlay：外层定高裁剪（槽位恒定），内层「graphicsLayer 先于 background」
+        // ——平移必须包住背景+内容整体。曾把 background 放在 graphicsLayer 之前，背景
+        // 画在层外不随平移，收起后留下整块白底盖住内容（模拟器像素扫描定位）。
+        val colors = AuroraTheme.colors
         val slotReady = headerFullPx > 0f
-        val slotHeight = with(density) { (headerFullPx - collapsePx).coerceAtLeast(0f).toDp() }
         Box(
             Modifier
                 .fillMaxWidth()
-                .then(if (slotReady) Modifier.height(slotHeight) else Modifier)
-                .clipToBounds()
-                // 内容按自然高度测量、底部对齐：槽位收缩时顶部先滑出裁剪区（桌面滚动语义）
-                .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
+                .then(if (slotReady) Modifier.height(with(density) { headerFullPx.toDp() }) else Modifier)
+                .clipToBounds(),
         ) {
-            Column(
-                Modifier.onSizeChanged { headerFullPx = it.height.toFloat() },
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationY = -scrollYpx.coerceIn(0f, headerFullPx) }
+                    .background(colors.content),
             ) {
-                header()
+                Column(
+                    Modifier.onSizeChanged { headerFullPx = it.height.toFloat() },
+                ) {
+                    header()
+                }
             }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            body()
         }
     }
 }

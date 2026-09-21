@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -908,22 +909,28 @@ fun App(
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             },
-                            body = {
-                                FileGrid(
-                                    images = displayImages,
-                                    selectedIds = tab.selectedFileIds,
-                                    thumbnailLoader = thumbnailLoader,
-                                    onItemClick = onImageClick,
-                                    onItemLongClick = onImageLongPress,
-                                    layoutMode = tab.layoutMode,
-                                    // 桌面专题图片区无分组（TopicFileGrid 无分组概念）
-                                    groupBy = GroupBy.NONE,
-                                    level = state.gridLevel,
-                                    onLevelChange = { state.gridLevel = it },
-                                    sidebarVisible = state.layout.isSidebarVisible,
-                                    pullToRefreshState = null,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                            body = { topInsetPx, onScrolled ->
+                                // 换专题（根↔子）不卸载详情子树，RV 会带着旧滚动位置；
+                                // overlay 架构里头部收起量 = 滚动累计，必须整体重挂对齐
+                                key(tab.activeTopicId) {
+                                    FileGrid(
+                                        images = displayImages,
+                                        selectedIds = tab.selectedFileIds,
+                                        thumbnailLoader = thumbnailLoader,
+                                        onItemClick = onImageClick,
+                                        onItemLongClick = onImageLongPress,
+                                        layoutMode = tab.layoutMode,
+                                        // 桌面专题图片区无分组（TopicFileGrid 无分组概念）
+                                        groupBy = GroupBy.NONE,
+                                        level = state.gridLevel,
+                                        onLevelChange = { state.gridLevel = it },
+                                        sidebarVisible = state.layout.isSidebarVisible,
+                                        pullToRefreshState = null,
+                                        topInsetPx = topInsetPx,
+                                        onScrolled = onScrolled,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
                             },
                         )
                     }

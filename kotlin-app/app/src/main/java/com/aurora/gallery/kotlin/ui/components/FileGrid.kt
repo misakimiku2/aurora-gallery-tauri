@@ -91,6 +91,13 @@ fun FileGrid(
     pullToRefreshState: PullToRefreshState? = null,
     /** 4.4 刷新动作：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullToRefresh: ((onComplete: () -> Unit) -> Unit)? = null,
+    /**
+     * 专题详情整页滚动（3.3fix③ overlay 化）：顶部额外留白 px（= 头部自然高度），
+     * 让首行初始落在头部下缘、收起时内容从头部底下钻出。只影响 RV 顶 padding。
+     */
+    topInsetPx: Int = 0,
+    /** 整页滚动联动：RV 实际滚动增量（OnScrollListener 的 dy）原样回传宿主。 */
+    onScrolled: ((Int) -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -120,6 +127,15 @@ fun FileGrid(
     val currentSidebarVisible = rememberUpdatedState(sidebarVisible)
     val sidebarSynced = remember { mutableStateOf(sidebarVisible) }
     val spanSyncTick = remember { mutableIntStateOf(0) }
+    // 整页滚动联动（3.3fix③）：factory 闭包只建一次，回调经 rememberUpdatedState 转发最新引用
+    val currentOnScrolled = rememberUpdatedState(onScrolled)
+    val gridScrollForwarder = remember {
+        object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                currentOnScrolled.value?.invoke(dy)
+            }
+        }
+    }
     val decoration = remember { GridSpacingDecoration(6, gapPx) }
 
     // 进度驱动 FLIP：捏合手势 = FLIP 动画的进度条（见 PinchFlipController）
@@ -320,8 +336,10 @@ fun FileGrid(
                 // ~0.5-1MB/张），adapter 数据变化（notifyDataSetChanged）时缓存整体清空回收。
                 setItemViewCacheSize(128)
                 addItemDecoration(decoration)
-                setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
+                setPadding(paddingPx, paddingPx + topInsetPx, paddingPx, paddingPx)
                 clipToPadding = false
+                // 整页滚动联动（3.3fix③）：dy 原样回传宿主，由宿主累计成 scrollY 驱动头部平移
+                addOnScrollListener(gridScrollForwarder)
                 // 裁剪双保险：滚出 RV 顶边的内容不得画进标题/chip 行（Compose interop 链路
                 // 默认不裁剪）。clipToOutline 的 outline 必须显式给 rect——RV 无背景时
                 // BACKGROUND provider 拿到的是 null outline，clipToOutline 不生效。
@@ -656,6 +674,9 @@ fun FileGrid(
         },
         update = { rv ->
             if (rv.width <= 0) return@AndroidView
+            // 顶 padding 随 topInsetPx 变化（专题详情：头部量高在 factory 之后，inset 是
+            // 后到的；View.setPadding 等值时内部去重，重复调用无害）
+            rv.setPadding(paddingPx, paddingPx + topInsetPx, paddingPx, paddingPx)
             spanSyncTick.value // 订阅：侧栏动画结束后由监听器递增，触发本次收敛重算
             val predicting = sidebarVisible != sidebarSynced.value
             val sidebarPx = (SIDEBAR_WIDTH_DP.value * density).roundToInt()
