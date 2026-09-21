@@ -672,7 +672,33 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_aurora_core_checksum_func_add_files_to_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_add_people_to_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_person(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_find_topics_containing_file(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_generate_thumbnail(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_all_file_metadata(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_all_people(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_all_topics(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_file_metadata(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_topic_cover_previews(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_topic_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_topic_files_paginated(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_topic_people(
     ): Int
     external fun uniffi_aurora_core_checksum_func_init_db(
     ): Int
@@ -680,7 +706,23 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_images(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_remove_file_from_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_remove_person_from_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_set_topic_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_set_topic_people(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_update_person_avatar(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_upsert_file_metadata(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_media_images(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_upsert_person(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_upsert_topic(
     ): Int
     external fun ffi_aurora_core_uniffi_contract_version(
     ): Int
@@ -695,7 +737,33 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
         
     }
+    external fun uniffi_aurora_core_fn_func_add_files_to_topic(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_add_people_to_topic(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_delete_person(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_delete_topic(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_find_topics_containing_file(`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_generate_thumbnail(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_all_file_metadata(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_all_people(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_all_topics(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_file_metadata(`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_topic_cover_previews(`topicIds`: RustBuffer.ByValue,`previewCount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_topic_files(`topicId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_topic_files_paginated(`topicId`: RustBuffer.ByValue,`offset`: Long,`limit`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_topic_people(`topicId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_init_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -703,7 +771,23 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_list_images(`folderId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_remove_file_from_topic(`topicId`: RustBuffer.ByValue,`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_remove_person_from_topic(`topicId`: RustBuffer.ByValue,`peopleId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_set_topic_files(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_set_topic_people(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_update_person_avatar(`personId`: RustBuffer.ByValue,`coverFileId`: RustBuffer.ByValue,`faceBox`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_upsert_file_metadata(`metadata`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_media_images(`images`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_upsert_person(`person`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_upsert_topic(`topic`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun ffi_aurora_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -824,7 +908,46 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_aurora_core_checksum_func_add_files_to_topic() != 55474) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_add_people_to_topic() != 37626) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_delete_person() != 23922) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_delete_topic() != 33355) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_find_topics_containing_file() != 54482) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_generate_thumbnail() != 12901) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_all_file_metadata() != 2616) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_all_people() != 61909) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_all_topics() != 12560) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_file_metadata() != 63384) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_topic_cover_previews() != 18228) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_topic_files() != 33526) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_topic_files_paginated() != 51532) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_topic_people() != 29311) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
@@ -836,7 +959,31 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_remove_file_from_topic() != 6129) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_remove_person_from_topic() != 27759) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_set_topic_files() != 18224) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_set_topic_people() != 48421) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_update_person_avatar() != 15429) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_file_metadata() != 37365) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 3627) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_person() != 18271) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_topic() != 1190) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1004,6 +1151,52 @@ public object FfiConverterLong: FfiConverter<Long, Long> {
 /**
  * @suppress
  */
+public object FfiConverterDouble: FfiConverter<Double, Double> {
+    override fun lift(value: Double): Double {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Double {
+        return buf.getDouble()
+    }
+
+    override fun lower(value: Double): Double {
+        return value
+    }
+
+    override fun allocationSize(value: Double) = 8UL
+
+    override fun write(value: Double, buf: ByteBuffer) {
+        buf.putDouble(value)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterBoolean: FfiConverter<Boolean, Byte> {
+    override fun lift(value: Byte): Boolean {
+        return value.toInt() != 0
+    }
+
+    override fun read(buf: ByteBuffer): Boolean {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: Boolean): Byte {
+        return if (value) 1.toByte() else 0.toByte()
+    }
+
+    override fun allocationSize(value: Boolean) = 1UL
+
+    override fun write(value: Boolean, buf: ByteBuffer) {
+        buf.put(lower(value))
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     // Note: we don't inherit from FfiConverterRustBuffer, because we use a
     // special encoding when lowering/lifting.  We can use `RustBuffer.len` to
@@ -1074,6 +1267,426 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
     override fun write(value: ByteArray, buf: ByteBuffer) {
         buf.putInt(value.size)
         buf.put(value)
+    }
+}
+
+
+
+/**
+ * `db::topics::CoverCropData` 的 FFI 镜像。
+ */
+data class FfiCoverCrop (
+    var `x`: kotlin.Double
+    , 
+    var `y`: kotlin.Double
+    , 
+    var `width`: kotlin.Double
+    , 
+    var `height`: kotlin.Double
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCoverCrop: FfiConverterRustBuffer<FfiCoverCrop> {
+    override fun read(buf: ByteBuffer): FfiCoverCrop {
+        return FfiCoverCrop(
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCoverCrop) = (
+            FfiConverterDouble.allocationSize(value.`x`) +
+            FfiConverterDouble.allocationSize(value.`y`) +
+            FfiConverterDouble.allocationSize(value.`width`) +
+            FfiConverterDouble.allocationSize(value.`height`)
+    )
+
+    override fun write(value: FfiCoverCrop, buf: ByteBuffer) {
+            FfiConverterDouble.write(value.`x`, buf)
+            FfiConverterDouble.write(value.`y`, buf)
+            FfiConverterDouble.write(value.`width`, buf)
+            FfiConverterDouble.write(value.`height`, buf)
+    }
+}
+
+
+
+/**
+ * `db::persons::FaceBox` 的 FFI 镜像。
+ */
+data class FfiFaceBox (
+    var `x`: kotlin.Double
+    , 
+    var `y`: kotlin.Double
+    , 
+    var `w`: kotlin.Double
+    , 
+    var `h`: kotlin.Double
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiFaceBox: FfiConverterRustBuffer<FfiFaceBox> {
+    override fun read(buf: ByteBuffer): FfiFaceBox {
+        return FfiFaceBox(
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiFaceBox) = (
+            FfiConverterDouble.allocationSize(value.`x`) +
+            FfiConverterDouble.allocationSize(value.`y`) +
+            FfiConverterDouble.allocationSize(value.`w`) +
+            FfiConverterDouble.allocationSize(value.`h`)
+    )
+
+    override fun write(value: FfiFaceBox, buf: ByteBuffer) {
+            FfiConverterDouble.write(value.`x`, buf)
+            FfiConverterDouble.write(value.`y`, buf)
+            FfiConverterDouble.write(value.`w`, buf)
+            FfiConverterDouble.write(value.`h`, buf)
+    }
+}
+
+
+
+/**
+ * `db::file_metadata::FileMetadata` 的 FFI 镜像。
+ *
+ * `tags` 列在库里是 JSON 文本，DTO 里收成 `Vec<String>`；非法值按空处理。
+ * `ai_data` 只透传原始 JSON 文本，M4a 不解析。
+ */
+data class FfiFileMetadata (
+    var `fileId`: kotlin.String
+    , 
+    var `path`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    var `description`: kotlin.String?
+    , 
+    var `sourceUrl`: kotlin.String?
+    , 
+    var `aiData`: kotlin.String?
+    , 
+    var `category`: kotlin.String?
+    , 
+    var `updatedAt`: kotlin.Long?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMetadata> {
+    override fun read(buf: ByteBuffer): FfiFileMetadata {
+        return FfiFileMetadata(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiFileMetadata) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterOptionalString.allocationSize(value.`description`) +
+            FfiConverterOptionalString.allocationSize(value.`sourceUrl`) +
+            FfiConverterOptionalString.allocationSize(value.`aiData`) +
+            FfiConverterOptionalString.allocationSize(value.`category`) +
+            FfiConverterOptionalLong.allocationSize(value.`updatedAt`)
+    )
+
+    override fun write(value: FfiFileMetadata, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+            FfiConverterOptionalString.write(value.`sourceUrl`, buf)
+            FfiConverterOptionalString.write(value.`aiData`, buf)
+            FfiConverterOptionalString.write(value.`category`, buf)
+            FfiConverterOptionalLong.write(value.`updatedAt`, buf)
+    }
+}
+
+
+
+/**
+ * `db::topics::PaginatedFiles` 的 FFI 镜像。
+ *
+ * `usize` 不是 UniFFI 类型；这里用 `i64` 而不是 `u64`，因为 UniFFI 把 `u64` 映射成
+ * Kotlin 的 `ULong`（与 `Long` 混用得手动转换），而本文件既有 DTO 的计数/尺寸一律 `i64`。
+ */
+data class FfiPaginatedFiles (
+    var `files`: List<kotlin.String>
+    , 
+    var `total`: kotlin.Long
+    , 
+    var `hasMore`: kotlin.Boolean
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiPaginatedFiles: FfiConverterRustBuffer<FfiPaginatedFiles> {
+    override fun read(buf: ByteBuffer): FfiPaginatedFiles {
+        return FfiPaginatedFiles(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiPaginatedFiles) = (
+            FfiConverterSequenceString.allocationSize(value.`files`) +
+            FfiConverterLong.allocationSize(value.`total`) +
+            FfiConverterBoolean.allocationSize(value.`hasMore`)
+    )
+
+    override fun write(value: FfiPaginatedFiles, buf: ByteBuffer) {
+            FfiConverterSequenceString.write(value.`files`, buf)
+            FfiConverterLong.write(value.`total`, buf)
+            FfiConverterBoolean.write(value.`hasMore`, buf)
+    }
+}
+
+
+
+/**
+ * `db::persons::Person` 的 FFI 镜像。
+ */
+data class FfiPerson (
+    var `id`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    , 
+    var `coverFileId`: kotlin.String
+    , 
+    var `count`: kotlin.Int
+    , 
+    var `description`: kotlin.String?
+    , 
+    var `faceBox`: FfiFaceBox?
+    , 
+    var `updatedAt`: kotlin.Long?
+    , 
+    var `characterTagName`: kotlin.String?
+    , 
+    var `characterTagIndex`: kotlin.Int?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiPerson: FfiConverterRustBuffer<FfiPerson> {
+    override fun read(buf: ByteBuffer): FfiPerson {
+        return FfiPerson(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeFfiFaceBox.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiPerson) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`coverFileId`) +
+            FfiConverterInt.allocationSize(value.`count`) +
+            FfiConverterOptionalString.allocationSize(value.`description`) +
+            FfiConverterOptionalTypeFfiFaceBox.allocationSize(value.`faceBox`) +
+            FfiConverterOptionalLong.allocationSize(value.`updatedAt`) +
+            FfiConverterOptionalString.allocationSize(value.`characterTagName`) +
+            FfiConverterOptionalInt.allocationSize(value.`characterTagIndex`)
+    )
+
+    override fun write(value: FfiPerson, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`coverFileId`, buf)
+            FfiConverterInt.write(value.`count`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+            FfiConverterOptionalTypeFfiFaceBox.write(value.`faceBox`, buf)
+            FfiConverterOptionalLong.write(value.`updatedAt`, buf)
+            FfiConverterOptionalString.write(value.`characterTagName`, buf)
+            FfiConverterOptionalInt.write(value.`characterTagIndex`, buf)
+    }
+}
+
+
+
+/**
+ * `db::topics::Topic` 的 FFI 镜像。
+ *
+ * UniFFI 不看 serde 属性，Kotlin 侧字段名是 `topicType`（React 拿到的是 `type`）。
+ * 列表查询里 `file_ids` / `people_ids` 恒为空（懒加载），计数请用 `file_count`。
+ */
+data class FfiTopic (
+    var `id`: kotlin.String
+    , 
+    var `parentId`: kotlin.String?
+    , 
+    var `name`: kotlin.String
+    , 
+    var `description`: kotlin.String?
+    , 
+    var `topicType`: kotlin.String?
+    , 
+    var `coverFileId`: kotlin.String?
+    , 
+    var `backgroundFileId`: kotlin.String?
+    , 
+    var `coverCrop`: FfiCoverCrop?
+    , 
+    var `peopleIds`: List<kotlin.String>
+    , 
+    var `fileIds`: List<kotlin.String>
+    , 
+    var `sourceUrl`: kotlin.String?
+    , 
+    var `createdAt`: kotlin.Long?
+    , 
+    var `updatedAt`: kotlin.Long?
+    , 
+    var `sourceType`: kotlin.String?
+    , 
+    var `workName`: kotlin.String?
+    , 
+    var `workNameCn`: kotlin.String?
+    , 
+    var `fileCount`: kotlin.Int
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTopic: FfiConverterRustBuffer<FfiTopic> {
+    override fun read(buf: ByteBuffer): FfiTopic {
+        return FfiTopic(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalTypeFfiCoverCrop.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTopic) = (
+            FfiConverterString.allocationSize(value.`id`) +
+            FfiConverterOptionalString.allocationSize(value.`parentId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterOptionalString.allocationSize(value.`description`) +
+            FfiConverterOptionalString.allocationSize(value.`topicType`) +
+            FfiConverterOptionalString.allocationSize(value.`coverFileId`) +
+            FfiConverterOptionalString.allocationSize(value.`backgroundFileId`) +
+            FfiConverterOptionalTypeFfiCoverCrop.allocationSize(value.`coverCrop`) +
+            FfiConverterSequenceString.allocationSize(value.`peopleIds`) +
+            FfiConverterSequenceString.allocationSize(value.`fileIds`) +
+            FfiConverterOptionalString.allocationSize(value.`sourceUrl`) +
+            FfiConverterOptionalLong.allocationSize(value.`createdAt`) +
+            FfiConverterOptionalLong.allocationSize(value.`updatedAt`) +
+            FfiConverterOptionalString.allocationSize(value.`sourceType`) +
+            FfiConverterOptionalString.allocationSize(value.`workName`) +
+            FfiConverterOptionalString.allocationSize(value.`workNameCn`) +
+            FfiConverterInt.allocationSize(value.`fileCount`)
+    )
+
+    override fun write(value: FfiTopic, buf: ByteBuffer) {
+            FfiConverterString.write(value.`id`, buf)
+            FfiConverterOptionalString.write(value.`parentId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+            FfiConverterOptionalString.write(value.`topicType`, buf)
+            FfiConverterOptionalString.write(value.`coverFileId`, buf)
+            FfiConverterOptionalString.write(value.`backgroundFileId`, buf)
+            FfiConverterOptionalTypeFfiCoverCrop.write(value.`coverCrop`, buf)
+            FfiConverterSequenceString.write(value.`peopleIds`, buf)
+            FfiConverterSequenceString.write(value.`fileIds`, buf)
+            FfiConverterOptionalString.write(value.`sourceUrl`, buf)
+            FfiConverterOptionalLong.write(value.`createdAt`, buf)
+            FfiConverterOptionalLong.write(value.`updatedAt`, buf)
+            FfiConverterOptionalString.write(value.`sourceType`, buf)
+            FfiConverterOptionalString.write(value.`workName`, buf)
+            FfiConverterOptionalString.write(value.`workNameCn`, buf)
+            FfiConverterInt.write(value.`fileCount`, buf)
     }
 }
 
@@ -1491,6 +2104,38 @@ public object FfiConverterOptionalInt: FfiConverterRustBuffer<kotlin.Int?> {
 /**
  * @suppress
  */
+public object FfiConverterOptionalLong: FfiConverterRustBuffer<kotlin.Long?> {
+    override fun read(buf: ByteBuffer): kotlin.Long? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterLong.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Long?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterLong.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.Long?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterLong.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
     override fun read(buf: ByteBuffer): kotlin.String? {
         if (buf.get().toInt() == 0) {
@@ -1513,6 +2158,214 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
         } else {
             buf.put(1)
             FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiCoverCrop: FfiConverterRustBuffer<FfiCoverCrop?> {
+    override fun read(buf: ByteBuffer): FfiCoverCrop? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiCoverCrop.read(buf)
+    }
+
+    override fun allocationSize(value: FfiCoverCrop?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiCoverCrop.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiCoverCrop?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiCoverCrop.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiFaceBox: FfiConverterRustBuffer<FfiFaceBox?> {
+    override fun read(buf: ByteBuffer): FfiFaceBox? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiFaceBox.read(buf)
+    }
+
+    override fun allocationSize(value: FfiFaceBox?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiFaceBox.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiFaceBox?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiFaceBox.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMetadata?> {
+    override fun read(buf: ByteBuffer): FfiFileMetadata? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiFileMetadata.read(buf)
+    }
+
+    override fun allocationSize(value: FfiFileMetadata?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiFileMetadata.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiFileMetadata?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiFileMetadata.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String> {
+        val len = buf.getInt()
+        return List<kotlin.String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiFileMetadata: FfiConverterRustBuffer<List<FfiFileMetadata>> {
+    override fun read(buf: ByteBuffer): List<FfiFileMetadata> {
+        val len = buf.getInt()
+        return List<FfiFileMetadata>(len) {
+            FfiConverterTypeFfiFileMetadata.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiFileMetadata>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiFileMetadata.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiFileMetadata>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiFileMetadata.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiPerson: FfiConverterRustBuffer<List<FfiPerson>> {
+    override fun read(buf: ByteBuffer): List<FfiPerson> {
+        val len = buf.getInt()
+        return List<FfiPerson>(len) {
+            FfiConverterTypeFfiPerson.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiPerson>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiPerson.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiPerson>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiPerson.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTopic: FfiConverterRustBuffer<List<FfiTopic>> {
+    override fun read(buf: ByteBuffer): List<FfiTopic> {
+        val len = buf.getInt()
+        return List<FfiTopic>(len) {
+            FfiConverterTypeFfiTopic.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTopic>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTopic.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTopic>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTopic.write(it, buf)
         }
     }
 }
@@ -1600,6 +2453,103 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<kotlin.String, List<kotlin.String>>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, List<kotlin.String>> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, List<kotlin.String>>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterSequenceString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, List<kotlin.String>>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterSequenceString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, List<kotlin.String>>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterSequenceString.write(v, buf)
+        }
+    }
+}
+    @Throws(AuroraException::class) fun `addFilesToTopic`(`topicId`: kotlin.String, `fileIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_add_files_to_topic(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `addPeopleToTopic`(`topicId`: kotlin.String, `peopleIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_add_people_to_topic(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterSequenceString.lower(`peopleIds`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `deletePerson`(`id`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_person(
+    
+        
+        FfiConverterString.lower(`id`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `deleteTopic`(`id`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_topic(
+    
+        
+        FfiConverterString.lower(`id`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `findTopicsContainingFile`(`fileId`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_find_topics_containing_file(
+    
+        
+        FfiConverterString.lower(`fileId`),_status)
+}
+    )
+    }
+    
+
         /**
          * 用 Rust 解码原图字节生成 JPEG 缩略图（最长边 256px，保持宽高比）。
          *
@@ -1613,6 +2563,106 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
     
         
         FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getAllFileMetadata`(): List<FfiFileMetadata> {
+            return FfiConverterSequenceTypeFfiFileMetadata.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_all_file_metadata(
+    
+        _status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getAllPeople`(): List<FfiPerson> {
+            return FfiConverterSequenceTypeFfiPerson.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_all_people(
+    
+        _status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getAllTopics`(): List<FfiTopic> {
+            return FfiConverterSequenceTypeFfiTopic.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_all_topics(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 按 id 读单条元数据；不存在返回 `null`（桌面走的是「全表拉进内存」，
+         * Kotlin 侧的先读后写必须要这条，见 M4a 清单 0.1）。
+         */
+    @Throws(AuroraException::class) fun `getFileMetadata`(`fileId`: kotlin.String): FfiFileMetadata? {
+            return FfiConverterOptionalTypeFfiFileMetadata.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_file_metadata(
+    
+        
+        FfiConverterString.lower(`fileId`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getTopicCoverPreviews`(`topicIds`: List<kotlin.String>, `previewCount`: kotlin.Long): Map<kotlin.String, List<kotlin.String>> {
+            return FfiConverterMapStringSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_topic_cover_previews(
+    
+        
+        FfiConverterSequenceString.lower(`topicIds`),
+        FfiConverterLong.lower(`previewCount`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getTopicFiles`(`topicId`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_topic_files(
+    
+        
+        FfiConverterString.lower(`topicId`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getTopicFilesPaginated`(`topicId`: kotlin.String, `offset`: kotlin.Long, `limit`: kotlin.Long): FfiPaginatedFiles {
+            return FfiConverterTypeFfiPaginatedFiles.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_topic_files_paginated(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterLong.lower(`offset`),
+        FfiConverterLong.lower(`limit`),_status)
+}
+    )
+    }
+    
+
+    @Throws(AuroraException::class) fun `getTopicPeople`(`topicId`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_topic_people(
+    
+        
+        FfiConverterString.lower(`topicId`),_status)
 }
     )
     }
@@ -1659,6 +2709,78 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
     }
     
 
+    @Throws(AuroraException::class) fun `removeFileFromTopic`(`topicId`: kotlin.String, `fileId`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_remove_file_from_topic(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterString.lower(`fileId`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `removePersonFromTopic`(`topicId`: kotlin.String, `peopleId`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_remove_person_from_topic(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterString.lower(`peopleId`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `setTopicFiles`(`topicId`: kotlin.String, `fileIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_set_topic_files(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `setTopicPeople`(`topicId`: kotlin.String, `peopleIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_set_topic_people(
+    
+        
+        FfiConverterString.lower(`topicId`),
+        FfiConverterSequenceString.lower(`peopleIds`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `updatePersonAvatar`(`personId`: kotlin.String, `coverFileId`: kotlin.String, `faceBox`: FfiFaceBox?)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_update_person_avatar(
+    
+        
+        FfiConverterString.lower(`personId`),
+        FfiConverterString.lower(`coverFileId`),
+        FfiConverterOptionalTypeFfiFaceBox.lower(`faceBox`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `upsertFileMetadata`(`metadata`: FfiFileMetadata)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_file_metadata(
+    
+        
+        FfiConverterTypeFfiFileMetadata.lower(`metadata`),_status)
+}
+    
+    
+
         /**
          * 把 Kotlin 扫描的 MediaStore 图片写入索引（按 bucket 聚合出文件夹）。
          *
@@ -1673,6 +2795,28 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
     
         
         FfiConverterSequenceTypeMediaImage.lower(`images`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `upsertPerson`(`person`: FfiPerson)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_person(
+    
+        
+        FfiConverterTypeFfiPerson.lower(`person`),_status)
+}
+    
+    
+
+    @Throws(AuroraException::class) fun `upsertTopic`(`topic`: FfiTopic)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_topic(
+    
+        
+        FfiConverterTypeFfiTopic.lower(`topic`),_status)
 }
     
     
