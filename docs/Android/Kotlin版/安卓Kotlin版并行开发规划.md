@@ -197,8 +197,9 @@ LAN 浏览桌面文件时，桌面 API 顺带返回该图的标签/人物/专题
 | **M0 前置与验证** | §4 四项下沉启动；UniFFI PoC（零改动验证 Kotlin → UniFFI → Rust 管道，分步见 [启动指南](./启动指南.md)）；平台开关集中化 | Kotlin demo 经 UniFFI 读取导出库数据，与导出源快照一致（交付物是通信管道，列表仅为验证载荷） |
 | **M1 应用骨架 + FileGrid** ✅ **已封版（2026-09-21）** | 前置： 设计约定文档（桌面端颜色 token/间距/组件样式提取，见 [§2.3](#23-视觉对齐原则)）；workspace 拆分（`lib.rs` 解耦，基于 M0 评估）；TopBar / TabBar / 侧栏骨架；RecyclerView + GridLayoutManager；三档捏合（沿用 `src/utils/androidThumbnailSizes.ts` 三档设计，逐档切换）；分组标题；虚拟滚动；编辑模式/多选/范围选择 | 9.8 万张图库滚动与捏合换档稳定 60fps（对照 React 版实测）；返回手势链（关菜单→退全屏→退编辑→取消选择→关标签）生效 |
 | **M2 FoldersOverview + 侧栏** | 文件夹总览视图、侧栏六个 Section（含各自排序） | [三端功能矩阵](./三端功能矩阵.md) 中标注 M2 的目标条目全部达成 |
-| **M3 查看器并入** | NativeGalleryView / SlideshowView / ZoomableImageView 从 WindowManager 桥接模式并入新应用壳 | 全部手势行为不回退（对照 [安卓端手势适配修改记录.md](../安卓端手势适配修改记录.md) 的基线） |
-| **M4 管理界面 + 系统集成** | 标签/人物/专题管理界面；设置面板；系统分享/任务通知/全屏/沉浸模式 | 矩阵中标注 M4 的目标条目全部达成 |
+| **M3 查看器并入** ✅ **已封版（2026-09-21）** | NativeGalleryView / SlideshowView / ZoomableImageView 从 WindowManager 桥接模式并入新应用壳 | **达成**。手势逐条对照 [安卓端手势适配修改记录.md](../安卓端手势适配修改记录.md) 无回退（Tab S8+ 上 adb 实测 + 验收人上手双确认）；宿主形态定为 Compose 全屏条件层 + AndroidView（D7），大图管线定为喂 `ByteBuffer`（D8，URI 不再进解码器），`dialogs/` 全套一次搬入（D9）。转屏按验收人决定与 React 壳对齐（`configChanges`，不重建 Activity）。执行清单与小步结果见 [M3 查看器并入任务清单](./M3查看器并入任务清单.md) |
+| **M4a 数据与整理**（2026-09-21 由 M4 拆出，先行） | UniFFI 扩面（人物/专题/文件元数据的读写导出）；标签从 TS 下沉 Rust（含标签词表的落库方式）；查看器内编辑标签/描述/来源网址；侧栏标签/人物/专题三个 Section 接真数据 + 三个总览视图；标签过滤接真数据；元数据面板 | 能给一张图打上标签 → 侧栏标签 Section 看得到并带计数 → 点它能筛出该标签下的图；人物/专题同链路可读；M1 留下的三个占位（长按已选中项、选择栏「更多」、标签过滤弹层）转为真实行为 |
+| **M4b 系统集成**（2026-09-21 由 M4 拆出，后置） | 设置三个面板（通用/存储扫描/LAN+AI）；任务进度通知；状态栏与全局沉浸补全；画布入口 | 矩阵表 6 标注 M4 的条目全部达成；画布入口可点进（视图本体仍属 M5） |
 | **M5 Canvas 平板版 + 比较器** | Canvas 按 [§2.2](#22-canvas-双定位) 的「展示 + 轻整理」范围实现（复用 ZoomableImageView 手势代码）；ImageComparer 触摸化 | 矩阵中标注 M5 的目标条目全部达成 |
 | **M6 LAN + AI + 互联** | LAN 客户端/上传；AI 任务（§4-2 完成）；桌面互联；[§5.3](#53-阶段-1在线查询先行实施) 在线查询上线 | 矩阵中标注 M6 的目标条目达成；AI 全流程无 WebView 跑通 |
 | **M7 对齐验收** | 对照矩阵逐项核对 | 矩阵「平板 Kotlin 目标」列全绿（无待定项）→ React 安卓版退役，桌面 React 版保留 |
@@ -208,7 +209,8 @@ LAN 浏览桌面文件时，桌面 API 顺带返回该图的标签/人物/专题
 
 - **M1 完成后重估路线 A/B**（[§3.4](#34-路线决策-混合渐进a-vs-独立应用b) 触发条件）—— **已重估，2026-09-21 定案走 B**（帧率数据与判读见 §3.4 条件②）。
 - **顺序调整（2026-09-21 验收人拍板）：M3 提前到 M2 之前，M2 并入 M4。** 理由两条：① Kotlin 版当前**打不开图片**（`AppState.viewingFileId` 声明后零引用），查看器是眼下最刺眼的功能缺口，而它的手势代码（`NativeGalleryView` / `ZoomableImageView` / `SlideshowView`，共约 3000 行）经核**零 Tauri 依赖**，迁移成本可控；② M2 的实质是「侧栏六 Section 接真数据」，但平板库由 MediaStore 扫进自建 db，标签/人物/专题**零条数据**，而能写入它们的入口（`TagEditDialog`、长按上下文菜单、管理界面）全在 M4/M6——先做 M2 只是把空态换成另一种空态。合并后的一段做「元数据与整理」：标签/人物/专题的 FFI 读写 + 查看器内编辑 + 侧栏真数据 + 元数据面板 + M1 留下的三个占位（长按已选中项的上下文菜单、选择栏「更多」的 Toast、搜索 scope 的标签按钮）。[矩阵](./三端功能矩阵.md) 表 1/表 2 的 M2 标注随之改期。
-- FLIP 的全部 workaround（锚点定位、clamp 污染防护、pinch 钉住 scrollTop、双动画同步、视口 padding 裁剪）在 Kotlin 侧**无对应物**——RecyclerView 体系原生覆盖这些场景，相关代码不迁移、不重写。
+- **M4 拆分（2026-09-21 验收人拍板）**：M4 一次性做完体量过大且中途没有可验收的中间态，拆成 **M4a 数据与整理**（先做）与 **M4b 系统集成**。拆分依据来自一次 Rust 侧摸底：`core/src/ffi.rs` 目前只导出 5 个函数（M1/M3 够用），但人物/专题/文件元数据的 db 原语在 `core/src/db/` 里全都现成，`db_commands.rs` 里对应那 20 个 command 清一色只依赖 `State<AppDbPool>`、不碰 AppHandle，导出成 UniFFI 是机械活（约 1–2 天含 Record 派生与绑定重生成），且 `init_db()` 已经把这些表在安卓上建好了。**真正的缺口只有标签**：标签没有表，它是 `file_metadata.tags` 的 JSON 列；标签词表存在 user_data JSON blob 里，而写它的 command 依赖 Tauri 路径 API；标签的重命名/跨文件删除/侧栏分组计数目前写在 TS（`src/hooks/useTags.ts`）——按 §3.1「逻辑写一次在 Rust」的原则，这部分必须先下沉，否则 Kotlin 会变成第二份业务逻辑。
+- **FLIP 的全部 workaround**（锚点定位、clamp 污染防护、pinch 钉住 scrollTop、双动画同步、视口 padding 裁剪）在 Kotlin 侧**无对应物**——RecyclerView 体系原生覆盖这些场景，相关代码不迁移、不重写。
 
 ---
 
