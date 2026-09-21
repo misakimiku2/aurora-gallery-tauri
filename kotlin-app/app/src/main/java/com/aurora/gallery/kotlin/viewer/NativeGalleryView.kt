@@ -445,7 +445,8 @@ class NativeGalleryView @JvmOverloads constructor(
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
             }
             columnCount = 2
-            useDefaultMargins = true
+            // 不开 useDefaultMargins：格子现在是写死的列宽（两列正好铺满内容宽），
+            // 默认 margin 会把第二列挤出去。列间距由每格自身的右内边距给。
         }
         drawerContainer.addView(drawerDetailsGrid)
 
@@ -761,14 +762,27 @@ class NativeGalleryView @JvmOverloads constructor(
         // 如果抽屉打开，等待 onSizeChanged 触发后由其处理 layoutParams 更新
     }
 
+    /**
+     * 文件信息的一格。
+     *
+     * **列宽写死，不用 GridLayout 权重**：权重只在 GridLayout 自己重新测量时才分给子
+     * view，而抽屉每次换图都是「往一个已经测过的 GridLayout 里换子 view」——它自己的
+     * 测量尺寸不变，于是新加进来的格子停在 0x0。平板探针实测：翻页后开抽屉
+     * `cells=[0x0 ×5]` 而 `grid=612x255`（旧尺寸），改成写死列宽后翻页路径正常了。
+     * 抽屉内容宽恒为 320dp − 左右各 16dp padding，两列各 144dp。
+     *
+     * ⚠ 这**没有**修完抽屉延迟显示：退出查看器再进来时格子仍是 0x0（三节一起空），
+     * 那条的现场与线索记在 M4a 清单 §8。
+     */
     private fun buildDetailCell(label: String, value: String, iconRes: Int? = null): LinearLayout {
         val density = resources.displayMetrics.density
+        val cellWidth = ((DRAWER_WIDTH_DP - 32f) / 2f * density).toInt()
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = GridLayout.LayoutParams().apply {
-                width = 0
+                width = cellWidth
                 height = LayoutParams.WRAP_CONTENT
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, 1f)
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1)
             }
             setPadding(0, 0, (density * 12).toInt(), (density * 8).toInt())
             addView(TextView(context).apply {
@@ -1972,6 +1986,8 @@ class NativeGalleryView @JvmOverloads constructor(
         private const val SWIPE_VELOCITY_THRESHOLD = 200f
         /** 翻页时两张图片之间的视觉间隔（dp），避免竖屏下图片紧贴 */
         private const val SWIPE_GAP_DP = 16f
+        /** 元数据抽屉宽度（dp）。文件信息格子按它算列宽，见 [buildDetailCell]。 */
+        private const val DRAWER_WIDTH_DP = 320f
     }
 
     /** 翻页间隔的像素值 */
