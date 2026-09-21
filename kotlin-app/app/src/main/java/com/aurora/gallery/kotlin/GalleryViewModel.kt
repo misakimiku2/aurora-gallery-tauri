@@ -35,6 +35,7 @@ import uniffi.aurora_core.getFileMetadata
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
+import uniffi.aurora_core.listImagesByTags
 import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
@@ -77,6 +78,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** 侧栏要看的分组 + 计数。**顺序由 Rust 定**，UI 侧不再排（清单 §1「排序规则只许有一套」）。 */
     val tagGroups = mutableStateOf<List<TagGroup>>(emptyList())
+
+    /** [reloadImages] 上次取数用的序列源，用来区分「换视图」与「同一视图热刷新」。 */
+    private var loadedImagesKey: Pair<String?, List<String>>? = null
 
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
@@ -180,7 +184,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 val t0 = android.os.SystemClock.elapsedRealtime()
                 scanAndReconcile()
                 Log.i(TAG, "[Scan] hot refresh cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
-                reloadActiveFolderImages()
+                reloadImages()
             } catch (e: Exception) {
                 Log.w(TAG, "[Scan] hot refresh failed", e)
             }
@@ -199,7 +203,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         viewModelScope.launch {
             try {
                 scanAndReconcile()
-                reloadActiveFolderImages()
+                reloadImages()
                 Log.i(TAG, "[Scan] manual refresh done")
             } catch (e: Exception) {
                 Log.w(TAG, "[Scan] manual refresh failed", e)
@@ -338,6 +342,45 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
+     * 当前视图该显示哪些图，**唯一的取数口**（M4a 4.1）。
+     *
+     * 两条序列源：
+     *  - 有标签筛选 → Rust 按标签取**全库**图片（`list_images_by_tags`）。不能只筛当前
+     *    文件夹：侧栏标签上的计数是全库口径，点进去只剩本文件夹那几张的话，同一屏上
+     *    「5」和「2 张」自相矛盾。
+     *  - 否则 → 当前文件夹的图片；没有文件夹（总览）就不取，保留上一次的结果没有意义。
+     *
+     * 挂起函数，由 `MainActivity` 的 `LaunchedEffect(viewMode, folderId, activeTags)`
+     * 触发——导航与筛选都收敛到这一个触发点，不再各处自己 launch 一份。
+     */
+    suspend fun reloadImages() {
+        val tab = appState.activeTab
+        if (tab.viewMode != ViewMode.BROWSER) return
+        val byTag = tab.activeTags.isNotEmpty()
+        if (!byTag && tab.folderId == null) return
+        val folderId = tab.folderId
+        val key = folderId to tab.activeTags
+        // 只在**序列源换了**（进文件夹 / 改筛选）时先清空：否则从 B 切回 A 的那一帧会
+        // 闪现上一个文件夹的内容。热刷新（MediaStore 变更）key 不变，不能清——清了就是闪白。
+        if (key != loadedImagesKey) images.value = emptyList()
+        loadedImagesKey = key
+        val imgs = try {
+            withContext(Dispatchers.IO) {
+                if (byTag) listImagesByTags(tab.activeTags) else listImages(folderId!!)
+            }
+        } catch (e: Exception) {
+            // 取数失败留空网格而不是旧内容：旧的可能是**另一个文件夹**的，比空着更误导
+            Log.w(TAG, "[Load] images failed byTag=$byTag folderId=$folderId", e)
+            return
+        }
+        // 取数期间用户可能已经导航走或改了筛选，过期结果直接丢弃
+        val now = appState.activeTab
+        if (now.viewMode == ViewMode.BROWSER && (now.folderId to now.activeTags) == key) {
+            images.value = imgs
+        }
+    }
+
+    /**
      * 重算 [tagsByFile] / [metadataById] / [tagGroups] 三份快照。
      *
      * 调用点只有两处：扫描对账之后（[scanAndReconcile] 尾部），以及元数据/标签落库之后
@@ -370,33 +413,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             list.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
         else list
 
-    /** 停在文件夹内时重查该文件夹（对账后库里内容可能已增删）；在总览则是 no-op。 */
-    private suspend fun reloadActiveFolderImages() {
-        val tab = appState.activeTab
-        val folderId = tab.folderId ?: return
-        if (tab.viewMode != ViewMode.BROWSER) return
-        val imgs = withContext(Dispatchers.IO) { listImages(folderId) }
-        // 查询期间用户可能已导航走，过期结果直接丢弃（同 openFolder 的竞态守卫）
-        val t = appState.activeTab
-        if (t.viewMode == ViewMode.BROWSER && t.folderId == folderId) {
-            images.value = imgs
-        }
-    }
-
     fun openFolder(folder: Folder) {
-        // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder
+        // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder。
+        // 取数不在这里：M4a 4.1 起统一由组合根的 LaunchedEffect(viewMode, folderId,
+        // activeTags) 触发 [reloadImages]，导航与筛选共用一个触发点。
         appState.openFolder(folder.id)
-        // 同步清空旧文件夹内容：listImages 在 IO 线程返回前，组合仍拿着旧 images 渲染，
-        // 表现为「点进 B 先闪现 A 的网格再换内容」。清空后中间帧是空白而非错误内容。
-        images.value = emptyList()
-        viewModelScope.launch {
-            val imgs = withContext(Dispatchers.IO) { listImages(folder.id) }
-            // 查询期间可能已返回总览/进入其他文件夹，过期结果直接丢弃
-            val tab = appState.activeTab
-            if (tab.viewMode == ViewMode.BROWSER && tab.folderId == folder.id) {
-                images.value = imgs
-            }
-        }
     }
 
     private fun scanMediaStore(): List<MediaImage> {

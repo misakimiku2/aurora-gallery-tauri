@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import kotlin.math.roundToInt
 import uniffi.aurora_core.Folder
+import uniffi.aurora_core.TagGroup
 
 /**
  * 左侧数据面板（3.4 侧栏 / 3.5 面板开合，对齐 React `SidebarPane.tsx` + `TreeSidebar.tsx`）。
@@ -92,15 +93,17 @@ import uniffi.aurora_core.Folder
  * − 全部固定 Section 的剩余空间（React 的 listCap 实测逻辑同义），内容不足时只占内容
  * 高。互斥展开保证任意时刻至多一个加权列表存在。
  *
- * M1 数据现状与对应展示：
+ * 数据来源与对应展示（M4a 3.1 起）：
  *  - 本地相册：MediaStore bucket 扁平列表（真实数据），点击进文件夹（复用 openFolder
  *    历史导航），当前文件夹蓝底白字高亮（对齐 React 树节点 `bg-blue-600 text-white`），
  *    选中行文件名超宽时**来回滚动**展示全名（对齐 React MarqueeText，见 [MarqueeText]）；
  *    **总览态（currentFolderId == null）头部自身高亮**（对齐 React FolderSection 的
  *    `isSelected = 单根 && currentFolderId === 根`）；头部**不显示计数**（React
  *    FolderSection 头部本就无计数；人物/标签保留）；
- *  - 其余 Section：M1 无数据源（人物/标签 M2、网络 M6、专题/画布 M2），人物/标签展开
- *    显示空态文案。标签 Section 接受 [groupedTags]，M2 落库后传入即显示标签行。
+ *  - 标签：Rust `get_grouped_tags` 的分组 + 计数（[tagGroups]），顺序原样渲染、UI 不再
+ *    排第二遍；点击行 = 单选替换筛选（[onTagClick]）；
+ *  - 人物：数据源在 M6（人脸识别 / AI 打标 / 互联态读桌面库），本轮只有空态文案；
+ *  - 网络 M6、专题与画布见规划 §6 的归属。
  *
  * 视觉参数对齐 React 的 `isAndroid` 分支（WebView 安卓端形态）：Section 头 52dp、
  * 水平外距 12dp（React `margin: '0 12px'`）+ 圆角 8dp 底、图标 18dp、标题 14sp 粗体
@@ -188,7 +191,15 @@ fun TreeSidebar(
     currentFolderId: String?,
     onFolderClick: (Folder) -> Unit,
     onNavigateHome: () -> Unit = {},
-    groupedTags: Map<String, List<String>> = emptyMap(),
+    /**
+     * 标签分组 + 计数，Rust `get_grouped_tags` 的原样返回。**组的先后、组内标签的先后
+     * 都以它为准**，UI 侧不再排第二遍（清单 §1「排序规则只许有一套」）。这里必须是
+     * `List` 而不是 `Map`——Kotlin 的 Map 不保序，用 Map 传就等于把顺序丢了再让 UI 猜。
+     */
+    tagGroups: List<TagGroup> = emptyList(),
+    /** 当前生效的标签筛选（单选替换，见 `AppState.toggleTagFilter`）。 */
+    activeTags: List<String> = emptyList(),
+    onTagClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -202,9 +213,8 @@ fun TreeSidebar(
             FolderSort.DATE_ASC -> folders.sortedBy { it.modifiedAt }
         }
     }
-    val tagNames = remember(groupedTags) {
-        groupedTags.values.flatten().sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
-    }
+    // Section 头部的计数 = 词表里的标签条数（React 侧栏 TagSection 头部同口径）
+    val tagCount = tagGroups.sumOf { it.tags.size }
 
     Column(
         modifier
@@ -308,14 +318,14 @@ fun TreeSidebar(
             title = "标签",
             icon = IconTagBadge,
             iconTint = SECTION_BLUE,
-            count = tagNames.size,
+            count = tagCount,
             expanded = activeSection == SidebarSection.TAGS,
             onClick = {
                 activeSection = if (activeSection == SidebarSection.TAGS) null else SidebarSection.TAGS
             },
         )
         if (activeSection == SidebarSection.TAGS) {
-            if (tagNames.isEmpty()) {
+            if (tagGroups.isEmpty()) {
                 EmptyHint("暂无标签")
             } else {
                 Column(
@@ -324,8 +334,17 @@ fun TreeSidebar(
                         .verticalScroll(rememberScrollState())
                         .clipToBounds(),
                 ) {
-                    tagNames.forEach { tag ->
-                        TagRow(tag)
+                    // 分组结构照搬 Rust 的返回：组名一行不可点的分隔标题，组内是标签行
+                    tagGroups.forEach { group ->
+                        TagGroupHeader(group.key)
+                        group.tags.forEach { entry ->
+                            TagRow(
+                                tag = entry.tag,
+                                count = entry.count,
+                                selected = entry.tag in activeTags,
+                                onClick = { onTagClick(entry.tag) },
+                            )
+                        }
                     }
                 }
             }
@@ -568,24 +587,72 @@ private fun MarqueeText(
     }
 }
 
-/** 标签行（M1 骨架占位：Tag 图标 + 名称；点选筛选行为随 M2 接入）。缩进对齐 React 标签列表（pl-5 + px-2）。 */
+/**
+ * 分组标题行（A…Z / #）。React 那边组名出现在顶栏标签弹层（`TopBar.tsx:224`）与标签总览
+ * （`TagsList.tsx:219`）两处，都是**不可点**的分隔标题，这里同口径。
+ */
 @Composable
-private fun TagRow(tag: String) {
-    Row(
+private fun TagGroupHeader(key: String) {
+    Text(
+        key,
         Modifier
-            .padding(start = 28.dp, top = 1.dp, end = 20.dp, bottom = 1.dp)
             .fillMaxWidth()
-            .height(36.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = IconTagSmall,
-            contentDescription = null,
-            tint = SIDEBAR_GRAY_600,
-            modifier = Modifier.size(12.dp),
-        )
-        Spacer(Modifier.size(8.dp))
-        Text(tag, fontSize = 14.sp, color = SIDEBAR_GRAY_600, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            .padding(start = 28.dp, top = 10.dp, bottom = 2.dp, end = 12.dp),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        color = SIDEBAR_GRAY_400,
+    )
+}
+
+/**
+ * 标签行（React 侧栏 TagSection 的行形态：Tag 图标 + 名称 + 右侧计数徽标，
+ * `TreeSidebar.tsx:778-786`）。选中态与文件夹行同一套（蓝底白字），计数徽标在选中时
+ * 换半透明白底保持可读；计数为 0 = 只在词表里、还没贴到任何文件上，照样出行（同 React，
+ * 它就是要给「先建词后贴图」留位置）。整行 48dp 触控目标。
+ */
+@Composable
+private fun TagRow(tag: String, count: Long, selected: Boolean, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) colors.primary else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(start = 16.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IconTagSmall,
+                contentDescription = null,
+                tint = if (selected) Color.White else SIDEBAR_GRAY_600,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                tag,
+                fontSize = 14.sp,
+                color = if (selected) Color.White else SIDEBAR_GRAY_600,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                count.toString(),
+                fontSize = 10.sp,
+                color = if (selected) Color.White else SIDEBAR_GRAY_500,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (selected) Color.White.copy(alpha = 0.25f) else colors.surface
+                    )
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+            )
+        }
     }
 }
 

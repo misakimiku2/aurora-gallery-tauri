@@ -99,6 +99,7 @@ import com.aurora.gallery.kotlin.state.DateFilterMode
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import uniffi.aurora_core.TagGroup
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -120,8 +121,9 @@ import kotlin.math.roundToInt
  *    区间选择语义逐条对齐：首点设 start（清 end）、次点补 end（早于 start 则互换）、
  *    再点重新开始；
  *  - 标签筛选：底部弹层标签面板（React TagsWidget 的 bottom-sheet 形态）：标题 + 总数
- *    徽标、搜索框、按首字符分组的 chips；M1 无标签数据（标签体系随 M2 落库）传空
- *    Map 显示「暂无标签」空态，M2 只需把分组数据传入 [groupedTags]。
+ *    徽标、搜索框、按 [TagGroup] 分组展示的 chips。**组序与组内序都取 Rust
+ *    `get_grouped_tags` 的原样**（M4a 1.2 起 UI 侧不再自己排，见清单 §1）；chips 可点，
+ *    点下去 = 单选筛选（与侧栏标签行同一个 [onTagClick]）。
  *
  * 与 React 版的差异（均有意为之，见各处注释）：无色板搜索（M6）；手机竖屏的「更多」
  * 菜单合并（isPhonePortrait）随手机适配再做。工具按钮按视图提供（2026-09-17 起）：
@@ -159,8 +161,15 @@ fun TopBar(
     /** 侧栏可见性（侧栏开关按钮的高亮态，3.5）。 */
     sidebarVisible: Boolean,
     onToggleSidebar: () -> Unit,
-    /** 标签分组数据（key = 分组名/首字符，value = 该组标签）；M1 无标签体系传空。 */
-    groupedTags: Map<String, List<String>> = emptyMap(),
+    /**
+     * 标签分组 + 计数，Rust `get_grouped_tags` 的原样返回（组序、组内序都不许 UI 再排）。
+     * 与侧栏标签 Section 同源——两处是同一份数据的两个视图，不是两份缓存。
+     */
+    tagGroups: List<TagGroup> = emptyList(),
+    /** 当前生效的标签筛选，弹层里给 chips 画选中态。 */
+    activeTags: List<String> = emptyList(),
+    /** 点 chips：与侧栏标签行同一条 [AppState.toggleTagFilter]。 */
+    onTagClick: (String) -> Unit = {},
     /** 是否显示返回键（总览 = false，主界面不提供返回按键）。 */
     showBack: Boolean = true,
     /** 是否显示搜索开关（文件夹内部与总览都提供；总览按文件夹名过滤）。 */
@@ -387,7 +396,12 @@ fun TopBar(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             TagsFilterSheet(
-                groupedTags = groupedTags,
+                tagGroups = tagGroups,
+                activeTags = activeTags,
+                onTagClick = { tag ->
+                    onTagClick(tag)
+                    tagsSheetOpen = false
+                },
                 onDone = { tagsSheetOpen = false },
             )
         }
@@ -952,30 +966,38 @@ private fun DateModeChip(text: String, selected: Boolean, onClick: () -> Unit, m
 
 /**
  * 标签筛选底部弹层（React `TagsWidget` 的 bottom-sheet 形态）：标题 + 总数徽标、
- * 搜索框（大小写不敏感 contains 过滤，X 清词）、按 [groupedTags] 的 key 分组展示
- * chips（组名字序对齐 React `keys.sort()`），空态「暂无标签」/「未找到标签」。
+ * 搜索框（大小写不敏感 contains 过滤，X 清词）、按 [TagGroup] 分组展示 chips。
  *
- * M1 无标签体系（标签随 M2 落库），调用方传空 Map 即显示空态；M2 接入时只需把
- * 分组数据传进 [TopBar] 的 `groupedTags`。点选标签的行为（进入标签视图/多选筛选）
- * 同样随 M2 决定，当前 chips 仅展示。
+ * 两处口径写死在这里，别改回去：
+ *  - **组序与组内序 = Rust 给的原样**（M4a 1.2 把分组排序收进了 `collate::group_tags`，
+ *    UI 再排就是全项目第三套标签排序规则）；组名按 `tagGroups` 的出现顺序渲染，不再
+ *    `keys.sorted()`；
+ *  - 搜索框的过滤（React 的 `tagSearchQuery`）**留在 UI 侧**：输入即时响应，不该每个
+ *    字符过一次 FFI（清单 1.2 的定案）。
+ *
+ * chips 可点（点下去 = 单选筛选并收起弹层），选中态与侧栏标签行同一套语义。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TagsFilterSheet(
-    groupedTags: Map<String, List<String>>,
+    tagGroups: List<TagGroup>,
+    activeTags: List<String>,
+    onTagClick: (String) -> Unit,
     onDone: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
     var query by remember { mutableStateOf("") }
 
-    val filtered = remember(groupedTags, query) {
-        if (query.isBlank()) groupedTags
-        else groupedTags.mapValues { (_, tags) ->
-            tags.filter { it.contains(query, ignoreCase = true) }
-        }.filterValues { it.isNotEmpty() }
+    // 只过滤组内成员、不动组的顺序；整组被过滤空的组不显示
+    val filtered = remember(tagGroups, query) {
+        if (query.isBlank()) tagGroups
+        else tagGroups
+            .map { group ->
+                group.copy(tags = group.tags.filter { it.tag.contains(query, ignoreCase = true) })
+            }
+            .filter { it.tags.isNotEmpty() }
     }
-    val sortedKeys = remember(filtered) { filtered.keys.sorted() }
-    val totalTags = filtered.values.sumOf { it.size }
+    val totalTags = filtered.sumOf { it.tags.size }
 
     Column(
         Modifier
@@ -1005,8 +1027,9 @@ private fun TagsFilterSheet(
             Spacer(Modifier.weight(1f))
             Box(
                 Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(18.dp))
+                    // 关闭是弹层里唯一的退出入口，命中区按移动端下限给到 48dp
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .clickable(onClick = onDone),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1071,7 +1094,7 @@ private fun TagsFilterSheet(
             }
         }
         Spacer(Modifier.height(16.dp))
-        if (sortedKeys.isEmpty()) {
+        if (totalTags == 0) {
             Text(
                 if (query.isBlank()) "暂无标签" else "未找到标签",
                 Modifier.fillMaxWidth().padding(vertical = 16.dp),
@@ -1080,10 +1103,10 @@ private fun TagsFilterSheet(
                 color = colors.textSecondary,
             )
         } else {
-            sortedKeys.forEach { key ->
+            filtered.forEach { group ->
                 Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                     Text(
-                        key,
+                        group.key,
                         Modifier.fillMaxWidth().padding(bottom = 6.dp),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -1096,16 +1119,28 @@ private fun TagsFilterSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        filtered[key]?.forEach { tag ->
+                        group.tags.forEach { entry ->
+                            val selected = entry.tag in activeTags
                             Text(
-                                tag,
+                                entry.tag,
                                 Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(colors.primary.copy(alpha = 0.08f))
-                                    .border(1.dp, colors.primary.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .background(
+                                        if (selected) colors.primary
+                                        else colors.primary.copy(alpha = 0.08f)
+                                    )
+                                    .border(
+                                        1.dp,
+                                        if (selected) colors.primary
+                                        else colors.primary.copy(alpha = 0.2f),
+                                        RoundedCornerShape(6.dp),
+                                    )
+                                    // 命中区：文字 chip 本体只有约 30dp 高，补到 48dp 下限
+                                    // （视觉尺寸不变，padding 计入可点区）
+                                    .clickable { onTagClick(entry.tag) }
+                                    .padding(horizontal = 12.dp, vertical = 14.dp),
                                 fontSize = 14.sp,
-                                color = colors.primary,
+                                color = if (selected) Color.White else colors.primary,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )

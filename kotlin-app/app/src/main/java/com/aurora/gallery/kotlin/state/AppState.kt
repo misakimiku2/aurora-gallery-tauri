@@ -47,15 +47,18 @@ data class DateFilter(
 /**
  * 历史条目（Kotlin 化 React `HistoryItem`，`src/types.ts:478-492`）。
  *
- * M1 只记录 folderId / viewMode / 搜索三项；React 版的 activeTags / activePersonId /
- * activeTopicId 等随 M2 侧栏筛选再补。scrollTop 是该位置的滚动恢复点，M1 只记录不
- * 消费（TopBar 导航按钮 / 返回手势链 4.3 接入后用于恢复滚动位置）。
+ * M1 只记录 folderId / viewMode / 搜索三项；M4a 3.1 起带上 activeTags（标签筛选要能被
+ * 系统返回退掉）。React 版的 activePersonId / activeTopicId 随人物与专题筛选再补。
+ * scrollTop 是该位置的滚动恢复点，M1 只记录不消费（TopBar 导航按钮 / 返回手势链 4.3
+ * 接入后用于恢复滚动位置）。
  */
 data class HistoryItem(
     val folderId: String?,
     val viewMode: ViewMode,
     val searchQuery: String = "",
     val searchScope: SearchScope = SearchScope.ALL,
+    /** 该位置生效的标签筛选（M4a 3.1）。不存进历史的话「点标签→返回」会退回带筛选的状态。 */
+    val activeTags: List<String> = emptyList(),
     val scrollTop: Int = 0,
 )
 
@@ -85,8 +88,8 @@ data class HistoryStack(
  * 单个标签页状态（Kotlin 化 React `TabState`，`src/types.ts:494-521`）。
  *
  * 只保留 M1 与近期里程碑会消费的字段，省略项及理由：
- *  - activeTags / activePersonId / activeTopicId / selectedTopicIds / selectedPersonIds /
- *    selectedTagIds / aiFilter：侧栏六 Section 与标签/人物筛选（M2）再补；
+ *  - activePersonId / activeTopicId / selectedTopicIds / selectedPersonIds / selectedTagIds /
+ *    aiFilter：人物与专题的筛选（数据源在 M6）与标签概览的多选集（3.2）再补；
  *  - isCompareMode / sessionName / currentPage：桌面画布与分页特性；
  *  - scrollToItemId：React 版跨页定位用，Kotlin 端 RV 锚点另有机制。
  *
@@ -104,6 +107,11 @@ data class TabState(
     val layoutMode: LayoutMode = LayoutMode.GRID,
     val searchQuery: String = "",
     val searchScope: SearchScope = SearchScope.ALL,
+    /**
+     * 侧栏标签筛选（M4a 3.1）。对齐 React `handleTagClick` 的**单选替换**语义
+     * （`activeTags: [tag]`），生效范围是当前文件夹的展示序列。
+     */
+    val activeTags: List<String> = emptyList(),
     val dateFilter: DateFilter = DateFilter(),
     /** 本标签页的选中集合（React 版选中即按标签页隔离）。 */
     val selectedFileIds: Set<String> = emptySet(),
@@ -220,6 +228,7 @@ class AppState(
                 viewMode = ViewMode.BROWSER,
                 searchQuery = "",
                 searchScope = SearchScope.ALL,
+                activeTags = emptyList(),
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = tab.history.push(HistoryItem(folderId = folderId, viewMode = ViewMode.BROWSER)),
@@ -259,6 +268,7 @@ class AppState(
                 viewMode = step.viewMode,
                 searchQuery = step.searchQuery,
                 searchScope = step.searchScope,
+                activeTags = step.activeTags,
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = it.history.copy(currentIndex = targetIndex),
@@ -378,6 +388,46 @@ class AppState(
 
     fun setSearchQuery(query: String) {
         updateActiveTab { it.copy(searchQuery = query) }
+    }
+
+    /**
+     * 侧栏/弹层点标签 = **单选替换** + 进 BROWSER 视图（对齐 React `enterTagView` 的
+     * `usePersonTopicHandlers.ts:69`：`viewMode: 'browser'`、`searchScope: 'tag'`、
+     * `activeTags: [tag]`，folderId 保持当前值）。
+     *
+     * 序列源随之换成「该标签下的全库图片」，见 `GalleryViewModel.reloadImages`——所以
+     * 在总览点标签也有确定反应（切到一个跨文件夹的标签视图），不是只能干等着。
+     *
+     * 与桌面的一处差别：这里把筛选态推成一条历史，「点标签 → 系统返回」退回未筛选态；
+     * 再点一次已生效的那个标签 = 取消筛选（触屏没有「点别处取消」的等价物），取消后
+     * 回到该位置本来该有的视图：在文件夹里留在文件夹，本来在总览就回总览。
+     */
+    fun toggleTagFilter(tag: String) {
+        val tab = activeTab
+        val clearing = tab.activeTags == listOf(tag)
+        val next = if (clearing) emptyList() else listOf(tag)
+        val scope = if (clearing) SearchScope.ALL else SearchScope.TAG
+        val mode = if (clearing && tab.folderId == null) ViewMode.FOLDERS_OVERVIEW else ViewMode.BROWSER
+        // 筛选一改展示序列就变，选中的项可能已经不在界面上（选择栏计数会跟界面脱节）
+        selectionMode = false
+        updateActiveTab {
+            it.copy(
+                viewMode = mode,
+                activeTags = next,
+                searchScope = scope,
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = it.history.push(
+                    HistoryItem(
+                        folderId = it.folderId,
+                        viewMode = mode,
+                        searchQuery = it.searchQuery,
+                        searchScope = scope,
+                        activeTags = next,
+                    )
+                ),
+            )
+        }
     }
 
     fun setDateFilter(filter: DateFilter) {

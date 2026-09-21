@@ -720,6 +720,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_images(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_list_images_by_tags(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_remove_file_from_topic(
     ): Int
     external fun uniffi_aurora_core_checksum_func_remove_person_from_topic(
@@ -802,6 +804,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_list_images(`folderId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_list_images_by_tags(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_remove_file_from_topic(`topicId`: RustBuffer.ByValue,`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1014,6 +1018,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_list_images_by_tags() != 10547) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_remove_file_from_topic() != 6129) {
@@ -3073,6 +3080,28 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`folderId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 按标签取图片行（M4a 4.1：侧栏点一个标签 = 筛出该标签下的全部图，跨文件夹）。
+         *
+         * 为什么要在 Rust 侧多开这一条：安卓的 `list_images` 只按文件夹取，而侧栏标签上的
+         * 计数（`get_grouped_tags`）是全库口径。只筛当前文件夹的话，徽标写 5、点进来剩 2 张，
+         * 这两个数在同一屏上自相矛盾。
+         *
+         * 并集 / 只认 Image / `modified_at DESC` 三条语义都在 `db::tags::images_with_any_tag`，
+         * 那里带单测；这里只做 DTO 搬运。
+         */
+    @Throws(AuroraException::class) fun `listImagesByTags`(`tags`: List<kotlin.String>): List<Image> {
+            return FfiConverterSequenceTypeImage.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_list_images_by_tags(
+    
+        
+        FfiConverterSequenceString.lower(`tags`),_status)
 }
     )
     }

@@ -49,10 +49,15 @@ internal fun aspectRatioOf(image: Image): Float {
  * 按搜索词与日期筛选图片（3.2 TopBar 的数据管道第一步）。
  *
  * 语义对齐 React `useFileSearch.ts`：
- *  - 搜索：文件名 contains、大小写不敏感（该文件 129-135 行的 `file` scope 分支）。
- *    `all/tag/folder` scope 依赖标签与文件夹名数据，M2 侧栏落地后再补；
+ *  - 搜索：文件名 contains、大小写不敏感（该文件 129-135 行的 `file` scope 分支）；
  *  - 日期：**start 与 end 同时存在才生效**（该文件 152 行的条件），[DateFilter.mode]
  *    决定比较 createdAt 还是 modifiedAt（epoch 秒，含端点）。
+ *
+ * **标签筛选不在这里**，别照着 React 的 `scope === 'tag'` 分支往这儿补：M4a 4.1 定的做法是
+ * 把标签当成**序列源**而不是谓词——`GalleryViewModel.reloadImages` 在 activeTags 非空时
+ * 直接调 `list_images_by_tags` 取全库命中的图。理由：侧栏标签上的计数是全库口径，
+ * 若只把当前文件夹的序列过滤一遍，同一屏上会出现「徽标 5、点开 2 张」的自相矛盾。
+ * 补在这里等于两套标签筛选，且第二套是错的。
  */
 fun filterImages(images: List<Image>, query: String, dateFilter: DateFilter): List<Image> {
     val q = query.trim().lowercase(Locale.US)

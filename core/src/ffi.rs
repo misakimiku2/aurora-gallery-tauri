@@ -461,6 +461,34 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
 /// 缩略图目标尺寸（最长边，像素）。
 const THUMBNAIL_SIZE: u32 = 256;
 
+/// 按标签取图片行（M4a 4.1：侧栏点一个标签 = 筛出该标签下的全部图，跨文件夹）。
+///
+/// 为什么要在 Rust 侧多开这一条：安卓的 `list_images` 只按文件夹取，而侧栏标签上的
+/// 计数（`get_grouped_tags`）是全库口径。只筛当前文件夹的话，徽标写 5、点进来剩 2 张，
+/// 这两个数在同一屏上自相矛盾。
+///
+/// 并集 / 只认 Image / `modified_at DESC` 三条语义都在 `db::tags::images_with_any_tag`，
+/// 那里带单测；这里只做 DTO 搬运。
+#[uniffi::export]
+pub fn list_images_by_tags(tags: Vec<String>) -> Result<Vec<Image>, AuroraError> {
+    let conn = pool().get_connection();
+    let rows = db::tags::images_with_any_tag(&conn, &tags).map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|e| Image {
+            id: e.file_id,
+            name: e.name,
+            content_uri: e.path,
+            width: e.width,
+            height: e.height,
+            size: e.size as i64,
+            created_at: e.created_at,
+            modified_at: e.modified_at,
+            format: e.format,
+        })
+        .collect())
+}
+
 /// 用 Rust 解码原图字节生成 JPEG 缩略图（最长边 256px，保持宽高比）。
 ///
 /// 用于「MINI_KIND 系统缩略图尺寸不足」时的兜底升级：Kotlin 端读取

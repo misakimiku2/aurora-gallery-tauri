@@ -5,7 +5,9 @@
 //! `file_metadata.tags` 那一列在安卓库里不再被写入（桌面路径不受影响）。
 //! 单一写入者是 `set_file_tags` / `add_tags_to_files`，UI 侧不许自己拼 JSON。
 
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Result, ToSql};
+
+use super::file_index::FileIndexEntry;
 
 /// 关联表里 `position` 的语义 = 该标签在这张图上的先后次序（TagEditDialog 的显示顺序）。
 pub fn create_table(conn: &Connection) -> Result<()> {
@@ -122,6 +124,53 @@ pub fn get_file_tags(conn: &Connection, file_id: &str) -> Result<Vec<String>> {
 pub fn get_files_by_tag(conn: &Connection, tag: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT file_id FROM file_tags WHERE tag = ?1 ORDER BY file_id")?;
     let rows = stmt.query_map(params![tag], |row| row.get::<_, String>(0))?;
+    rows.collect()
+}
+
+/// 带**任一**给定标签的图片行（M4a 4.1：侧栏点一个标签要筛出该标签下的全部图）。
+///
+/// 三个口径都是照 React 抄的，别顺手改：
+///  - 多标签是**并集**，不是交集——`useFileSearch.ts:110-113` 用的是 `tags.some(...)`；
+///  - 只取 `file_type = 'Image'`，词表里挂到文件夹上的标签不参与；
+///  - 顺序 `modified_at DESC`，与 `list_images` 同一条，切进切出筛选时网格不会突然换序。
+///
+/// 用 `EXISTS` 而不是 JOIN `file_tags`：一张图同时带两个命中标签时，JOIN 会把它
+/// 数成两行、网格里就出现两个格子。
+pub fn images_with_any_tag(conn: &Connection, tags: &[String]) -> Result<Vec<FileIndexEntry>> {
+    let tags = normalize(tags);
+    if tags.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = (1..=tags.len())
+        .map(|i| format!("?{}", i))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
+                width, height, format \
+         FROM file_index f \
+         WHERE f.file_type = 'Image' \
+           AND EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.file_id AND t.tag IN ({})) \
+         ORDER BY f.modified_at DESC",
+        marks
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let args: Vec<&dyn ToSql> = tags.iter().map(|t| t as &dyn ToSql).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: row.get(1)?,
+            path: row.get(2)?,
+            name: row.get(3)?,
+            file_type: row.get(4)?,
+            size: row.get(5)?,
+            created_at: row.get(6)?,
+            modified_at: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+            format: row.get(10)?,
+        })
+    })?;
     rows.collect()
 }
 
@@ -412,5 +461,75 @@ mod tests {
         assert!(get_file_tags(&c, "f2").unwrap().is_empty());
         assert!(!get_vocabulary(&c).unwrap().contains(&"要删".to_string()));
         delete_tags(&c, &[]).unwrap();
+    }
+
+    // —— images_with_any_tag（M4a 4.1 侧栏点标签的筛选）——
+
+    /// 这条路径要 join `file_index`，所以额外建那张表。
+    fn conn_with_index() -> Connection {
+        let c = conn();
+        super::super::file_index::create_table(&c).unwrap();
+        c
+    }
+
+    fn add_entry(conn: &Connection, id: &str, modified: i64, file_type: &str) {
+        conn.execute(
+            "INSERT INTO file_index (file_id, path, name, file_type, size, created_at, modified_at) \
+             VALUES (?1, ?2, ?3, ?4, 0, 0, ?5)",
+            params![id, format!("/p/{}.jpg", id), id, file_type, modified],
+        )
+        .unwrap();
+    }
+
+    fn ids(rows: &[FileIndexEntry]) -> Vec<String> {
+        rows.iter().map(|r| r.file_id.clone()).collect()
+    }
+
+    #[test]
+    fn tag_filter_returns_only_matching_images_in_modified_order() {
+        let c = conn_with_index();
+        add_entry(&c, "old", 100, "Image");
+        add_entry(&c, "new", 300, "Image");
+        add_entry(&c, "other", 200, "Image");
+        set_file_tags(&c, "old", &s(&["海边"])).unwrap();
+        set_file_tags(&c, "new", &s(&["海边"])).unwrap();
+        assert_eq!(ids(&images_with_any_tag(&c, &s(&["海边"])).unwrap()), s(&["new", "old"]));
+    }
+
+    #[test]
+    fn several_tags_are_unioned_not_intersected() {
+        let c = conn_with_index();
+        add_entry(&c, "a", 1, "Image");
+        add_entry(&c, "b", 2, "Image");
+        add_entry(&c, "both", 3, "Image");
+        set_file_tags(&c, "a", &s(&["x"])).unwrap();
+        set_file_tags(&c, "b", &s(&["y"])).unwrap();
+        set_file_tags(&c, "both", &s(&["x", "y"])).unwrap();
+        // 并集：三张全中；且 "both" 同时带两个命中标签也**只出现一次**（EXISTS 而非 JOIN）
+        assert_eq!(
+            ids(&images_with_any_tag(&c, &s(&["x", "y"])).unwrap()),
+            s(&["both", "b", "a"])
+        );
+    }
+
+    #[test]
+    fn tag_filter_skips_non_image_rows() {
+        let c = conn_with_index();
+        add_entry(&c, "img", 1, "Image");
+        add_entry(&c, "dir", 2, "Folder");
+        set_file_tags(&c, "dir", &s(&["错贴"])).unwrap();
+        set_file_tags(&c, "img", &s(&["对"])).unwrap();
+        assert_eq!(ids(&images_with_any_tag(&c, &s(&["错贴", "对"])).unwrap()), s(&["img"]));
+    }
+
+    #[test]
+    fn blank_and_untrimmed_tags_never_match_everything() {
+        let c = conn_with_index();
+        add_entry(&c, "img", 1, "Image");
+        set_file_tags(&c, "img", &s(&["海边"])).unwrap();
+        assert!(images_with_any_tag(&c, &[]).unwrap().is_empty());
+        assert!(images_with_any_tag(&c, &s(&["", "   "])).unwrap().is_empty());
+        // 传进来带空白的词按 trim 后匹配（与写入侧同一套归一化）
+        assert_eq!(ids(&images_with_any_tag(&c, &s(&["  海边 "])).unwrap()), s(&["img"]));
     }
 }

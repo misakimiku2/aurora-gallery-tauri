@@ -31,6 +31,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,7 @@ import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
+import uniffi.aurora_core.TagGroup
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -268,6 +270,13 @@ class MainActivity : ComponentActivity() {
             // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
             AuroraTheme(darkTheme = false) {
                 val appState = viewModel.appState
+                val tab = appState.activeTab
+                // 当前该显示哪批图（文件夹 or 标签命中的全库图）：导航与标签筛选都收敛到
+                // 这一个触发点。协程随 key 变化自动取消，所以「点进 B 还没查完」不会把 A
+                // 的结果盖上去——旧 openFolder 里手写的竞态守卫由结构化并发兜住了。
+                LaunchedEffect(tab.viewMode, tab.folderId, tab.activeTags) {
+                    viewModel.reloadImages()
+                }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
                 // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）
                 val displayImages = rememberDisplayImages(
@@ -285,6 +294,7 @@ class MainActivity : ComponentActivity() {
                         folders = viewModel.folders.value,
                         images = viewModel.images.value,
                         displayImages = displayImages,
+                        tagGroups = viewModel.tagGroups.value,
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
                         onFolderClick = { viewModel.openFolder(it) },
@@ -438,6 +448,8 @@ fun App(
     images: List<Image>,
     /** 展示序列（过滤+排序后）由组合根算好传入：查看器的进入序列必须是同一条（M3 2.2）。 */
     displayImages: List<Image>,
+    /** 侧栏标签 Section 的分组 + 计数（Rust 算好的顺序原样渲染，M4a 3.1）。 */
+    tagGroups: List<TagGroup>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
@@ -475,7 +487,12 @@ fun App(
     // Rust list_folders 子查询提供）。排序字段/方向是应用级状态（对齐 React：总览与
     // 文件网格共用同一 sortBy/sortDirection）。总览的视图循环（React folderLayoutMode）
     // 不做——文件夹卡片是等比正方形，adaptive/masonry 视觉与 grid 等价。
-    val inBrowser = tab.viewMode == ViewMode.BROWSER && currentFolder != null
+    //
+    // 标签视图（M4a 4.1）走的也是 BROWSER + 网格，只是序列源换成「标签命中的全库图片」，
+    // 所以这里不能只看 currentFolder 是否存在——在总览直接点标签时 folderId 为 null。
+    val tagFilterTitle = tab.activeTags.joinToString("、") { it }
+    val inBrowser =
+        tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty())
 
     // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
     // remember 键齐备：任一条件变化才重算，文件夹列表量级小、开销可忽略。
@@ -517,6 +534,11 @@ fun App(
         }
     }
 
+    // —— M4a 3.1 / 4.1 侧栏与弹层点标签 = 单选筛选 ——
+    // 序列源随之切换（见 GalleryViewModel.reloadImages：有标签 = 全库按标签取，
+    // 无标签 = 当前文件夹），取数由组合根那条 LaunchedEffect 统一触发。
+    val onTagClick: (String) -> Unit = { tag -> state.toggleTagFilter(tag) }
+
     // —— 4.3 返回手势链（D5 后：关弹层→关搜索→退选择→返回上级→总览再退=系统默认）。
     // 排序菜单/日期弹层/标签弹层是独立窗口（Dialog/BottomSheet），系统返回先被它们
     // 自己消费，不进本链。
@@ -552,6 +574,9 @@ fun App(
                 onFolderClick = onFolderClick,
                 // 头部点击 = 回主界面（React onNavigateHome，2026-09-20 用户要求）
                 onNavigateHome = { state.navigateHome() },
+                tagGroups = tagGroups,
+                activeTags = tab.activeTags,
+                onTagClick = onTagClick,
                 modifier = Modifier.fillMaxHeight(),
             )
         }
@@ -577,7 +602,10 @@ fun App(
                 )
             } else {
                 TopBar(
-                    title = currentFolder?.name ?: "文件夹",
+                    title = when {
+                        tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
+                        else -> currentFolder?.name ?: "文件夹"
+                    },
                     canBack = tab.history.canBack,
                     onBack = { state.goBack() },
                     // 主界面（总览）不显示返回键（2026-09-20 用户要求）；进文件夹后才有返回
@@ -602,6 +630,10 @@ fun App(
                     onGroupByChange = { state.groupBy = it },
                     layoutMode = tab.layoutMode,
                     onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+                    // 标签弹层与侧栏标签区同一份数据、同一个点击行为（M4a 3.1 / 4.1）
+                    tagGroups = tagGroups,
+                    activeTags = tab.activeTags,
+                    onTagClick = onTagClick,
                     showSearch = true,
                     showSortMenu = true,
                     showViewMode = inBrowser,
@@ -644,10 +676,12 @@ fun App(
                 if (displayImages.isEmpty()) {
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
-                        Text(
-                            if (hasCondition) "无匹配图片" else "文件夹为空",
-                            color = AuroraTheme.colors.textSecondary,
-                        )
+                        val emptyText = when {
+                            hasCondition -> "无匹配图片"
+                            tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                            else -> "文件夹为空"
+                        }
+                        Text(emptyText, color = AuroraTheme.colors.textSecondary)
                     }
                 } else {
                     Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
