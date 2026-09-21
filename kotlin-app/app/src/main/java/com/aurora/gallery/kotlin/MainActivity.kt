@@ -45,7 +45,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
+import com.aurora.gallery.kotlin.ui.components.TagsOverview
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -493,6 +495,9 @@ fun App(
     val tagFilterTitle = tab.activeTags.joinToString("、") { it }
     val inBrowser =
         tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty())
+    // M4a 3.2 总览：侧栏人物/标签 Section 头部进入（专题随 3.2 后半补）
+    val inTagsOverview = tab.viewMode == ViewMode.TAGS_OVERVIEW
+    val inPeopleOverview = tab.viewMode == ViewMode.PEOPLE_OVERVIEW
 
     // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
     // remember 键齐备：任一条件变化才重算，文件夹列表量级小、开销可忽略。
@@ -577,6 +582,12 @@ fun App(
                 tagGroups = tagGroups,
                 activeTags = tab.activeTags,
                 onTagClick = onTagClick,
+                // 人物/标签 Section 头部行主体 = 进对应总览（M4a 3.2）
+                onPeopleOverviewClick = { state.openOverview(ViewMode.PEOPLE_OVERVIEW) },
+                onTagsOverviewClick = { state.openOverview(ViewMode.TAGS_OVERVIEW) },
+                peopleOverviewSelected = inPeopleOverview,
+                tagsOverviewSelected = inTagsOverview,
+                foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
                 modifier = Modifier.fillMaxHeight(),
             )
         }
@@ -604,19 +615,25 @@ fun App(
                 TopBar(
                     title = when {
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
+                        inTagsOverview -> "标签"
+                        inPeopleOverview -> "人物"
                         else -> currentFolder?.name ?: "文件夹"
                     },
                     canBack = tab.history.canBack,
                     onBack = { state.goBack() },
-                    // 主界面（总览）不显示返回键（2026-09-20 用户要求）；进文件夹后才有返回
-                    showBack = inBrowser,
+                    // 总览是从别处推入历史栈的位置，可退；文件夹总览（栈底）不显示返回键
+                    showBack = inBrowser || inTagsOverview || inPeopleOverview,
                     sidebarVisible = state.layout.isSidebarVisible,
                     onToggleSidebar = { state.toggleSidebar() },
                     searchQuery = tab.searchQuery,
                     onSearchQueryChange = { state.setSearchQuery(it) },
                     searchOpen = searchOpen,
                     onSearchOpenChange = { searchOpen = it },
-                    searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
+                    searchPlaceholder = when {
+                        inTagsOverview -> "搜索标签"
+                        inBrowser -> "搜索图片"
+                        else -> "搜索文件夹"
+                    },
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,
@@ -642,7 +659,21 @@ fun App(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            if (!inBrowser) {
+            when {
+                // M4a 3.2 标签总览：分组标签卡片网格，点卡片 = 进该标签的筛选视图。
+                // 数据是本地库的词表（reloadTagState 快照），无 MediaStore 依赖，不接下拉刷新。
+                inTagsOverview -> TagsOverview(
+                    tagGroups = tagGroups,
+                    onTagClick = onTagClick,
+                    searchQuery = tab.searchQuery,
+                    initialScrollAnchor = state.tagsOverviewScrollAnchor,
+                    onScrollChanged = { state.tagsOverviewScrollAnchor = it },
+                    emptyText = if (tab.searchQuery.isNotBlank()) "无匹配标签" else "暂无标签",
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+                // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
+                inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
+                !inBrowser -> {
                 // clipToBounds：指示器空闲时藏在容器上方（负偏移），不裁剪会透出到工具栏
                 Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
                     FoldersOverview(
@@ -672,7 +703,8 @@ fun App(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-            } else {
+            }
+                else -> {
                 if (displayImages.isEmpty()) {
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
@@ -707,6 +739,7 @@ fun App(
                         )
                     }
                 }
+            }
             }
         }
     }

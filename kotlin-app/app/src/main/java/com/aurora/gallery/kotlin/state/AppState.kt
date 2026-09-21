@@ -12,13 +12,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * 视图模式（Kotlin 化 React `TabState['viewMode']`，`src/types.ts:498`）。
  *
  * React 版有六个取值（browser / folders-overview / tags-overview / people-overview /
- * topics-overview / lan-folders-overview）。M1 安卓端只用到两个：
+ * topics-overview / lan-folders-overview）。M4a 3.2 起补齐四个（网络总览随 M6）：
  *  - [FOLDERS_OVERVIEW]：文件夹总览（React 版 `folders-overview`；React 的根节点伪 id
  *    `__android_folders_root__` 在 Kotlin 端用 `folderId == null` 表示）；
- *  - [BROWSER]：文件夹内部网格（React 版 `browser`）。
- * 侧栏六 Section 对应的 overview 值随 M2 侧栏任务再补枚举。
+ *  - [BROWSER]：文件夹内部网格（React 版 `browser`）；
+ *  - [TAGS_OVERVIEW] / [PEOPLE_OVERVIEW]：侧栏对应 Section 头部进入的总览
+ *    （React `handleNavigateAllTags` / `handleNavigateAllPeople`）。
+ * 专题总览随 3.2 后半（TOPICS_OVERVIEW + activeTopicId）补枚举。
  */
-enum class ViewMode { FOLDERS_OVERVIEW, BROWSER }
+enum class ViewMode { FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW }
 
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }
@@ -192,6 +194,15 @@ class AppState(
      */
     var overviewScrollTop: Int = 0
 
+    /**
+     * 标签总览（3.2）滚动位置记忆，机制同 [overviewScrollTop]：TagsOverview 因导航离开
+     * 组合再回来时是全新组合，靠它归位。存的是**首个可见条目下标**而不是像素偏移——
+     * 总览列数随侧栏开合重排，像素偏移跨导航不稳定，条目下标才是稳定锚点（恢复用
+     * `LazyGridState.scrollToItem(index)`）。三个总览各有各的记忆字段，不共用——共用的
+     * 话「总览 A 滚到底 → 进总览 B」会把 A 的位置套在 B 上。
+     */
+    var tagsOverviewScrollAnchor: Int = 0
+
     /** 面板可见性（3.5 在此之上做互斥开合）。 */
     var layout by mutableStateOf(initialLayout)
         private set
@@ -232,6 +243,38 @@ class AppState(
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = tab.history.push(HistoryItem(folderId = folderId, viewMode = ViewMode.BROWSER)),
+            )
+        }
+    }
+
+    /**
+     * 进入总览视图（M4a 3.2：侧栏人物/标签 Section 头部点击，对齐 React
+     * `handleNavigateAllPeople` / `handleNavigateAllTags`——pushHistory 保留当前
+     * folderId，搜索与筛选复位，选中清空）。专题总览随 3.2 后半补。
+     *
+     * 复位对齐 React 的 pushHistory 实参（`usePersonTopicHandlers.ts`）：query=''、
+     * scope=ALL、activeTags=[]——总览是「从头看全部」的入口，带着上一个文件夹的
+     * 搜索词进总览只会得到一个看不懂的空列表。
+     */
+    fun openOverview(mode: ViewMode) {
+        require(mode == ViewMode.TAGS_OVERVIEW || mode == ViewMode.PEOPLE_OVERVIEW) {
+            "openOverview 只接受总览类视图，收到 $mode"
+        }
+        selectionMode = false
+        updateActiveTab { tab ->
+            tab.copy(
+                viewMode = mode,
+                searchQuery = "",
+                searchScope = SearchScope.ALL,
+                activeTags = emptyList(),
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = tab.history.push(
+                    HistoryItem(
+                        folderId = tab.folderId,
+                        viewMode = mode,
+                    )
+                ),
             )
         }
     }

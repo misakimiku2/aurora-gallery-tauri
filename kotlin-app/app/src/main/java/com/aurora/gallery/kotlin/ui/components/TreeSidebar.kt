@@ -83,9 +83,16 @@ import uniffi.aurora_core.TagGroup
  * （桌面点击是导航到对应视图，M1 尚无这些视图）。`activeSection` 互斥展开，初始展开
  * 文件夹（对齐 React `setActiveSection(prev => prev === x ? null : x)`）。
  *
- * **头部点击语义（对齐桌面）**：本地相册头部点击 = 回主界面（React onNavigateHome），
- * 展开/收起只走 chevron 独立命中区（40×52dp）；人物/标签 M1 无「全部」视图，整行点击
- * = 展开切换。
+/**
+ * **头部点击语义（M4a 3.2 起，对齐桌面）**：本地相册头部点击 = 回主界面（React
+ * onNavigateHome）；人物/标签头部行主体点击 = 进对应总览（React
+ * onNavigateAllPeople / onNavigateAllTags，3.2），展开/收起只走 chevron 独立命中区
+ * （40×52dp）；专题 M4a 3.2 后半接总览，当前整行不可点。
+ *
+ * **选中态（对齐桌面 isSelected）**：本地相册 = 未进任何文件夹（根）；人物/标签 =
+ * 正处于对应总览视图，底色按 Section 各自的彩（桌面 PeopleSection 紫 #a855f7、
+ * TagSection 蓝 = 全局 primary），不再是同一把蓝。
+ */
  *
  * **滚动结构（2026-09-20 用户报障「展开子文件夹能把整个面板都滚走」）**：对齐 React
  * 版侧栏——外层 Column **不可滚动**（React 根节点 `overflow-hidden`），Section 头恒定
@@ -200,6 +207,19 @@ fun TreeSidebar(
     /** 当前生效的标签筛选（单选替换，见 `AppState.toggleTagFilter`）。 */
     activeTags: List<String> = emptyList(),
     onTagClick: (String) -> Unit = {},
+    /** 人物 Section 头部行主体点击 = 进人物总览（M4a 3.2，对齐 React onNavigateAllPeople）。 */
+    onPeopleOverviewClick: () -> Unit = {},
+    /** 标签 Section 头部行主体点击 = 进标签总览（对齐 React onNavigateAllTags）。 */
+    onTagsOverviewClick: () -> Unit = {},
+    /** 正处于人物/标签总览视图（对应 Section 头部按各自的彩高亮）。 */
+    peopleOverviewSelected: Boolean = false,
+    tagsOverviewSelected: Boolean = false,
+    /**
+     * 正处于文件夹总览（`ViewMode.FOLDERS_OVERVIEW`）。本地相册头部的「根选中」必须是
+     * 「folderId == null **且** 在总览」两个条件同时成立——4.1 起标签筛选视图 folderId
+     * 也是 null（跨文件夹的全库标签结果），只看前者会跟人物/标签总览的高亮同屏双亮。
+     */
+    foldersOverviewSelected: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -239,9 +259,9 @@ fun TreeSidebar(
             icon = IconHardDrive,
             iconTint = SECTION_BLUE,
             expanded = activeSection == SidebarSection.FOLDERS,
-            // 总览态（未进任何文件夹）= 桌面的「根目录选中」：头部蓝底白字（React
-            // FolderSection isSelected = 单根 && currentFolderId === 根）
-            selected = currentFolderId == null,
+            // 总览态 = 桌面的「根目录选中」：头部蓝底白字。必须同时要求真的在总览视图
+            //（见参数注释：标签筛选视图 folderId 同为 null）
+            selected = currentFolderId == null && foldersOverviewSelected,
             // 头部点击 = 回主界面（2026-09-20 用户要求，对齐 React onNavigateHome）；
             // 展开/收起只走 chevron 独立命中区
             onClick = onNavigateHome,
@@ -251,7 +271,7 @@ fun TreeSidebar(
             trailing = {
                 SortCycleButton(
                     sort = folderSort,
-                    selected = currentFolderId == null,
+                    selected = currentFolderId == null && foldersOverviewSelected,
                     onClick = {
                         // 名称升 → 名称降 → 时间降 → 时间升 → 名称升（对齐 React 循环序）
                         folderSort = when (folderSort) {
@@ -305,9 +325,13 @@ fun TreeSidebar(
             iconTint = SECTION_PURPLE,
             count = 0,
             expanded = activeSection == SidebarSection.PEOPLE,
-            onClick = {
+            // 行主体点击 = 进人物总览（3.2，对齐桌面 onNavigateAllPeople）；展开只走 chevron
+            onClick = onPeopleOverviewClick,
+            onChevronClick = {
                 activeSection = if (activeSection == SidebarSection.PEOPLE) null else SidebarSection.PEOPLE
             },
+            selected = peopleOverviewSelected,
+            selectedColor = SECTION_PURPLE,
         )
         if (activeSection == SidebarSection.PEOPLE) {
             EmptyHint("暂无人物")
@@ -320,9 +344,12 @@ fun TreeSidebar(
             iconTint = SECTION_BLUE,
             count = tagCount,
             expanded = activeSection == SidebarSection.TAGS,
-            onClick = {
+            // 行主体点击 = 进标签总览（对齐桌面 onNavigateAllTags）；展开只走 chevron
+            onClick = onTagsOverviewClick,
+            onChevronClick = {
                 activeSection = if (activeSection == SidebarSection.TAGS) null else SidebarSection.TAGS
             },
+            selected = tagsOverviewSelected,
         )
         if (activeSection == SidebarSection.TAGS) {
             if (tagGroups.isEmpty()) {
@@ -370,8 +397,9 @@ fun TreeSidebar(
  * 图标与配色逐一对应桌面端 TreeSidebar——专题 Layout 粉、本地相册 HardDrive 蓝、
  * 网络 WifiOff 灰（断连态）、人物 Brain 紫、标签 Tag 蓝、画布 Scan 绿。
  *
- * [selected] = 该 Section 处于「根选中」态（React 头部 `bg-blue-600 text-white`）：
- * 蓝底白字，chevron/图标/标题一并变白（M1 只有本地相册会用到）。
+ * [selected] = 该 Section 处于「根选中」态（React 头部 `bg-blue-600 text-white` 同形）：
+ * 底色取 [selectedColor]（null = 全局 primary 蓝；人物紫、专题粉各自传），文字/图标/
+ * chevron 一并变白。
  *
  * [expandable] = false 时没有展开语义（专题/画布/未连接的网络，2026-09-20 用户要求）：
  * chevron 以 opacity-0 占位保持对齐（桌面 TopicSection/CanvasSection 同款）。
@@ -387,18 +415,20 @@ private fun SectionHeader(
     onClick: (() -> Unit)?,
     count: Int? = null,
     selected: Boolean = false,
+    selectedColor: Color? = null,
     expandable: Boolean = true,
     onChevronClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
+    val selectionBg = selectedColor ?: colors.primary
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(52.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (selected) colors.primary else Color.Transparent)
+                .background(if (selected) selectionBg else Color.Transparent)
                 .then(
                     if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
                 )
