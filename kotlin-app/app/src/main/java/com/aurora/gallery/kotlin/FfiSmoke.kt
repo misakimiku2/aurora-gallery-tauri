@@ -7,14 +7,21 @@ import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.FfiPerson
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.addFilesToTopic
+import uniffi.aurora_core.addTagsToFiles
 import uniffi.aurora_core.deletePerson
 import uniffi.aurora_core.deleteTopic
 import uniffi.aurora_core.getAllFileMetadata
+import uniffi.aurora_core.getAllFileTags
 import uniffi.aurora_core.getAllPeople
 import uniffi.aurora_core.getAllTopics
 import uniffi.aurora_core.getFileMetadata
+import uniffi.aurora_core.getFileTags
+import uniffi.aurora_core.getFilesByTag
 import uniffi.aurora_core.getTopicFiles
 import uniffi.aurora_core.getTopicFilesPaginated
+import uniffi.aurora_core.listFolders
+import uniffi.aurora_core.listImages
+import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertPerson
 import uniffi.aurora_core.upsertTopic
@@ -38,6 +45,7 @@ fun runFfiSmoke(nonce: String) {
             smokeTopic(nonce)
             smokeFileMetadata(nonce)
             smokeMissingRow(nonce)
+            smokeTags(nonce)
             Log.i(TAG, "[FfiSmoke $nonce] end")
         } catch (e: Throwable) {
             Log.e(TAG, "[FfiSmoke $nonce] CRASH ${e.javaClass.simpleName}: ${e.message}", e)
@@ -152,7 +160,6 @@ private fun smokeFileMetadata(nonce: String) {
     val written = FfiFileMetadata(
         fileId = id,
         path = "content://media/external/images/media/999",
-        tags = listOf("风景", "he said \"hi\"", "a\\b", "🌸", ""),
         description = "描述 with 中文",
         sourceUrl = "https://example.com",
         aiData = """{"wd14":["a",1],"嵌套":{"k":[1,2]}}""",
@@ -164,7 +171,6 @@ private fun smokeFileMetadata(nonce: String) {
     val fields = listOf(
         "fileId" to (written.fileId to read.fileId),
         "path" to (written.path to read.path),
-        "tags" to (written.tags to read.tags),
         "description" to (written.description to read.description),
         "sourceUrl" to (written.sourceUrl to read.sourceUrl),
         "aiData" to (written.aiData to read.aiData),
@@ -173,7 +179,7 @@ private fun smokeFileMetadata(nonce: String) {
     )
     report(nonce, "metadata", fields)
     check(nonce, "全表读得到本行", true, getAllFileMetadata().any { it.fileId == id })
-    Log.i(TAG, "[FfiSmoke $nonce] PASS metadata ${fields.size} 字段一致（tags 含引号/反斜杠/中文/emoji/空串）")
+    Log.i(TAG, "[FfiSmoke $nonce] PASS metadata ${fields.size} 字段一致")
 }
 
 /** 失败路径：不存在的 file_id 必须是 `null`，不能是异常或进程退出。 */
@@ -181,4 +187,53 @@ private fun smokeMissingRow(nonce: String) {
     val missing = getFileMetadata("smoke-$nonce-不存在的 id")
     check(nonce, "缺行返回 null", null, missing)
     Log.i(TAG, "[FfiSmoke $nonce] PASS 缺行返回 null（AuroraError 未误抛）")
+}
+
+/**
+ * M4a 1.1：标签四原语 + 批量粘贴。用库里真实的图（file_id 与 `generate_id(content_uri)`
+ * 对得上），否则只测了合成 id 等于没测。
+ */
+private fun smokeTags(nonce: String) {
+    // 惰性取两张就够：全量 flatMap 会把每个相册都查一遍，和启动扫描抢锁
+    val images = listFolders().asSequence().flatMap { listImages(it.id) }.take(2).toList()
+    if (images.size < 2) {
+        Log.w(TAG, "[FfiSmoke $nonce] SKIP tags：库里不足两张图（${images.size}）")
+        return
+    }
+    val (f1, f2) = images.map { it.id }
+    val shared = "冒烟$nonce-风景"
+    val only1 = "冒烟$nonce-猫 \"带引号\" \\反斜杠 🌸"
+    val pasted = "冒烟$nonce-旅行"
+
+    setFileTags(f1, listOf(shared, only1))
+    setFileTags(f2, listOf(shared))
+    check(nonce, "按标签取文件（两张图共用一个标签）", listOf(f1, f2).sorted(), getFilesByTag(shared).sorted())
+    check(nonce, "读回单图标签含顺序", listOf(shared, only1), getFileTags(f1))
+    check(nonce, "另一张图只有共享标签", listOf(shared), getFileTags(f2))
+    check(nonce, "没人用的标签返回空表", emptyList<String>(), getFilesByTag("冒烟$nonce-不存在"))
+
+    // 整行覆盖陷阱：写描述走的是 file_metadata，不得把 file_tags 里的标签冲掉
+    val meta = getFileMetadata(f1) ?: FfiFileMetadata(
+        fileId = f1,
+        path = images[0].contentUri,
+        description = null,
+        sourceUrl = null,
+        aiData = null,
+        category = null,
+        updatedAt = null,
+    )
+    upsertFileMetadata(meta.copy(description = "冒烟描述 $nonce"))
+    check(nonce, "写描述后标签没被冲掉", listOf(shared, only1), getFileTags(f1))
+    check(nonce, "写描述确实生效", "冒烟描述 $nonce", getFileMetadata(f1)?.description)
+
+    addTagsToFiles(listOf(f1, f2), listOf(pasted, shared))
+    check(nonce, "批量粘贴：已有成员不重复、新标签追加在尾", listOf(shared, only1, pasted), getFileTags(f1))
+    check(nonce, "批量粘贴：第二张图", listOf(shared, pasted), getFileTags(f2))
+    check(nonce, "批量粘贴后按标签取文件", listOf(f1, f2).sorted(), getFilesByTag(pasted).sorted())
+    check(nonce, "全量映射读得到", true, getAllFileTags().any { it.fileId == f1 && it.tags == listOf(shared, only1, pasted) })
+
+    setFileTags(f1, emptyList())
+    setFileTags(f2, emptyList())
+    val purged = getFilesByTag(shared).isEmpty() && getFilesByTag(pasted).isEmpty()
+    Log.i(TAG, "[FfiSmoke $nonce] PASS tags 四原语+批量粘贴，成员行已清空=$purged（3 个冒烟词留在词表，1.2 的 remove_tag 落地后清）")
 }

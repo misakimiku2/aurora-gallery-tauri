@@ -6,8 +6,10 @@
 //! DTO 约定（见 `docs/Android/Kotlin版/M4a数据与整理任务清单.md` 0.1）：
 //! - 不给 `db::` 结构体加 `uniffi::Record` 派生——`serde_json::Value` 与 `usize`
 //!   都不是 UniFFI 类型，且改字段类型会动到 React 侧的 serde 契约；
-//! - `tags` 在 DTO 里是 `Vec<String>`，`ai_data` 是原始 JSON 文本；
-//! - 一律 `i64` 替代 `usize`（`u64` 会映射成 Kotlin `ULong`，和既有 DTO 的 `i64` 打架）。
+//! - `ai_data` 透传原始 JSON 文本，不解析；
+//! - 一律 `i64` 替代 `usize`（`u64` 会映射成 Kotlin `ULong`，和既有 DTO 的 `i64` 打架）；
+//! - **标签不在 `FfiFileMetadata` 里**：D10=② 之后它的真源是 `tags` / `file_tags` 两张表，
+//!   走 `set_file_tags` 一族（`db/tags.rs`），元数据那一列在安卓侧不再写。
 
 use crate::db::{self, file_index, AppDbPool};
 use crate::db::file_index::FileIndexEntry;
@@ -255,7 +257,6 @@ pub struct FfiPaginatedFiles {
 pub struct FfiFileMetadata {
     pub file_id: String,
     pub path: String,
-    pub tags: Vec<String>,
     pub description: Option<String>,
     pub source_url: Option<String>,
     pub ai_data: Option<String>,
@@ -263,28 +264,11 @@ pub struct FfiFileMetadata {
     pub updated_at: Option<i64>,
 }
 
-/// `tags` 列（TEXT 存 JSON，rusqlite 直映 `Value`）→ 标签列表。只认字符串数组；
-/// `null`、非数组、含非字符串元素一律按「没有可用标签」处理（`null` 与空数组在
-/// React 侧渲染结果相同，这里也保持相同）。
-fn tags_from_json(value: Option<serde_json::Value>) -> Vec<String> {
-    match value {
-        Some(serde_json::Value::Array(items)) => items
-            .into_iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// 空列表写 `NULL` 而不是 `"[]"`：`get_all_tags_for_classification`
-/// （`file_metadata.rs:149`）用 `tags IS NOT NULL` 判有没有标签。
-fn tags_to_json(tags: &[String]) -> Option<serde_json::Value> {
-    if tags.is_empty() {
-        return None;
-    }
-    Some(serde_json::Value::Array(
-        tags.iter().map(|t| serde_json::Value::String(t.clone())).collect(),
-    ))
+/// 一个文件当前的标签集合（顺序即 UI 显示顺序）。
+#[derive(uniffi::Record)]
+pub struct FileTags {
+    pub file_id: String,
+    pub tags: Vec<String>,
 }
 
 impl From<db::file_metadata::FileMetadata> for FfiFileMetadata {
@@ -292,7 +276,6 @@ impl From<db::file_metadata::FileMetadata> for FfiFileMetadata {
         FfiFileMetadata {
             file_id: m.file_id,
             path: m.path,
-            tags: tags_from_json(m.tags),
             description: m.description,
             source_url: m.source_url,
             ai_data: m.ai_data.map(|v| v.to_string()),
@@ -307,7 +290,9 @@ impl From<FfiFileMetadata> for db::file_metadata::FileMetadata {
         db::file_metadata::FileMetadata {
             file_id: m.file_id,
             path: m.path,
-            tags: tags_to_json(&m.tags),
+            // 标签的真源是 file_tags（D10=②），这一列安卓侧不写；置 None 以免
+            // 整行 upsert 把别处写过的 JSON 值带回来当第二份数据。
+            tags: None,
             description: m.description,
             source_url: m.source_url,
             ai_data: m.ai_data.as_deref().and_then(|s| serde_json::from_str(s).ok()),
@@ -639,11 +624,50 @@ pub fn get_all_file_metadata() -> Result<Vec<FfiFileMetadata>, AuroraError> {
 
 /// 按 id 读单条元数据；不存在返回 `null`（桌面走的是「全表拉进内存」，
 /// Kotlin 侧的先读后写必须要这条，见 M4a 清单 0.1）。
+///
+/// 不含标签——标签走 `get_file_tags`。
 #[uniffi::export]
 pub fn get_file_metadata(file_id: String) -> Result<Option<FfiFileMetadata>, AuroraError> {
     let conn = pool().get_connection();
     db::file_metadata::get_metadata_by_id(&conn, &file_id)
         .map(|v| v.map(FfiFileMetadata::from))
+        .map_err(db_err)
+}
+
+// ===== 标签（M4a 1.1：真源是 tags / file_tags，见 db/tags.rs）=====
+
+/// 设置某张图的标签集合（整体替换）。词表由 Rust 维护，Kotlin 侧不拼任何 JSON。
+#[uniffi::export]
+pub fn set_file_tags(file_id: String, tags: Vec<String>) -> Result<(), AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::set_file_tags(&conn, &file_id, &tags).map_err(db_err)
+}
+
+/// 批量贴标签（长按菜单 / 选择栏「更多」的粘贴），单事务。
+#[uniffi::export]
+pub fn add_tags_to_files(file_ids: Vec<String>, tags: Vec<String>) -> Result<(), AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::add_tags_to_files(&conn, &file_ids, &tags).map_err(db_err)
+}
+
+#[uniffi::export]
+pub fn get_file_tags(file_id: String) -> Result<Vec<String>, AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::get_file_tags(&conn, &file_id).map_err(db_err)
+}
+
+#[uniffi::export]
+pub fn get_files_by_tag(tag: String) -> Result<Vec<String>, AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::get_files_by_tag(&conn, &tag).map_err(db_err)
+}
+
+/// 全量「文件 → 标签」映射：标签过滤（4.1）与一致性对照（1.3）的输入。
+#[uniffi::export]
+pub fn get_all_file_tags() -> Result<Vec<FileTags>, AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::get_all_file_tags(&conn)
+        .map(|v| v.into_iter().map(|(file_id, tags)| FileTags { file_id, tags }).collect())
         .map_err(db_err)
 }
 
@@ -664,54 +688,15 @@ mod tests {
         }
     }
 
-    fn owned(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn empty_tags_write_null_not_an_empty_array() {
-        assert_eq!(tags_to_json(&owned(&[])), None);
-        assert!(tags_from_json(None).is_empty());
-        assert!(tags_from_json(Some(serde_json::json!([]))).is_empty());
-    }
-
-    #[test]
-    fn tag_names_survive_the_json_column() {
-        let tricky = owned(&["风景", "he said \"hi\"", r"a\b", "中文 混 English", "", "🌸"]);
-        let round = tags_from_json(tags_to_json(&tricky));
-        assert_eq!(round, tricky);
-    }
-
-    #[test]
-    fn unusable_tags_column_values_degrade_to_empty() {
-        for bad in [
-            None,
-            Some(serde_json::Value::Null),
-            Some(serde_json::json!("风景")),
-            Some(serde_json::json!({"a": 1})),
-            Some(serde_json::json!(1)),
-        ] {
-            let shown = bad.as_ref().map(|v| v.to_string()).unwrap_or("NULL".into());
-            assert!(tags_from_json(bad).is_empty(), "column {shown} should read as no tags");
-        }
-        // 数组里混非字符串：只丢那一项，其余保留
-        assert_eq!(
-            tags_from_json(Some(serde_json::json!(["ok", 7, null, "also"]))),
-            owned(&["ok", "also"])
-        );
-    }
-
-    /// 1.1 的先读后写要把 `FfiFileMetadata` 原样拼回去，任何一列在往返中变形
-    /// 都会在下一次整行 upsert 时把用户数据写没。
+    /// 2.1 的先读后写要把这一行原样拼回去，任何一列在往返中变形都会在整行 upsert
+    /// 时把用户数据写没。
     #[test]
     fn file_metadata_ffi_round_trip_keeps_every_column() {
-        let original = row(tags_to_json(&owned(&["风景", "猫"])));
-
+        let original = row(None);
         let back: db::file_metadata::FileMetadata = FfiFileMetadata::from(original.clone()).into();
 
         assert_eq!(back.file_id, original.file_id);
         assert_eq!(back.path, original.path);
-        assert_eq!(back.tags, original.tags);
         assert_eq!(back.description, original.description);
         assert_eq!(back.source_url, original.source_url);
         assert_eq!(back.ai_data, original.ai_data);
@@ -719,21 +704,20 @@ mod tests {
         assert_eq!(back.updated_at, original.updated_at);
     }
 
+    /// 标签的真源已搬到 `file_tags`。旧的 `file_metadata.tags` 列既不读出也不写回，
+    /// 免得留第二份数据——这条把该行为钉住。
     #[test]
-    fn file_metadata_without_tags_round_trips_as_null() {
-        let original = row(None);
-        let ffi = FfiFileMetadata::from(original.clone());
-        assert!(ffi.tags.is_empty());
+    fn legacy_json_tags_column_is_never_read_or_written() {
+        let original = row(Some(serde_json::json!(["旧列里的", "标签"])));
+        let ffi = FfiFileMetadata::from(original);
         let back: db::file_metadata::FileMetadata = ffi.into();
         assert_eq!(back.tags, None);
-        assert_eq!(back.description, original.description);
-        assert_eq!(back.ai_data, original.ai_data);
     }
 
     /// `ai_data` 只透传不解析：M4a 不读它的结构，但必须原样带回。
     #[test]
     fn ai_data_survives_as_opaque_json_text() {
-        let original = row(tags_to_json(&owned(&["x"])));
+        let original = row(None);
         let ffi = FfiFileMetadata::from(original.clone());
         let text = ffi.ai_data.clone().expect("ai_data should pass through");
         assert_eq!(
