@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -176,7 +177,13 @@ fun TopicsOverview(
                 .collect { onScrollChanged(it) }
         }
         // 桌面卡片 = 3:4、高 350px（≈260px 宽）。列数按侧栏目标状态的最终内容宽度一次
-        // 算死（FileGrid 3.5 列数预测同思路），开合动画期间只缩放不跳档
+        // 算死（FileGrid 3.5 列数预测同思路）。3.3fix②：网格视口也用 requiredWidth 钉在
+        // 目标宽度上——LazyVerticalGrid 的格子宽 = 当前视口宽 ÷ 列数，视口若随侧栏动画
+        // 逐帧变化（或拍点被 incoming 约束重切，Modifier.width 压不过单元格强制约束），
+        // 卡片就会瞬变一档再动画回归；视口钉死在目标宽度后格子宽恒定，开合只剩整网
+        // 格的平移与一次列归属重排（桌面即时重排同感），卡片全程零尺寸变化。
+        // 溢出方向：收起时网格比容器宽、右缘随容器长大滑入屏内（窗口裁剪）；展开时
+        // 网格比容器窄、随侧栏滑入整体右移，右侧露底色。
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val targetContentWidth = screenWidthDp - (if (sidebarVisible) SIDEBAR_WIDTH_DP.value else 0f)
         val cols = ((targetContentWidth + 16f) / (220f + 16f)).toInt().coerceAtLeast(1)
@@ -188,7 +195,7 @@ fun TopicsOverview(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp,
             ),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.weight(1f).requiredWidth(targetContentWidth.dp),
         ) {
             items(
                 count = topics.size,
