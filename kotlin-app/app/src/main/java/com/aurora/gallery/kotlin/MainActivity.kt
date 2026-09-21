@@ -306,6 +306,8 @@ class MainActivity : ComponentActivity() {
                         displayImages = displayImages,
                         viewerProvider = ::ensureViewer,
                         parentName = currentFolderName,
+                        tagsByFile = viewModel.tagsByFile.value,
+                        metadataById = viewModel.metadataById.value,
                     )
                 }
             }

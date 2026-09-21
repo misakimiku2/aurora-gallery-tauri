@@ -84,6 +84,9 @@ object DialogUtils {
             gravity = Gravity.CENTER
             setTextColor(if (isPrimary) Color.WHITE else theme.colorButtonSecondaryText())
             setPadding((d * 20).toInt(), (d * 10).toInt(), (d * 20).toInt(), (d * 10).toInt())
+            // 13sp 文字 + 上下 10dp padding 只有约 45dp，差 3dp 不到移动端下限；这里补齐，
+            // 全部查看器弹窗的取消/保存一次改到位。
+            minHeight = (d * 48).toInt()
             background = createRoundedBg(
                 if (isPrimary) theme.colorAccent() else theme.colorButtonSecondaryBg(),
                 8f,

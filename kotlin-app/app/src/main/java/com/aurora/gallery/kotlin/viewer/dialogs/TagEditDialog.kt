@@ -107,7 +107,7 @@ class TagEditDialog(
                     relayoutTagDialog()
                 }
             }
-            layoutParams = LinearLayout.LayoutParams((density * 44).toInt(), (density * 44).toInt()).apply {
+            layoutParams = LinearLayout.LayoutParams((density * 48).toInt(), (density * 48).toInt()).apply {
                 marginStart = (density * 8).toInt()
             }
         }
@@ -180,7 +180,8 @@ class TagEditDialog(
                 text = "✕"
                 setTextColor(theme.colorDanger())
                 textSize = 15f
-                val minTouch = (density * 32).toInt()
+                // 删除叉是这条链路上唯一的「摘掉一个标签」入口，命中区按移动端下限给到 48dp
+                val minTouch = (density * 48).toInt()
                 minWidth = minTouch
                 minHeight = minTouch
                 gravity = Gravity.CENTER

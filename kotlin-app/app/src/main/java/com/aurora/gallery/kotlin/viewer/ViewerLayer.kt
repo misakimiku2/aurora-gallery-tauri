@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aurora.gallery.kotlin.state.AppState
 import org.json.JSONObject
+import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.Image
 
 /**
@@ -28,10 +29,17 @@ fun ViewerLayerHost(
     viewerProvider: () -> NativeGalleryView,
     /** 抽屉「位置」一行显示的上级文件夹名；BROWSER 视图下即当前文件夹名。 */
     parentName: String = "",
+    /** 抽屉要显示的标签与元数据，来自 `GalleryViewModel` 的标签快照（M4a 2.2）。 */
+    tagsByFile: Map<String, List<String>> = emptyMap(),
+    metadataById: Map<String, FfiFileMetadata> = emptyMap(),
 ) {
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
-    val items = remember(displayImages, parentName) { displayImages.map { it.toViewerItem(parentName) } }
+    val items = remember(displayImages, parentName, tagsByFile, metadataById) {
+        displayImages.map {
+            it.toViewerItem(parentName, tagsByFile[it.id].orEmpty(), metadataById[it.id])
+        }
+    }
     val startIndex = displayImages.indexOfFirst { it.id == fileId }.coerceAtLeast(0)
     NativeViewerLayer(
         viewer = viewer,

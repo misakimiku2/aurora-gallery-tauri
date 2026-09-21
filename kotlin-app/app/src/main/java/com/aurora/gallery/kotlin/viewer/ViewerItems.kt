@@ -1,5 +1,6 @@
 package com.aurora.gallery.kotlin.viewer
 
+import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.Image
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -12,10 +13,15 @@ import java.util.Locale
  * 恒经 ContentResolver 授权。查看器的 `path` 字段在 React 版承载本地路径与 LAN 的 HTTP URL
  * 两种语义，M3 不做 LAN（M6），留空。
  *
- * tags / description / sourceUrl / palette / ai* 一律取默认空值——编辑与生成属 M4/M6，
- * 抽屉里这些区段显示空态。
+ * 标签与元数据由调用方从 `GalleryViewModel` 的标签快照传入（M4a 2.2），本文件不查库。
+ * palette / aiTags / aiDescription / aiSceneCategory / aiObjects 仍是空态：主色调提取与
+ * AI 打标属 M6。
  */
-internal fun Image.toViewerItem(parentName: String = "") = NativeGalleryView.ImageItem(
+internal fun Image.toViewerItem(
+    parentName: String = "",
+    tags: List<String> = emptyList(),
+    metadata: FfiFileMetadata? = null,
+) = NativeGalleryView.ImageItem(
     // 与 contentUri 同值：`Listener.onShare(filePath)` 只带这一个串，宿主要靠它拉起分享面板；
     // 取图不受影响（resolveLoadData 优先走 contentUri，File 分支只在 contentUri 为空时才碰）。
     path = contentUri,
@@ -31,6 +37,9 @@ internal fun Image.toViewerItem(parentName: String = "") = NativeGalleryView.Ima
     createdAt = formatIso(createdAt),
     updatedAt = formatIso(modifiedAt),
     parentName = parentName,
+    tags = tags,
+    description = metadata?.description.orEmpty(),
+    sourceUrl = metadata?.sourceUrl.orEmpty(),
 )
 
 /**

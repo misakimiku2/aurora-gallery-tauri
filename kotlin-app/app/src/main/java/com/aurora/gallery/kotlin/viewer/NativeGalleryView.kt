@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -857,6 +858,9 @@ class NativeGalleryView @JvmOverloads constructor(
                 setTextColor(colorTagText())
                 textSize = 11f
                 setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
+                // 命中区补到 48dp（移动端规范下限；原文字 + 上下 6dp padding 只有约 33dp）
+                gravity = Gravity.CENTER
+                minHeight = (resources.displayMetrics.density * 48).toInt()
                 background = DialogUtils.createRoundedBg(colorTagBg(), 10f, colorTagBorder(), 1f, context)
                 isClickable = true
                 isFocusable = true
@@ -946,6 +950,9 @@ class NativeGalleryView @JvmOverloads constructor(
             setTextColor(colorButtonSecondaryText())
             textSize = 11f
             setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
+            // 与上面「提取主色调」同一条：命中区补到 48dp
+            gravity = Gravity.CENTER
+            minHeight = (resources.displayMetrics.density * 48).toInt()
             background = DialogUtils.createRoundedBg(colorButtonSecondaryBg(), 10f, colorBorder(), 1f, context)
             isClickable = true
             setOnClickListener { showTagEditDialog() }
