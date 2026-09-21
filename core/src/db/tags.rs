@@ -31,13 +31,15 @@ pub fn create_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// 去掉空串与重复项，保留首次出现的顺序。
+/// 去掉首尾空白、空串与重复项，保留首次出现的顺序。
+/// 所有入口都过这一道，`tags` 列里才会只有一种形态——React 的
+/// `handleSaveNewTag`（`useTags.ts:110`）也是先 trim 再存。
 fn normalize(tags: &[String]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     tags.iter()
-        .filter(|t| !t.trim().is_empty())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
         .filter(|t| seen.insert(t.clone()))
-        .cloned()
         .collect()
 }
 
@@ -148,6 +150,80 @@ pub fn get_vocabulary(conn: &Connection) -> Result<Vec<String>> {
     rows.collect()
 }
 
+/// 新增一个词（对齐 `useTags.ts:108` 的 `handleSaveNewTag`：trim 后非空才收，重复静默忽略）。
+pub fn add_tag_to_vocabulary(conn: &Connection, tag: &str) -> Result<()> {
+    let tag = tag.trim();
+    if tag.is_empty() {
+        return Ok(());
+    }
+    upsert_vocabulary(conn, &[tag.to_string()])
+}
+
+/// 词表 ∪ 文件上实际出现的标签，配各自的文件数——`App.tsx:1263` 里
+/// `new Set(customTags)` ∪ 各文件 `tags` 那一步的 SQL 版。取并集而不是只读词表，
+/// 是为了「只删词表不删文件标签」这种库里真能出现的状态下也不丢行。
+pub fn tag_counts(conn: &Connection) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.tag, COUNT(f.file_id) FROM \
+         (SELECT tag FROM tags UNION SELECT DISTINCT tag FROM file_tags) t \
+         LEFT JOIN file_tags f ON f.tag = t.tag \
+         GROUP BY t.tag",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
+    rows.collect()
+}
+
+/// 删除标签：词表和所有文件上的它一起删（对齐 `handleConfirmDeleteTags`，`:39-72`
+/// 那一支桌面本来就是逐文件落库的），一批文件放一个事务里。
+pub fn delete_tags(conn: &Connection, tags: &[String]) -> Result<()> {
+    let tags = normalize(tags);
+    if tags.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    for tag in &tags {
+        tx.execute("DELETE FROM file_tags WHERE tag = ?1", params![tag])?;
+        tx.execute("DELETE FROM tags WHERE tag = ?1", params![tag])?;
+    }
+    tx.commit()
+}
+
+/// 重命名并级联。
+///
+/// **与桌面行为有意不同**（D14 选「修正」）：桌面 `handleRenameTag`（`useTags.ts:163`）
+/// 只改内存 state，重启后文件标签回到旧名、词表却留下新名。这里词表与所有文件的标签
+/// 在同一个事务里改，落库。
+///
+/// 与桌面保持一致的两点：① 空 new / 新旧同名一律 no-op（`:164`）；② 词表里原本没有
+/// 旧名时，不把新名塞进词表（`:178` 的 `if includes`）。
+/// 差别只在重名合并：桌面 `.map()` 会让一张图同时出现两个同名标签，关系表的主键不认，
+/// 这里合并成一个。
+pub fn rename_tag(conn: &Connection, old_tag: &str, new_tag: &str) -> Result<()> {
+    let new_tag = new_tag.trim();
+    if new_tag.is_empty() || new_tag == old_tag {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    let in_vocabulary: bool = tx.query_row(
+        "SELECT 1 FROM tags WHERE tag = ?1",
+        params![old_tag],
+        |_| Ok(true),
+    ).unwrap_or(false);
+    if in_vocabulary {
+        upsert_vocabulary(&tx, &[new_tag.to_string()])?;
+    }
+    // 先插后删：目标标签在这张图上已存在时 INSERT OR IGNORE 自然跳过，剩下的旧行删掉
+    // 就等于合并；position 沿用旧行的，次序不跳。
+    tx.execute(
+        "INSERT OR IGNORE INTO file_tags (file_id, tag, position) \
+         SELECT file_id, ?2, position FROM file_tags WHERE tag = ?1",
+        params![old_tag, new_tag],
+    )?;
+    tx.execute("DELETE FROM file_tags WHERE tag = ?1", params![old_tag])?;
+    tx.execute("DELETE FROM tags WHERE tag = ?1", params![old_tag])?;
+    tx.commit()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +259,17 @@ mod tests {
         let c = conn();
         set_file_tags(&c, "f1", &s(&["a", "a", "  ", "", "b"])).unwrap();
         assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["a", "b"]));
+    }
+
+    /// 每个入口都 trim，否则「a」与「 a」会在词表里成两个词、1.3 也无从对齐。
+    #[test]
+    fn every_entry_point_trims_the_same_way() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&[" 风景 ", "猫  "])).unwrap();
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["风景", "猫"]));
+        assert_eq!(get_files_by_tag(&c, "风景").unwrap(), s(&["f1"]));
+        add_tag_to_vocabulary(&c, " 风景 ").unwrap();
+        assert_eq!(get_vocabulary(&c).unwrap(), s(&["猫", "风景"]));
     }
 
     #[test]
@@ -244,5 +331,86 @@ mod tests {
     fn table_setup_is_idempotent() {
         let c = conn();
         create_table(&c).unwrap();
+    }
+
+    #[test]
+    fn counting_covers_the_union_of_vocabulary_and_file_tags() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&["猫", "风景"])).unwrap();
+        set_file_tags(&c, "f2", &s(&["猫"])).unwrap();
+        add_tag_to_vocabulary(&c, "只有词表里有").unwrap();
+        let mut counts = tag_counts(&c).unwrap();
+        counts.sort();
+        assert_eq!(
+            counts,
+            vec![
+                ("只有词表里有".to_string(), 0),
+                ("猫".to_string(), 2),
+                ("风景".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn vocabulary_add_trims_and_ignores_blanks_and_duplicates() {
+        let c = conn();
+        add_tag_to_vocabulary(&c, "  旅行  ").unwrap();
+        add_tag_to_vocabulary(&c, "旅行").unwrap();
+        add_tag_to_vocabulary(&c, "   ").unwrap();
+        assert_eq!(get_vocabulary(&c).unwrap(), s(&["旅行"]));
+    }
+
+    /// D14：桌面只改内存不落库，这里必须落到文件上。
+    #[test]
+    fn rename_cascades_into_every_file_and_persists() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&["旧名", "别的"])).unwrap();
+        set_file_tags(&c, "f2", &s(&["旧名"])).unwrap();
+        rename_tag(&c, "旧名", "新名").unwrap();
+        assert_eq!(get_files_by_tag(&c, "新名").unwrap(), s(&["f1", "f2"]));
+        assert!(get_files_by_tag(&c, "旧名").unwrap().is_empty());
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["新名", "别的"]));
+        assert_eq!(get_vocabulary(&c).unwrap(), s(&["别的", "新名"]));
+    }
+
+    /// 词表里没有旧名时（只在文件上贴过），新名也不进词表——与 `useTags.ts:178` 一致。
+    #[test]
+    fn rename_does_not_promote_a_word_the_vocabulary_never_had() {
+        let c = conn();
+        let tx = c.unchecked_transaction().unwrap();
+        tx.execute("INSERT OR IGNORE INTO file_tags (file_id, tag, position) VALUES ('f1', '野生', 0)", []).unwrap();
+        tx.commit().unwrap();
+        rename_tag(&c, "野生", "野生2").unwrap();
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["野生2"]));
+        assert!(get_vocabulary(&c).unwrap().is_empty());
+    }
+
+    #[test]
+    fn renaming_onto_an_existing_tag_merges_instead_of_duplicating() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&["a", "b"])).unwrap();
+        rename_tag(&c, "a", "b").unwrap();
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["b"]));
+    }
+
+    #[test]
+    fn rename_guards_blank_and_no_op() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&["a"])).unwrap();
+        rename_tag(&c, "a", "a").unwrap();
+        rename_tag(&c, "a", "   ").unwrap();
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["a"]));
+    }
+
+    #[test]
+    fn deleting_a_tag_removes_it_from_files_and_the_vocabulary() {
+        let c = conn();
+        set_file_tags(&c, "f1", &s(&["要删", "留下"])).unwrap();
+        set_file_tags(&c, "f2", &s(&["要删"])).unwrap();
+        delete_tags(&c, &s(&["要删"])).unwrap();
+        assert_eq!(get_file_tags(&c, "f1").unwrap(), s(&["留下"]));
+        assert!(get_file_tags(&c, "f2").unwrap().is_empty());
+        assert!(!get_vocabulary(&c).unwrap().contains(&"要删".to_string()));
+        delete_tags(&c, &[]).unwrap();
     }
 }

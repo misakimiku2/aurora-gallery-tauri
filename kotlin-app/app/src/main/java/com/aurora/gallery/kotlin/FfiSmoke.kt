@@ -8,7 +8,9 @@ import uniffi.aurora_core.FfiPerson
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.addFilesToTopic
 import uniffi.aurora_core.addTagsToFiles
+import uniffi.aurora_core.addTagToVocabulary
 import uniffi.aurora_core.deletePerson
+import uniffi.aurora_core.deleteTags
 import uniffi.aurora_core.deleteTopic
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
@@ -17,10 +19,12 @@ import uniffi.aurora_core.getAllTopics
 import uniffi.aurora_core.getFileMetadata
 import uniffi.aurora_core.getFileTags
 import uniffi.aurora_core.getFilesByTag
+import uniffi.aurora_core.getGroupedTags
 import uniffi.aurora_core.getTopicFiles
 import uniffi.aurora_core.getTopicFilesPaginated
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
+import uniffi.aurora_core.renameTag
 import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertPerson
@@ -46,6 +50,7 @@ fun runFfiSmoke(nonce: String) {
             smokeFileMetadata(nonce)
             smokeMissingRow(nonce)
             smokeTags(nonce)
+            smokeVocabulary(nonce)
             Log.i(TAG, "[FfiSmoke $nonce] end")
         } catch (e: Throwable) {
             Log.e(TAG, "[FfiSmoke $nonce] CRASH ${e.javaClass.simpleName}: ${e.message}", e)
@@ -188,6 +193,59 @@ private fun smokeMissingRow(nonce: String) {
     check(nonce, "缺行返回 null", null, missing)
     Log.i(TAG, "[FfiSmoke $nonce] PASS 缺行返回 null（AuroraError 未误抛）")
 }
+
+/**
+ * M4a 1.2：词表四个动作（新增 / 分组计数 / 重命名级联 / 删除级联）。
+ *
+ * React 侧 `customTags` 是从不过 trim 的数组，Rust 侧统一 trim（否则一个词会存成两个，
+ * 1.3 也无从对齐），所以这里故意用带空白的输入写、用干净的形态读。
+ */
+private fun smokeVocabulary(nonce: String) {
+    val plain = listFolders().asSequence().flatMap { listImages(it.id) }.firstOrNull()
+        ?.id ?: run {
+        Log.w(TAG, "[FfiSmoke $nonce] SKIP vocab：库里没有图")
+        return
+    }
+    val zero = " 冒烟$nonce-零词  "
+    val used = "冒烟$nonce-猫 "
+    val renamed = "冒烟$nonce-狗"
+
+    addTagToVocabulary(zero)
+    var grouped = getGroupedTags("zh")
+    check(nonce, "trim 后词表只留一个形态", true, "冒烟$nonce-零词" in grouped.tags())
+
+    setFileTags(plain, listOf(used))
+    grouped = getGroupedTags("zh")
+    check(nonce, "新贴标签的计数", 1L, grouped.countOf("冒烟$nonce-猫"))
+    check(nonce, "0 计数的词仍在分组里", 0L, grouped.countOf("冒烟$nonce-零词"))
+    check(nonce, "冒烟前缀的两个词同落 M 组", listOf("M", "M"),
+        listOf("冒烟$nonce-猫", "冒烟$nonce-零词").map { grouped.keyOf(it) })
+    check(nonce, "分组按组名升序", grouped.map { it.key }, grouped.map { it.key }.sorted())
+
+    renameTag(used.trim(), renamed)
+    check(nonce, "重命名级联到文件（桌面不落的库这里落）", listOf(plain), getFilesByTag(renamed))
+    check(nonce, "旧名从文件上消失", emptyList<String>(), getFilesByTag(used.trim()))
+    grouped = getGroupedTags("zh")
+    check(nonce, "旧名从词表消失", null, grouped.countOf(used.trim()))
+    check(nonce, "新名进词表并带计数", 1L, grouped.countOf(renamed))
+
+    deleteTags(listOf(renamed, zero.trim()))
+    val cleared = getGroupedTags("zh").flatMap { it.tags }.none { it.tag == renamed || it.tag == zero.trim() }
+    check(nonce, "删除级联（文件与词表一起）", true, cleared)
+
+    // 顺手清掉历轮冒烟留在词表里的词（成员行本来就会被清空）
+    val leftovers = getGroupedTags("zh").flatMap { it.tags }.map { it.tag }.filter { it.startsWith("冒烟") }
+    if (leftovers.isNotEmpty()) deleteTags(leftovers)
+    Log.i(TAG, "[FfiSmoke $nonce] PASS vocab 四动作一致，历史冒烟词清理 ${leftovers.size} 个")
+}
+
+private fun List<uniffi.aurora_core.TagGroup>.tags() = flatMap { it.tags }.map { it.tag }
+
+private fun List<uniffi.aurora_core.TagGroup>.countOf(tag: String) =
+    flatMap { it.tags }.firstOrNull { it.tag == tag }?.count
+
+private fun List<uniffi.aurora_core.TagGroup>.keyOf(tag: String) =
+    firstOrNull { g -> g.tags.any { it.tag == tag } }?.key
 
 /**
  * M4a 1.1：标签四原语 + 批量粘贴。用库里真实的图（file_id 与 `generate_id(content_uri)`

@@ -6,6 +6,7 @@
 use icu_collator::options::{CollatorOptions, Strength};
 use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::Locale;
+use std::collections::HashMap;
 
 pub type Col = CollatorBorrowed<'static>;
 
@@ -65,6 +66,34 @@ pub fn sort_tags(tags: &[String], locale: &str) -> Vec<String> {
     out
 }
 
+/// 侧栏分组：`(标签, 计数)` → 按组键分桶、组名升序、组内按 `locale` 排序。
+///
+/// 复刻 `App.tsx:1263` 的 `groupedTags`。计数为 0 的词（只在词表里、没贴到任何文件上）
+/// 照样出现在分组里，与 React 一致。返回 `Vec` 而非 `Map`——Kotlin 的 `Map` 不保序，
+/// 会丢掉 Rust 排好的组顺序。
+///
+/// 标签搜索（React 的 `tagSearchQuery`）不在这里做：那是输入即时响应的过滤，留 UI 侧。
+pub fn group_tags(counts: &[(String, i64)], locale: &str) -> Vec<(String, Vec<(String, i64)>)> {
+    let group_col = group_collator();
+    let order_col = order_collator(locale);
+    let mut by_key: HashMap<String, Vec<(String, i64)>> = HashMap::new();
+    for (tag, count) in counts {
+        by_key
+            .entry(group_key(&group_col, tag))
+            .or_default()
+            .push((tag.clone(), *count));
+    }
+    let mut keys: Vec<String> = by_key.keys().cloned().collect();
+    keys.sort();
+    keys.into_iter()
+        .map(|key| {
+            let mut items = by_key.remove(&key).unwrap_or_default();
+            items.sort_by(|a, b| order_col.compare(a.0.as_str(), b.0.as_str()));
+            (key, items)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +146,46 @@ mod tests {
         let en = sort_tags(&tags, "en");
         assert_eq!(zh, en);
         assert_eq!(zh, ["Apple", "banana", "cherry"]);
+    }
+
+    fn counts(items: &[(&str, i64)]) -> Vec<(String, i64)> {
+        items.iter().map(|(t, c)| (t.to_string(), *c)).collect()
+    }
+
+    #[test]
+    fn groups_carry_their_counts_and_keep_zero_count_words() {
+        let groups = group_tags(&counts(&[("猫", 3), ("阿零", 0)]), "zh");
+        let keys: Vec<&str> = groups.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["A", "M"]);
+        // 0 计数（只在词表里、没贴到任何文件上）的词不因此从分组里消失
+        assert_eq!(groups[0].1, vec![("阿零".to_string(), 0i64)]);
+        assert_eq!(groups[1].1, vec![("猫".to_string(), 3i64)]);
+    }
+
+    /// 组名升序用的是码位序：`#`(35) < 数字(48) < 字母(65)，与 JS `Object.keys().sort()` 同。
+    #[test]
+    fn group_keys_sort_by_code_point() {
+        let groups = group_tags(&counts(&[("猫", 1), ("-dash", 1), ("7up", 1), ("alpha", 1)]), "zh");
+        let keys: Vec<&str> = groups.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["#", "7", "A", "M"]);
+    }
+
+    #[test]
+    fn tags_within_a_group_are_locale_ordered_not_by_code_point() {
+        // 码位序会把大写排在小写前；localeCompare 不会
+        let tags = counts(&[("zeta", 1), ("Alpha", 1), ("beta", 1), ("alpha", 1)]);
+        let groups = group_tags(&tags, "zh");
+        let keys: Vec<&str> = groups.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["A", "B", "Z"]);
+        let a = &groups[0].1;
+        assert_eq!(
+            a.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+            ["alpha", "Alpha"]
+        );
+    }
+
+    #[test]
+    fn empty_input_groups_to_nothing() {
+        assert!(group_tags(&[], "zh").is_empty());
     }
 }

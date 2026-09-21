@@ -676,9 +676,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_people_to_topic(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_add_tag_to_vocabulary(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_add_tags_to_files(
     ): Int
     external fun uniffi_aurora_core_checksum_func_delete_person(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_tags(
     ): Int
     external fun uniffi_aurora_core_checksum_func_delete_topic(
     ): Int
@@ -700,6 +704,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_get_files_by_tag(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_get_grouped_tags(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_get_topic_cover_previews(
     ): Int
     external fun uniffi_aurora_core_checksum_func_get_topic_files(
@@ -717,6 +723,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_aurora_core_checksum_func_remove_file_from_topic(
     ): Int
     external fun uniffi_aurora_core_checksum_func_remove_person_from_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_rename_tag(
     ): Int
     external fun uniffi_aurora_core_checksum_func_set_file_tags(
     ): Int
@@ -751,9 +759,13 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_aurora_core_fn_func_add_people_to_topic(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_add_tag_to_vocabulary(`tag`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_aurora_core_fn_func_add_tags_to_files(`fileIds`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_delete_person(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_delete_tags(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_delete_topic(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -775,6 +787,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_get_files_by_tag(`tag`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_grouped_tags(`locale`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_get_topic_cover_previews(`topicIds`: RustBuffer.ByValue,`previewCount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_get_topic_files(`topicId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -792,6 +806,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_remove_file_from_topic(`topicId`: RustBuffer.ByValue,`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_remove_person_from_topic(`topicId`: RustBuffer.ByValue,`peopleId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_rename_tag(`oldTag`: RustBuffer.ByValue,`newTag`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_set_file_tags(`fileId`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -934,10 +950,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_add_people_to_topic() != 37626) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_add_tag_to_vocabulary() != 1655) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_add_tags_to_files() != 52504) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_delete_person() != 23922) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_delete_tags() != 43194) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_delete_topic() != 33355) {
@@ -970,6 +992,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_get_files_by_tag() != 36789) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_get_grouped_tags() != 23568) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_get_topic_cover_previews() != 18228) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -995,6 +1020,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_remove_person_from_topic() != 27759) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_rename_tag() != 51090) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_set_file_tags() != 9996) {
@@ -2021,6 +2049,91 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
 
 
 
+/**
+ * 一个标签 + 它贴在多少张图上。计数为 0 = 只在词表里、还没贴到任何文件上。
+ */
+data class TagEntry (
+    var `tag`: kotlin.String
+    , 
+    var `count`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTagEntry: FfiConverterRustBuffer<TagEntry> {
+    override fun read(buf: ByteBuffer): TagEntry {
+        return TagEntry(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TagEntry) = (
+            FfiConverterString.allocationSize(value.`tag`) +
+            FfiConverterLong.allocationSize(value.`count`)
+    )
+
+    override fun write(value: TagEntry, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tag`, buf)
+            FfiConverterLong.write(value.`count`, buf)
+    }
+}
+
+
+
+/**
+ * 侧栏的一个标签分组。
+ *
+ * 顺序（组的先后、组内标签的先后）全由 Rust 定，UI 侧不许再排 —— 见 M4a 清单 §1
+ * 「排序规则只许有一套」。用 `Vec` 而不是 `Map`：Kotlin 的 `Map` 不保序。
+ */
+data class TagGroup (
+    var `key`: kotlin.String
+    , 
+    var `tags`: List<TagEntry>
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTagGroup: FfiConverterRustBuffer<TagGroup> {
+    override fun read(buf: ByteBuffer): TagGroup {
+        return TagGroup(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeTagEntry.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TagGroup) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterSequenceTypeTagEntry.allocationSize(value.`tags`)
+    )
+
+    override fun write(value: TagGroup, buf: ByteBuffer) {
+            FfiConverterString.write(value.`key`, buf)
+            FfiConverterSequenceTypeTagEntry.write(value.`tags`, buf)
+    }
+}
+
+
+
 
 
 /**
@@ -2559,6 +2672,62 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeTagEntry: FfiConverterRustBuffer<List<TagEntry>> {
+    override fun read(buf: ByteBuffer): List<TagEntry> {
+        val len = buf.getInt()
+        return List<TagEntry>(len) {
+            FfiConverterTypeTagEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TagEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTagEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TagEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTagEntry.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTagGroup: FfiConverterRustBuffer<List<TagGroup>> {
+    override fun read(buf: ByteBuffer): List<TagGroup> {
+        val len = buf.getInt()
+        return List<TagGroup>(len) {
+            FfiConverterTypeTagGroup.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TagGroup>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTagGroup.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TagGroup>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTagGroup.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<kotlin.String, List<kotlin.String>>> {
     override fun read(buf: ByteBuffer): Map<kotlin.String, List<kotlin.String>> {
         val len = buf.getInt()
@@ -2616,6 +2785,20 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
 
         /**
+         * 往词表里加一个词（不贴到任何文件上，计数 0）。
+         */
+    @Throws(AuroraException::class) fun `addTagToVocabulary`(`tag`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_add_tag_to_vocabulary(
+    
+        
+        FfiConverterString.lower(`tag`),_status)
+}
+    
+    
+
+        /**
          * 批量贴标签（长按菜单 / 选择栏「更多」的粘贴），单事务。
          */
     @Throws(AuroraException::class) fun `addTagsToFiles`(`fileIds`: List<kotlin.String>, `tags`: List<kotlin.String>)
@@ -2637,6 +2820,20 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`id`),_status)
+}
+    
+    
+
+        /**
+         * 删除标签：词表 + 所有文件上的它，一个事务。
+         */
+    @Throws(AuroraException::class) fun `deleteTags`(`tags`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_tags(
+    
+        
+        FfiConverterSequenceString.lower(`tags`),_status)
 }
     
     
@@ -2771,6 +2968,24 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     }
     
 
+        /**
+         * 侧栏标签分组 + 计数。`locale` 是界面语言（`zh` / `en`），只影响组内次序。
+         *
+         * 词表搜索（React 的 `tagSearchQuery`）留给 UI 侧：那是输入即时响应的过滤，
+         * 不该每敲一个字过一次 FFI。
+         */
+    @Throws(AuroraException::class) fun `getGroupedTags`(`locale`: kotlin.String): List<TagGroup> {
+            return FfiConverterSequenceTypeTagGroup.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_grouped_tags(
+    
+        
+        FfiConverterString.lower(`locale`),_status)
+}
+    )
+    }
+    
+
     @Throws(AuroraException::class) fun `getTopicCoverPreviews`(`topicIds`: List<kotlin.String>, `previewCount`: kotlin.Long): Map<kotlin.String, List<kotlin.String>> {
             return FfiConverterMapStringSequenceString.lift(
     uniffiRustCallWithError(AuroraException) { _status ->
@@ -2883,6 +3098,22 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         
         FfiConverterString.lower(`topicId`),
         FfiConverterString.lower(`peopleId`),_status)
+}
+    
+    
+
+        /**
+         * 重命名并级联到词表与所有文件。桌面不落的库这里落（D14=修正）；
+         * 会话态（当前筛选中的标签、选中的标签、各 tab 的搜索词）由 Kotlin 侧自己改。
+         */
+    @Throws(AuroraException::class) fun `renameTag`(`oldTag`: kotlin.String, `newTag`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_rename_tag(
+    
+        
+        FfiConverterString.lower(`oldTag`),
+        FfiConverterString.lower(`newTag`),_status)
 }
     
     

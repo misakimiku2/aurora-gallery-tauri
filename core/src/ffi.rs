@@ -11,6 +11,7 @@
 //! - **标签不在 `FfiFileMetadata` 里**：D10=② 之后它的真源是 `tags` / `file_tags` 两张表，
 //!   走 `set_file_tags` 一族（`db/tags.rs`），元数据那一列在安卓侧不再写。
 
+use crate::collate;
 use crate::db::{self, file_index, AppDbPool};
 use crate::db::file_index::FileIndexEntry;
 use std::collections::HashMap;
@@ -300,6 +301,23 @@ impl From<FfiFileMetadata> for db::file_metadata::FileMetadata {
             updated_at: m.updated_at,
         }
     }
+}
+
+/// 一个标签 + 它贴在多少张图上。计数为 0 = 只在词表里、还没贴到任何文件上。
+#[derive(uniffi::Record)]
+pub struct TagEntry {
+    pub tag: String,
+    pub count: i64,
+}
+
+/// 侧栏的一个标签分组。
+///
+/// 顺序（组的先后、组内标签的先后）全由 Rust 定，UI 侧不许再排 —— 见 M4a 清单 §1
+/// 「排序规则只许有一套」。用 `Vec` 而不是 `Map`：Kotlin 的 `Map` 不保序。
+#[derive(uniffi::Record)]
+pub struct TagGroup {
+    pub key: String,
+    pub tags: Vec<TagEntry>,
 }
 
 /// 初始化数据库（Kotlin 端启动时调用，指向 filesDir 下的 db 文件）。
@@ -669,6 +687,48 @@ pub fn get_all_file_tags() -> Result<Vec<FileTags>, AuroraError> {
     db::tags::get_all_file_tags(&conn)
         .map(|v| v.into_iter().map(|(file_id, tags)| FileTags { file_id, tags }).collect())
         .map_err(db_err)
+}
+
+/// 侧栏标签分组 + 计数。`locale` 是界面语言（`zh` / `en`），只影响组内次序。
+///
+/// 词表搜索（React 的 `tagSearchQuery`）留给 UI 侧：那是输入即时响应的过滤，
+/// 不该每敲一个字过一次 FFI。
+#[uniffi::export]
+pub fn get_grouped_tags(locale: String) -> Result<Vec<TagGroup>, AuroraError> {
+    let conn = pool().get_connection();
+    let counts = db::tags::tag_counts(&conn).map_err(db_err)?;
+    Ok(collate::group_tags(&counts, &locale)
+        .into_iter()
+        .map(|(key, items)| TagGroup {
+            key,
+            tags: items
+                .into_iter()
+                .map(|(tag, count)| TagEntry { tag, count })
+                .collect(),
+        })
+        .collect())
+}
+
+/// 往词表里加一个词（不贴到任何文件上，计数 0）。
+#[uniffi::export]
+pub fn add_tag_to_vocabulary(tag: String) -> Result<(), AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::add_tag_to_vocabulary(&conn, &tag).map_err(db_err)
+}
+
+/// 重命名并级联到词表与所有文件。桌面不落的库这里落（D14=修正）；
+/// 会话态（当前筛选中的标签、选中的标签、各 tab 的搜索词）由 Kotlin 侧自己改。
+#[uniffi::export]
+pub fn rename_tag(old_tag: String, new_tag: String) -> Result<(), AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::rename_tag(&conn, &old_tag, &new_tag).map_err(db_err)
+}
+
+/// 删除标签：词表 + 所有文件上的它，一个事务。
+#[uniffi::export]
+pub fn delete_tags(tags: Vec<String>) -> Result<(), AuroraError> {
+    let conn = pool().get_connection();
+    db::tags::delete_tags(&conn, &tags).map_err(db_err)
 }
 
 #[cfg(test)]
