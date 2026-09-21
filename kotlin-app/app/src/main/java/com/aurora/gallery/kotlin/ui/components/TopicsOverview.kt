@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -36,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
@@ -157,7 +160,7 @@ fun TopicsOverview(
     }
 }
 
-/** 专题卡片：封面（正方形，右下角计数徽标）+ 名称。整卡可点。 */
+/** 专题卡片（桌面 TopicModule 形制：3:4 竖版封面 + 右下角计数徽标 + 名称）。整卡可点。 */
 @Composable
 private fun TopicCard(
     topic: FfiTopic,
@@ -175,7 +178,7 @@ private fun TopicCard(
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
+                .aspectRatio(0.75f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(colors.surface),
         ) {
@@ -297,9 +300,158 @@ fun CreateTopicDialog(
 }
 
 /**
+ * 子专题区（M4a 3.2④，对齐桌面 TopicModule 详情页的 Sub Topics 分区，:2071-2140）。
+ * 桌面**严格两层**：子专题区只在根专题详情渲染（:945/:2072 `!currentTopic.parentId`），
+ * 子专题里不再出现这个区——平板同构：本组件只被根专题详情调用（由宿主保证）。
+ *
+ * 形态差异（触屏适配）：桌面是页内网格分区 + 右上「+ 新建专题」文字按钮；平板详情页
+ * 主体是图片网格（FileGrid），子专题做成**顶部横向滚动条**（LazyRow 的 3:4 竖版卡），
+ * 「新建子专题」按钮常驻在区头——触屏没有 hover，入口必须可见。
+ */
+@Composable
+fun TopicChildrenSection(
+    /** 当前专题的子专题（宿主按 parentId 过滤后的列表）。 */
+    children: List<FfiTopic>,
+    coverImages: Map<String, Image>,
+    thumbnailLoader: ThumbnailLoader,
+    onChildClick: (FfiTopic) -> Unit,
+    onCreateChild: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = AuroraTheme.colors
+    val pink = Color(0xFFEC4899)
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IconLayoutBig,
+                contentDescription = null,
+                tint = pink,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                "子专题",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+            if (children.isNotEmpty()) {
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    children.size.toString(),
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onCreateChild)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = IconPlus,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    "新建子专题",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.primary,
+                )
+            }
+        }
+        if (children.isEmpty()) {
+            Text(
+                "还没有子专题，用右上角的按钮建一个",
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+                modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
+            )
+        } else {
+            LazyRow(
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(children.size, key = { children[it].id }) { i ->
+                    val topic = children[i]
+                    Column(
+                        Modifier
+                            .width(110.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onChildClick(topic) },
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(0.75f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(colors.surface),
+                        ) {
+                            var bmp by remember(topic.coverFileId) { mutableStateOf<Bitmap?>(null) }
+                            LaunchedEffect(topic.coverFileId) {
+                                val img = topic.coverFileId?.let { coverImages[it] }
+                                    ?: return@LaunchedEffect
+                                val imageId = thumbnailLoader.extractImageId(img.contentUri)
+                                bmp = thumbnailLoader.peekMemory(imageId)
+                                    ?: thumbnailLoader.loadFastLimited(imageId)
+                            }
+                            val bitmap = bmp
+                            if (bitmap != null) {
+                                Image(
+                                    bitmap = bitmap.asImageBitmap(),
+                                    contentDescription = topic.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                Box(
+                                    Modifier.fillMaxSize().background(
+                                        // 桌面无封面子专题卡的渐变占位（from-indigo-500 to-purple-600）
+                                        Brush.linearGradient(listOf(Color(0xFF6366F1), Color(0xFF9333EA)))
+                                    ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = IconLayoutBig,
+                                        contentDescription = null,
+                                        tint = Color.White.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(28.dp),
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            topic.name,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
  * 专题选择弹窗（M4a 3.2 的「归入」链路最后一跳：选择模式 → 更多 → 加入专题 → 选目标）。
- * 对齐桌面 'add-to-topic' 模态（ContextMenu.tsx:490），列表只列根专题（嵌套归 M6）。
- * 无专题时给引导文案而不是空列表——用户第一次用不会卡在「点加入后无处可去」。
+ * 对齐桌面 AddToTopicModal：**根专题 + 可展开的子专题**两层树（子专题缩进展示，两层都
+ * 可选为目标）。无专题时给引导文案而不是空列表——用户第一次用不会卡在「点加入后无处可去」。
  */
 @Composable
 fun TopicPickerDialog(
@@ -308,6 +460,60 @@ fun TopicPickerDialog(
     onPick: (FfiTopic) -> Unit,
 ) {
     val colors = AuroraTheme.colors
+    // 展开的根专题集合（有子专题的根行才显示展开箭头，桌面 ChevronsDown/ChevronRight 同构）
+    var expanded by remember { mutableStateOf(setOf<String>()) }
+    val roots = topics.filter { it.parentId == null }
+
+    @Composable
+    fun TopicRow(topic: FfiTopic, indent: Boolean, hasChildren: Boolean, isExpanded: Boolean, onToggle: (() -> Unit)?) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = if (indent) 24.dp else 0.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onPick(topic) }
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (hasChildren) {
+                Box(
+                    Modifier
+                        .size(24.dp)
+                        .clickable(onClick = onToggle ?: {}),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        if (isExpanded) "▾" else "▸",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+            } else {
+                Spacer(Modifier.size(if (indent) 24.dp else 0.dp))
+            }
+            Icon(
+                imageVector = IconLayoutBig,
+                contentDescription = null,
+                tint = Color(0xFFEC4899),
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                topic.name,
+                fontSize = 15.sp,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                topic.fileCount.toString(),
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+            )
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("加入专题") },
@@ -323,35 +529,27 @@ fun TopicPickerDialog(
                         .heightIn(max = 360.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    topics.forEach { topic ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onPick(topic) }
-                                .padding(horizontal = 8.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = IconLayoutBig,
-                                contentDescription = null,
-                                tint = Color(0xFFEC4899),
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.size(10.dp))
-                            Text(
-                                topic.name,
-                                fontSize = 15.sp,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                topic.fileCount.toString(),
-                                fontSize = 12.sp,
-                                color = colors.textSecondary,
-                            )
+                    roots.forEach { root ->
+                        val children = topics.filter { it.parentId == root.id }
+                        TopicRow(
+                            topic = root,
+                            indent = false,
+                            hasChildren = children.isNotEmpty(),
+                            isExpanded = root.id in expanded,
+                            onToggle = {
+                                expanded = if (root.id in expanded) expanded - root.id else expanded + root.id
+                            },
+                        )
+                        if (children.isNotEmpty() && root.id in expanded) {
+                            children.forEach { child ->
+                                TopicRow(
+                                    topic = child,
+                                    indent = true,
+                                    hasChildren = false,
+                                    isExpanded = false,
+                                    onToggle = null,
+                                )
+                            }
                         }
                     }
                 }

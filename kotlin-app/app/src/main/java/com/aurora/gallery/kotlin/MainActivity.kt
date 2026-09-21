@@ -50,6 +50,7 @@ import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
+import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
@@ -307,7 +308,7 @@ class MainActivity : ComponentActivity() {
                         thumbnailLoader = viewModel.thumbnailLoader,
                         onFolderClick = { viewModel.openFolder(it) },
                         onTopicClick = { viewModel.appState.openTopic(it.id) },
-                        onCreateTopic = { name -> viewModel.createTopic(name) },
+                        onCreateTopic = { name, parentId -> viewModel.createTopic(name, parentId) },
                         onAddToTopic = { topicId, ids ->
                             viewModel.addFilesToTopic(topicId, ids) { ok ->
                                 Toast.makeText(
@@ -489,8 +490,8 @@ fun App(
     onFolderClick: (Folder) -> Unit,
     /** 点专题卡片 = 进专题详情（3.2）。 */
     onTopicClick: (uniffi.aurora_core.FfiTopic) -> Unit,
-    /** 新建专题（3.2，名称经弹窗输入后落库）。 */
-    onCreateTopic: (String) -> Unit,
+    /** 新建专题（3.2；parentId null=根专题，非 null=在该专题下建子专题）。 */
+    onCreateTopic: (String, String?) -> Unit,
     /** 3.2 归入：把选中图加入专题（宿主落库 + 反馈）。 */
     onAddToTopic: (topicId: String, fileIds: Set<String>) -> Unit,
     /** 3.2 对称操作：从专题移除选中图。 */
@@ -518,6 +519,8 @@ fun App(
     var showCreateTopic by remember { mutableStateOf(false) }
     // M4a 3.2 专题选择弹窗（选择模式「更多」→「加入专题…」触发）
     var showTopicPicker by remember { mutableStateOf(false) }
+    // 3.2④ 建专题弹窗的目标父级：总览按钮=null（根专题），详情子专题区=当前专题
+    var createTopicParent by remember { mutableStateOf<String?>(null) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
     val ptrState = remember { PullToRefreshState() }
 
@@ -548,6 +551,14 @@ fun App(
     val currentTopicName = tab.activeTopicId?.let { id ->
         topics.firstOrNull { it.id == id }?.name
     }
+    // 3.2④ 两层专题（对齐桌面：顶层只显示根专题 TopicModule:860；子专题区只渲染在根
+    // 专题详情 :945/:2072——子专题里没有这个区，子专题不能再建子专题）
+    val rootTopics = topics.filter { it.parentId == null }
+    val childTopics = tab.activeTopicId?.let { id -> topics.filter { it.parentId == id } } ?: emptyList()
+    // 当前详情里的专题是否根专题（子专题详情不渲染子专题区/建子专题入口）
+    val currentTopicIsRoot = tab.activeTopicId?.let { id ->
+        topics.firstOrNull { it.id == id }?.parentId == null
+    } ?: false
 
     // 「更多」菜单项（3.2 归入入口；其余项归 4.3 收口）：
     //  - 文件夹网格里多选 → 「加入专题…」（桌面同位：文件右键菜单的添加到主题）
@@ -655,6 +666,7 @@ fun App(
                 tagsOverviewSelected = inTagsOverview,
                 topicsOverviewSelected = inTopicsOverview,
                 foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
+                browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )
         }
@@ -745,26 +757,73 @@ fun App(
                 )
                 // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
                 inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
-                // 专题总览列表（3.2）：卡片网格 + 常驻「新建专题」按钮
+                // 专题总览列表（3.2）：根专题卡片网格 + 常驻「新建专题」按钮
                 inTopicsList -> TopicsOverview(
-                    topics = topics,
+                    topics = rootTopics,
                     coverImages = coverImagesById,
                     thumbnailLoader = thumbnailLoader,
                     onTopicClick = { onTopicClick(it) },
-                    onCreateTopic = { showCreateTopic = true },
+                    onCreateTopic = {
+                        createTopicParent = null
+                        showCreateTopic = true
+                    },
                     initialScrollAnchor = state.topicsOverviewScrollAnchor,
                     onScrollChanged = { state.topicsOverviewScrollAnchor = it },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
-                // 专题详情（3.2）与文件夹内网格同一套图片网格（选择/查看器共用），只是序列源不同
-                inTopicDetail || inBrowser -> {
+                // 专题详情（3.2④ 两层）：根专题详情有子专题区（含建子专题入口）；
+                // 子专题详情没有这个区（桌面 :2072 `!currentTopic.parentId` 同构）
+                inTopicDetail -> Column(Modifier.fillMaxWidth().weight(1f)) {
+                    if (currentTopicIsRoot) {
+                        TopicChildrenSection(
+                            children = childTopics,
+                            coverImages = coverImagesById,
+                            thumbnailLoader = thumbnailLoader,
+                            onChildClick = { onTopicClick(it) },
+                            onCreateChild = {
+                                createTopicParent = tab.activeTopicId
+                                showCreateTopic = true
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     if (displayImages.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
                             val emptyText = when {
                                 hasCondition -> "无匹配图片"
                                 tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
-                                inTopicDetail -> "专题里还没有图片"
+                                else -> "专题里还没有图片"
+                            }
+                            Text(emptyText, color = AuroraTheme.colors.textSecondary)
+                        }
+                    } else {
+                        Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                            FileGrid(
+                                images = displayImages,
+                                selectedIds = tab.selectedFileIds,
+                                thumbnailLoader = thumbnailLoader,
+                                onItemClick = onImageClick,
+                                onItemLongClick = onImageLongPress,
+                                layoutMode = tab.layoutMode,
+                                groupBy = state.groupBy,
+                                level = state.gridLevel,
+                                onLevelChange = { state.gridLevel = it },
+                                sidebarVisible = state.layout.isSidebarVisible,
+                                pullToRefreshState = null,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                }
+                // 文件夹内网格（选择/查看器共用同一展示序列）
+                inBrowser -> {
+                    if (displayImages.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                            val emptyText = when {
+                                hasCondition -> "无匹配图片"
+                                tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
                                 else -> "文件夹为空"
                             }
                             Text(emptyText, color = AuroraTheme.colors.textSecondary)
@@ -782,7 +841,7 @@ fun App(
                                 level = state.gridLevel,
                                 onLevelChange = { state.gridLevel = it },
                                 sidebarVisible = state.layout.isSidebarVisible,
-                                pullToRefreshState = if (inBrowser) ptrState else null,
+                                pullToRefreshState = ptrState,
                                 onPullToRefresh = onPullRefresh,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -836,7 +895,7 @@ fun App(
             onDismiss = { showCreateTopic = false },
             onConfirm = { name ->
                 showCreateTopic = false
-                onCreateTopic(name)
+                onCreateTopic(name, createTopicParent)
             },
         )
     }

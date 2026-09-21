@@ -223,6 +223,12 @@ fun TreeSidebar(
      * 也是 null（跨文件夹的全库标签结果），只看前者会跟人物/标签总览的高亮同屏双亮。
      */
     foldersOverviewSelected: Boolean = false,
+    /**
+     * 正处于文件夹内部（`ViewMode.BROWSER`）。文件夹行的选中高亮以此为开关：
+     * `openOverview` 按 React 语义保留 folderId（返回时回到原文件夹），但人已经在
+     * 专题/标签总览里，行再亮着就会跟专题粉/标签蓝同屏双亮（3.2 验收反馈 ②）。
+     */
+    browserActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -305,7 +311,7 @@ fun TreeSidebar(
                     sortedFolders.forEach { folder ->
                         FolderRow(
                             folder = folder,
-                            selected = folder.id == currentFolderId,
+                            selected = browserActive && folder.id == currentFolderId,
                             onClick = { onFolderClick(folder) },
                         )
                     }

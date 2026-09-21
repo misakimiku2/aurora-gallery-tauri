@@ -386,11 +386,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 新建根专题（M4a 3.2 的「建专题」入口，对齐 React `handleCreateTopic(null, name)`）。
+     * 新建专题（M4a 3.2，对齐 React `handleCreateTopic(parentId, name)`）。[parentId]
+     * 为 null = 根专题（专题总览的「新建专题」按钮）；非 null = 在该专题详情里建
+     * **子专题**（子专题区头部的按钮，桌面 TopicModule.tsx:2108 同位）。
      * type 恒 "TOPIC"（React 默认值）；成员为空，不调 set_topic_files（与 React 同注：
-     * upsert_topic 只写元数据）。
+     * upsert_topic 只写元数据）。桌面严格两层：子专题详情不再渲染子专题区（UI 层约束，
+     * 这里不拦——万一将来要三层，数据层不用动）。
      */
-    fun createTopic(name: String, onDone: (Boolean) -> Unit = {}) {
+    fun createTopic(name: String, parentId: String? = null, onDone: (Boolean) -> Unit = {}) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
             onDone(false)
@@ -400,7 +403,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             val now = System.currentTimeMillis()
             val topic = FfiTopic(
                 id = UUID.randomUUID().toString(),
-                parentId = null,
+                parentId = parentId,
                 name = trimmed,
                 description = null,
                 topicType = "TOPIC",
@@ -430,6 +433,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /**
      * 把一批图归入专题（M4a 3.2 的「归入」入口；Rust 原语在 1.1 同款语义：已在内成员
      * 不重复、新成员追加尾部）。归入后成员计数变了，[reloadTopics] 必须跑。
+     *
+     * **首图自动成封面**（对齐桌面 `useTopics.ts:89-99`）：专题还没有封面时，把成员里
+     * 第一张图片设为封面——否则总览卡片一直是占位图（3.2 验收反馈 ①）。upsert_topic
+     * 只写元数据行、不动成员关联（桌面同注），所以追加这条 upsert 是安全的。
      */
     fun addFilesToTopic(topicId: String, fileIds: Set<String>, onDone: (Boolean) -> Unit = {}) {
         if (fileIds.isEmpty()) {
@@ -438,7 +445,26 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { addFilesToTopic(topicId, fileIds.toList()) }.also {
+                runCatching {
+                    addFilesToTopic(topicId, fileIds.toList())
+                    // 无封面 → 成员按加入次序的第一张图（getTopicFiles 保序，
+                    // listImagesByIds 只回图片、缺失 id 静默跳过）
+                    val topic = topics.value.firstOrNull { it.id == topicId }
+                    if (topic != null && topic.coverFileId == null) {
+                        val members = getTopicFiles(topicId)
+                        val firstImage = members.takeIf { it.isNotEmpty() }
+                            ?.let { listImagesByIds(it) }
+                            ?.firstOrNull()
+                        if (firstImage != null) {
+                            upsertTopic(
+                                topic.copy(
+                                    coverFileId = firstImage.id,
+                                    updatedAt = System.currentTimeMillis(),
+                                )
+                            )
+                        }
+                    }
+                }.also {
                     if (it.isFailure) Log.w(TAG, "[Topics] addFiles failed", it.exceptionOrNull())
                 }.isSuccess
             }
@@ -451,6 +477,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * 从专题移除一批图（3.2 详情页的对称操作；归属关系在 topic_files，不动图片本身）。
      * Rust 原语是单文件的，这里在一个 IO 块里逐条调——选择集通常是个位数，且失败要
      * 逐条记日志而不是整体回滚（没有事务要求：成员关系本就是一行一条）。
+     *
+     * **封面改指**：桌面移除成员不处理封面（coverFileId 留着已移出的图，卡片还显示它），
+     * 这里按修正语义处理——封面在被移除集合里时改指剩余成员的第一张图，专题空了才清空。
      */
     fun removeFilesFromTopic(topicId: String, fileIds: Set<String>, onDone: (Boolean) -> Unit = {}) {
         if (fileIds.isEmpty()) {
@@ -468,7 +497,26 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                         Log.w(TAG, "[Topics] removeFile failed id=$id", e)
                     }
                 }
-                success == fileIds.size
+                val allRemoved = success == fileIds.size
+                // 封面改指（失败也应尝试：能删多少算多少，封面指向已移出的图更难看）
+                val topic = topics.value.firstOrNull { it.id == topicId }
+                if (allRemoved && topic?.coverFileId != null && topic.coverFileId in fileIds) {
+                    try {
+                        val remaining = getTopicFiles(topicId)
+                        val nextCover = remaining.takeIf { it.isNotEmpty() }
+                            ?.let { listImagesByIds(it) }
+                            ?.firstOrNull()
+                        upsertTopic(
+                            topic.copy(
+                                coverFileId = nextCover?.id,
+                                updatedAt = System.currentTimeMillis(),
+                            )
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Topics] cover re-point failed", e)
+                    }
+                }
+                allRemoved
             }
             if (ok) {
                 reloadTopics()
