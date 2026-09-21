@@ -12,11 +12,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -289,6 +292,73 @@ fun CreateTopicDialog(
             TextButton(onClick = onDismiss) {
                 Text("取消", color = colors.textPrimary)
             }
+        },
+    )
+}
+
+/**
+ * 专题选择弹窗（M4a 3.2 的「归入」链路最后一跳：选择模式 → 更多 → 加入专题 → 选目标）。
+ * 对齐桌面 'add-to-topic' 模态（ContextMenu.tsx:490），列表只列根专题（嵌套归 M6）。
+ * 无专题时给引导文案而不是空列表——用户第一次用不会卡在「点加入后无处可去」。
+ */
+@Composable
+fun TopicPickerDialog(
+    topics: List<FfiTopic>,
+    onDismiss: () -> Unit,
+    onPick: (FfiTopic) -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("加入专题") },
+        text = {
+            if (topics.isEmpty()) {
+                Text(
+                    "暂无专题。先在侧栏「专题」里新建一个，再把图收进来。",
+                    color = colors.textSecondary,
+                )
+            } else {
+                Column(
+                    Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    topics.forEach { topic ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onPick(topic) }
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = IconLayoutBig,
+                                contentDescription = null,
+                                tint = Color(0xFFEC4899),
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.size(10.dp))
+                            Text(
+                                topic.name,
+                                fontSize = 15.sp,
+                                color = colors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                topic.fileCount.toString(),
+                                fontSize = 12.sp,
+                                color = colors.textSecondary,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("取消", color = colors.textPrimary) }
         },
     )
 }

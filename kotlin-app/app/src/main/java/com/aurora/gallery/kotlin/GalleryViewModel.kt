@@ -447,13 +447,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** 从专题移除一张图（3.2 详情页的对称操作；归属关系在 topic_files，不动图片本身）。 */
-    fun removeFileFromTopic(topicId: String, fileId: String, onDone: (Boolean) -> Unit = {}) {
+    /**
+     * 从专题移除一批图（3.2 详情页的对称操作；归属关系在 topic_files，不动图片本身）。
+     * Rust 原语是单文件的，这里在一个 IO 块里逐条调——选择集通常是个位数，且失败要
+     * 逐条记日志而不是整体回滚（没有事务要求：成员关系本就是一行一条）。
+     */
+    fun removeFilesFromTopic(topicId: String, fileIds: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        if (fileIds.isEmpty()) {
+            onDone(false)
+            return
+        }
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { removeFileFromTopic(topicId, fileId) }.also {
-                    if (it.isFailure) Log.w(TAG, "[Topics] removeFile failed", it.exceptionOrNull())
-                }.isSuccess
+                var success = 0
+                for (id in fileIds) {
+                    try {
+                        removeFileFromTopic(topicId, id)
+                        success++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Topics] removeFile failed id=$id", e)
+                    }
+                }
+                success == fileIds.size
             }
             if (ok) {
                 reloadTopics()

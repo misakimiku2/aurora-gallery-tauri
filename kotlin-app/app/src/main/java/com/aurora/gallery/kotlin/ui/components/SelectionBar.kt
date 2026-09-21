@@ -13,6 +13,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,9 +38,13 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
  * 按钮触控目标 48dp（React w-10 h-10 是 40dp 视觉 + hover 边距；触屏最小命中目标按
  * desktop-to-android 规范扩到 48dp）。删除为红色（React text-red-500 = #EF4444）。
  *
- * M1 边界：「更多」按钮仅占位（React 打开的是文件操作上下文菜单——复制/移动/标签等
- * M2+ 能力），点击提示后续提供。
+ * 「更多」菜单（M4a 3.2 起）：[moreActions] 非空时点击弹出 DropdownMenu（当前只有
+ * 「加入专题…」/「从专题移除」，是 3.2 的归入入口）；为空时退回 [onMore] 占位 Toast
+ * ——上下文菜单的其余项（复制/移动/粘贴标签）归 4.3 收口时再补，不在这里预做。
  */
+/** 「更多」菜单项（标签 + 动作；仅 3.2 的归入/移除，4.3 扩充时再加字段）。 */
+data class SelectionMoreAction(val label: String, val onClick: () -> Unit)
+
 @Composable
 fun SelectionBar(
     selectedCount: Int,
@@ -46,11 +54,15 @@ fun SelectionBar(
     onExit: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
+    /** [moreActions] 为空时的占位行为（Toast，M1 边界）。 */
     onMore: () -> Unit,
+    /** 「更多」的菜单项；非空 = 点击弹出菜单（3.2 归入专题入口）。 */
+    moreActions: List<SelectionMoreAction> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
     val allSelected = totalCount > 0 && selectedCount >= totalCount
+    var moreOpen by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -102,13 +114,29 @@ fun SelectionBar(
             )
         }
         Spacer(Modifier.size(4.dp))
-        SelBarButton(onClick = onMore) {
-            Icon(
-                imageVector = SelIconMore,
-                contentDescription = "更多",
-                tint = colors.textSecondary,
-                modifier = Modifier.size(20.dp),
-            )
+        Box {
+            SelBarButton(onClick = { if (moreActions.isEmpty()) onMore() else moreOpen = true }) {
+                Icon(
+                    imageVector = SelIconMore,
+                    contentDescription = "更多",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            androidx.compose.material3.DropdownMenu(
+                expanded = moreOpen,
+                onDismissRequest = { moreOpen = false },
+            ) {
+                moreActions.forEach { action ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(action.label, color = colors.textPrimary, fontSize = 15.sp) },
+                        onClick = {
+                            moreOpen = false
+                            action.onClick()
+                        },
+                    )
+                }
+            }
         }
     }
 }

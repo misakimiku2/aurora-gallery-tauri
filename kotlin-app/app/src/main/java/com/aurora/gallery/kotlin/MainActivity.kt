@@ -48,8 +48,10 @@ import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
+import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
+import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -306,6 +308,26 @@ class MainActivity : ComponentActivity() {
                         onFolderClick = { viewModel.openFolder(it) },
                         onTopicClick = { viewModel.appState.openTopic(it.id) },
                         onCreateTopic = { name -> viewModel.createTopic(name) },
+                        onAddToTopic = { topicId, ids ->
+                            viewModel.addFilesToTopic(topicId, ids) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已加入专题" else "加入专题失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                if (ok) viewModel.appState.exitSelectionMode()
+                            }
+                        },
+                        onRemoveFromTopic = { topicId, ids ->
+                            viewModel.removeFilesFromTopic(topicId, ids) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已从专题移除" else "移除失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                if (ok) viewModel.appState.exitSelectionMode()
+                            }
+                        },
                         onShareSelection = { ids ->
                             viewModel.resolveSelectionUris(ids) { uris ->
                                 if (uris.isNotEmpty()) shareUris(uris)
@@ -469,6 +491,10 @@ fun App(
     onTopicClick: (uniffi.aurora_core.FfiTopic) -> Unit,
     /** 新建专题（3.2，名称经弹窗输入后落库）。 */
     onCreateTopic: (String) -> Unit,
+    /** 3.2 归入：把选中图加入专题（宿主落库 + 反馈）。 */
+    onAddToTopic: (topicId: String, fileIds: Set<String>) -> Unit,
+    /** 3.2 对称操作：从专题移除选中图。 */
+    onRemoveFromTopic: (topicId: String, fileIds: Set<String>) -> Unit,
     /** 4.2 分享：解析选中项为 URI 后由宿主拉起系统分享面板。 */
     onShareSelection: (Set<String>) -> Unit,
     /** 4.2 删除：解析选中项为 URI 后由宿主发起删除请求（含系统确认）。 */
@@ -490,6 +516,8 @@ fun App(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // M4a 3.2 新建专题弹窗（TopicsOverview 的「新建专题」按钮触发）
     var showCreateTopic by remember { mutableStateOf(false) }
+    // M4a 3.2 专题选择弹窗（选择模式「更多」→「加入专题…」触发）
+    var showTopicPicker by remember { mutableStateOf(false) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
     val ptrState = remember { PullToRefreshState() }
 
@@ -519,6 +547,21 @@ fun App(
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
         topics.firstOrNull { it.id == id }?.name
+    }
+
+    // 「更多」菜单项（3.2 归入入口；其余项归 4.3 收口）：
+    //  - 文件夹网格里多选 → 「加入专题…」（桌面同位：文件右键菜单的添加到主题）
+    //  - 专题详情里多选 → 「从专题移除」（对称操作）
+    val moreActions = when {
+        inBrowser -> listOf(
+            SelectionMoreAction("加入专题…") { showTopicPicker = true },
+        )
+        inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> listOf(
+            SelectionMoreAction("从专题移除") {
+                onRemoveFromTopic(tab.activeTopicId!!, tab.selectedFileIds)
+            },
+        )
+        else -> emptyList()
     }
 
     // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
@@ -631,9 +674,11 @@ fun App(
                     onDelete = { showDeleteConfirm = true },
                     onShare = { onShareSelection(tab.selectedFileIds) },
                     onMore = {
-                        // React 打开文件操作上下文菜单（复制/移动/标签等）；M2 接入
-                        Toast.makeText(context, "更多操作将随 M2 提供", Toast.LENGTH_SHORT).show()
+                        // 仅剩总览（文件夹卡片选择）会走到这里——文件网格的「更多」
+                        // 已是菜单（moreActions），见 SelectionBar
+                        Toast.makeText(context, "更多操作将随 M4b 提供", Toast.LENGTH_SHORT).show()
                     },
+                    moreActions = moreActions,
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
@@ -792,6 +837,17 @@ fun App(
             onConfirm = { name ->
                 showCreateTopic = false
                 onCreateTopic(name)
+            },
+        )
+    }
+
+    if (showTopicPicker) {
+        TopicPickerDialog(
+            topics = topics,
+            onDismiss = { showTopicPicker = false },
+            onPick = { topic ->
+                showTopicPicker = false
+                onAddToTopic(topic.id, tab.selectedFileIds)
             },
         )
     }
