@@ -52,6 +52,7 @@ import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
+import com.aurora.gallery.kotlin.ui.components.TopicCollapsibleDetail
 import com.aurora.gallery.kotlin.ui.components.TopicDashedEmpty
 import com.aurora.gallery.kotlin.ui.components.TopicHero
 import com.aurora.gallery.kotlin.ui.components.TopicSectionHeader
@@ -795,7 +796,7 @@ fun App(
                 )
                 // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
                 inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
-                // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面）
+                // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面；3.3fix 列数预测防跳档）
                 inTopicsList -> TopicsOverview(
                     topics = sortedRootTopics,
                     coverImages = coverImagesById,
@@ -815,74 +816,99 @@ fun App(
                             .putBoolean("sortAscending", ascending)
                             .apply()
                     },
+                    sidebarVisible = state.layout.isSidebarVisible,
                     initialScrollAnchor = state.topicsOverviewScrollAnchor,
                     onScrollChanged = { state.topicsOverviewScrollAnchor = it },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
-                // 专题详情（3.2④ 两层落地；3.3 对齐桌面详情：Hero 头图 + 区块化。Hero 与
-                // 区块头固定顶部、FileGrid 独立滚动——不动 FileGrid 滚动契约的结构妥协，
-                // 见 TopicDetail.kt 的 KDoc）
-                inTopicDetail -> Column(Modifier.fillMaxWidth().weight(1f)) {
+                // 专题详情（3.2④ 两层落地；3.3 对齐桌面详情：Hero 头图 + 区块化；
+                // 3.3fix 起 Hero/区块头可随滚动收起、图片区整页接续——见 TopicCollapsibleDetail）
+                inTopicDetail -> {
                     if (currentTopic == null) {
                         // activeTopicId 悬空（专题被删后的竞态窗口）；reloadTopics 会收敛
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("专题不存在", color = AuroraTheme.colors.textSecondary)
+                        Column(Modifier.fillMaxWidth().weight(1f)) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text("专题不存在", color = AuroraTheme.colors.textSecondary)
+                            }
                         }
-                    } else {
-                        TopicHero(
-                            topic = currentTopic,
-                            coverImage = currentTopic.coverFileId?.let { coverImagesById[it] },
-                            thumbnailLoader = thumbnailLoader,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (currentTopicIsRoot) {
-                            TopicChildrenSection(
-                                children = sortedChildTopics,
-                                coverImages = coverImagesById,
+                    } else if (displayImages.isEmpty()) {
+                        // 空态没有滚动主体，头部不需要收起逻辑
+                        Column(Modifier.fillMaxWidth().weight(1f)) {
+                            TopicHero(
+                                topic = currentTopic,
+                                coverImage = currentTopic.coverFileId?.let { coverImagesById[it] },
                                 thumbnailLoader = thumbnailLoader,
-                                onChildClick = { onTopicClick(it) },
-                                onCreateChild = {
-                                    createTopicParent = tab.activeTopicId
-                                    showCreateTopic = true
-                                },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                        }
-                        if (displayImages.isEmpty()) {
-                            Column(Modifier.weight(1f).fillMaxWidth()) {
-                                TopicSectionHeader(
-                                    icon = com.aurora.gallery.kotlin.ui.components.IconImages,
-                                    iconTint = com.aurora.gallery.kotlin.ui.components.TOPIC_SECTION_GREEN,
-                                    title = "图片",
+                            if (currentTopicIsRoot) {
+                                TopicChildrenSection(
+                                    children = sortedChildTopics,
+                                    coverImages = coverImagesById,
+                                    thumbnailLoader = thumbnailLoader,
+                                    onChildClick = { onTopicClick(it) },
+                                    onCreateChild = {
+                                        createTopicParent = tab.activeTopicId
+                                        showCreateTopic = true
+                                    },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
-                                Box(
-                                    Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
-                                    // 桌面空态是紧跟区块头的在流元素（不垂直居中）
-                                    contentAlignment = Alignment.TopCenter,
-                                ) {
-                                    val hasCondition =
-                                        tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
-                                    val emptyText = when {
-                                        hasCondition -> "无匹配图片"
-                                        tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
-                                        else -> "专题里还没有图片"
-                                    }
-                                    TopicDashedEmpty(
-                                        icon = com.aurora.gallery.kotlin.ui.components.IconImages,
-                                        text = emptyText,
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                                    )
-                                }
                             }
-                        } else {
                             TopicSectionHeader(
                                 icon = com.aurora.gallery.kotlin.ui.components.IconImages,
                                 iconTint = com.aurora.gallery.kotlin.ui.components.TOPIC_SECTION_GREEN,
                                 title = "图片",
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                            Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+                            Box(
+                                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
+                                contentAlignment = Alignment.TopCenter,
+                            ) {
+                                val hasCondition =
+                                    tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                                val emptyText = when {
+                                    hasCondition -> "无匹配图片"
+                                    tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                                    else -> "专题里还没有图片"
+                                }
+                                TopicDashedEmpty(
+                                    icon = com.aurora.gallery.kotlin.ui.components.IconImages,
+                                    text = emptyText,
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        TopicCollapsibleDetail(
+                            resetKey = tab.activeTopicId,
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            header = {
+                                TopicHero(
+                                    topic = currentTopic,
+                                    coverImage = currentTopic.coverFileId?.let { coverImagesById[it] },
+                                    thumbnailLoader = thumbnailLoader,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                if (currentTopicIsRoot) {
+                                    TopicChildrenSection(
+                                        children = sortedChildTopics,
+                                        coverImages = coverImagesById,
+                                        thumbnailLoader = thumbnailLoader,
+                                        onChildClick = { onTopicClick(it) },
+                                        onCreateChild = {
+                                            createTopicParent = tab.activeTopicId
+                                            showCreateTopic = true
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                TopicSectionHeader(
+                                    icon = com.aurora.gallery.kotlin.ui.components.IconImages,
+                                    iconTint = com.aurora.gallery.kotlin.ui.components.TOPIC_SECTION_GREEN,
+                                    title = "图片",
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            },
+                            body = {
                                 FileGrid(
                                     images = displayImages,
                                     selectedIds = tab.selectedFileIds,
@@ -898,8 +924,8 @@ fun App(
                                     pullToRefreshState = null,
                                     modifier = Modifier.fillMaxSize(),
                                 )
-                            }
-                        }
+                            },
+                        )
                     }
                 }
                 // 文件夹内网格（选择/查看器共用同一展示序列）

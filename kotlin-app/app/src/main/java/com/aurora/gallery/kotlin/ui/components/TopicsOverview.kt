@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,14 +74,18 @@ import java.util.Locale
  *  - 页头「专题」标题 + 排序菜单 + 蓝色实心「新建专题」按钮 → 常驻（触屏无 hover，
  *    桌面 Section 头 hover 的 + 在这里是实心按钮）；自动分类/来源筛选属桌面 AI 链路
  *    （M6），不做；
- *  - 排序（桌面 localStorage 持久化的 name/time × asc/desc）→ 宿主持久化同名语义，
- *    点同一字段 = 切换方向；点别的字段 = 换字段保持方向；
+ *  - 排序（桌面 localStorage 持久化的 name/time × asc/desc）→ 宿主持久化同名语义；
  *  - 右键菜单（重命名/设置封面/删除/智能创建）→ 归 4.3 长按菜单收口，本轮不做。
  *
  * 封面：有 coverFileId 的专题经 [coverImages]（VM 已解析的 Image）加载缩略图；没有或
  * 已失效 → 靛紫渐变 + 白色 Layout 图标占位。卡片左下计数 = [topicTreeTotals]（本专题
  * + 递归子专题，桌面 getTotalPersonCount/getTotalFileCount 同语义）；`fileCount` 是
  * 列表口径（fileIds 懒加载恒空，别用 fileIds.size——0.1 记过的坑）。
+ *
+ * [sidebarVisible] 是侧栏的**目标**状态：LazyVerticalGrid 没有列数动画，侧栏开合的
+ * 300ms 里若用 Adaptive 每帧重算列数，跨阈值瞬间整个网格会跳一档（3.3fix 用户反馈）。
+ * 这里学 FileGrid 3.5 的「列数预测」：列数按动画结束后的内容宽度一次收敛，动画期间
+ * 卡片只做连续的宽度缩放。
  */
 @Composable
 fun TopicsOverview(
@@ -98,6 +103,8 @@ fun TopicsOverview(
     sortOption: TopicSortOption = TopicSortOption.TIME,
     sortAscending: Boolean = false,
     onSortChange: (TopicSortOption, Boolean) -> Unit = { _, _ -> },
+    /** 侧栏目标可见性（列数预测用，见 KDoc）。 */
+    sidebarVisible: Boolean = false,
 ) {
     val colors = AuroraTheme.colors
     val totals = remember(topics) { topicTreeTotals(topics) }
@@ -168,9 +175,13 @@ fun TopicsOverview(
             androidx.compose.runtime.snapshotFlow { gridState.firstVisibleItemIndex }
                 .collect { onScrollChanged(it) }
         }
-        // 桌面卡片 = 3:4、高 350px（≈260px 宽）；Adaptive 220dp 在平板上每行 ~5 列，同桌面观感
+        // 桌面卡片 = 3:4、高 350px（≈260px 宽）。列数按侧栏目标状态的最终内容宽度一次
+        // 算死（FileGrid 3.5 列数预测同思路），开合动画期间只缩放不跳档
+        val screenWidthDp = LocalConfiguration.current.screenWidthDp
+        val targetContentWidth = screenWidthDp - (if (sidebarVisible) SIDEBAR_WIDTH_DP.value else 0f)
+        val cols = ((targetContentWidth + 16f) / (220f + 16f)).toInt().coerceAtLeast(1)
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 220.dp),
+            columns = GridCells.Fixed(cols),
             state = gridState,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -252,6 +263,12 @@ private fun topicSourceLabel(sourceType: String?): String? = when (sourceType) {
 }
 
 /**
+ * 专题卡阴影色（15% 黑）：Compose 阴影沿圆角裁剪边缘的抗锯齿像素会透出阴影色，
+ * 纯黑（默认）在四角聚成细黑边——柔灰后与桌面 shadow-lg（black/10 大模糊）观感一致。
+ */
+private val TopicCardShadowColor = Color(0x26000000)
+
+/**
  * 专题卡片（桌面 TopicModule :1864-1928 杂志式：3:4 封面、顶部黑渐变标题条、左下两行
  * 计数、右下类型胶囊、靛紫渐变占位、静态阴影 + 12dp 圆角 + 细边框）。整卡可点。
  */
@@ -270,7 +287,15 @@ private fun TopicCard(
         Modifier
             .fillMaxWidth()
             .aspectRatio(0.75f)
-            .shadow(elevation = 6.dp, shape = shape, clip = true)
+            // 阴影色调成 15% 黑：Compose 阴影在圆角裁剪边缘的抗锯齿像素会透出阴影色，
+            // 纯黑时四角出现细黑边（3.3fix 用户反馈）；柔灰后与桌面 shadow-lg 的观感一致
+            .shadow(
+                elevation = 5.dp,
+                shape = shape,
+                clip = true,
+                ambientColor = TopicCardShadowColor,
+                spotColor = TopicCardShadowColor,
+            )
             .background(colors.surface)
             .border(1.dp, colors.border, shape)
             .clickable(onClick = onClick),
@@ -653,7 +678,13 @@ private fun SubTopicCard(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.75f)
-                .shadow(elevation = 5.dp, shape = shape, clip = true)
+                .shadow(
+                    elevation = 5.dp,
+                    shape = shape,
+                    clip = true,
+                    ambientColor = TopicCardShadowColor,
+                    spotColor = TopicCardShadowColor,
+                )
                 .background(colors.surface),
         ) {
             var bmp by remember(topic.coverFileId) { mutableStateOf<Bitmap?>(null) }

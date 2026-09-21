@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,23 +31,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.wrapContentHeight
 import com.aurora.gallery.kotlin.ThumbnailLoader
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import uniffi.aurora_core.FfiTopic
@@ -55,13 +65,82 @@ import uniffi.aurora_core.Image
 /**
  * 专题详情的桌面化部件（M4a 3.3，对齐桌面 `TopicModule` renderDetail :2035-2293）。
  *
- * 与桌面的结构差：桌面详情整页滚动（Hero 随页滚走）；平板详情主体是 FileGrid（原生
- * RecyclerView，捏合换档/预取/滚动锚点都在它身上，不能嵌进 Compose 滚动列），所以
- * Hero 与区块头**固定在顶部**、图片区独立滚动——这是复用主网格的代价，视觉形制不变。
+ * 滚动结构（3.3fix 起）：桌面详情整页滚动；平板详情主体是 FileGrid（原生 RecyclerView），
+ * 通过 [TopicCollapsibleDetail] 的嵌套滚动桥接实现同款整页滚动——上滑先收起 Hero/区块头、
+ * 顶到底后图片区接续滚动，在网格顶部下滑先展开头部（CoordinatorLayout 语义）。依赖
+ * AndroidComposeView 的 View↔Compose 嵌套滚动互通（官方 interop API，RV 默认
+ * nestedScrollingEnabled=true）。
  *
  * backgroundFileId（桌面画布「设置为专题背景」）暂不参与 Hero：coverImagesById 快照
  * 只解析封面，背景要 VM 扩快照，而平板目前也没有产生背景图的入口（归 M6 互联态）。
  */
+
+/**
+ * 「可收起头部 + 图片网格」的整页滚动容器。
+ *
+ * 结构：头部槽位高度 = 头部自然高度 - 已收起量（底部对齐、顶部被裁掉），网格吃剩余
+ * 空间——所以收起过程是真实的布局让位（网格逐帧长高），不是 overlay 平移。收起量由
+ * [NestedScrollConnection] 驱动：上滑（dy<0）在 onPreScroll 里先收头部；网格顶到头
+ * 后的下滑（dy>0 剩余）在 onPostScroll 里先展头部。
+ *
+ * 未覆盖（记入清单 §8）：快速下滑（fling）的剩余速度不驱动头部展开——RV 的 fling
+ * 剩余走 onPostFling，这里没实现，展开靠拖拽；桌面是连续滚动所以无此差异感。
+ */
+@Composable
+fun TopicCollapsibleDetail(
+    /** 换专题时重置收起量与已测头部高度（宿主传 activeTopicId）。 */
+    resetKey: Any?,
+    modifier: Modifier = Modifier,
+    /** 头部内容（Hero + 子专题区 + 图片区块头）。自然高度随意，容器自适应。 */
+    header: @Composable () -> Unit,
+    /** 收起完成后的滚动主体（FileGrid）。 */
+    body: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    var headerFullPx by remember(resetKey) { mutableFloatStateOf(0f) }
+    var collapsePx by remember(resetKey) { mutableFloatStateOf(0f) }
+
+    val connection = remember(resetKey) {
+        object : NestedScrollConnection {
+            private fun take(dy: Float): Offset {
+                val prev = collapsePx
+                collapsePx = (collapsePx - dy).coerceIn(0f, headerFullPx)
+                return Offset(0f, prev - collapsePx)
+            }
+
+            // 上滑：头部先收（消费 dy<0），剩余才进网格
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
+                if (available.y < 0f && collapsePx < headerFullPx) take(available.y) else Offset.Zero
+
+            // 网格已在顶部的下滑（dy>0 剩余）：先展头部
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+                if (available.y > 0f && collapsePx > 0f) take(available.y) else Offset.Zero
+        }
+    }
+
+    Column(modifier.fillMaxSize().nestedScroll(connection)) {
+        // 头部槽位：未量到自然高度前先放开量（首帧 = 自然高度，量到后高度恒等不跳变）
+        val slotReady = headerFullPx > 0f
+        val slotHeight = with(density) { (headerFullPx - collapsePx).coerceAtLeast(0f).toDp() }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .then(if (slotReady) Modifier.height(slotHeight) else Modifier)
+                .clipToBounds()
+                // 内容按自然高度测量、底部对齐：槽位收缩时顶部先滑出裁剪区（桌面滚动语义）
+                .wrapContentHeight(align = Alignment.Bottom, unbounded = true),
+        ) {
+            Column(
+                Modifier.onSizeChanged { headerFullPx = it.height.toFloat() },
+            ) {
+                header()
+            }
+        }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            body()
+        }
+    }
+}
 @Composable
 fun TopicHero(
     topic: FfiTopic,
