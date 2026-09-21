@@ -58,7 +58,7 @@ A ✅ collation 实测（已完成，落点 core/src/collate.rs）──┐（1.
 - **底层不用动**：`core/src/db/persons.rs:27-125`、`db/topics.rs:143-387`、`db/file_metadata.rs:18-145` 已是纯函数；表由 `init_db()` 建（`db/mod.rs:100-190`，含 `topics::create_table` 与 `backfill_association_tables`），安卓库里已经存在。
 - **做法：另写 FFI DTO，不要给 `db::` 结构体加派生。** 这是 `ffi.rs` 现有的约定（`MediaImage` / `Folder` / `Image` 都是手写镜像 Record，从没给 `db::` 结构体加过派生），而且不这么做会撞两堵墙：
   1. **`serde_json::Value` 不是 UniFFI 类型**。`FileMetadata` 有 `tags: Option<serde_json::Value>`（`file_metadata.rs:10`）与 `ai_data`（`:13`），直接 `#[derive(uniffi::Record)]` 编译不过——而 `tags` 正是本里程碑的核心。DTO 里 `tags` 用 `Vec<String>`、`ai_data` 用 `Option<String>`（原始 JSON 文本，M4a 不解析）。
-  2. **UniFFI 0.32 不支持 `usize`**（`uniffi_core-0.32.0/src/ffi_converter_impls.rs:70-79` 只有 u8/i8/u16/i16/u32/i32/u64/i64/f32/f64）。撞三处：`PaginatedFiles.total: usize`、`db_get_topic_files_paginated(offset, limit: usize)`、`db_get_topic_cover_previews(preview_count: usize)`。DTO 与新导出函数一律用 `u64`（或 `u32`），在 FFI 层转。
+  2. **UniFFI 0.32 不支持 `usize`**（`uniffi_core-0.32.0/src/ffi_converter_impls.rs:70-79` 只有 u8/i8/u16/i16/u32/i32/u64/i64/f32/f64）。撞三处：`PaginatedFiles.total: usize`、`db_get_topic_files_paginated(offset, limit: usize)`、`db_get_topic_cover_previews(preview_count: usize)`。DTO 与新导出函数一律用 `i64`（v5 落地时改的选择：`u64` 生成到 Kotlin 侧是 `ULong`，与既有 DTO 全用 `i64`（`size` / `image_count` / `createdAt`）打架且混用得手动转换），在 FFI 层 `.max(0) as usize` 转回去。
   - 改 `db::` 结构体的字段类型来迁就 UniFFI 是**禁止**的：那会改到 `#[serde(rename_all = "camelCase")]` 的输出，动到 React 侧的序列化契约，违反 §1。
 - **类型上另外三个坑**（v1 提的，仍然成立）：`Topic` 里嵌了 `CoverCropData` 且有 `#[serde(rename = "type")]`（`topics.rs:21-22`）——UniFFI 不看 serde 属性，Kotlin 侧字段名会是 `topicType`，与 React 拿到的 `type` 不同名，别照 React 的字段名写 Kotlin；`HashMap<String, Vec<String>>`（`db_get_topic_cover_previews:136` 的返回）**UniFFI 原生支持，不需要额外配 record**；`db_upsert_file_metadata:194` 写入时会 `normalize_path(&metadata.path)`（v1 把这条挂到了 `db_get_all_file_metadata:205` 上，那条只是转发 `get_all_metadata`）——安卓侧 `path` 存的是 `content://` URI，`normalize_path` 对它是空操作（无反斜杠、非 Windows 前导斜杠），所以**真正要确认的是 `file_id` 语义而不是 path**（见 §0 已知边界）。
 - **`Topic.file_ids` 是懒加载的**（`topics.rs:34-37` 的注释）：列表查询时 `file_ids` 为空、`file_count` 才是列表用的计数。Kotlin 侧若按 `topic.fileIds.size` 显示计数会恒为 0，D11 选 ②/③ 时这是第一个会踩的坑。
@@ -177,9 +177,9 @@ A ✅ collation 实测（已完成，落点 core/src/collate.rs）──┐（1.
 | 任务 | 状态 | 结果与备注 |
 |---|---|---|
 | A 前置：ICU collation 可行性实测 | **完成**（v5，2026-09-21） | 落点 `core/src/collate.rs`（`group_collator` / `order_collator(locale)` / `group_key` / `sort_tags`，带 5 个单测）。cargo-ndk 双 ABI 通过；arm64 so +1.35 MB(+22%)；组键对 30,463 输入零差异；`zh` 组内次序在真实词集上零差异。唯一偏差 = `en` + 含汉字标签的组内次序（ICU 数据版本差），M4a 恒传 `zh` 不可达。详见 1.2 的 ✅ 条与 1.3 的三档判据。 |
-| 0.1 FFI 扩面（含 DTO 与按 id 读元数据） | 未开始 | |
-| 0.2 绑定与双 ABI so | 未开始 | |
-| 0.3 Kotlin 读写冒烟 | 未开始 | |
+| 0.1 FFI 扩面（含 DTO 与按 id 读元数据） | **完成**（2026-09-21） | 26 个导出（原 5 + 新 21：人物 4 / 专题 14 / 元数据 3）。手写镜像 Record `FfiPerson`/`FfiTopic`/`FfiCoverCrop`/`FfiFaceBox`/`FfiFileMetadata`/`FfiPaginatedFiles`；`tags` 收成 `Vec<String>`、`ai_data` 透传 JSON 文本、`usize` 走 `i64`（不是原定的 `u64`，理由见 0.1 第 2 条）。6 个 DTO 往返单测过（空数组/null/引号/反斜杠/中文/emoji/非字符串元素）。**注意**：空标签写 `NULL` 而非 `"[]"`，因为 `get_all_tags_for_classification`（`file_metadata.rs:149`）按 `tags IS NOT NULL` 判有无标签。 |
+| 0.2 绑定与双 ABI so | **完成**（2026-09-21） | `aurora_core.kt` 26 个 `fun` 齐、`FfiPaginatedFiles.total` 生成的是 `kotlin.Long`；arm64-v8a 与 x86_64 两份 so 同轮重编（6,466,848 / 6,352,840 字节，时间戳一致）。⚠ **ICU 那 1.35 MB 还没进 so**：`collate` 目前没有任何导出符号引用它，release 构建照例当死代码剥掉了（本轮只 +310 KB）。1.2 把 `get_grouped_tags` 接上之后必须重新量一次体积，别拿 Part A 那个数字当现状。 |
+| 0.3 Kotlin 读写冒烟 | **完成**（2026-09-21） | 挂在调试广播 `am broadcast -a aurora.debug.FFI_SMOKE`（`FfiSmoke.kt`，沿用 M3 的 `aurora.debug.PINCH` 那条路；Release 不注册，不进主链路）。**平板 SM-X808U（arm64）`nonce=M4a03t1` 与模拟器（x86_64）`nonce=M4a03e1` 各一次，四项全 PASS**：person 8 字段、topic 13 字段 + 懒加载契约（列表 `fileIds` 恒空、`getTopicFiles` 拿得到成员、分页 `total=3`）、metadata 8 字段（tags 含引号/反斜杠/中文/emoji/空串），以及失败路径「不存在的 file_id 返回 null 不抛异常」。日志每行都带本轮 nonce。 |
 | 1.1 标签读写原语下沉（四原语 + 批量粘贴判定） | 未开始 | |
 | 1.2 词表与分组计数下沉（含 collation 路径） | 未开始 | |
 | 1.3 一致性对照 | 未开始 | |

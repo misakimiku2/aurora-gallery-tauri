@@ -286,6 +286,12 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.PINCH"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
+            ContextCompat.registerReceiver(
+                this,
+                ffiDebugReceiver,
+                IntentFilter("aurora.debug.FFI_SMOKE"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
         }
     }
 
@@ -351,6 +357,17 @@ class MainActivity : ComponentActivity() {
             val listener = PinchGridSpanListener.lastInstance?.get() ?: return
             if (mode == "touch") listener.debugInjectTouchPinch(scale, steps, seed)
             else listener.debugInjectPinch(scale, steps)
+        }
+    }
+
+    /**
+     * M4a 0.3 冒烟钩子：`adb shell am broadcast -a aurora.debug.FFI_SMOKE`
+     * 跑一遍 0.1 新导出的人物/专题/元数据读写（含「读不存在的行返回 null」的失败路径），
+     * 结果只进日志。nonce 用来确认日志确实出自本轮。
+     */
+    private val ffiDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            runFfiSmoke(intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString())
         }
     }
 
