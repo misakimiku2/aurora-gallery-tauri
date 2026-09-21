@@ -720,6 +720,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_images(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_list_images_by_ids(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_list_images_by_tags(
     ): Int
     external fun uniffi_aurora_core_checksum_func_remove_file_from_topic(
@@ -804,6 +806,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_list_images(`folderId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_list_images_by_ids(`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_list_images_by_tags(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1018,6 +1022,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_list_images_by_ids() != 23589) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images_by_tags() != 10547) {
@@ -3080,6 +3087,23 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`folderId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 按 id 集合取图片（M4a 3.2）。顺序/缺行/只认 Image 的语义在
+         * `db::file_index::images_by_ids`（那里有注释），这里只做 DTO 搬运。
+         * 消费方：专题详情网格（`getTopicFiles` 的成员 id 补齐成 Image）与专题封面。
+         */
+    @Throws(AuroraException::class) fun `listImagesByIds`(`fileIds`: List<kotlin.String>): List<Image> {
+            return FfiConverterSequenceTypeImage.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_list_images_by_ids(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),_status)
 }
     )
     }

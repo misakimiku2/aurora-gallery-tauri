@@ -16,11 +16,16 @@ import java.util.concurrent.atomic.AtomicInteger
  *  - [FOLDERS_OVERVIEW]：文件夹总览（React 版 `folders-overview`；React 的根节点伪 id
  *    `__android_folders_root__` 在 Kotlin 端用 `folderId == null` 表示）；
  *  - [BROWSER]：文件夹内部网格（React 版 `browser`）；
- *  - [TAGS_OVERVIEW] / [PEOPLE_OVERVIEW]：侧栏对应 Section 头部进入的总览
- *    （React `handleNavigateAllTags` / `handleNavigateAllPeople`）。
- * 专题总览随 3.2 后半（TOPICS_OVERVIEW + activeTopicId）补枚举。
+ *  - [TAGS_OVERVIEW] / [PEOPLE_OVERVIEW] / [TOPICS_OVERVIEW]：侧栏对应 Section 头部
+ *    进入的总览（React `handleNavigateAllTags` / `handleNavigateAllPeople` /
+ *    `handleNavigateTopics`）。
+ *
+ * 专题详情**不设独立 ViewMode**（对齐 React：topics-overview + activeTopicId 非空即
+ * 详情），见 [TabState.activeTopicId]。
  */
-enum class ViewMode { FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW }
+enum class ViewMode {
+    FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW, TOPICS_OVERVIEW,
+}
 
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }
@@ -61,6 +66,8 @@ data class HistoryItem(
     val searchScope: SearchScope = SearchScope.ALL,
     /** 该位置生效的标签筛选（M4a 3.1）。不存进历史的话「点标签→返回」会退回带筛选的状态。 */
     val activeTags: List<String> = emptyList(),
+    /** 该位置打开的专题（M4a 3.2）。非空且 viewMode=TOPICS_OVERVIEW 即专题详情。 */
+    val activeTopicId: String? = null,
     val scrollTop: Int = 0,
 )
 
@@ -90,8 +97,8 @@ data class HistoryStack(
  * 单个标签页状态（Kotlin 化 React `TabState`，`src/types.ts:494-521`）。
  *
  * 只保留 M1 与近期里程碑会消费的字段，省略项及理由：
- *  - activePersonId / activeTopicId / selectedTopicIds / selectedPersonIds / selectedTagIds /
- *    aiFilter：人物与专题的筛选（数据源在 M6）与标签概览的多选集（3.2）再补；
+ *  - activePersonId / selectedTopicIds / selectedPersonIds / selectedTagIds /
+ *    aiFilter：人物与专题的筛选与多选集（人物数据源在 M6；专题多选随 4.3 长按菜单再补）；
  *  - isCompareMode / sessionName / currentPage：桌面画布与分页特性；
  *  - scrollToItemId：React 版跨页定位用，Kotlin 端 RV 锚点另有机制。
  *
@@ -114,6 +121,11 @@ data class TabState(
      * （`activeTags: [tag]`），生效范围是当前文件夹的展示序列。
      */
     val activeTags: List<String> = emptyList(),
+    /**
+     * 当前打开的专题（M4a 3.2）。非空且 viewMode=[ViewMode.TOPICS_OVERVIEW] 即专题
+     * 详情；列表态恒为 null。对齐 React `TabState.activeTopicId`。
+     */
+    val activeTopicId: String? = null,
     val dateFilter: DateFilter = DateFilter(),
     /** 本标签页的选中集合（React 版选中即按标签页隔离）。 */
     val selectedFileIds: Set<String> = emptySet(),
@@ -203,6 +215,9 @@ class AppState(
      */
     var tagsOverviewScrollAnchor: Int = 0
 
+    /** 专题总览（3.2）滚动位置记忆，语义同 [tagsOverviewScrollAnchor]。 */
+    var topicsOverviewScrollAnchor: Int = 0
+
     /** 面板可见性（3.5 在此之上做互斥开合）。 */
     var layout by mutableStateOf(initialLayout)
         private set
@@ -240,6 +255,7 @@ class AppState(
                 searchQuery = "",
                 searchScope = SearchScope.ALL,
                 activeTags = emptyList(),
+                activeTopicId = null,
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = tab.history.push(HistoryItem(folderId = folderId, viewMode = ViewMode.BROWSER)),
@@ -248,22 +264,51 @@ class AppState(
     }
 
     /**
-     * 进入总览视图（M4a 3.2：侧栏人物/标签 Section 头部点击，对齐 React
-     * `handleNavigateAllPeople` / `handleNavigateAllTags`——pushHistory 保留当前
-     * folderId，搜索与筛选复位，选中清空）。专题总览随 3.2 后半补。
+     * 进入总览视图（M4a 3.2：侧栏人物/标签/专题 Section 头部点击，对齐 React
+     * `handleNavigateAllPeople` / `handleNavigateAllTags` / `handleNavigateTopics`——
+     * pushHistory 保留当前 folderId，搜索与筛选复位，选中清空）。
      *
      * 复位对齐 React 的 pushHistory 实参（`usePersonTopicHandlers.ts`）：query=''、
      * scope=ALL、activeTags=[]——总览是「从头看全部」的入口，带着上一个文件夹的
-     * 搜索词进总览只会得到一个看不懂的空列表。
+     * 搜索词进总览只会得到一个看不懂的空列表。activeTopicId 一并归 null：从专题详情
+     * 点侧栏「专题」头部应回到专题**列表**，不是停在原专题里。
      */
     fun openOverview(mode: ViewMode) {
-        require(mode == ViewMode.TAGS_OVERVIEW || mode == ViewMode.PEOPLE_OVERVIEW) {
-            "openOverview 只接受总览类视图，收到 $mode"
-        }
+        require(
+            mode == ViewMode.TAGS_OVERVIEW ||
+                mode == ViewMode.PEOPLE_OVERVIEW ||
+                mode == ViewMode.TOPICS_OVERVIEW,
+        ) { "openOverview 只接受总览类视图，收到 $mode" }
         selectionMode = false
         updateActiveTab { tab ->
             tab.copy(
                 viewMode = mode,
+                searchQuery = "",
+                searchScope = SearchScope.ALL,
+                activeTags = emptyList(),
+                activeTopicId = null,
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = tab.history.push(
+                    HistoryItem(
+                        folderId = tab.folderId,
+                        viewMode = mode,
+                    )
+                ),
+            )
+        }
+    }
+
+    /**
+     * 打开专题详情（M4a 3.2，对齐 React `handleNavigateTopic(topicId)`：TOPICS_OVERVIEW
+     * + activeTopicId，推历史）。返回经 [goBack] 退回专题列表。
+     */
+    fun openTopic(topicId: String) {
+        selectionMode = false
+        updateActiveTab { tab ->
+            tab.copy(
+                viewMode = ViewMode.TOPICS_OVERVIEW,
+                activeTopicId = topicId,
                 searchQuery = "",
                 searchScope = SearchScope.ALL,
                 activeTags = emptyList(),
@@ -272,7 +317,8 @@ class AppState(
                 history = tab.history.push(
                     HistoryItem(
                         folderId = tab.folderId,
-                        viewMode = mode,
+                        viewMode = ViewMode.TOPICS_OVERVIEW,
+                        activeTopicId = topicId,
                     )
                 ),
             )
@@ -312,6 +358,7 @@ class AppState(
                 searchQuery = step.searchQuery,
                 searchScope = step.searchScope,
                 activeTags = step.activeTags,
+                activeTopicId = step.activeTopicId,
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = it.history.copy(currentIndex = targetIndex),
@@ -458,6 +505,7 @@ class AppState(
                 viewMode = mode,
                 activeTags = next,
                 searchScope = scope,
+                activeTopicId = null,
                 selectedFileIds = emptySet(),
                 lastSelectedId = null,
                 history = it.history.push(

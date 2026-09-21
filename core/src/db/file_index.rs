@@ -184,6 +184,58 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     Ok(entries)
 }
 
+/// 按 id 集合取图片（M4a 3.2）。**保留入参顺序**、不在库中的 id 静默跳过——调用方
+/// 是专题：成员 id 来自 `topic_files`，而 MediaStore 对账可能已把对应行清掉（用户删了图），
+/// 这时该成员自然消失，不该报错炸掉整个专题详情。
+/// 只认 `file_type = 'Image'`：专题理论上可能挂了文件夹/视频 id，网格只吃图片。
+pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileIndexEntry>> {
+    use rusqlite::{params_from_iter, ToSql};
+    use std::collections::HashMap;
+
+    if file_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let marks = (1..=file_ids.len())
+        .map(|i| format!("?{}", i))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
+                width, height, format \
+         FROM file_index \
+         WHERE file_type = 'Image' AND file_id IN ({})",
+        marks
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let args: Vec<&dyn ToSql> = file_ids.iter().map(|t| t as &dyn ToSql).collect();
+    let rows = stmt.query_map(rusqlite::params_from_iter(args.iter()), |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: row.get(1)?,
+            path: row.get(2)?,
+            name: row.get(3)?,
+            file_type: row.get(4)?,
+            size: row.get(5)?,
+            created_at: row.get(6)?,
+            modified_at: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+            format: row.get(10)?,
+        })
+    })?;
+    let mut by_id: HashMap<String, FileIndexEntry> = HashMap::new();
+    for row in rows {
+        let e = row?;
+        by_id.insert(e.file_id.clone(), e);
+    }
+    // IN (...) 不保序；按入参顺序重排（专题成员的先后 = 加入时的次序，就是详情网格的
+    // 次序）。重复入参各自解析到同一行（输出与入参 1:1 对齐），缺的静默跳过。
+    Ok(file_ids
+        .iter()
+        .filter_map(|id| by_id.get(id).cloned())
+        .collect())
+}
+
 /// 通过 file_id 获取文件路径
 pub fn get_path_by_id(conn: &Connection, file_id: &str) -> Result<Option<String>> {
     let result = conn.query_row(
@@ -329,6 +381,33 @@ mod reconcile_tests {
 
         let count = get_all_entries(&conn).expect("read back").len();
         assert_eq!(count, 2, "重复对账不产生累积或丢失");
+    }
+
+    #[test]
+    fn images_by_ids_preserves_order_and_skips_missing() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+
+        let seed = vec![
+            entry("i2", None, "uri://i2", "i2.jpg", "Image"),
+            entry("i1", None, "uri://i1", "i1.jpg", "Image"),
+            // 非图片与库外 id：一个要被过滤，一个要被跳过
+            entry("fold", None, "uri://fold", "fold", "Folder"),
+            entry("i3", None, "uri://i3", "i3.jpg", "Image"),
+        ];
+        let mut conn = conn;
+        batch_upsert(&mut conn, &seed).expect("seed rows");
+
+        let ids = vec![
+            "i2".to_string(),
+            "gone".to_string(), // 不在库里：静默跳过
+            "i1".to_string(),
+            "fold".to_string(), // Folder：只认 Image，滤掉
+            "i2".to_string(),   // 重复入参：按顺序重复出现（行为可预期即可）
+        ];
+        let out = images_by_ids(&conn, &ids).expect("query");
+        let got: Vec<&str> = out.iter().map(|e| e.file_id.as_str()).collect();
+        assert_eq!(got, vec!["i2", "i1", "i2"], "保留入参顺序、跳缺失、滤非图片");
     }
 }
 

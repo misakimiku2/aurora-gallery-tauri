@@ -24,22 +24,30 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.FfiFileMetadata
+import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import uniffi.aurora_core.MediaImage
 import uniffi.aurora_core.TagGroup
+import uniffi.aurora_core.addFilesToTopic
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
+import uniffi.aurora_core.getAllTopics
 import uniffi.aurora_core.getGroupedTags
 import uniffi.aurora_core.getFileMetadata
+import uniffi.aurora_core.getTopicFiles
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
+import uniffi.aurora_core.listImagesByIds
 import uniffi.aurora_core.listImagesByTags
+import uniffi.aurora_core.removeFileFromTopic
 import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
+import uniffi.aurora_core.upsertTopic
 import java.io.File
+import java.util.UUID
 
 /**
  * 应用数据与 UI 状态的持有者（ViewModel：生存期跨越旋转等配置变更重建）。
@@ -79,8 +87,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 侧栏要看的分组 + 计数。**顺序由 Rust 定**，UI 侧不再排（清单 §1「排序规则只许有一套」）。 */
     val tagGroups = mutableStateOf<List<TagGroup>>(emptyList())
 
-    /** [reloadImages] 上次取数用的序列源，用来区分「换视图」与「同一视图热刷新」。 */
-    private var loadedImagesKey: Pair<String?, List<String>>? = null
+    // —— M4a 3.2 专题数据层 ——
+    // 与标签快照同一条纪律：总览/详情/选择弹窗三处都读这两份，唯一写者是 [reloadTopics]，
+    // 所有专题写操作（建/归入/移除）落库后必须调它刷新，不许自己改列表。
+
+    /** 全部专题（Rust `get_all_topics`）。列表口径用 [FfiTopic.fileCount]（fileIds 懒加载恒空）。 */
+    val topics = mutableStateOf<List<FfiTopic>>(emptyList())
+
+    /** 专题封面解析：coverFileId → Image（一次 `list_images_by_ids` 取齐）。 */
+    val coverImagesById = mutableStateOf<Map<String, Image>>(emptyMap())
+
+    /** [reloadImages] 上次取数用的序列源（folder|tags|topic 的复合 key），区分「换视图」与「同一视图热刷新」。 */
+    private var loadedImagesKey: String? = null
 
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
@@ -136,8 +154,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             val cached = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
             folders.value = cached
             // 标签快照走本地库、不依赖 MediaStore，先于全量扫描发布：否则扫描那几秒里
-            // 侧栏标签区是空的，重进应用的标签要等扫描跑完才回来。
+            // 侧栏标签区是空的，重进应用的标签要等扫描跑完才回来。专题同理（3.2）。
             reloadTagState()
+            reloadTopics()
             if (cached.isEmpty()) scanning.value = true
             try {
                 scanAndReconcile()
@@ -284,8 +303,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         folders.value = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
         Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
         // 对账可能清掉孤儿行（含 file_tags 指向的 file_id），标签快照跟着重算，
-        // 否则侧栏会数出几个网格里点不出来的标签。
+        // 否则侧栏会数出几个网格里点不出来的标签。专题成员同理（topic_files 的孤儿），
+        // fileCount 一并刷新。
         reloadTagState()
+        reloadTopics()
     }
 
     /**
@@ -342,40 +363,164 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 当前视图该显示哪些图，**唯一的取数口**（M4a 4.1）。
+     * 重算 [topics] / [coverImagesById]。调用点：启动（先于扫描，专题读本地库不等
+     * MediaStore）、对账尾部（删除图片会留下孤儿成员，fileCount 要跟上）、以及每个
+     * 专题写操作（建/归入/移除）落库之后。
+     */
+    suspend fun reloadTopics() {
+        try {
+            val list = withContext(Dispatchers.IO) { getAllTopics() }
+            topics.value = list
+            // 封面一次取齐：有 coverFileId 的专题通常寥寥（新专题没有封面），
+            // 空列表就不发查询。个别封面图已删除时 listImagesByIds 静默跳过，
+            // 该专题退回占位图。
+            val coverIds = list.mapNotNull { it.coverFileId }.distinct()
+            coverImagesById.value =
+                if (coverIds.isEmpty()) emptyMap()
+                else withContext(Dispatchers.IO) { listImagesByIds(coverIds) }
+                    .associateBy { it.id }
+            Log.i(TAG, "[Topics] reload count=${list.size} covers=${coverImagesById.value.size}")
+        } catch (e: Exception) {
+            Log.w(TAG, "[Topics] reload failed", e)
+        }
+    }
+
+    /**
+     * 新建根专题（M4a 3.2 的「建专题」入口，对齐 React `handleCreateTopic(null, name)`）。
+     * type 恒 "TOPIC"（React 默认值）；成员为空，不调 set_topic_files（与 React 同注：
+     * upsert_topic 只写元数据）。
+     */
+    fun createTopic(name: String, onDone: (Boolean) -> Unit = {}) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val topic = FfiTopic(
+                id = UUID.randomUUID().toString(),
+                parentId = null,
+                name = trimmed,
+                description = null,
+                topicType = "TOPIC",
+                coverFileId = null,
+                backgroundFileId = null,
+                coverCrop = null,
+                peopleIds = emptyList(),
+                fileIds = emptyList(),
+                sourceUrl = null,
+                createdAt = now,
+                updatedAt = now,
+                sourceType = null,
+                workName = null,
+                workNameCn = null,
+                fileCount = 0,
+            )
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { upsertTopic(topic) }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] create failed", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) reloadTopics()
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 把一批图归入专题（M4a 3.2 的「归入」入口；Rust 原语在 1.1 同款语义：已在内成员
+     * 不重复、新成员追加尾部）。归入后成员计数变了，[reloadTopics] 必须跑。
+     */
+    fun addFilesToTopic(topicId: String, fileIds: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        if (fileIds.isEmpty()) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { addFilesToTopic(topicId, fileIds.toList()) }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] addFiles failed", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) reloadTopics()
+            onDone(ok)
+        }
+    }
+
+    /** 从专题移除一张图（3.2 详情页的对称操作；归属关系在 topic_files，不动图片本身）。 */
+    fun removeFileFromTopic(topicId: String, fileId: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { removeFileFromTopic(topicId, fileId) }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] removeFile failed", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) {
+                reloadTopics()
+                reloadImages()
+            }
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 当前视图该显示哪些图，**唯一的取数口**（M4a 4.1 / 3.2）。
      *
-     * 两条序列源：
+     * 三条序列源：
+     *  - 专题详情（TOPICS_OVERVIEW + activeTopicId）→ `getTopicFiles` 成员 id 经
+     *    `list_images_by_ids` 补齐（成员次序 = 详情网格次序 = 加入次序）；
      *  - 有标签筛选 → Rust 按标签取**全库**图片（`list_images_by_tags`）。不能只筛当前
      *    文件夹：侧栏标签上的计数是全库口径，点进去只剩本文件夹那几张的话，同一屏上
      *    「5」和「2 张」自相矛盾。
      *  - 否则 → 当前文件夹的图片；没有文件夹（总览）就不取，保留上一次的结果没有意义。
      *
-     * 挂起函数，由 `MainActivity` 的 `LaunchedEffect(viewMode, folderId, activeTags)`
-     * 触发——导航与筛选都收敛到这一个触发点，不再各处自己 launch 一份。
+     * 挂起函数，由 `MainActivity` 的
+     * `LaunchedEffect(viewMode, folderId, activeTags, activeTopicId)` 触发——导航与筛选
+     * 都收敛到这一个触发点，不再各处自己 launch 一份。
      */
     suspend fun reloadImages() {
         val tab = appState.activeTab
-        if (tab.viewMode != ViewMode.BROWSER) return
+        val topicId = if (tab.viewMode == ViewMode.TOPICS_OVERVIEW) tab.activeTopicId else null
         val byTag = tab.activeTags.isNotEmpty()
-        if (!byTag && tab.folderId == null) return
-        val folderId = tab.folderId
-        val key = folderId to tab.activeTags
-        // 只在**序列源换了**（进文件夹 / 改筛选）时先清空：否则从 B 切回 A 的那一帧会
-        // 闪现上一个文件夹的内容。热刷新（MediaStore 变更）key 不变，不能清——清了就是闪白。
+        if (topicId == null) {
+            if (tab.viewMode != ViewMode.BROWSER) return
+            if (!byTag && tab.folderId == null) return
+        }
+        // 换视图的 key 必须覆盖三条序列源的所有输入
+        val key = buildString {
+            append("f=").append(tab.folderId ?: "-")
+            append("|g=").append(tab.activeTags.joinToString(","))
+            append("|t=").append(topicId ?: "-")
+        }
+        // 只在**序列源换了**（进文件夹 / 改筛选 / 换专题）时先清空：否则从 B 切回 A 的
+        // 那一帧会闪现上一个视图的内容。热刷新（MediaStore 变更）key 不变，不能清——清了就是闪白。
         if (key != loadedImagesKey) images.value = emptyList()
         loadedImagesKey = key
         val imgs = try {
             withContext(Dispatchers.IO) {
-                if (byTag) listImagesByTags(tab.activeTags) else listImages(folderId!!)
+                when {
+                    topicId != null -> {
+                        val memberIds = getTopicFiles(topicId)
+                        if (memberIds.isEmpty()) emptyList() else listImagesByIds(memberIds)
+                    }
+                    byTag -> listImagesByTags(tab.activeTags)
+                    else -> listImages(tab.folderId!!)
+                }
             }
         } catch (e: Exception) {
-            // 取数失败留空网格而不是旧内容：旧的可能是**另一个文件夹**的，比空着更误导
-            Log.w(TAG, "[Load] images failed byTag=$byTag folderId=$folderId", e)
+            // 取数失败留空网格而不是旧内容：旧的可能是**另一个视图**的，比空着更误导
+            Log.w(TAG, "[Load] images failed topic=$topicId byTag=$byTag folderId=${tab.folderId}", e)
             return
         }
         // 取数期间用户可能已经导航走或改了筛选，过期结果直接丢弃
         val now = appState.activeTab
-        if (now.viewMode == ViewMode.BROWSER && (now.folderId to now.activeTags) == key) {
+        val nowTopic = if (now.viewMode == ViewMode.TOPICS_OVERVIEW) now.activeTopicId else null
+        val nowKey = buildString {
+            append("f=").append(now.folderId ?: "-")
+            append("|g=").append(now.activeTags.joinToString(","))
+            append("|t=").append(nowTopic ?: "-")
+        }
+        if (nowKey == key) {
             images.value = imgs
         }
     }

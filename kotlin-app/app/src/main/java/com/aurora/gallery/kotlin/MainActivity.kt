@@ -45,9 +45,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
+import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -273,10 +275,10 @@ class MainActivity : ComponentActivity() {
             AuroraTheme(darkTheme = false) {
                 val appState = viewModel.appState
                 val tab = appState.activeTab
-                // 当前该显示哪批图（文件夹 or 标签命中的全库图）：导航与标签筛选都收敛到
+                // 当前该显示哪批图（文件夹 / 标签命中 / 专题成员）：导航与标签筛选都收敛到
                 // 这一个触发点。协程随 key 变化自动取消，所以「点进 B 还没查完」不会把 A
                 // 的结果盖上去——旧 openFolder 里手写的竞态守卫由结构化并发兜住了。
-                LaunchedEffect(tab.viewMode, tab.folderId, tab.activeTags) {
+                LaunchedEffect(tab.viewMode, tab.folderId, tab.activeTags, tab.activeTopicId) {
                     viewModel.reloadImages()
                 }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
@@ -297,9 +299,13 @@ class MainActivity : ComponentActivity() {
                         images = viewModel.images.value,
                         displayImages = displayImages,
                         tagGroups = viewModel.tagGroups.value,
+                        topics = viewModel.topics.value,
+                        coverImagesById = viewModel.coverImagesById.value,
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
                         onFolderClick = { viewModel.openFolder(it) },
+                        onTopicClick = { viewModel.appState.openTopic(it.id) },
+                        onCreateTopic = { name -> viewModel.createTopic(name) },
                         onShareSelection = { ids ->
                             viewModel.resolveSelectionUris(ids) { uris ->
                                 if (uris.isNotEmpty()) shareUris(uris)
@@ -452,9 +458,17 @@ fun App(
     displayImages: List<Image>,
     /** 侧栏标签 Section 的分组 + 计数（Rust 算好的顺序原样渲染，M4a 3.1）。 */
     tagGroups: List<TagGroup>,
+    /** 全部专题（M4a 3.2 总览网格）。 */
+    topics: List<uniffi.aurora_core.FfiTopic>,
+    /** coverFileId → Image（专题卡片封面）。 */
+    coverImagesById: Map<String, Image>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
+    /** 点专题卡片 = 进专题详情（3.2）。 */
+    onTopicClick: (uniffi.aurora_core.FfiTopic) -> Unit,
+    /** 新建专题（3.2，名称经弹窗输入后落库）。 */
+    onCreateTopic: (String) -> Unit,
     /** 4.2 分享：解析选中项为 URI 后由宿主拉起系统分享面板。 */
     onShareSelection: (Set<String>) -> Unit,
     /** 4.2 删除：解析选中项为 URI 后由宿主发起删除请求（含系统确认）。 */
@@ -474,6 +488,8 @@ fun App(
     var searchOpen by remember { mutableStateOf(false) }
     // 4.2 删除确认弹窗
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // M4a 3.2 新建专题弹窗（TopicsOverview 的「新建专题」按钮触发）
+    var showCreateTopic by remember { mutableStateOf(false) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
     val ptrState = remember { PullToRefreshState() }
 
@@ -495,9 +511,15 @@ fun App(
     val tagFilterTitle = tab.activeTags.joinToString("、") { it }
     val inBrowser =
         tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty())
-    // M4a 3.2 总览：侧栏人物/标签 Section 头部进入（专题随 3.2 后半补）
+    // M4a 3.2 总览：侧栏人物/标签/专题 Section 头部进入；专题详情 = TOPICS_OVERVIEW + activeTopicId
     val inTagsOverview = tab.viewMode == ViewMode.TAGS_OVERVIEW
     val inPeopleOverview = tab.viewMode == ViewMode.PEOPLE_OVERVIEW
+    val inTopicsOverview = tab.viewMode == ViewMode.TOPICS_OVERVIEW
+    val inTopicsList = inTopicsOverview && tab.activeTopicId == null
+    val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
+    val currentTopicName = tab.activeTopicId?.let { id ->
+        topics.firstOrNull { it.id == id }?.name
+    }
 
     // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
     // remember 键齐备：任一条件变化才重算，文件夹列表量级小、开销可忽略。
@@ -582,11 +604,13 @@ fun App(
                 tagGroups = tagGroups,
                 activeTags = tab.activeTags,
                 onTagClick = onTagClick,
-                // 人物/标签 Section 头部行主体 = 进对应总览（M4a 3.2）
+                // 人物/标签/专题 Section 头部 = 进对应总览（M4a 3.2）
                 onPeopleOverviewClick = { state.openOverview(ViewMode.PEOPLE_OVERVIEW) },
                 onTagsOverviewClick = { state.openOverview(ViewMode.TAGS_OVERVIEW) },
+                onTopicsOverviewClick = { state.openOverview(ViewMode.TOPICS_OVERVIEW) },
                 peopleOverviewSelected = inPeopleOverview,
                 tagsOverviewSelected = inTagsOverview,
+                topicsOverviewSelected = inTopicsOverview,
                 foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
                 modifier = Modifier.fillMaxHeight(),
             )
@@ -594,9 +618,10 @@ fun App(
         Column(Modifier.weight(1f).fillMaxHeight()) {
             // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）
             if (state.selectionMode) {
-                SelectionBar(
-                    selectedCount = tab.selectedFileIds.size,
-                    totalCount = if (inBrowser) displayImages.size else displayFolders.size,
+            SelectionBar(
+                selectedCount = tab.selectedFileIds.size,
+                // 专题详情（3.2）与文件夹网格同为图片选择；文件夹总览选的是文件夹
+                totalCount = if (inBrowser || inTopicDetail) displayImages.size else displayFolders.size,
                     onToggleSelectAll = {
                         val ids = if (inBrowser) currentImageIds.value else currentFolderIds.value
                         if (tab.selectedFileIds.size >= ids.size) state.deselectAll()
@@ -617,12 +642,14 @@ fun App(
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
                         inTagsOverview -> "标签"
                         inPeopleOverview -> "人物"
+                        inTopicDetail -> currentTopicName ?: "专题"
+                        inTopicsList -> "专题"
                         else -> currentFolder?.name ?: "文件夹"
                     },
                     canBack = tab.history.canBack,
                     onBack = { state.goBack() },
                     // 总览是从别处推入历史栈的位置，可退；文件夹总览（栈底）不显示返回键
-                    showBack = inBrowser || inTagsOverview || inPeopleOverview,
+                    showBack = inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview,
                     sidebarVisible = state.layout.isSidebarVisible,
                     onToggleSidebar = { state.toggleSidebar() },
                     searchQuery = tab.searchQuery,
@@ -673,65 +700,81 @@ fun App(
                 )
                 // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
                 inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
-                !inBrowser -> {
-                // clipToBounds：指示器空闲时藏在容器上方（负偏移），不裁剪会透出到工具栏
-                Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
-                    FoldersOverview(
-                        folders = displayFolders,
-                        thumbnailLoader = thumbnailLoader,
-                        onFolderClick = onFolderCardClick,
-                        onFolderLongClick = onFolderCardLongPress,
-                        level = state.gridLevel,
-                        onLevelChange = { state.gridLevel = it },
-                        // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
-                        sidebarVisible = state.layout.isSidebarVisible,
-                        // 4.1 选中态：总览的文件夹卡片同样高亮（边框 + 勾）
-                        selectedIds = tab.selectedFileIds,
-                        // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
-                        initialScrollTop = state.overviewScrollTop,
-                        onScrollChanged = { state.overviewScrollTop = it },
-                        emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
-                        else "暂无文件夹",
-                        pullToRefreshState = ptrState,
-                        onPullToRefresh = onPullRefresh,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
-                    PullToRefreshIndicator(
-                        state = ptrState,
-                        thresholdPx = ptrThresholdPx,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-                else -> {
-                if (displayImages.isEmpty()) {
-                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
-                        val emptyText = when {
-                            hasCondition -> "无匹配图片"
-                            tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
-                            else -> "文件夹为空"
+                // 专题总览列表（3.2）：卡片网格 + 常驻「新建专题」按钮
+                inTopicsList -> TopicsOverview(
+                    topics = topics,
+                    coverImages = coverImagesById,
+                    thumbnailLoader = thumbnailLoader,
+                    onTopicClick = { onTopicClick(it) },
+                    onCreateTopic = { showCreateTopic = true },
+                    initialScrollAnchor = state.topicsOverviewScrollAnchor,
+                    onScrollChanged = { state.topicsOverviewScrollAnchor = it },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+                // 专题详情（3.2）与文件夹内网格同一套图片网格（选择/查看器共用），只是序列源不同
+                inTopicDetail || inBrowser -> {
+                    if (displayImages.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                            val emptyText = when {
+                                hasCondition -> "无匹配图片"
+                                tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                                inTopicDetail -> "专题里还没有图片"
+                                else -> "文件夹为空"
+                            }
+                            Text(emptyText, color = AuroraTheme.colors.textSecondary)
                         }
-                        Text(emptyText, color = AuroraTheme.colors.textSecondary)
+                    } else {
+                        Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                            FileGrid(
+                                images = displayImages,
+                                selectedIds = tab.selectedFileIds,
+                                thumbnailLoader = thumbnailLoader,
+                                onItemClick = onImageClick,
+                                onItemLongClick = onImageLongPress,
+                                layoutMode = tab.layoutMode,
+                                groupBy = state.groupBy,
+                                level = state.gridLevel,
+                                onLevelChange = { state.gridLevel = it },
+                                sidebarVisible = state.layout.isSidebarVisible,
+                                pullToRefreshState = if (inBrowser) ptrState else null,
+                                onPullToRefresh = onPullRefresh,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
+                            PullToRefreshIndicator(
+                                state = ptrState,
+                                thresholdPx = ptrThresholdPx,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
-                } else {
+                }
+                // 文件夹总览（栈底 / 主界面）
+                else -> {
+                    // clipToBounds：指示器空闲时藏在容器上方（负偏移），不裁剪会透出到工具栏
                     Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
-                        FileGrid(
-                            images = displayImages,
-                            selectedIds = tab.selectedFileIds,
+                        FoldersOverview(
+                            folders = displayFolders,
                             thumbnailLoader = thumbnailLoader,
-                            onItemClick = onImageClick,
-                            onItemLongClick = onImageLongPress,
-                            layoutMode = tab.layoutMode,
-                            groupBy = state.groupBy,
+                            onFolderClick = onFolderCardClick,
+                            onFolderLongClick = onFolderCardLongPress,
                             level = state.gridLevel,
                             onLevelChange = { state.gridLevel = it },
+                            // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
                             sidebarVisible = state.layout.isSidebarVisible,
+                            // 4.1 选中态：总览的文件夹卡片同样高亮（边框 + 勾）
+                            selectedIds = tab.selectedFileIds,
+                            // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
+                            initialScrollTop = state.overviewScrollTop,
+                            onScrollChanged = { state.overviewScrollTop = it },
+                            emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
+                            else "暂无文件夹",
                             pullToRefreshState = ptrState,
                             onPullToRefresh = onPullRefresh,
                             modifier = Modifier.fillMaxSize(),
                         )
+                        // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
                         PullToRefreshIndicator(
                             state = ptrState,
                             thresholdPx = ptrThresholdPx,
@@ -740,8 +783,17 @@ fun App(
                     }
                 }
             }
-            }
         }
+    }
+
+    if (showCreateTopic) {
+        CreateTopicDialog(
+            onDismiss = { showCreateTopic = false },
+            onConfirm = { name ->
+                showCreateTopic = false
+                onCreateTopic(name)
+            },
+        )
     }
 
     if (showDeleteConfirm) {
@@ -751,7 +803,7 @@ fun App(
             title = { Text("删除所选") },
             text = {
                 Text(
-                    if (inBrowser) "确定删除所选的 $n 张图片吗？删除后可尝试在系统相册的回收站中找回。"
+                    if (inBrowser || inTopicDetail) "确定删除所选的 $n 张图片吗？删除后可尝试在系统相册的回收站中找回。"
                     else "确定删除所选 $n 个文件夹内的全部图片吗？删除后可尝试在系统相册的回收站中找回。",
                     color = AuroraTheme.colors.textPrimary,
                 )

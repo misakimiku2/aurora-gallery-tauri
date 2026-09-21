@@ -489,6 +489,29 @@ pub fn list_images_by_tags(tags: Vec<String>) -> Result<Vec<Image>, AuroraError>
         .collect())
 }
 
+/// 按 id 集合取图片（M4a 3.2）。顺序/缺行/只认 Image 的语义在
+/// `db::file_index::images_by_ids`（那里有注释），这里只做 DTO 搬运。
+/// 消费方：专题详情网格（`getTopicFiles` 的成员 id 补齐成 Image）与专题封面。
+#[uniffi::export]
+pub fn list_images_by_ids(file_ids: Vec<String>) -> Result<Vec<Image>, AuroraError> {
+    let conn = pool().get_connection();
+    let rows = db::file_index::images_by_ids(&conn, &file_ids).map_err(db_err)?;
+    Ok(rows
+        .into_iter()
+        .map(|e| Image {
+            id: e.file_id,
+            name: e.name,
+            content_uri: e.path,
+            width: e.width,
+            height: e.height,
+            size: e.size as i64,
+            created_at: e.created_at,
+            modified_at: e.modified_at,
+            format: e.format,
+        })
+        .collect())
+}
+
 /// 用 Rust 解码原图字节生成 JPEG 缩略图（最长边 256px，保持宽高比）。
 ///
 /// 用于「MINI_KIND 系统缩略图尺寸不足」时的兜底升级：Kotlin 端读取

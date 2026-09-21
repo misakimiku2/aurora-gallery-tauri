@@ -211,9 +211,12 @@ fun TreeSidebar(
     onPeopleOverviewClick: () -> Unit = {},
     /** 标签 Section 头部行主体点击 = 进标签总览（对齐 React onNavigateAllTags）。 */
     onTagsOverviewClick: () -> Unit = {},
-    /** 正处于人物/标签总览视图（对应 Section 头部按各自的彩高亮）。 */
+    /** 专题 Section 整行点击 = 进专题总览（M4a 3.2，对齐桌面 TopicSection onNavigateTopics）。 */
+    onTopicsOverviewClick: () -> Unit = {},
+    /** 正处于人物/标签/专题总览视图（对应 Section 头部按各自的彩高亮）。 */
     peopleOverviewSelected: Boolean = false,
     tagsOverviewSelected: Boolean = false,
+    topicsOverviewSelected: Boolean = false,
     /**
      * 正处于文件夹总览（`ViewMode.FOLDERS_OVERVIEW`）。本地相册头部的「根选中」必须是
      * 「folderId == null **且** 在总览」两个条件同时成立——4.1 起标签筛选视图 folderId
@@ -242,14 +245,17 @@ fun TreeSidebar(
             .width(SIDEBAR_WIDTH_DP)
             .padding(top = 10.dp, bottom = 16.dp),
     ) {
-        // 专题：M2 前仅入口占位，无展开语义（chevron opacity-0 占位，行不可点，对齐桌面）
+        // 专题：M4a 3.2 起整行可点 = 进专题总览（对齐桌面 TopicSection 的 onNavigateTopics，
+        // 无展开语义；行尾的 + 新建入口在总览页内常驻——触屏没有 hover）
         SectionHeader(
             title = "专题",
             icon = IconLayout,
             iconTint = SECTION_PINK,
             expanded = false,
-            onClick = null,
+            onClick = onTopicsOverviewClick,
             expandable = false,
+            selected = topicsOverviewSelected,
+            selectedColor = TOPIC_SELECT_PINK,
         )
 
         // React 各 Section 容器 mt-2（首个除外）：Section 间 8dp 空隙
@@ -739,6 +745,9 @@ private val SECTION_BLUE = Color(0xFF3B82F6)
 private val SECTION_PURPLE = Color(0xFFA855F7)
 private val SECTION_EMERALD = Color(0xFF10B981)
 private val SECTION_GRAY = Color(0xFF9CA3AF)
+
+/** 专题 Section 选中底色（桌面 TopicSection isSelected 的 #ee5ea5，比 pink-500 浅一档）。 */
+private val TOPIC_SELECT_PINK = Color(0xFFEE5EA5)
 
 // 侧栏文字灰阶（对齐 React 侧栏的 tailwind gray 色阶，非全局 token：桌面树文案比
 // token 的 textSecondary #737373 更具层次——标题 gray-500、行文字 gray-600、空态 gray-400）
