@@ -88,7 +88,20 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onLongPress(fileId: String)
         /** 用户切换了沉浸模式。immersive=true 表示进入沉浸，false 表示退出。 */
         fun onImmersiveToggle(immersive: Boolean)
-        /** 用户在原生层编辑了文件元数据（tags/description 等），JSON 字符串形如 {"tags":[...]} */
+        /**
+         * 用户在原生层编辑了文件元数据。`updatesJson` 是 **camelCase** 的 JSON 对象，
+         * 且**只带用户这次编辑过的那几个键**——缺键=不改，不是清空。
+         *
+         * 键集合（M4a 2.1 定死，改弹窗时同步改这里）：
+         *  - `tags`: `string[]`，该文件的标签**全集**（整体替换语义，宿主走 `setFileTags`）；
+         *  - `description`: `string`，可为空串（=清空描述）；
+         *  - `sourceUrl`: `string`，同上；
+         *  - `name`: `string`，查看器重命名弹窗。宿主**不写元数据行**（重命名改的是
+         *    MediaStore 的 `DISPLAY_NAME`，归 M4b），只给可见占位。
+         *
+         * 合并与整行读改写都在宿主侧（`GalleryViewModel.saveFileUpdates`），本类不做
+         * 任何落库判断，只负责把编辑结果原样报出去。
+         */
         fun onUpdateFile(fileId: String, updatesJson: String)
         /** 用户点击了抽屉里的调色板色块，请求按该颜色搜索。colorHex 形如 "#RRGGBB"。 */
         fun onColorSearch(colorHex: String)

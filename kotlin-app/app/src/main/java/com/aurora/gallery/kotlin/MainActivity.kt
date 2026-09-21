@@ -66,6 +66,8 @@ import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
+import org.json.JSONException
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
 
@@ -161,7 +163,40 @@ class MainActivity : ComponentActivity() {
         override fun onMore(fileId: String) = toastSoon("更多操作", "M4")
         override fun onLongPress(fileId: String) = toastSoon("长按上下文菜单", "M4")
         override fun onEditTags(fileId: String) = toastSoon("标签保存", "M4")
-        override fun onUpdateFile(fileId: String, updatesJson: String) = toastSoon("元数据保存", "M4")
+
+        /**
+         * M4a 2.1：查看器三个编辑弹窗的落库分支。键与语义见
+         * [NativeGalleryView.Listener.onUpdateFile] 的契约注释。
+         *
+         * 本方法是「查看器协议 → 数据层」的唯一适配点：解析在这里做，落库与快照重算在
+         * [GalleryViewModel.saveFileUpdates]，元数据面板（4.2）直接调后者、不经过这里。
+         */
+        override fun onUpdateFile(fileId: String, updatesJson: String) {
+            val updates = try {
+                JSONObject(updatesJson)
+            } catch (e: JSONException) {
+                Log.w("AuroraKotlin", "[Edit] updatesJson 解析失败: $updatesJson", e)
+                Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val tags = updates.optJSONArray("tags")?.let { arr ->
+                // getString 而非 optString：契约里 tags 恒为字符串数组（见 Listener 注释），
+                // 元素类型不对时宁可让这次保存炸在日志里，也不静默丢掉一个标签。
+                List(arr.length()) { arr.getString(it) }
+            }
+            val description = if (updates.has("description")) updates.getString("description") else null
+            val sourceUrl = if (updates.has("sourceUrl")) updates.getString("sourceUrl") else null
+            if (tags == null && description == null && sourceUrl == null) {
+                // 走到这里的实际只有 `{"name": …}`（查看器的重命名弹窗）。文件重命名改的是
+                // MediaStore 的 DISPLAY_NAME、不是元数据行，本地库侧归 M4b。
+                toastSoon("重命名", "M4b")
+                return
+            }
+            viewModel.saveFileUpdates(fileId, tags, description, sourceUrl) { ok ->
+                if (!ok) Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M4")
         override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
         override fun onCopyToFolder(fileId: String) = toastSoon("复制到文件夹", "M4")

@@ -31,9 +31,12 @@ import uniffi.aurora_core.TagGroup
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
 import uniffi.aurora_core.getGroupedTags
+import uniffi.aurora_core.getFileMetadata
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
+import uniffi.aurora_core.setFileTags
+import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
 import java.io.File
 
@@ -279,6 +282,59 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 对账可能清掉孤儿行（含 file_tags 指向的 file_id），标签快照跟着重算，
         // 否则侧栏会数出几个网格里点不出来的标签。
         reloadTagState()
+    }
+
+    /**
+     * 查看器编辑弹窗的**唯一**落库入口（M4a 2.1）。参数为 `null` 表示这次没编辑这一项，
+     * 与「编辑成空串」是两回事（清空描述是 `""`，不是 `null`）。
+     *
+     * 标签走 `setFileTags` 整体替换（`file_tags` 是安卓侧唯一真源，见 1.1）；描述与来源
+     * 网址走**读-改-写**：`upsertFileMetadata` 是整行 `ON CONFLICT DO UPDATE`，拿半空的
+     * 行去写会把另一边的字段冲掉。合并只在 Rust 之外做这一次，元数据面板（4.2）复用本函数，
+     * 不再各拼一遍整行。
+     */
+    fun saveFileUpdates(
+        fileId: String,
+        tags: List<String>? = null,
+        description: String? = null,
+        sourceUrl: String? = null,
+        onDone: (Boolean) -> Unit = {},
+    ) {
+        // path 在新建元数据行时才用得上（库里已有行则整行读回来了）。在主线程读
+        // images.value，不进 IO 块——Compose state 不该在别的线程读。
+        val contentUri = images.value.firstOrNull { it.id == fileId }?.contentUri.orEmpty()
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (tags != null) setFileTags(fileId, tags)
+                    if (description != null || sourceUrl != null) {
+                        val row = getFileMetadata(fileId) ?: FfiFileMetadata(
+                            fileId = fileId,
+                            path = contentUri,
+                            description = null,
+                            sourceUrl = null,
+                            aiData = null,
+                            category = null,
+                            updatedAt = null,
+                        )
+                        upsertFileMetadata(
+                            row.copy(
+                                description = description ?: row.description,
+                                sourceUrl = sourceUrl ?: row.sourceUrl,
+                            )
+                        )
+                    }
+                }.also {
+                    if (it.isFailure) {
+                        // 不弹「保存成功」的假反馈：这里失败=用户编辑的内容没了
+                        Log.w(TAG, "[Edit] save failed fileId=$fileId", it.exceptionOrNull())
+                    }
+                }.isSuccess
+            }
+            // 只有真写进去才重算快照：失败时重算会把库里旧值当新值刷回界面
+            if (ok) reloadTagState()
+            onDone(ok)
+        }
     }
 
     /**
