@@ -113,7 +113,8 @@ import kotlin.math.roundToInt
  *    禁用条件对齐 React `history.currentIndex <= 0`；总览（主界面）整键隐藏（2026-09-20
  *    用户要求：主界面不需要返回按键，[showBack] 控制）；
  *  - 搜索：点开替换标题为胶囊（React `isSearchOpen`），关闭时清空 query（对齐 React
- *    `onSetToolbarQuery('')` + close）；M1 只做文件名过滤，scope 下拉随 M2 标签补；
+ *    `onSetToolbarQuery('')` + close）；标签筛选已由 4.1 的标签弹层承载（SearchScope.TAG
+ *    走 activeTags 序列源），文本搜索的 scope 下拉（全部/文件/标签/文件夹）不做，归 M4b；
  *  - 排序菜单：排序字段/方向 + 分组方式（React sortMenuOpen 的菜单，选项不点走不收）；
  *  - 视图排布：三档循环按钮（2026-09-20 用户要求：改回切换式、不弹菜单）——
  *    grid → adaptive → masonry（模式集合 = React isAndroid 分支，无 list）；
@@ -630,6 +631,8 @@ internal fun AuroraMenuItem(
     onClick: () -> Unit,
     checked: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
+    /** 覆盖文字色（危险项红色等）；按压态仍强制白字。 */
+    textColor: Color? = null,
 ) {
     val colors = AuroraTheme.colors
     val interaction = remember { MutableInteractionSource() }
@@ -646,7 +649,11 @@ internal fun AuroraMenuItem(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, fontSize = 14.sp, color = if (pressed) Color.White else colors.textPrimary)
+        Text(text, fontSize = 14.sp, color = when {
+            pressed -> Color.White
+            textColor != null -> textColor
+            else -> colors.textPrimary
+        })
         when {
             checked -> Icon(
                 CheckMark,

@@ -4,9 +4,11 @@ import android.graphics.Bitmap
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,7 +80,10 @@ import java.util.Locale
  *    桌面 Section 头 hover 的 + 在这里是实心按钮）；自动分类/来源筛选属桌面 AI 链路
  *    （M6），不做；
  *  - 排序（桌面 localStorage 持久化的 name/time × asc/desc）→ 宿主持久化同名语义；
- *  - 右键菜单（重命名/设置封面/删除/智能创建）→ 归 4.3 长按菜单收口，本轮不做。
+ *  - 右键菜单（重命名/设置封面/删除/智能创建）→ 4.3 长按菜单收口：**重命名/删除**
+ *    在卡片长按弹层（[onRenameTopic]/[onDeleteTopic]，桌面 single 右键的触屏同位；
+ *    「设置专题封面」的同位入口挪到专题详情——选中一张成员图 → 更多菜单「设为封面」，
+ *    触屏上比「卡片右键再弹选图器」少一层模态；「智能创建」属 AI 链路归 M6。
  *
  * 封面：有 coverFileId 的专题经 [coverImages]（VM 已解析的 Image）加载缩略图；没有或
  * 已失效 → 靛紫渐变 + 白色 Layout 图标占位。卡片左下计数 = [topicTreeTotals]（本专题
@@ -98,6 +103,10 @@ fun TopicsOverview(
     thumbnailLoader: ThumbnailLoader,
     onTopicClick: (FfiTopic) -> Unit,
     onCreateTopic: () -> Unit,
+    /** 4.3 长按菜单：重命名（宿主弹输入框，走 upsertTopic 整行写）。 */
+    onRenameTopic: (FfiTopic) -> Unit = {},
+    /** 4.3 长按菜单：删除（宿主弹确认框，递归删子专题）。 */
+    onDeleteTopic: (FfiTopic) -> Unit = {},
     modifier: Modifier = Modifier,
     /** 返回总览时恢复的滚动位置（首个可见条目下标，同 [TagsOverview] 的锚点语义）。 */
     initialScrollAnchor: Int = 0,
@@ -221,6 +230,8 @@ fun TopicsOverview(
                         totals = totals[topic.id],
                         thumbnailLoader = thumbnailLoader,
                         onClick = { onTopicClick(topic) },
+                        onRename = { onRenameTopic(topic) },
+                        onDelete = { onDeleteTopic(topic) },
                     )
                 }
             }
@@ -291,8 +302,10 @@ private val TopicCardShadowColor = Color(0x26000000)
 
 /**
  * 专题卡片（桌面 TopicModule :1864-1928 杂志式：3:4 封面、顶部黑渐变标题条、左下两行
- * 计数、右下类型胶囊、靛紫渐变占位、静态阴影 + 12dp 圆角 + 细边框）。整卡可点。
+ * 计数、右下类型胶囊、靛紫渐变占位、静态阴影 + 12dp 圆角 + 细边框）。整卡可点；
+ * 长按弹「重命名/删除」菜单（桌面 single 右键的触屏同位，4.3）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TopicCard(
     topic: FfiTopic,
@@ -301,9 +314,13 @@ private fun TopicCard(
     totals: Pair<Int, Int>?,
     thumbnailLoader: ThumbnailLoader,
     onClick: () -> Unit,
+    onRename: () -> Unit = {},
+    onDelete: () -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val shape = RoundedCornerShape(12.dp)
+    var menuOpen by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -319,8 +336,16 @@ private fun TopicCard(
             )
             .background(colors.surface)
             .border(1.dp, colors.border, shape)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .onGloballyPositioned { anchor = it.boundsInWindow() },
     ) {
+        TopicCardMenuOverlay(
+            menuOpen = menuOpen,
+            onMenuOpenChange = { menuOpen = it },
+            anchor = anchor,
+            onRename = onRename,
+            onDelete = onDelete,
+        )
         var bmp by remember(cover?.id) { mutableStateOf<Bitmap?>(null) }
         LaunchedEffect(cover?.id) {
             val img = cover ?: return@LaunchedEffect
@@ -549,17 +574,21 @@ private fun NewTopicButton(onClick: () -> Unit) {
 /**
  * 新建专题弹窗（名称输入）。桌面同操作是小模态；触屏规范建议 Bottom Sheet，但单行
  * 文本输入沿用应用内既有的 AlertDialog 口径（删除确认等），不为此引一套弹层形制。
+ * 4.3 起同一弹窗复用为**重命名**（[title]/[initialName]/[confirmLabel]）。
  */
 @Composable
 fun CreateTopicDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+    title: String = "新建专题",
+    initialName: String = "",
+    confirmLabel: String = "创建",
 ) {
     val colors = AuroraTheme.colors
-    var name by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf(initialName) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("新建专题") },
+        title = { Text(title) },
         text = {
             OutlinedTextField(
                 value = name,
@@ -574,7 +603,7 @@ fun CreateTopicDialog(
                 onClick = { onConfirm(name.trim()) },
             ) {
                 Text(
-                    "创建",
+                    confirmLabel,
                     color = if (name.isNotBlank()) colors.primaryDeep else colors.textSecondary,
                 )
             }
@@ -605,6 +634,9 @@ fun TopicChildrenSection(
     thumbnailLoader: ThumbnailLoader,
     onChildClick: (FfiTopic) -> Unit,
     onCreateChild: () -> Unit,
+    /** 4.3 子专题卡长按菜单（与总览卡片同一套重命名/删除）。 */
+    onRenameChild: (FfiTopic) -> Unit = {},
+    onDeleteChild: (FfiTopic) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
@@ -672,6 +704,8 @@ fun TopicChildrenSection(
                         cover = children[i].coverFileId?.let { coverImages[it] },
                         thumbnailLoader = thumbnailLoader,
                         onClick = { onChildClick(children[i]) },
+                        onRename = { onRenameChild(children[i]) },
+                        onDelete = { onDeleteChild(children[i]) },
                     )
                 }
             }
@@ -679,22 +713,68 @@ fun TopicChildrenSection(
     }
 }
 
+/** 子专题长按菜单（与 [TopicCard] 同一套：重命名/删除，4.3）。 */
+@Composable
+private fun TopicCardMenuOverlay(
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    anchor: androidx.compose.ui.geometry.Rect,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    AuroraDropdown(
+        expanded = menuOpen,
+        anchorBoundsInWindow = anchor,
+        onDismissRequest = { onMenuOpenChange(false) },
+    ) {
+        AuroraMenuItem(
+            text = "重命名",
+            onClick = {
+                onMenuOpenChange(false)
+                onRename()
+            },
+        )
+        AuroraMenuDivider()
+        AuroraMenuItem(
+            text = "删除",
+            textColor = Color(0xFFEF4444),
+            onClick = {
+                onMenuOpenChange(false)
+                onDelete()
+            },
+        )
+    }
+}
+
 /** 子专题卡（桌面 :2116-2167：封面 + 下方居中衬线名称 + 人物/图片计数行）。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SubTopicCard(
     topic: FfiTopic,
     cover: Image?,
     thumbnailLoader: ThumbnailLoader,
     onClick: () -> Unit,
+    onRename: () -> Unit = {},
+    onDelete: () -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val shape = RoundedCornerShape(12.dp)
+    var menuOpen by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     Column(
         Modifier
             .width(176.dp)
             .clip(shape)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .onGloballyPositioned { anchor = it.boundsInWindow() },
     ) {
+        TopicCardMenuOverlay(
+            menuOpen = menuOpen,
+            onMenuOpenChange = { menuOpen = it },
+            anchor = anchor,
+            onRename = onRename,
+            onDelete = onDelete,
+        )
         Box(
             Modifier
                 .fillMaxWidth()

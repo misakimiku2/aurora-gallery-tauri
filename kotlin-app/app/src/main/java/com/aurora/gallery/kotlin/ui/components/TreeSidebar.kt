@@ -390,7 +390,7 @@ fun TreeSidebar(
         }
 
         Spacer(Modifier.height(8.dp))
-        // 画布：M2 前仅入口占位，无展开语义（对齐桌面 CanvasSection）
+        // 画布：M4b 前仅入口占位，无展开语义（对齐桌面 CanvasSection；视图归 M5）
         SectionHeader(
             title = "画布",
             icon = IconScan,

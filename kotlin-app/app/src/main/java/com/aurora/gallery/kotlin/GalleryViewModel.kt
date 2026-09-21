@@ -31,6 +31,7 @@ import uniffi.aurora_core.MediaImage
 import uniffi.aurora_core.TagGroup
 import uniffi.aurora_core.addFilesToTopic
 import uniffi.aurora_core.addTagsToFiles
+import uniffi.aurora_core.deleteTopic as deleteTopicFfi
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
 import uniffi.aurora_core.getAllTopics
@@ -384,6 +385,79 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     .isSuccess
             }
             if (ok) reloadTagState()
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 重命名专题（M4a 4.3 长按菜单；桌面 TopicModule 右键「重命名」同位）。FFI 没有
+     * 专门的 rename 导出，走 `upsertTopic` 整行写——它只写元数据行、不动成员关联
+     * （3.2 的自动封面同款路径已实证），快照里的 [topic] 直接 copy 即可。
+     */
+    fun renameTopic(topic: FfiTopic, newName: String, onDone: (Boolean) -> Unit = {}) {
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty()) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    upsertTopic(topic.copy(name = trimmed, updatedAt = System.currentTimeMillis()))
+                }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] rename failed", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) reloadTopics()
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 删除专题（M4a 4.3 长按菜单；桌面右键「删除」同位）。`delete_topic` 只删该专题的
+     * topics / topic_files / topic_people 三表行、**不级联子专题**，这里先把子专题
+     * （两层模型下只此一层）递归删掉再删自己；图片本身不受影响。删的是当前详情正打开
+     * 的专题时，宿主负责把 activeTopicId 清掉回列表。
+     */
+    fun deleteTopic(topic: FfiTopic, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    getAllTopics().filter { it.parentId == topic.id }.forEach { child ->
+                        deleteTopicFfi(child.id)
+                    }
+                    deleteTopicFfi(topic.id)
+                }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] delete failed id=${topic.id}", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) reloadTopics()
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 把成员图设为专题封面（M4a 4.3；桌面「设置专题封面」的触屏同位——桌面在专题
+     * 卡片右键弹选图，平板入口在专题详情：选中一张成员图 → 更多菜单「设为封面」）。
+     * 走 `upsertTopic` 整行写，同 [renameTopic] 的安全性论证。
+     */
+    fun setTopicCover(topicId: String, fileId: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val topic = topics.value.firstOrNull { it.id == topicId }
+            if (topic == null) {
+                onDone(false)
+                return@launch
+            }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    upsertTopic(
+                        topic.copy(coverFileId = fileId, updatedAt = System.currentTimeMillis()),
+                    )
+                }.also {
+                    if (it.isFailure) Log.w(TAG, "[Topics] set cover failed", it.exceptionOrNull())
+                }.isSuccess
+            }
+            if (ok) reloadTopics()
             onDone(ok)
         }
     }

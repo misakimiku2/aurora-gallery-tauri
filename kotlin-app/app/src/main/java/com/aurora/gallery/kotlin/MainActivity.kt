@@ -167,7 +167,8 @@ class MainActivity : ComponentActivity() {
         /** 3.2 分享：单图版，复用网格那套 ACTION_SEND_MULTIPLE。 */
         override fun onShare(filePath: String) {
             if (filePath.isEmpty()) {
-                toastSoon("分享", "M4")
+                // 防御分支（正常路径 filePath 恒非空）；文件操作归 M4b
+                toastSoon("分享", "M4b")
                 return
             }
             shareUris(listOf(Uri.parse(filePath)))
@@ -178,10 +179,11 @@ class MainActivity : ComponentActivity() {
             Log.i("AuroraViewer", "slideshow config applied: $configJson")
         }
 
-        // —— 以下入口的能力属 M4/M6，M3 只保证「点下去有确定反应」——
-        override fun onMore(fileId: String) = toastSoon("更多操作", "M4")
-        override fun onLongPress(fileId: String) = toastSoon("长按上下文菜单", "M4")
-        override fun onEditTags(fileId: String) = toastSoon("标签保存", "M4")
+        // —— 以下入口的能力归属已按 M4 拆分重标（M4a 4.3）：查看器的复制/移动/重命名
+        // 走 MediaStore 归 M4b，颜色/主色调链路归 M6——
+        override fun onMore(fileId: String) = toastSoon("更多操作", "M4b")
+        override fun onLongPress(fileId: String) = toastSoon("长按上下文菜单", "M4b")
+        override fun onEditTags(fileId: String) = toastSoon("标签保存", "M4b")
 
         /**
          * M4a 2.1：查看器三个编辑弹窗的落库分支。键与语义见
@@ -216,12 +218,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M4")
+        override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M6")
         override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
-        override fun onCopyToFolder(fileId: String) = toastSoon("复制到文件夹", "M4")
-        override fun onMoveToFolder(fileId: String) = toastSoon("移动到文件夹", "M4")
+        override fun onCopyToFolder(fileId: String) = toastSoon("复制到文件夹", "M4b")
+        override fun onMoveToFolder(fileId: String) = toastSoon("移动到文件夹", "M4b")
         override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) =
-            toastSoon("文件夹选择", "M4")
+            toastSoon("文件夹选择", "M4b")
     }
 
     /** 未落地能力的可见占位（M3 3.3：静默无响应在真机上会被当成 bug 报回来）。 */
@@ -377,6 +379,39 @@ class MainActivity : ComponentActivity() {
                         onSaveFileTags = { fileId, tags ->
                             viewModel.saveFileUpdates(fileId, tags = tags) { ok ->
                                 if (!ok) Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        // —— M4a 4.3 专题长按菜单（重命名/删除）与详情「设为封面」——
+                        onRenameTopic = { topic, name ->
+                            viewModel.renameTopic(topic, name) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已重命名" else "重命名失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDeleteTopic = { topic ->
+                            viewModel.deleteTopic(topic) { ok ->
+                                if (ok) {
+                                    // 删的是正在看的专题（总览里删根专题时 activeTopicId
+                                    // 必为 null；详情里删的是子专题，不动 activeTopicId）
+                                    if (appState.activeTab.activeTopicId == topic.id) {
+                                        appState.updateActiveTab { it.copy(activeTopicId = null) }
+                                    }
+                                    Toast.makeText(this@MainActivity, "专题已删除", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(this@MainActivity, "删除失败", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onSetTopicCover = { topicId, fileId ->
+                            viewModel.setTopicCover(topicId, fileId) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已设为封面" else "设置封面失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
                             }
                         },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
@@ -548,6 +583,12 @@ fun App(
     onPasteTags: (Set<String>) -> Unit,
     /** 4.3 编辑标签保存：单文件标签整体替换（2.1 的 saveFileUpdates，唯一写入口）。 */
     onSaveFileTags: (String, List<String>) -> Unit,
+    /** 4.3 专题重命名落库（upsertTopic 整行写）。 */
+    onRenameTopic: (uniffi.aurora_core.FfiTopic, String) -> Unit = { _, _ -> },
+    /** 4.3 专题删除落库（递归删子专题）。 */
+    onDeleteTopic: (uniffi.aurora_core.FfiTopic) -> Unit = {},
+    /** 4.3 设为专题封面（详情选择模式的触屏同位入口）。 */
+    onSetTopicCover: (topicId: String, fileId: String) -> Unit = { _, _ -> },
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
 ) {
@@ -571,6 +612,9 @@ fun App(
     var moreExpanded by remember { mutableStateOf(false) }
     // M4a 4.3 编辑标签弹窗的目标文件（单选菜单项触发）
     var editTagsFileId by remember { mutableStateOf<String?>(null) }
+    // M4a 4.3 专题卡片长按菜单 → 重命名 / 删除确认弹窗的目标
+    var renameTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
+    var deleteTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
     // 3.2④ 建专题弹窗的目标父级：总览按钮=null（根专题），详情子专题区=当前专题
     var createTopicParent by remember { mutableStateOf<String?>(null) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
@@ -653,11 +697,21 @@ fun App(
             }
             add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
         }
-        inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> listOf(
-            SelectionMoreAction("从专题移除") {
+        inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> buildList {
+            if (tab.selectedFileIds.size == 1) {
+                add(SelectionMoreAction("编辑标签…") { editTagsFileId = tab.selectedFileIds.first() })
+                add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
+                // 桌面「设置专题封面」的触屏同位（桌面在专题卡片右键弹选图器，
+                // 平板收敛为「详情里选中一张成员图 → 设为封面」，见 TopicsOverview KDoc）
+                add(SelectionMoreAction("设为封面") {
+                    onSetTopicCover(tab.activeTopicId!!, tab.selectedFileIds.first())
+                })
+            }
+            add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
+            add(SelectionMoreAction("从专题移除") {
                 onRemoveFromTopic(tab.activeTopicId!!, tab.selectedFileIds)
-            },
-        )
+            })
+        }
         else -> emptyList()
     }
 
@@ -862,6 +916,8 @@ fun App(
                         createTopicParent = null
                         showCreateTopic = true
                     },
+                    onRenameTopic = { renameTopicState = it },
+                    onDeleteTopic = { deleteTopicState = it },
                     sortOption = topicSort,
                     sortAscending = topicSortAscending,
                     onSortChange = { option, ascending ->
@@ -906,6 +962,8 @@ fun App(
                                         createTopicParent = tab.activeTopicId
                                         showCreateTopic = true
                                     },
+                                    onRenameChild = { renameTopicState = it },
+                                    onDeleteChild = { deleteTopicState = it },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -954,6 +1012,8 @@ fun App(
                                             createTopicParent = tab.activeTopicId
                                             showCreateTopic = true
                                         },
+                                        onRenameChild = { renameTopicState = it },
+                                        onDeleteChild = { deleteTopicState = it },
                                         modifier = Modifier.fillMaxWidth(),
                                     )
                                 }
@@ -1070,6 +1130,52 @@ fun App(
             onConfirm = { name ->
                 showCreateTopic = false
                 onCreateTopic(name, createTopicParent)
+            },
+        )
+    }
+
+    // M4a 4.3 专题重命名（卡片长按菜单触发；同一弹窗组件复用为重命名形制）
+    renameTopicState?.let { topic ->
+        CreateTopicDialog(
+            title = "重命名专题",
+            initialName = topic.name,
+            confirmLabel = "重命名",
+            onDismiss = { renameTopicState = null },
+            onConfirm = { name ->
+                renameTopicState = null
+                onRenameTopic(topic, name)
+            },
+        )
+    }
+
+    // M4a 4.3 专题删除确认（桌面右键「删除」同位；根专题连带子专题一起删）
+    deleteTopicState?.let { topic ->
+        val childCount = topics.count { it.parentId == topic.id }
+        AlertDialog(
+            onDismissRequest = { deleteTopicState = null },
+            title = { Text("删除专题") },
+            text = {
+                Text(
+                    if (childCount > 0) {
+                        "确定删除「${topic.name}」吗？其 $childCount 个子专题将一并删除，图片本身不受影响。"
+                    } else {
+                        "确定删除「${topic.name}」吗？图片本身不受影响。"
+                    },
+                    color = AuroraTheme.colors.textPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTopicState = null
+                    onDeleteTopic(topic)
+                }) {
+                    Text("删除", color = Color(0xFFEF4444))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTopicState = null }) {
+                    Text("取消", color = AuroraTheme.colors.textPrimary)
+                }
             },
         )
     }
