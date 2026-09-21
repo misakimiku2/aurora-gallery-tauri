@@ -30,6 +30,7 @@ import uniffi.aurora_core.Image
 import uniffi.aurora_core.MediaImage
 import uniffi.aurora_core.TagGroup
 import uniffi.aurora_core.addFilesToTopic
+import uniffi.aurora_core.addTagsToFiles
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
 import uniffi.aurora_core.getAllTopics
@@ -357,6 +358,31 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 }.isSuccess
             }
             // 只有真写进去才重算快照：失败时重算会把库里旧值当新值刷回界面
+            if (ok) reloadTagState()
+            onDone(ok)
+        }
+    }
+
+    /**
+     * 批量粘贴标签（M4a 4.3 长按菜单的「粘贴标签」）：把应用内剪贴板
+     * （[AppState.copiedTags]）里的标签合并进选中集每个文件——1.1 的批量原语
+     * `add_tags_to_files` 单事务完成，已有成员不重复、新标签追加尾部。合并语义与
+     * 桌面 `handlePasteTags`（`useTags.ts:83`）一致；落库成功才重算快照。
+     */
+    fun pasteTagsToFiles(fileIds: Set<String>, onDone: (Boolean) -> Unit = {}) {
+        val tags = appState.copiedTags.toList()
+        if (fileIds.isEmpty() || tags.isEmpty()) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { addTagsToFiles(fileIds.toList(), tags) }
+                    .also {
+                        if (it.isFailure) Log.w(TAG, "[Edit] paste tags failed", it.exceptionOrNull())
+                    }
+                    .isSuccess
+            }
             if (ok) reloadTagState()
             onDone(ok)
         }

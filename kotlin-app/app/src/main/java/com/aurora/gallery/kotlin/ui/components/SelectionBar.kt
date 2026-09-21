@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,11 +40,13 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
  * 按钮触控目标 48dp（React w-10 h-10 是 40dp 视觉 + hover 边距；触屏最小命中目标按
  * desktop-to-android 规范扩到 48dp）。删除为红色（React text-red-500 = #EF4444）。
  *
- * 「更多」菜单（M4a 3.2 起）：[moreActions] 非空时点击弹出 DropdownMenu（当前只有
- * 「加入专题…」/「从专题移除」，是 3.2 的归入入口）；为空时退回 [onMore] 占位 Toast
- * ——上下文菜单的其余项（复制/移动/粘贴标签）归 4.3 收口时再补，不在这里预做。
+ * 「更多」菜单（M4a 3.2 起真菜单，4.3 扩成选中集上下文菜单的承载物）：[moreActions]
+ * 非空时展开 AuroraDropdown 毛玻璃弹层（§8 教训：弹层一律复用 Aurora 系组件，不再起
+ * material3 DropdownMenu 第二套）；为空时退回 [onMore] 占位 Toast。开合状态受控
+ * （[moreExpanded]/[onMoreExpandedChange] 提升到宿主）——长按已选中项要从网格侧把它
+ * 打开（M1 占位「长按已选中项的上下文菜单」的同位收口，桌面同位是文件右键菜单）。
  */
-/** 「更多」菜单项（标签 + 动作；仅 3.2 的归入/移除，4.3 扩充时再加字段）。 */
+/** 「更多」菜单项（标签 + 动作；3.2 归入/移除 + 4.3 标签三项）。 */
 data class SelectionMoreAction(val label: String, val onClick: () -> Unit)
 
 @Composable
@@ -56,13 +60,16 @@ fun SelectionBar(
     onShare: () -> Unit,
     /** [moreActions] 为空时的占位行为（Toast，M1 边界）。 */
     onMore: () -> Unit,
-    /** 「更多」的菜单项；非空 = 点击弹出菜单（3.2 归入专题入口）。 */
+    /** 「更多」的菜单项；非空 = 点击弹出菜单。 */
     moreActions: List<SelectionMoreAction> = emptyList(),
+    /** 菜单开合（受控）：长按已选中项时由宿主置 true。 */
+    moreExpanded: Boolean = false,
+    onMoreExpandedChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
     val allSelected = totalCount > 0 && selectedCount >= totalCount
-    var moreOpen by remember { mutableStateOf(false) }
+    var moreAnchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -114,8 +121,10 @@ fun SelectionBar(
             )
         }
         Spacer(Modifier.size(4.dp))
-        Box {
-            SelBarButton(onClick = { if (moreActions.isEmpty()) onMore() else moreOpen = true }) {
+        Box(
+            Modifier.onGloballyPositioned { moreAnchor = it.boundsInWindow() },
+        ) {
+            SelBarButton(onClick = { if (moreActions.isEmpty()) onMore() else onMoreExpandedChange(true) }) {
                 Icon(
                     imageVector = SelIconMore,
                     contentDescription = "更多",
@@ -123,15 +132,17 @@ fun SelectionBar(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            androidx.compose.material3.DropdownMenu(
-                expanded = moreOpen,
-                onDismissRequest = { moreOpen = false },
+            // 毛玻璃弹层复用（§8 教训）；AuroraDropdown 点选项后由这里收起
+            AuroraDropdown(
+                expanded = moreExpanded && moreActions.isNotEmpty(),
+                anchorBoundsInWindow = moreAnchor,
+                onDismissRequest = { onMoreExpandedChange(false) },
             ) {
                 moreActions.forEach { action ->
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(action.label, color = colors.textPrimary, fontSize = 15.sp) },
+                    AuroraMenuItem(
+                        text = action.label,
                         onClick = {
-                            moreOpen = false
+                            onMoreExpandedChange(false)
                             action.onClick()
                         },
                     )

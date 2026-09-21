@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
+import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
@@ -348,6 +349,36 @@ class MainActivity : ComponentActivity() {
                                 if (uris.isNotEmpty()) requestDelete(uris)
                             }
                         },
+                        // —— M4a 4.3 长按菜单的标签三项（数据在 VM 快照，落库走唯一写入口）——
+                        tagsByFile = viewModel.tagsByFile.value,
+                        onCopyTags = { ids ->
+                            val merged = LinkedHashSet<String>()
+                            ids.forEach { id -> viewModel.tagsByFile.value[id]?.let(merged::addAll) }
+                            viewModel.appState.copiedTags = merged
+                            Toast.makeText(
+                                this@MainActivity,
+                                if (merged.isEmpty()) "所选图片没有标签" else "已复制 ${merged.size} 个标签",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                        onPasteTags = { ids ->
+                            if (viewModel.appState.copiedTags.isEmpty()) {
+                                Toast.makeText(this@MainActivity, "剪贴板里还没有标签，先用「复制标签」复制一份", Toast.LENGTH_SHORT).show()
+                            } else {
+                                viewModel.pasteTagsToFiles(ids) { ok ->
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        if (ok) "已粘贴标签" else "粘贴失败",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                        },
+                        onSaveFileTags = { fileId, tags ->
+                            viewModel.saveFileUpdates(fileId, tags = tags) { ok ->
+                                if (!ok) Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
+                            }
+                        },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
                     )
                     // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
@@ -509,6 +540,14 @@ fun App(
     onShareSelection: (Set<String>) -> Unit,
     /** 4.2 删除：解析选中项为 URI 后由宿主发起删除请求（含系统确认）。 */
     onDeleteSelection: (Set<String>) -> Unit,
+    /** 4.3 编辑标签弹窗的数据源：file_id → 标签（VM 快照原样）。 */
+    tagsByFile: Map<String, List<String>>,
+    /** 4.3 复制标签：选中集标签并集存应用内剪贴板（宿主做，反馈也在这里）。 */
+    onCopyTags: (Set<String>) -> Unit,
+    /** 4.3 粘贴标签：剪贴板标签合并进选中集（1.1 批量原语，宿主落库）。 */
+    onPasteTags: (Set<String>) -> Unit,
+    /** 4.3 编辑标签保存：单文件标签整体替换（2.1 的 saveFileUpdates，唯一写入口）。 */
+    onSaveFileTags: (String, List<String>) -> Unit,
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
 ) {
@@ -528,6 +567,10 @@ fun App(
     var showCreateTopic by remember { mutableStateOf(false) }
     // M4a 3.2 专题选择弹窗（选择模式「更多」→「加入专题…」触发）
     var showTopicPicker by remember { mutableStateOf(false) }
+    // M4a 4.3 「更多」菜单开合（受控）：长按已选中项时从网格侧打开
+    var moreExpanded by remember { mutableStateOf(false) }
+    // M4a 4.3 编辑标签弹窗的目标文件（单选菜单项触发）
+    var editTagsFileId by remember { mutableStateOf<String?>(null) }
     // 3.2④ 建专题弹窗的目标父级：总览按钮=null（根专题），详情子专题区=当前专题
     var createTopicParent by remember { mutableStateOf<String?>(null) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
@@ -595,13 +638,21 @@ fun App(
         sortTopicsForDisplay(childTopics, topicSort, topicSortAscending)
     }
 
-    // 「更多」菜单项（3.2 归入入口；其余项归 4.3 收口）：
-    //  - 文件夹网格里多选 → 「加入专题…」（桌面同位：文件右键菜单的添加到主题）
-    //  - 专题详情里多选 → 「从专题移除」（对称操作）
+    // 「更多」菜单项（3.2 归入入口 + M4a 4.3 收口的标签三项；桌面同位是文件右键
+    // 菜单 ContextMenu.tsx 的文件分支——「添加到主题 / 编辑标签 / 复制标签 / 粘贴标签」，
+    // 其余项的归属：复制/移动/重命名归 M4b（桌面安卓版先例：不适用的项直接不出现）、
+    // AI/比较归 M6）：
+    //  - 文件夹网格里多选 → 加入专题 / 粘贴标签，单选另有 编辑标签 / 复制标签
+    //  - 专题详情里多选 → 从专题移除（对称操作）
     val moreActions = when {
-        inBrowser -> listOf(
-            SelectionMoreAction("加入专题…") { showTopicPicker = true },
-        )
+        inBrowser -> buildList {
+            add(SelectionMoreAction("加入专题…") { showTopicPicker = true })
+            if (tab.selectedFileIds.size == 1) {
+                add(SelectionMoreAction("编辑标签…") { editTagsFileId = tab.selectedFileIds.first() })
+                add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
+            }
+            add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
+        }
         inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> listOf(
             SelectionMoreAction("从专题移除") {
                 onRemoveFromTopic(tab.activeTopicId!!, tab.selectedFileIds)
@@ -637,7 +688,9 @@ fun App(
         when {
             !state.selectionMode -> state.enterSelectionMode(img.id)
             img.id !in tab.selectedFileIds -> state.rangeSelect(img.id, currentImageIds.value)
-            // 已选中项长按：React 是文件上下文菜单（M2 接入），当前无操作
+            // 已选中项长按 = 打开选中集菜单（M4a 4.3 收口 M1 占位；桌面同位是文件
+            // 右键菜单，菜单本体在选择栏「更多」按钮处展开）
+            else -> moreExpanded = true
         }
     }
     val onFolderCardClick: (Folder) -> Unit = { folder ->
@@ -726,6 +779,8 @@ fun App(
                         Toast.makeText(context, "更多操作将随 M4b 提供", Toast.LENGTH_SHORT).show()
                     },
                     moreActions = moreActions,
+                    moreExpanded = moreExpanded,
+                    onMoreExpandedChange = { moreExpanded = it },
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
@@ -1026,6 +1081,20 @@ fun App(
             onPick = { topic ->
                 showTopicPicker = false
                 onAddToTopic(topic.id, tab.selectedFileIds)
+            },
+        )
+    }
+
+    // M4a 4.3 编辑标签（长按菜单单选项触发）；保存走 2.1 的唯一写入口
+    editTagsFileId?.let { fid ->
+        EditTagsDialog(
+            fileName = images.firstOrNull { it.id == fid }?.name,
+            currentTags = tagsByFile[fid].orEmpty(),
+            vocabulary = tagGroups.flatMap { group -> group.tags.map { it.tag } },
+            onDismiss = { editTagsFileId = null },
+            onSave = { tags ->
+                editTagsFileId = null
+                onSaveFileTags(fid, tags)
             },
         )
     }

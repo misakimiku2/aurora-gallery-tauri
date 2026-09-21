@@ -223,9 +223,17 @@ class AppState(
         private set
 
     /**
+     * 应用内标签剪贴板（M4a 4.3 长按菜单的「复制标签 / 粘贴标签」）。对齐 React 的
+     * `state.clipboard`（`useTags.ts:79/:84`）——那边也是内存态、不是系统剪贴板，
+     * 跨进程/跨会话不保留。复制时存选中集全部标签的并集（去重、保首见序）。
+     */
+    var copiedTags: Set<String> by mutableStateOf(emptySet())
+
+    /**
      * 侧栏开合（3.5，TopBar 左侧开关按钮消费）。
      * 对齐 React `App.tsx` toggleSidebar 的安卓分支：开一个面板时收起其余（互斥开合），
-     * 避免两面板同时挤占内容宽度。元数据面板 M2 接入后此语义自然覆盖它。
+     * 避免两面板同时挤占内容宽度。（isMetadataVisible 的唯一消费者本来是元数据面板，
+     * v15 已拍板 4.2 改期不做，字段与互斥置 false 保留——将来做颜色搜索面板时直接接上。）
      */
     fun toggleSidebar() {
         layout = layout.copy(isSidebarVisible = !layout.isSidebarVisible, isMetadataVisible = false)
