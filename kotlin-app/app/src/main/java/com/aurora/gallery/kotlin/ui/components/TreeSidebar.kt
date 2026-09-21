@@ -122,7 +122,7 @@ import uniffi.aurora_core.TagGroup
 val SIDEBAR_WIDTH_DP = 256.dp
 
 /** 面板开合动画时长（React SidebarPane `width 300ms ease-out`；与捏合 FLIP 240ms 是两套）。 */
-private const val PANEL_ANIMATE_MS = 300
+internal const val PANEL_ANIMATE_MS = 300
 
 /**
  * [SidebarPane] = 开合动画壳：对齐 React 同名组件的「外层 width 16rem↔0 + 内层固定宽

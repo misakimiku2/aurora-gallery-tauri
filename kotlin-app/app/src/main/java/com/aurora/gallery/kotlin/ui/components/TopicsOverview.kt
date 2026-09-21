@@ -1,6 +1,8 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -202,13 +204,25 @@ fun TopicsOverview(
                 key = { i -> topics[i].id },
             ) { i ->
                 val topic = topics[i]
-                TopicCard(
-                    topic = topic,
-                    cover = topic.coverFileId?.let { coverImages[it] },
-                    totals = totals[topic.id],
-                    thumbnailLoader = thumbnailLoader,
-                    onClick = { onTopicClick(topic) },
-                )
+                // 3.3fix② 三轮：列归属重排（4↔5 列）会让跨行卡片在拍点瞬移——收起时
+                // 第二行首卡直接跳到新列、展开时反向。animateItem 的 placement 动画让
+                // 重排卡片用与侧栏开合同规格的 300ms ease-out 滑到新位置；spec 显式传
+                // tween 与侧栏动画完全同步，fadeIn/Out 关掉（开关场景没有增删条目）。
+                Box(
+                    Modifier.animateItem(
+                        fadeInSpec = null,
+                        placementSpec = tween(durationMillis = PANEL_ANIMATE_MS, easing = EaseOut),
+                        fadeOutSpec = null,
+                    ),
+                ) {
+                    TopicCard(
+                        topic = topic,
+                        cover = topic.coverFileId?.let { coverImages[it] },
+                        totals = totals[topic.id],
+                        thumbnailLoader = thumbnailLoader,
+                        onClick = { onTopicClick(topic) },
+                    )
+                }
             }
         }
     }
