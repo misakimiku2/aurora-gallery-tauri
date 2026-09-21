@@ -41,6 +41,15 @@ data class AuroraColorScheme(
     val primaryWeak: Color,   // 选中框描边/拖拽描边（primary @ 0.8）
     val textPrimary: Color,   // 正文
     val textSecondary: Color, // 说明/占位
+    val border: Color,        // 边框/描边（M4a 3.3 专题卡片细边框起进 scheme）
+    // —— 专题专属（M4a 3.3，值见 AuroraPalette 字段注释）——
+    val topicPink: Color,
+    val topicSelectPink: Color,
+    val topicGradientStart: Color,
+    val topicGradientEnd: Color,
+    val primaryDeep: Color,
+    val heroSlateStart: Color,
+    val heroSlateEnd: Color,
     /** 原始 Int 档，供 View 体系组件（查看器/弹窗）同一张表取色 */
     val palette: AuroraPalette,
 )

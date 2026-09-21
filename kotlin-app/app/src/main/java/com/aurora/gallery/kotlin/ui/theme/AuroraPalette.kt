@@ -46,6 +46,20 @@ data class AuroraPalette(
     val tagText: Int,
     val tagBorder: Int,
     val danger: Int,
+    // —— 专题专属角色（M4a 3.3 视觉对齐桌面 TopicModule）——
+    /** 专题强调色（桌面 pink-500 #EC4899：卡片标题条图标、区块图标、选择器图标） */
+    val topicPink: Int,
+    /** 侧栏专题 Section 选中底（桌面 TopicSection isSelected #ee5ea5，比 pink-500 浅一档） */
+    val topicSelectPink: Int,
+    /** 无封面占位渐变起（桌面 from-indigo-500 #6366F1） */
+    val topicGradientStart: Int,
+    /** 无封面占位渐变止（桌面 to-purple-600 #9333EA） */
+    val topicGradientEnd: Int,
+    /** 实心主操作（桌面「新建专题」按钮 blue-600 #2563EB，比 primary 深一档） */
+    val primaryDeep: Int,
+    /** 专题 Hero 无背景图时的兜底渐变（桌面 from-slate-900 / to-slate-800） */
+    val heroSlateStart: Int,
+    val heroSlateEnd: Int,
 )
 
 /** 取色：`AuroraPalettes.of(dark)`。查看器与 Compose 主题共用这一处分支。 */
@@ -75,6 +89,13 @@ object AuroraPalettes {
         tagText = 0xFF2563EB.toInt(),
         tagBorder = 0xFFDBEAFE.toInt(),
         danger = 0xFFEF4444.toInt(),
+        topicPink = 0xFFEC4899.toInt(),
+        topicSelectPink = 0xFFEE5EA5.toInt(),
+        topicGradientStart = 0xFF6366F1.toInt(),
+        topicGradientEnd = 0xFF9333EA.toInt(),
+        primaryDeep = 0xFF2563EB.toInt(),
+        heroSlateStart = 0xFF0F172A.toInt(),
+        heroSlateEnd = 0xFF1E293B.toInt(),
     )
 
     val dark = AuroraPalette(
@@ -101,6 +122,14 @@ object AuroraPalettes {
         tagText = 0xFF93C5FD.toInt(),
         tagBorder = 0x551E40AF.toInt(),
         danger = 0xFFF87171.toInt(),
+        // 专题专属色在深浅两档同值：粉/靛紫/blue-600 本就是深浅通用的品牌强调色（桌面 dark 同值）
+        topicPink = 0xFFEC4899.toInt(),
+        topicSelectPink = 0xFFEE5EA5.toInt(),
+        topicGradientStart = 0xFF6366F1.toInt(),
+        topicGradientEnd = 0xFF9333EA.toInt(),
+        primaryDeep = 0xFF2563EB.toInt(),
+        heroSlateStart = 0xFF0F172A.toInt(),
+        heroSlateEnd = 0xFF1E293B.toInt(),
     )
 
     fun of(dark: Boolean): AuroraPalette = if (dark) this.dark else light
@@ -117,6 +146,14 @@ fun AuroraPalette.toComposeColorScheme(): AuroraColorScheme = AuroraColorScheme(
     primaryWeak = Color(primaryWeak),
     textPrimary = Color(textPrimary),
     textSecondary = Color(textSecondary),
+    border = Color(border),
+    topicPink = Color(topicPink),
+    topicSelectPink = Color(topicSelectPink),
+    topicGradientStart = Color(topicGradientStart),
+    topicGradientEnd = Color(topicGradientEnd),
+    primaryDeep = Color(primaryDeep),
+    heroSlateStart = Color(heroSlateStart),
+    heroSlateEnd = Color(heroSlateEnd),
     palette = this,
 )
 

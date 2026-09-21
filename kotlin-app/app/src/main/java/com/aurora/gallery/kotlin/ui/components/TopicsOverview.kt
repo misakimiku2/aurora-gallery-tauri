@@ -3,6 +3,7 @@ package com.aurora.gallery.kotlin.ui.components
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -21,8 +23,8 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -38,14 +40,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,22 +60,27 @@ import com.aurora.gallery.kotlin.ThumbnailLoader
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Image
+import java.text.Collator
+import java.util.Locale
 
 /**
- * 专题总览（M4a 3.2，对齐桌面 `TopicModule` 的专题列表层；D11 v7：含「手动建专题 +
- * 把图归入」入口，不是空壳）。
+ * 专题总览（M4a 3.2 落地；3.3 视觉对齐桌面 `TopicModule` 的总览层）。
  *
  * 桌面形态 → 触屏适配（desktop-to-android 适配表）：
- *  - 专题卡 hover 换封面/3D 效果、右键菜单（重命名/设置封面/删除/智能创建）→ 不做：
- *    封面是桌面画布特性（归 M6 互联态后看桌面数据），重命名/删除等上下文操作归 4.3
- *    长按菜单收口时一起定；本轮交付「建专题 → 归图 → 看成员」主链路；
- *  - 新建入口（桌面是 Section 头 hover 的 + / 空白处右键）→ 常驻「新建专题」按钮
- *    （触屏无 hover，必须常显）；
- *  - 嵌套专题（parentId）→ 平板只做根专题（React 的嵌套导航依赖桌面双栏，M6 再看）。
+ *  - 杂志式专题卡（标题叠在封面顶部黑渐变条上、左下两行计数、右下类型胶囊、无封面
+ *    靛紫渐变占位、静态阴影 + 12dp 圆角）→ 原样还原；hover 阴影/封面缩放不还原
+ *    （触屏无 hover），单击 = 进详情（桌面双击进入的触屏等价物）；
+ *  - 页头「专题」标题 + 排序菜单 + 蓝色实心「新建专题」按钮 → 常驻（触屏无 hover，
+ *    桌面 Section 头 hover 的 + 在这里是实心按钮）；自动分类/来源筛选属桌面 AI 链路
+ *    （M6），不做；
+ *  - 排序（桌面 localStorage 持久化的 name/time × asc/desc）→ 宿主持久化同名语义，
+ *    点同一字段 = 切换方向；点别的字段 = 换字段保持方向；
+ *  - 右键菜单（重命名/设置封面/删除/智能创建）→ 归 4.3 长按菜单收口，本轮不做。
  *
  * 封面：有 coverFileId 的专题经 [coverImages]（VM 已解析的 Image）加载缩略图；没有或
- * 已失效 → 占位图标。计数 = `topic.fileCount`（列表口径；fileIds 懒加载恒空，别用
- * fileIds.size——0.1 记过的坑）。
+ * 已失效 → 靛紫渐变 + 白色 Layout 图标占位。卡片左下计数 = [topicTreeTotals]（本专题
+ * + 递归子专题，桌面 getTotalPersonCount/getTotalFileCount 同语义）；`fileCount` 是
+ * 列表口径（fileIds 懒加载恒空，别用 fileIds.size——0.1 记过的坑）。
  */
 @Composable
 fun TopicsOverview(
@@ -83,15 +94,37 @@ fun TopicsOverview(
     /** 返回总览时恢复的滚动位置（首个可见条目下标，同 [TagsOverview] 的锚点语义）。 */
     initialScrollAnchor: Int = 0,
     onScrollChanged: (Int) -> Unit = {},
+    /** 排序字段/方向（宿主持久化，桌面 aurora_topic_sort_* 同语义）。 */
+    sortOption: TopicSortOption = TopicSortOption.TIME,
+    sortAscending: Boolean = false,
+    onSortChange: (TopicSortOption, Boolean) -> Unit = { _, _ -> },
 ) {
     val colors = AuroraTheme.colors
+    val totals = remember(topics) { topicTreeTotals(topics) }
     Column(modifier.fillMaxSize()) {
-        // 常驻动作行：触屏没有 hover，桌面的「+ 悬停出现在 Section 头」在这里必须常显
+        // 页头（桌面 renderGallery 标题栏：h2「专题」+ 右侧排序/新建）
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp),
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            Icon(
+                imageVector = IconLayoutBig,
+                contentDescription = null,
+                tint = colors.topicPink,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                text = "专题",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.weight(1f))
+            TopicSortMenu(option = sortOption, ascending = sortAscending, onChange = onSortChange)
+            Spacer(Modifier.size(8.dp))
             NewTopicButton(onClick = onCreateTopic)
         }
 
@@ -101,20 +134,21 @@ fun TopicsOverview(
                     Icon(
                         imageVector = IconLayoutBig,
                         contentDescription = null,
-                        tint = colors.textSecondary.copy(alpha = 0.3f),
-                        modifier = Modifier.size(64.dp),
+                        tint = colors.textSecondary.copy(alpha = 0.2f),
+                        modifier = Modifier.size(80.dp),
                     )
                     Text(
                         text = "暂无专题",
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
                         color = colors.textSecondary,
-                        modifier = Modifier.padding(top = 12.dp),
+                        modifier = Modifier.padding(top = 16.dp),
                     )
                     Text(
                         text = "点「新建专题」把相关的图收在一起",
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         color = colors.textSecondary.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(top = 4.dp),
+                        modifier = Modifier.padding(top = 6.dp),
                     )
                 }
             }
@@ -134,11 +168,12 @@ fun TopicsOverview(
             androidx.compose.runtime.snapshotFlow { gridState.firstVisibleItemIndex }
                 .collect { onScrollChanged(it) }
         }
+        // 桌面卡片 = 3:4、高 350px（≈260px 宽）；Adaptive 220dp 在平板上每行 ~5 列，同桌面观感
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 150.dp),
+            columns = GridCells.Adaptive(minSize = 220.dp),
             state = gridState,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp,
             ),
@@ -152,6 +187,7 @@ fun TopicsOverview(
                 TopicCard(
                     topic = topic,
                     cover = topic.coverFileId?.let { coverImages[it] },
+                    totals = totals[topic.id],
                     thumbnailLoader = thumbnailLoader,
                     onClick = { onTopicClick(topic) },
                 )
@@ -160,103 +196,306 @@ fun TopicsOverview(
     }
 }
 
-/** 专题卡片（桌面 TopicModule 形制：3:4 竖版封面 + 右下角计数徽标 + 名称）。整卡可点。 */
+/** 专题排序字段（桌面 localStorage `aurora_topic_sort_mode` 的 name/time 同语义）。 */
+enum class TopicSortOption { NAME, TIME }
+
+/**
+ * 展示排序（桌面 TopicModule :680-692 同语义：名称按 locale 比较、时间按 createdAt；
+ * 时间缺省当 0）。纯展示层排序——Rust 只保证 getAllTopics 的稳定顺序，桌面也是
+ * 客户端排，不违反「UI 不重排 Rust 结果」的标签纪律。
+ */
+fun sortTopicsForDisplay(
+    topics: List<FfiTopic>,
+    option: TopicSortOption,
+    ascending: Boolean,
+): List<FfiTopic> {
+    val sorted = when (option) {
+        TopicSortOption.NAME -> {
+            val collator = Collator.getInstance(Locale.CHINA)
+            topics.sortedWith(compareBy(collator) { it.name })
+        }
+        TopicSortOption.TIME -> topics.sortedBy { it.createdAt ?: 0L }
+    }
+    return if (ascending) sorted else sorted.asReversed()
+}
+
+/** 递归合计：people 去重并集、fileCount 求和（含全部后代；桌面 :469-504 同口径）。 */
+internal fun topicTreeTotals(topics: List<FfiTopic>): Map<String, Pair<Int, Int>> {
+    val byParent = topics.groupBy { it.parentId }
+    val result = HashMap<String, Pair<Int, Int>>(topics.size)
+    fun resolve(topic: FfiTopic, path: MutableSet<String>): Pair<Set<String>, Int> {
+        if (topic.id in path) return emptySet<String>() to 0 // 数据异常成环时兜底
+        path.add(topic.id)
+        val people = topic.peopleIds.toMutableSet()
+        var files = topic.fileCount.coerceAtLeast(0)
+        for (child in byParent[topic.id].orEmpty()) {
+            val (childPeople, childFiles) = resolve(child, path)
+            people.addAll(childPeople)
+            files += childFiles
+        }
+        path.remove(topic.id)
+        result[topic.id] = people.size to files
+        return people to files
+    }
+    topics.forEach { topic -> if (topic.id !in result) resolve(topic, HashSet()) }
+    return result
+}
+
+/** 来源中文标签（桌面总览卡右上角标；manual 与未知来源不显示）。 */
+private fun topicSourceLabel(sourceType: String?): String? = when (sourceType) {
+    null, "", "manual" -> null
+    "auto_content" -> "内容分类"
+    "auto_cluster" -> "视觉聚类"
+    "auto_person" -> "作品角色"
+    "folder_set" -> "图集"
+    else -> null
+}
+
+/**
+ * 专题卡片（桌面 TopicModule :1864-1928 杂志式：3:4 封面、顶部黑渐变标题条、左下两行
+ * 计数、右下类型胶囊、靛紫渐变占位、静态阴影 + 12dp 圆角 + 细边框）。整卡可点。
+ */
 @Composable
 private fun TopicCard(
     topic: FfiTopic,
     cover: Image?,
+    /** (人物数, 图片数) 递归合计；null = 不在快照里（退回本级口径）。 */
+    totals: Pair<Int, Int>?,
     thumbnailLoader: ThumbnailLoader,
     onClick: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
-    Column(
+    val shape = RoundedCornerShape(12.dp)
+    Box(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .aspectRatio(0.75f)
+            .shadow(elevation = 6.dp, shape = shape, clip = true)
+            .background(colors.surface)
+            .border(1.dp, colors.border, shape)
             .clickable(onClick = onClick),
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(0.75f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.surface),
-        ) {
-            var bmp by remember(cover?.id) { mutableStateOf<Bitmap?>(null) }
-            LaunchedEffect(cover?.id) {
-                val img = cover ?: return@LaunchedEffect
-                val imageId = thumbnailLoader.extractImageId(img.contentUri)
-                bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
-            }
-            val bitmap = bmp
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = topic.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                // 占位：专题图标居中（封面未设或已随图删除）
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = IconLayoutBig,
-                        contentDescription = null,
-                        tint = colors.textSecondary.copy(alpha = 0.4f),
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
-            }
-            if (topic.fileCount > 0) {
-                Text(
-                    topic.fileCount.toString(),
-                    fontSize = 10.sp,
-                    color = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(Color(0x80000000))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+        var bmp by remember(cover?.id) { mutableStateOf<Bitmap?>(null) }
+        LaunchedEffect(cover?.id) {
+            val img = cover ?: return@LaunchedEffect
+            val imageId = thumbnailLoader.extractImageId(img.contentUri)
+            bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
+        }
+        val bitmap = bmp
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = topic.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            // 桌面无封面占位：from-indigo-500 to-purple-600 对角渐变 + 白色 Layout 图标 50%
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.linearGradient(
+                            listOf(colors.topicGradientStart, colors.topicGradientEnd),
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = IconLayoutBig,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.size(48.dp),
                 )
             }
         }
-        Text(
-            topic.name,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-        )
+
+        // 顶部杂志式标题条（桌面 :1895-1906：黑渐变 + 白色衬线体大写宽字距）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0x99000000), Color(0x00000000)),
+                    ),
+                )
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 22.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Text(
+                text = topic.name.uppercase(Locale.ROOT),
+                fontSize = 20.sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                letterSpacing = 2.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            topicSourceLabel(topic.sourceType)?.let { label ->
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    text = label,
+                    fontSize = 10.sp,
+                    color = Color.White,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(50))
+                        .background(Color(0x33FFFFFF))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+
+        // 底部信息条（桌面 :1909-1925：黑渐变 + 左下两行计数 + 右下类型胶囊）
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.5f to Color(0x66000000),
+                        1f to Color(0xCC000000),
+                    ),
+                )
+                .padding(start = 12.dp, end = 12.dp, top = 28.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                CardCountRow(
+                    icon = IconUser,
+                    text = (totals?.first ?: topic.peopleIds.size).toString(),
+                )
+                CardCountRow(
+                    icon = IconImages,
+                    text = (totals?.second ?: topic.fileCount.coerceAtLeast(0)).toString(),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            topic.topicType?.takeIf { it.isNotBlank() }?.let { type ->
+                Text(
+                    text = type.take(12),
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(50))
+                        .background(Color(0x33FFFFFF))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
     }
 }
 
-/** 「新建专题」按钮（粉色系，对齐桌面专题 Section 的强调色 pink-500；与 TreeSidebar 的 SECTION_PINK 同源）。 */
+@Composable
+private fun CardCountRow(icon: ImageVector, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.7f),
+            modifier = Modifier.size(10.dp),
+        )
+        Spacer(Modifier.size(3.dp))
+        Text(text, fontSize = 11.sp, color = Color.White.copy(alpha = 0.7f))
+    }
+}
+
+/**
+ * 排序菜单：主界面顶栏排序菜单同款（TopBar 的 AuroraDropdown 毛玻璃弹层 + 条目结构，
+ * 2026-09-22 用户要求样式一致）——小节标题 + 字段勾选（按名称/按时间）+ 分隔线 +
+ * 升降序切换（箭头指向随方向旋转）。条目点击后不收起（与主菜单一致的连续调整语义）。
+ */
+@Composable
+private fun TopicSortMenu(
+    option: TopicSortOption,
+    ascending: Boolean,
+    onChange: (TopicSortOption, Boolean) -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    var open by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Box(
+        Modifier.onGloballyPositioned { anchor = it.boundsInWindow() },
+    ) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { open = !open },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IconSortArrows,
+                contentDescription = "排序",
+                tint = if (open) colors.primary else colors.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        AuroraDropdown(
+            expanded = open,
+            anchorBoundsInWindow = anchor,
+            onDismissRequest = { open = false },
+        ) {
+            AuroraMenuHeader("排序方式")
+            AuroraMenuItem(
+                text = "按名称",
+                checked = option == TopicSortOption.NAME,
+                onClick = { onChange(TopicSortOption.NAME, ascending) },
+            )
+            AuroraMenuItem(
+                text = "按时间",
+                checked = option == TopicSortOption.TIME,
+                onClick = { onChange(TopicSortOption.TIME, ascending) },
+            )
+            AuroraMenuDivider()
+            AuroraMenuItem(
+                text = if (ascending) "升序" else "降序",
+                onClick = { onChange(option, !ascending) },
+                trailing = {
+                    Icon(
+                        imageVector = IconSortArrows,
+                        contentDescription = null,
+                        tint = AuroraTheme.colors.textSecondary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .rotate(if (ascending) 180f else 0f),
+                    )
+                },
+            )
+        }
+    }
+}
+
+/** 「新建专题」实心按钮（桌面 :1836-1842 bg-blue-600 text-white；触点 ≥48dp）。 */
 @Composable
 private fun NewTopicButton(onClick: () -> Unit) {
-    val pink = Color(0xFFEC4899)
+    val colors = AuroraTheme.colors
     Row(
         Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(pink.copy(alpha = 0.08f))
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.primaryDeep)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = IconPlus,
             contentDescription = null,
-            tint = pink,
-            modifier = Modifier.size(16.dp),
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
         )
-        Spacer(Modifier.size(6.dp))
+        Spacer(Modifier.size(8.dp))
         Text(
             "新建专题",
-            fontSize = 14.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
-            color = pink,
+            color = Color.White,
         )
     }
 }
@@ -288,7 +527,10 @@ fun CreateTopicDialog(
                 enabled = name.isNotBlank(),
                 onClick = { onConfirm(name.trim()) },
             ) {
-                Text("创建", color = if (name.isNotBlank()) colors.primary else colors.textSecondary)
+                Text(
+                    "创建",
+                    color = if (name.isNotBlank()) colors.primaryDeep else colors.textSecondary,
+                )
             }
         },
         dismissButton = {
@@ -300,13 +542,14 @@ fun CreateTopicDialog(
 }
 
 /**
- * 子专题区（M4a 3.2④，对齐桌面 TopicModule 详情页的 Sub Topics 分区，:2071-2140）。
- * 桌面**严格两层**：子专题区只在根专题详情渲染（:945/:2072 `!currentTopic.parentId`），
- * 子专题里不再出现这个区——平板同构：本组件只被根专题详情调用（由宿主保证）。
+ * 子专题区（M4a 3.2④ 落地；3.3 视觉对齐桌面详情页 Sub Topics 分区 :2072-2176）。
+ * 桌面**严格两层**：子专题区只在根专题详情渲染，子专题里不再出现这个区——平板同构：
+ * 本组件只被根专题详情调用（由宿主保证）。
  *
- * 形态差异（触屏适配）：桌面是页内网格分区 + 右上「+ 新建专题」文字按钮；平板详情页
- * 主体是图片网格（FileGrid），子专题做成**顶部横向滚动条**（LazyRow 的 3:4 竖版卡），
- * 「新建子专题」按钮常驻在区头——触屏没有 hover，入口必须可见。
+ * 形态差异（触屏适配）：桌面是页内网格分区 + hover 才出现的操作；平板详情页主体是
+ * 图片网格（FileGrid），子专题做成**顶部横向滚动条**（LazyRow 的 3:4 竖版卡），「新建
+ * 子专题」按钮常驻在区头。卡片下方是桌面同款「居中衬线名称 + 人物/图片计数行」
+ * （:2116-2167），计数用本级口径（不递归）。
  */
 @Composable
 fun TopicChildrenSection(
@@ -319,139 +562,202 @@ fun TopicChildrenSection(
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
-    val pink = Color(0xFFEC4899)
     Column(modifier.fillMaxWidth()) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 8.dp),
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = IconLayoutBig,
                 contentDescription = null,
-                tint = pink,
-                modifier = Modifier.size(16.dp),
+                tint = colors.topicPink,
+                modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.size(8.dp))
             Text(
                 "子专题",
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = colors.textPrimary,
             )
-            if (children.isNotEmpty()) {
-                Spacer(Modifier.size(6.dp))
-                Text(
-                    children.size.toString(),
-                    fontSize = 12.sp,
-                    color = colors.textSecondary,
-                )
-            }
             Spacer(Modifier.weight(1f))
             Row(
                 Modifier
+                    .defaultMinSize(minHeight = 48.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable(onClick = onCreateChild)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     imageVector = IconPlus,
                     contentDescription = null,
                     tint = colors.primary,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(16.dp),
                 )
-                Spacer(Modifier.size(4.dp))
+                Spacer(Modifier.size(6.dp))
                 Text(
                     "新建子专题",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = colors.primary,
                 )
             }
         }
         if (children.isEmpty()) {
-            Text(
-                "还没有子专题，用右上角的按钮建一个",
-                fontSize = 12.sp,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
+            TopicDashedEmpty(
+                icon = IconLayoutBig,
+                text = "暂无子专题",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 4.dp),
             )
         } else {
             LazyRow(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 items(children.size, key = { children[it].id }) { i ->
-                    val topic = children[i]
-                    Column(
-                        Modifier
-                            .width(110.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onChildClick(topic) },
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(0.75f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(colors.surface),
-                        ) {
-                            var bmp by remember(topic.coverFileId) { mutableStateOf<Bitmap?>(null) }
-                            LaunchedEffect(topic.coverFileId) {
-                                val img = topic.coverFileId?.let { coverImages[it] }
-                                    ?: return@LaunchedEffect
-                                val imageId = thumbnailLoader.extractImageId(img.contentUri)
-                                bmp = thumbnailLoader.peekMemory(imageId)
-                                    ?: thumbnailLoader.loadFastLimited(imageId)
-                            }
-                            val bitmap = bmp
-                            if (bitmap != null) {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = topic.name,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            } else {
-                                Box(
-                                    Modifier.fillMaxSize().background(
-                                        // 桌面无封面子专题卡的渐变占位（from-indigo-500 to-purple-600）
-                                        Brush.linearGradient(listOf(Color(0xFF6366F1), Color(0xFF9333EA)))
-                                    ),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        imageVector = IconLayoutBig,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(28.dp),
-                                    )
-                                }
-                            }
-                        }
-                        Text(
-                            topic.name,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
+                    SubTopicCard(
+                        topic = children[i],
+                        cover = children[i].coverFileId?.let { coverImages[it] },
+                        thumbnailLoader = thumbnailLoader,
+                        onClick = { onChildClick(children[i]) },
+                    )
                 }
             }
         }
     }
 }
 
+/** 子专题卡（桌面 :2116-2167：封面 + 下方居中衬线名称 + 人物/图片计数行）。 */
+@Composable
+private fun SubTopicCard(
+    topic: FfiTopic,
+    cover: Image?,
+    thumbnailLoader: ThumbnailLoader,
+    onClick: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        Modifier
+            .width(176.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .shadow(elevation = 5.dp, shape = shape, clip = true)
+                .background(colors.surface),
+        ) {
+            var bmp by remember(topic.coverFileId) { mutableStateOf<Bitmap?>(null) }
+            LaunchedEffect(topic.coverFileId) {
+                val img = cover ?: return@LaunchedEffect
+                val imageId = thumbnailLoader.extractImageId(img.contentUri)
+                bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
+            }
+            val bitmap = bmp
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = topic.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.linearGradient(
+                                listOf(colors.topicGradientStart, colors.topicGradientEnd),
+                            ),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = IconLayoutBig,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+            }
+            topic.topicType?.takeIf { it.isNotBlank() }?.let { type ->
+                Text(
+                    text = type.take(12),
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(10.dp)
+                        .clip(RoundedCornerShape(50))
+                        .border(1.dp, Color(0x4DFFFFFF), RoundedCornerShape(50))
+                        .background(Color(0x33000000))
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+        Text(
+            topic.name,
+            fontSize = 16.sp,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, start = 4.dp, end = 4.dp),
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            Icon(
+                imageVector = IconUser,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(12.dp),
+            )
+            Text(
+                topic.peopleIds.size.toString(),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+            )
+            Icon(
+                imageVector = IconImages,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(12.dp),
+            )
+            Text(
+                topic.fileCount.coerceAtLeast(0).toString(),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+            )
+            Spacer(Modifier.weight(1f))
+        }
+        Spacer(Modifier.heightIn(min = 4.dp))
+    }
+}
+
 /**
  * 专题选择弹窗（M4a 3.2 的「归入」链路最后一跳：选择模式 → 更多 → 加入专题 → 选目标）。
  * 对齐桌面 AddToTopicModal：**根专题 + 可展开的子专题**两层树（子专题缩进展示，两层都
- * 可选为目标）。无专题时给引导文案而不是空列表——用户第一次用不会卡在「点加入后无处可去」。
+ * 可选为目标），列表落 panel 底圆角容器。无专题时给引导文案而不是空列表。
  */
 @Composable
 fun TopicPickerDialog(
@@ -470,31 +776,32 @@ fun TopicPickerDialog(
             Modifier
                 .fillMaxWidth()
                 .padding(start = if (indent) 24.dp else 0.dp)
+                .defaultMinSize(minHeight = 48.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .clickable { onPick(topic) }
-                .padding(horizontal = 8.dp, vertical = 12.dp),
+                .padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (hasChildren) {
                 Box(
                     Modifier
-                        .size(24.dp)
+                        .size(48.dp)
                         .clickable(onClick = onToggle ?: {}),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         if (isExpanded) "▾" else "▸",
-                        fontSize = 12.sp,
+                        fontSize = 14.sp,
                         color = colors.textSecondary,
                     )
                 }
             } else {
-                Spacer(Modifier.size(if (indent) 24.dp else 0.dp))
+                Spacer(Modifier.size(if (indent) 48.dp else 12.dp))
             }
             Icon(
                 imageVector = IconLayoutBig,
                 contentDescription = null,
-                tint = Color(0xFFEC4899),
+                tint = colors.topicPink,
                 modifier = Modifier.size(16.dp),
             )
             Spacer(Modifier.size(10.dp))
@@ -526,7 +833,10 @@ fun TopicPickerDialog(
             } else {
                 Column(
                     Modifier
-                        .heightIn(max = 360.dp)
+                        .heightIn(max = 380.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colors.panel)
+                        .padding(6.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
                     roots.forEach { root ->
@@ -561,8 +871,11 @@ fun TopicPickerDialog(
     )
 }
 
+// ---- 自绘图标：lucide 线性风格（与 TopBar.kt 同款绘制参数；专题系列图标在本文件
+// 持有，TopicDetail.kt 同包直接引用）----
+
 /** lucide Layout（专题卡片/空态；与 TreeSidebar 的 IconLayout 同形）。 */
-private val IconLayoutBig: ImageVector by lazy {
+internal val IconLayoutBig: ImageVector by lazy {
     ImageVector.Builder(
         name = "LayoutBig",
         defaultWidth = 24.dp,
@@ -596,7 +909,7 @@ private val IconLayoutBig: ImageVector by lazy {
 }
 
 /** lucide Plus。 */
-private val IconPlus: ImageVector by lazy {
+internal val IconPlus: ImageVector by lazy {
     ImageVector.Builder(
         name = "Plus",
         defaultWidth = 24.dp,
@@ -617,3 +930,139 @@ private val IconPlus: ImageVector by lazy {
         }
     }.build()
 }
+
+/** lucide User（人物计数）。 */
+internal val IconUser: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "TopicUser",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+        ) {
+            // 头
+            moveTo(12f, 12f)
+            arcTo(4f, 4f, 0f, false, true, 12f, 4f)
+            arcTo(4f, 4f, 0f, false, true, 12f, 12f)
+            close()
+            // 肩
+            moveTo(19f, 21f)
+            // v-2 a4 4 0 0 0-4-4 H9 a4 4 0 0 0-4 4 v2
+            lineTo(19f, 19f)
+            arcTo(4f, 4f, 0f, false, false, 15f, 15f)
+            lineTo(9f, 15f)
+            arcTo(4f, 4f, 0f, false, false, 5f, 19f)
+            lineTo(5f, 21f)
+        }
+    }.build()
+}
+
+/** lucide Image（图片计数/图片区块标题）。 */
+internal val IconImages: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "TopicImage",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+        ) {
+            // 外框（rx=2）
+            moveTo(5f, 3f)
+            lineTo(19f, 3f)
+            arcTo(2f, 2f, 0f, false, true, 21f, 5f)
+            lineTo(21f, 19f)
+            arcTo(2f, 2f, 0f, false, true, 19f, 21f)
+            lineTo(5f, 21f)
+            arcTo(2f, 2f, 0f, false, true, 3f, 19f)
+            lineTo(3f, 5f)
+            arcTo(2f, 2f, 0f, false, true, 5f, 3f)
+            close()
+            // 太阳
+            moveTo(9f, 11f)
+            arcTo(2f, 2f, 0f, false, true, 9f, 7f)
+            arcTo(2f, 2f, 0f, false, true, 9f, 11f)
+            close()
+            // 山（m21 15-3.086-3.086 a2 2 0 0 0-2.828 0 L6 21）
+            moveTo(21f, 15f)
+            lineTo(17.914f, 11.914f)
+            arcTo(2f, 2f, 0f, false, false, 15.086f, 11.914f)
+            lineTo(6f, 21f)
+        }
+    }.build()
+}
+
+/** lucide ExternalLink（来源链接胶囊）。 */
+internal val IconExternalLink: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "TopicExternalLink",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+        ) {
+            moveTo(15f, 3f)
+            lineTo(21f, 3f)
+            lineTo(21f, 9f)
+            moveTo(10f, 14f)
+            lineTo(21f, 3f)
+            moveTo(18f, 13f)
+            lineTo(18f, 19f)
+            arcTo(2f, 2f, 0f, false, true, 16f, 21f)
+            lineTo(5f, 21f)
+            arcTo(2f, 2f, 0f, false, true, 3f, 19f)
+            lineTo(3f, 8f)
+            arcTo(2f, 2f, 0f, false, true, 5f, 6f)
+            lineTo(11f, 6f)
+        }
+    }.build()
+}
+
+/** lucide ArrowDownUp（排序；主菜单同款图标与升降序箭头共用）。 */
+internal val IconSortArrows: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "TopicArrowDownUp",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+        ) {
+            // 下箭头（m3 16 4 4 4-4 / M7 20V4）
+            moveTo(3f, 16f)
+            lineTo(7f, 20f)
+            lineTo(11f, 16f)
+            moveTo(7f, 20f)
+            lineTo(7f, 4f)
+            // 上箭头（m21 8-4-4-4 4 / M17 4v16）
+            moveTo(21f, 8f)
+            lineTo(17f, 4f)
+            lineTo(13f, 8f)
+            moveTo(17f, 4f)
+            lineTo(17f, 20f)
+        }
+    }.build()
+}
+

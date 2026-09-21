@@ -449,7 +449,7 @@ private fun TopBarButton(
  * 调字段/方向/分组）。内容超高时内部滚动（48dp 触控行高下矮屏的安全阀）。
  */
 @Composable
-private fun AuroraDropdown(
+internal fun AuroraDropdown(
     expanded: Boolean,
     anchorBoundsInWindow: Rect,
     onDismissRequest: () -> Unit,
@@ -608,7 +608,7 @@ private fun AuroraDropdown(
 
 /** 小节标题（React `px-3 py-1 text-xs font-bold text-gray-400 uppercase`）。 */
 @Composable
-private fun AuroraMenuHeader(text: String) {
+internal fun AuroraMenuHeader(text: String) {
     val colors = AuroraTheme.colors
     Text(
         text,
@@ -625,7 +625,7 @@ private fun AuroraMenuHeader(text: String) {
  * [trailing] 是非勾选型尾部图标（如升降序的箭头）。行高 ≥48dp（触屏最小命中目标）。
  */
 @Composable
-private fun AuroraMenuItem(
+internal fun AuroraMenuItem(
     text: String,
     onClick: () -> Unit,
     checked: Boolean = false,
@@ -661,7 +661,7 @@ private fun AuroraMenuItem(
 
 /** 分隔线（React `border-t border-black/5 my-1`；subtle = gray-200 观感一致）。 */
 @Composable
-private fun AuroraMenuDivider() {
+internal fun AuroraMenuDivider() {
     HorizontalDivider(
         Modifier.padding(vertical = 4.dp),
         color = AuroraTheme.colors.subtle,

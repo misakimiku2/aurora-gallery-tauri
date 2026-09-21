@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +52,10 @@ import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
+import com.aurora.gallery.kotlin.ui.components.TopicDashedEmpty
+import com.aurora.gallery.kotlin.ui.components.TopicHero
+import com.aurora.gallery.kotlin.ui.components.TopicSectionHeader
+import com.aurora.gallery.kotlin.ui.components.TopicSortOption
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
@@ -59,6 +64,7 @@ import com.aurora.gallery.kotlin.ui.components.TreeSidebar
 import com.aurora.gallery.kotlin.ui.components.filterFolders
 import com.aurora.gallery.kotlin.ui.components.rememberDisplayImages
 import com.aurora.gallery.kotlin.ui.components.sortFolders
+import com.aurora.gallery.kotlin.ui.components.sortTopicsForDisplay
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
@@ -68,6 +74,7 @@ import android.view.View
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
@@ -551,6 +558,8 @@ fun App(
     val currentTopicName = tab.activeTopicId?.let { id ->
         topics.firstOrNull { it.id == id }?.name
     }
+    // 当前详情的专题（3.3 Hero 用；activeTopicId 悬空时详情分支给兜底空态）
+    val currentTopic = tab.activeTopicId?.let { id -> topics.firstOrNull { it.id == id } }
     // 3.2④ 两层专题（对齐桌面：顶层只显示根专题 TopicModule:860；子专题区只渲染在根
     // 专题详情 :945/:2072——子专题里没有这个区，子专题不能再建子专题）
     val rootTopics = topics.filter { it.parentId == null }
@@ -559,6 +568,30 @@ fun App(
     val currentTopicIsRoot = tab.activeTopicId?.let { id ->
         topics.firstOrNull { it.id == id }?.parentId == null
     } ?: false
+
+    // —— M4a 3.3 专题排序 + 总览搜索（对齐桌面 TopicModule）——
+    // 排序：桌面 localStorage `aurora_topic_sort_mode/order` 同语义，这里 SharedPreferences
+    // 持久化（默认 按时间/降序，同桌面默认）。比较逻辑在 sortTopicsForDisplay（展示层）。
+    val topicSortPrefs = remember { context.getSharedPreferences("aurora_topics", Context.MODE_PRIVATE) }
+    var topicSort by remember {
+        mutableStateOf(
+            if (topicSortPrefs.getBoolean("sortByName", false)) TopicSortOption.NAME else TopicSortOption.TIME,
+        )
+    }
+    var topicSortAscending by remember { mutableStateOf(topicSortPrefs.getBoolean("sortAscending", false)) }
+    // 总览搜索：按名称过滤根专题（桌面 topics-overview 的顶栏搜索同款）
+    val topicQuery = tab.searchQuery.trim()
+    val visibleRootTopics = remember(rootTopics, topicQuery) {
+        if (topicQuery.isEmpty()) rootTopics
+        else rootTopics.filter { it.name.contains(topicQuery, ignoreCase = true) }
+    }
+    val sortedRootTopics = remember(visibleRootTopics, topicSort, topicSortAscending) {
+        sortTopicsForDisplay(visibleRootTopics, topicSort, topicSortAscending)
+    }
+    // 子专题横排沿用同一排序（桌面子专题区有独立的排序按钮，平板收敛为一份）
+    val sortedChildTopics = remember(childTopics, topicSort, topicSortAscending) {
+        sortTopicsForDisplay(childTopics, topicSort, topicSortAscending)
+    }
 
     // 「更多」菜单项（3.2 归入入口；其余项归 4.3 收口）：
     //  - 文件夹网格里多选 → 「加入专题…」（桌面同位：文件右键菜单的添加到主题）
@@ -715,6 +748,7 @@ fun App(
                     onSearchOpenChange = { searchOpen = it },
                     searchPlaceholder = when {
                         inTagsOverview -> "搜索标签"
+                        inTopicsList -> "搜索专题"
                         inBrowser -> "搜索图片"
                         else -> "搜索文件夹"
                     },
@@ -736,10 +770,14 @@ fun App(
                     activeTags = tab.activeTags,
                     onTagClick = onTagClick,
                     showSearch = true,
-                    showSortMenu = true,
-                    showViewMode = inBrowser,
-                    showDateFilter = true,
+                    // 专题视图下顶栏只留 搜索/返回/侧栏开关（桌面 TopBar :1256/:1521/:1563
+                    // 在 topics-overview 隐藏排序/日期/标签，专题自己的排序在页头菜单里）；
+                    // 视图切换（grid/adaptive/masonry）= 文件夹网格与专题详情共用
+                    showSortMenu = !inTopicsOverview,
+                    showViewMode = inBrowser || inTopicDetail,
+                    showDateFilter = !inTopicsOverview,
                     showGroupBy = inBrowser,
+                    showTags = !inTopicsOverview,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -757,9 +795,9 @@ fun App(
                 )
                 // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
                 inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
-                // 专题总览列表（3.2）：根专题卡片网格 + 常驻「新建专题」按钮
+                // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面）
                 inTopicsList -> TopicsOverview(
-                    topics = rootTopics,
+                    topics = sortedRootTopics,
                     coverImages = coverImagesById,
                     thumbnailLoader = thumbnailLoader,
                     onTopicClick = { onTopicClick(it) },
@@ -767,52 +805,100 @@ fun App(
                         createTopicParent = null
                         showCreateTopic = true
                     },
+                    sortOption = topicSort,
+                    sortAscending = topicSortAscending,
+                    onSortChange = { option, ascending ->
+                        topicSort = option
+                        topicSortAscending = ascending
+                        topicSortPrefs.edit()
+                            .putBoolean("sortByName", option == TopicSortOption.NAME)
+                            .putBoolean("sortAscending", ascending)
+                            .apply()
+                    },
                     initialScrollAnchor = state.topicsOverviewScrollAnchor,
                     onScrollChanged = { state.topicsOverviewScrollAnchor = it },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
-                // 专题详情（3.2④ 两层）：根专题详情有子专题区（含建子专题入口）；
-                // 子专题详情没有这个区（桌面 :2072 `!currentTopic.parentId` 同构）
+                // 专题详情（3.2④ 两层落地；3.3 对齐桌面详情：Hero 头图 + 区块化。Hero 与
+                // 区块头固定顶部、FileGrid 独立滚动——不动 FileGrid 滚动契约的结构妥协，
+                // 见 TopicDetail.kt 的 KDoc）
                 inTopicDetail -> Column(Modifier.fillMaxWidth().weight(1f)) {
-                    if (currentTopicIsRoot) {
-                        TopicChildrenSection(
-                            children = childTopics,
-                            coverImages = coverImagesById,
-                            thumbnailLoader = thumbnailLoader,
-                            onChildClick = { onTopicClick(it) },
-                            onCreateChild = {
-                                createTopicParent = tab.activeTopicId
-                                showCreateTopic = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    if (displayImages.isEmpty()) {
-                        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                            val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
-                            val emptyText = when {
-                                hasCondition -> "无匹配图片"
-                                tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
-                                else -> "专题里还没有图片"
-                            }
-                            Text(emptyText, color = AuroraTheme.colors.textSecondary)
+                    if (currentTopic == null) {
+                        // activeTopicId 悬空（专题被删后的竞态窗口）；reloadTopics 会收敛
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("专题不存在", color = AuroraTheme.colors.textSecondary)
                         }
                     } else {
-                        Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
-                            FileGrid(
-                                images = displayImages,
-                                selectedIds = tab.selectedFileIds,
+                        TopicHero(
+                            topic = currentTopic,
+                            coverImage = currentTopic.coverFileId?.let { coverImagesById[it] },
+                            thumbnailLoader = thumbnailLoader,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (currentTopicIsRoot) {
+                            TopicChildrenSection(
+                                children = sortedChildTopics,
+                                coverImages = coverImagesById,
                                 thumbnailLoader = thumbnailLoader,
-                                onItemClick = onImageClick,
-                                onItemLongClick = onImageLongPress,
-                                layoutMode = tab.layoutMode,
-                                groupBy = state.groupBy,
-                                level = state.gridLevel,
-                                onLevelChange = { state.gridLevel = it },
-                                sidebarVisible = state.layout.isSidebarVisible,
-                                pullToRefreshState = null,
-                                modifier = Modifier.fillMaxSize(),
+                                onChildClick = { onTopicClick(it) },
+                                onCreateChild = {
+                                    createTopicParent = tab.activeTopicId
+                                    showCreateTopic = true
+                                },
+                                modifier = Modifier.fillMaxWidth(),
                             )
+                        }
+                        if (displayImages.isEmpty()) {
+                            Column(Modifier.weight(1f).fillMaxWidth()) {
+                                TopicSectionHeader(
+                                    icon = com.aurora.gallery.kotlin.ui.components.IconImages,
+                                    iconTint = com.aurora.gallery.kotlin.ui.components.TOPIC_SECTION_GREEN,
+                                    title = "图片",
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Box(
+                                    Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp),
+                                    // 桌面空态是紧跟区块头的在流元素（不垂直居中）
+                                    contentAlignment = Alignment.TopCenter,
+                                ) {
+                                    val hasCondition =
+                                        tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                                    val emptyText = when {
+                                        hasCondition -> "无匹配图片"
+                                        tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                                        else -> "专题里还没有图片"
+                                    }
+                                    TopicDashedEmpty(
+                                        icon = com.aurora.gallery.kotlin.ui.components.IconImages,
+                                        text = emptyText,
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    )
+                                }
+                            }
+                        } else {
+                            TopicSectionHeader(
+                                icon = com.aurora.gallery.kotlin.ui.components.IconImages,
+                                iconTint = com.aurora.gallery.kotlin.ui.components.TOPIC_SECTION_GREEN,
+                                title = "图片",
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+                                FileGrid(
+                                    images = displayImages,
+                                    selectedIds = tab.selectedFileIds,
+                                    thumbnailLoader = thumbnailLoader,
+                                    onItemClick = onImageClick,
+                                    onItemLongClick = onImageLongPress,
+                                    layoutMode = tab.layoutMode,
+                                    // 桌面专题图片区无分组（TopicFileGrid 无分组概念）
+                                    groupBy = GroupBy.NONE,
+                                    level = state.gridLevel,
+                                    onLevelChange = { state.gridLevel = it },
+                                    sidebarVisible = state.layout.isSidebarVisible,
+                                    pullToRefreshState = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
                         }
                     }
                 }
