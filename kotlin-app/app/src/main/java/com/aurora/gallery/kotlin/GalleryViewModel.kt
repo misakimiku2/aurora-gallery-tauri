@@ -23,9 +23,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import uniffi.aurora_core.MediaImage
+import uniffi.aurora_core.TagGroup
+import uniffi.aurora_core.getAllFileMetadata
+import uniffi.aurora_core.getAllFileTags
+import uniffi.aurora_core.getGroupedTags
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
@@ -51,6 +56,24 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     val folders = mutableStateOf<List<Folder>>(emptyList())
     val images = mutableStateOf<List<Image>>(emptyList())
     val scanning = mutableStateOf(false)
+
+    // —— M4a 2.0 标签数据层 ——
+    //
+    // 三份快照的唯一读源：查看器抽屉（2.2）、侧栏标签 Section（3.1）、标签过滤（4.1）
+    // 都只读这三个，不许自己去查库。分头查就是三份缓存配三套失效时机，写完之后必然
+    // 有一处是旧的。
+    //
+    // 唯一写者是 [reloadTagState]（全量重算，不做增量）：标签量级是「千」不是「万」，
+    // 一次 SQL 分组比维护增量正确性便宜。
+
+    /** `file_id` → 该文件上的标签，保持库里的先后顺序（`file_tags` 是安卓侧唯一真源）。 */
+    val tagsByFile = mutableStateOf<Map<String, List<String>>>(emptyMap())
+
+    /** `file_id` → 元数据行。只有**编辑过**的文件才在这一列里有行，所以量很小。 */
+    val metadataById = mutableStateOf<Map<String, FfiFileMetadata>>(emptyMap())
+
+    /** 侧栏要看的分组 + 计数。**顺序由 Rust 定**，UI 侧不再排（清单 §1「排序规则只许有一套」）。 */
+    val tagGroups = mutableStateOf<List<TagGroup>>(emptyList())
 
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
@@ -105,6 +128,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         initialScanJob = viewModelScope.launch {
             val cached = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
             folders.value = cached
+            // 标签快照走本地库、不依赖 MediaStore，先于全量扫描发布：否则扫描那几秒里
+            // 侧栏标签区是空的，重进应用的标签要等扫描跑完才回来。
+            reloadTagState()
             if (cached.isEmpty()) scanning.value = true
             try {
                 scanAndReconcile()
@@ -241,7 +267,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
-    /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表。 */
+    /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表 + 标签快照。 */
     private suspend fun scanAndReconcile() = scanMutex.withLock {
         val t0 = android.os.SystemClock.elapsedRealtime()
         val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
@@ -250,6 +276,32 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
         folders.value = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
         Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
+        // 对账可能清掉孤儿行（含 file_tags 指向的 file_id），标签快照跟着重算，
+        // 否则侧栏会数出几个网格里点不出来的标签。
+        reloadTagState()
+    }
+
+    /**
+     * 重算 [tagsByFile] / [metadataById] / [tagGroups] 三份快照。
+     *
+     * 调用点只有两处：扫描对账之后（[scanAndReconcile] 尾部），以及元数据/标签落库之后
+     * （2.1 的写入路径）。**挂起函数**而非 launch-and-forget：写入方要在快照落地后再
+     * 刷新界面，否则「编辑完关掉重开」会读到上一次的快照。
+     *
+     * 失败只记日志并保留旧快照——三份快照任一读失败都不该把界面清成空的。
+     */
+    suspend fun reloadTagState() {
+        try {
+            val snapshot = withContext(Dispatchers.IO) {
+                Triple(getAllFileTags(), getAllFileMetadata(), getGroupedTags(TAG_LOCALE))
+            }
+            tagsByFile.value = snapshot.first.associate { it.fileId to it.tags }
+            metadataById.value = snapshot.second.associateBy { it.fileId }
+            tagGroups.value = snapshot.third
+            Log.i(TAG, "[Tags] reload groups=${tagGroups.value.size} taggedFiles=${tagsByFile.value.size} meta=${metadataById.value.size}")
+        } catch (e: Exception) {
+            Log.w(TAG, "[Tags] reload failed", e)
+        }
     }
 
     /**
@@ -358,6 +410,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
         /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
+
+        /**
+         * 标签分组/组内排序用的 locale。Kotlin 侧的语言开关随 M4b 的设置面板才存在，
+         * 本轮恒 `zh`（与 React 版 `settings.language` 默认值一致）。
+         */
+        private const val TAG_LOCALE = "zh"
 
         /**
          * factory 只在 ViewModel 首次创建时求值：旋转重建复用已有实例，不会重跑，
