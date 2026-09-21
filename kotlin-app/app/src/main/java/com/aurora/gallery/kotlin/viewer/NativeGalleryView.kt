@@ -37,6 +37,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import coil.size.Precision
+import coil.util.DebugLogger
 import com.aurora.gallery.kotlin.viewer.dialogs.DeleteConfirmDialog
 import com.aurora.gallery.kotlin.viewer.dialogs.DescriptionEditDialog
 import com.aurora.gallery.kotlin.viewer.dialogs.DialogTheme
@@ -150,6 +151,9 @@ class NativeGalleryView @JvmOverloads constructor(
                     add(GifDecoder.Factory())
                 }
             }
+            // 解码失败只报「加载失败」查不了真机问题（如 content:// 取流、缓存键、降级路径），
+            // 让 Coil 自己把堆栈打出来
+            .logger(DebugLogger(level = Log.ERROR))
             .build()
     }
 
@@ -1484,6 +1488,8 @@ class NativeGalleryView @JvmOverloads constructor(
                 },
                 onError = { _ ->
                     if (showProgress) progressBar.visibility = GONE
+                    // 失败原因由 Coil 的 logger 以堆栈形式打出（见 imageLoader 的 .logger(...)）：
+                    // 这个 target 重载拿不到 throwable，只记「加载失败」在真机上等于查不了
                     Log.e(TAG, "failed to load index=$index name=${item.name} path=${item.path}")
                     Toast.makeText(context, "Failed to load ${item.name}", Toast.LENGTH_SHORT).show()
                 }

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import coil.request.ImageRequest
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.Locale
 
 /**
@@ -15,7 +16,13 @@ import java.util.Locale
  * （`MediaRecoveryDatabase_Impl` 缺失）就是这么炸的。改成宿主自己用 `ContentResolver` 开流喂给
  * Coil，URI 根本不进解码器，那颗雷在这条路径上物理存在不了。
  *
- * 代价是**必须显式给缓存键**：`InputStream` 没有稳定身份，Coil 默认拿 `data.toString()` 求 key，
+ * **喂的是 `ByteBuffer` 而不是 `InputStream`**：Coil 2.7.0 的 `coil.fetch` 包里只有
+ * ByteBuffer / ContentUri / File / AssetUri / ResourceUri / HttpUri / Bitmap / Drawable 这些
+ * fetcher，**没有 InputStreamFetcher**——直接喂 `ContentResolver.openInputStream` 的结果会在
+ * `EngineInterceptor.fetch` 抛 `IllegalStateException: Unable to create a fetcher that supports:
+ * ...AutoCloseInputStream`（2026-09-21 SM-X808U 实测）。
+ *
+ * 代价是**必须显式给缓存键**：`ByteBuffer` 没有稳定身份，Coil 默认拿 `data.toString()` 求 key，
  * 每次都是新对象 → 缓存全废、翻页全部重解。两个键各自的意义：
  *  - `diskKey` 用 fileId：磁盘缓存存的是**原始字节**，与请求尺寸无关，所以原图 / 抽屉预览 /
  *    缩略图条共用同一份字节，谁先到谁落盘；
@@ -47,13 +54,16 @@ internal fun imageSourceFor(
     if (item.isLan) return CoilSource(item.path, null, null)
     if (item.contentUri.isNotEmpty()) {
         val uri = Uri.parse(item.contentUri)
-        if (item.format.lowercase(Locale.US) in ANIMATED_FORMATS) return CoilSource(uri, null, null)
-        val stream = runCatching { resolver.openInputStream(uri) }
+        val bytes = runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }
             .onFailure { Log.w("AuroraViewer", "openInputStream failed: ${item.fileId}", it) }
             .getOrNull()
-        // 开流失败时退回 URI：至少不比 A 案之前的行为更差，失败原因留在上面的日志里
-        if (stream == null) return CoilSource(uri, null, null)
-        return CoilSource(stream, KEY_PREFIX + item.fileId, "$KEY_PREFIX${item.fileId}:$variant")
+        // 读不到字节时退回 URI：至少不比 A 案之前的行为更差，失败原因留在上面的日志里
+        if (bytes == null) return CoilSource(uri, null, null)
+        return CoilSource(
+            ByteBuffer.wrap(bytes),
+            KEY_PREFIX + item.fileId,
+            "$KEY_PREFIX${item.fileId}:$variant",
+        )
     }
     return CoilSource(File(item.path), null, null)
 }

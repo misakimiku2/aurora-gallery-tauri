@@ -14,6 +14,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:theme="@style/Theme.AuroraKotlin">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
