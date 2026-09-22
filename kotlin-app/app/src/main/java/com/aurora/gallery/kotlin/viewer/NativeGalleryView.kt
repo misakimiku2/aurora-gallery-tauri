@@ -75,18 +75,12 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onClose()
         /** 当前图片索引变化（用户操作或幻灯片）。 */
         fun onNavigate(index: Int)
-        /** 用户点击了"更多"按钮，需要切换回 WebView 模式查看高级功能。 */
-        fun onMore(fileId: String)
         /** 用户点击了删除按钮。 */
         fun onDelete(fileId: String)
         /** 用户点击了"复制到文件夹"。 */
         fun onCopyToFolder(fileId: String)
         /** 用户点击了"移动到文件夹"。 */
         fun onMoveToFolder(fileId: String)
-        /** 用户点击了"编辑标签"。 */
-        fun onEditTags(fileId: String)
-        /** 用户长按图片。 */
-        fun onLongPress(fileId: String)
         /** 用户切换了沉浸模式。immersive=true 表示进入沉浸，false 表示退出。 */
         fun onImmersiveToggle(immersive: Boolean)
         /**
@@ -1160,9 +1154,10 @@ class NativeGalleryView @JvmOverloads constructor(
                 animateDrawerTo(targetOpen, fromProgress = currentProgress)
             }
             override fun onLongPressConfirmed() {
+                // M4b 6.1 收口：长按仅保留触感反馈——查看器的全部操作已在「⋮」菜单
+                // 承载（删除/重命名/复制到/移动到/幻灯片），无独立的上下文菜单需求
+                //（桌面查看器也无长按菜单同位项）。
                 performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                val item = images.getOrNull(currentIndex) ?: return
-                listener?.onLongPress(item.fileId)
             }
         }
     }

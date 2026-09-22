@@ -539,11 +539,9 @@ class MainActivity : ComponentActivity() {
             Log.i("AuroraViewer", "slideshow config applied: $configJson")
         }
 
-        // —— 以下入口的能力归属已按 M4 拆分重标（M4a 4.3）：查看器的复制/移动/重命名
-        // 走 MediaStore 归 M4b，颜色/主色调链路归 M6——
-        override fun onMore(fileId: String) = toastSoon("更多操作", "M4b")
-        override fun onLongPress(fileId: String) = toastSoon("长按上下文菜单", "M4b")
-        override fun onEditTags(fileId: String) = toastSoon("标签保存", "M4b")
+        // —— 以下入口的能力归属已按 M4 拆分重标（M4a 4.3）：查看器的复制/移动走
+        // MediaStore（M4b 1.5 已落地）；颜色/主色调链路归 M6；onMore/onEditTags/
+        // onLongPress 三个死回调已随 6.1 收口从 Listener 删除——
 
         /**
          * M4a 2.1：查看器三个编辑弹窗的落库分支。键与语义见
