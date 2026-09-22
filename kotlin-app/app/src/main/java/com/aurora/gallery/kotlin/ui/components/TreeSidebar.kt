@@ -229,6 +229,10 @@ fun TreeSidebar(
      * 专题/标签总览里，行再亮着就会跟专题粉/标签蓝同屏双亮（3.2 验收反馈 ②）。
      */
     browserActive: Boolean = false,
+    /** 画布 Section 头部行主体点击 = 进画布占位视图（M4b 阶段 4；视图归 M5）。 */
+    onCanvasClick: (() -> Unit)? = null,
+    /** 正处于画布占位视图（Section 头部按画布绿高亮）。 */
+    canvasSelected: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -390,13 +394,16 @@ fun TreeSidebar(
         }
 
         Spacer(Modifier.height(8.dp))
-        // 画布：M4b 前仅入口占位，无展开语义（对齐桌面 CanvasSection；视图归 M5）
+        // 画布：M4b 阶段 4 起入口可点（进占位视图，无展开语义；视图本体归 M5，
+        // 对齐桌面 CanvasSection）
         SectionHeader(
             title = "画布",
             icon = IconScan,
             iconTint = SECTION_EMERALD,
             expanded = false,
-            onClick = null,
+            onClick = onCanvasClick,
+            selected = canvasSelected,
+            selectedColor = SECTION_EMERALD,
             expandable = false,
         )
     }

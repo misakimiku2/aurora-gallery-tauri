@@ -2,8 +2,10 @@ package com.aurora.gallery.kotlin.ui.components
 
 import com.aurora.gallery.kotlin.state.DateFilter
 import com.aurora.gallery.kotlin.state.DateFilterMode
+import com.aurora.gallery.kotlin.state.SearchScope
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
+import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import java.util.Calendar
@@ -49,7 +51,8 @@ internal fun aspectRatioOf(image: Image): Float {
  * 按搜索词与日期筛选图片（3.2 TopBar 的数据管道第一步）。
  *
  * 语义对齐 React `useFileSearch.ts`：
- *  - 搜索：文件名 contains、大小写不敏感（该文件 129-135 行的 `file` scope 分支）；
+ *  - 搜索：scope 分支对齐该文件 128-148 行（M4b 阶段 3）——ALL = 文件名+标签+描述、
+ *    FILE = 文件名、TAG = 标签名、FOLDER = 文件夹名；
  *  - 日期：**start 与 end 同时存在才生效**（该文件 152 行的条件），[DateFilter.mode]
  *    决定比较 createdAt 还是 modifiedAt（epoch 秒，含端点）。
  *
@@ -57,14 +60,47 @@ internal fun aspectRatioOf(image: Image): Float {
  * 把标签当成**序列源**而不是谓词——`GalleryViewModel.reloadImages` 在 activeTags 非空时
  * 直接调 `list_images_by_tags` 取全库命中的图。理由：侧栏标签上的计数是全库口径，
  * 若只把当前文件夹的序列过滤一遍，同一屏上会出现「徽标 5、点开 2 张」的自相矛盾。
- * 补在这里等于两套标签筛选，且第二套是错的。
+ * 补在这里等于两套标签筛选，且第二套是错的。scope=TAG 的**文本搜索**是另一回事：
+ * 在当前序列里找「贴着名字含 query 的标签」的图，与序列源互不相干。
+ *
+ * 与 React 的已知语义差异（有意为之，登记于 M4b 清单阶段 3）：scope=FOLDER 匹配的是
+ * **当前视图的文件夹名**（序列级判定，全有或全无）——React 是「按每张图所属文件夹名」，
+ * 而 Kotlin 的 Image DTO 不带所属文件夹，标签全库视图下无法逐图判定；单文件夹视图里
+ * 两种语义本来等价（清单预告的「退化」）。
  */
-fun filterImages(images: List<Image>, query: String, dateFilter: DateFilter): List<Image> {
+fun filterImages(
+    images: List<Image>,
+    query: String,
+    dateFilter: DateFilter,
+    scope: SearchScope = SearchScope.ALL,
+    /** file_id → 标签（VM 快照原样；TAG / ALL 分支用）。 */
+    tagsByFile: Map<String, List<String>> = emptyMap(),
+    /** file_id → 元数据行（VM 快照原样；ALL 分支搜描述）。 */
+    metadataById: Map<String, FfiFileMetadata> = emptyMap(),
+    /** 当前视图所属文件夹名（FOLDER 分支；标签全库视图传空 = 恒不匹配）。 */
+    viewFolderName: String = "",
+): List<Image> {
     val q = query.trim().lowercase(Locale.US)
     val dateActive = dateFilter.start != null && dateFilter.end != null
     if (q.isEmpty() && !dateActive) return images
+    // FOLDER scope 是序列级判定：文件夹名不命中则整条序列为空
+    if (q.isNotEmpty() && scope == SearchScope.FOLDER &&
+        !viewFolderName.lowercase(Locale.US).contains(q)
+    ) {
+        return emptyList()
+    }
     return images.filter { img ->
-        (q.isEmpty() || img.name.lowercase(Locale.US).contains(q)) &&
+        val nameHit = img.name.lowercase(Locale.US).contains(q)
+        val tagHit = tagsByFile[img.id]?.any { it.lowercase(Locale.US).contains(q) } == true
+        val descHit = metadataById[img.id]?.description
+            ?.lowercase(Locale.US)?.contains(q) == true
+        val queryHit = when (scope) {
+            SearchScope.FILE -> nameHit
+            SearchScope.TAG -> tagHit
+            SearchScope.FOLDER -> true // 序列级判定已在函数头完成
+            SearchScope.ALL -> nameHit || tagHit || descHit
+        }
+        (q.isEmpty() || queryHit) &&
             (!dateActive || run {
                 val d = if (dateFilter.mode == DateFilterMode.CREATED) img.createdAt else img.modifiedAt
                 d >= dateFilter.start!! && d <= dateFilter.end!!

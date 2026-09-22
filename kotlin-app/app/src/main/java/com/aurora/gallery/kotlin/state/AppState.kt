@@ -22,9 +22,13 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * 专题详情**不设独立 ViewMode**（对齐 React：topics-overview + activeTopicId 非空即
  * 详情），见 [TabState.activeTopicId]。
+ *
+ * [CANVAS]（M4b 阶段 4）：侧栏「画布」入口的占位视图。React 的「画布」= 新建
+ * isCompareMode 标签页进 ImageComparer 全屏，没有独立 ViewMode；Kotlin 侧占位页独立
+ * 成模式，视图本体随 M5 落地时复用这个位置。
  */
 enum class ViewMode {
-    FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW, TOPICS_OVERVIEW,
+    FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW, TOPICS_OVERVIEW, CANVAS,
 }
 
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
@@ -337,6 +341,28 @@ class AppState(
     fun goBack(): Boolean = stepHistory(-1)
 
     /**
+     * 打开画布占位视图（M4b 阶段 4；对齐其他入口：清搜索/筛选/选中，推历史栈）。
+     * ViewMode 不持久化，重启自然回主界面（阶段 4 验收口径，天然满足）。
+     */
+    fun openCanvas() {
+        selectionMode = false
+        updateActiveTab { tab ->
+            tab.copy(
+                viewMode = ViewMode.CANVAS,
+                searchQuery = "",
+                searchScope = SearchScope.ALL,
+                activeTags = emptyList(),
+                activeTopicId = null,
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = tab.history.push(
+                    HistoryItem(folderId = tab.folderId, viewMode = ViewMode.CANVAS),
+                ),
+            )
+        }
+    }
+
+    /**
      * 回到主界面（总览 = 历史栈底，folderId = null）。
      * 对齐 React 侧栏「本地相册」头部点击的 onNavigateHome：无论深处几层，一步回总览
      * （2026-09-20 用户要求；此前头部点击只做展开切换）。已在总览时为无操作。
@@ -486,6 +512,15 @@ class AppState(
 
     fun setSearchQuery(query: String) {
         updateActiveTab { it.copy(searchQuery = query) }
+    }
+
+    /**
+     * 切换搜索范围（M4b 阶段 3 的 scope 下拉；React `onSearchScopeChange` 同位）。
+     * 只改谓词不改序列源——scope 影响的是 [com.aurora.gallery.kotlin.ui.components.filterImages]
+     * 的过滤分支，序列源（文件夹/标签/专题）仍由导航与 activeTags 驱动。
+     */
+    fun setSearchScope(scope: SearchScope) {
+        updateActiveTab { it.copy(searchScope = scope) }
     }
 
     /**

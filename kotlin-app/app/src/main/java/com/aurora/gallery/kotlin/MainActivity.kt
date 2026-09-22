@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,6 +54,7 @@ import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
+import com.aurora.gallery.kotlin.ui.components.TargetPickerDialog
 import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
 import com.aurora.gallery.kotlin.ui.components.TopicCollapsibleDetail
 import com.aurora.gallery.kotlin.ui.components.TopicDashedEmpty
@@ -76,6 +78,7 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import android.view.View
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
+import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.state.LayoutVisibility
@@ -187,14 +190,88 @@ class MainActivity : ComponentActivity() {
 
     /**
      * 文件操作统一入口：先按 file id 解析出 content uri（读索引），再过写授权，允许后
-     * 执行 [op]。复制不走这里（无授权），直接调 [GalleryViewModel.copyFiles]。
+     * 把 uri 交给 [op]。复制不走这里（无授权），直接调 [GalleryViewModel.copyFiles]。
      */
-    private fun fileOpWithWriteAccess(fileIds: Collection<String>, op: () -> Unit) {
+    private fun fileOpWithWriteAccessUris(fileIds: Collection<String>, op: (List<Uri>) -> Unit) {
         viewModel.resolveFileUris(fileIds) { uris ->
             if (uris.isEmpty()) {
                 Toast.makeText(this, "没有可操作的文件", Toast.LENGTH_SHORT).show()
             } else {
-                requestWriteAccess(uris, op)
+                requestWriteAccess(uris) { op(uris) }
+            }
+        }
+    }
+
+    private fun fileOpWithWriteAccess(fileIds: Collection<String>, op: () -> Unit) {
+        fileOpWithWriteAccessUris(fileIds) { op() }
+    }
+
+    // —— M4b 1.4/1.3 复制/移动/重命名的宿主执行（网格与查看器共用一条写入路径）——
+    // 弹窗层状态（目标选择器/合并确认/重命名目标）在 App() 组合里；这里只提供
+    // 「已确定目标后的执行」：解析 RELATIVE_PATH、批量授权、调写原语、反馈。
+
+    /** 复制/移动到既有相册（folderId 现场解析 RELATIVE_PATH）。 */
+    private fun performCopyMoveToFolder(
+        fileIds: List<String>,
+        targetFolderId: String,
+        type: String,
+        onFinished: () -> Unit = {},
+    ) {
+        viewModel.resolveFolderRelPath(targetFolderId) { relPath ->
+            if (relPath == null) {
+                Toast.makeText(this, "无法解析目标相册路径", Toast.LENGTH_SHORT).show()
+                return@resolveFolderRelPath
+            }
+            performCopyMove(fileIds, relPath, type, onFinished)
+        }
+    }
+
+    /** 复制/移动到**新相册**（1.3 懒创建：RELATIVE_PATH 指向 `Pictures/<名字>`，落地文件才产生 Folder 行）。 */
+    private fun performCopyMoveToNewAlbum(
+        fileIds: List<String>,
+        albumName: String,
+        type: String,
+        onFinished: () -> Unit = {},
+    ) {
+        if (albumName.isEmpty() || albumName == "." || albumName == ".." ||
+            albumName.contains('/') || albumName.contains('\\')
+        ) {
+            Toast.makeText(this, "相册名不能包含 / \\ 等路径字符", Toast.LENGTH_SHORT).show()
+            return
+        }
+        performCopyMove(fileIds, "Pictures/$albumName", type, onFinished)
+    }
+
+    private fun performCopyMove(
+        fileIds: List<String>,
+        relPath: String,
+        type: String,
+        onFinished: () -> Unit = {},
+    ) {
+        viewModel.resolveFileUris(fileIds) { uris ->
+            // M4b 诊断日志：fileId 与 uri 的对应关系是「移错文件」类问题的第一现场
+            Log.w("AuroraFileOp", "performCopyMove type=$type relPath=$relPath ids=$fileIds uris=$uris")
+            if (uris.isEmpty()) {
+                Toast.makeText(this, "没有可操作的文件", Toast.LENGTH_SHORT).show()
+                return@resolveFileUris
+            }
+            val report: (Int) -> Unit = { n ->
+                Toast.makeText(
+                    this,
+                    when {
+                        n == 0 -> if (type == "copy") "复制失败" else "移动失败"
+                        else -> (if (type == "copy") "已复制 " else "已移动 ") + "$n 张"
+                    },
+                    Toast.LENGTH_SHORT,
+                ).show()
+                if (n > 0) onFinished()
+            }
+            if (type == "copy") {
+                // 复制静默完成（insert 新行只要读权限，规划五要点②的不对称）
+                viewModel.copyFiles(uris, relPath, report)
+            } else {
+                // 移动要过系统写授权（批量一次弹窗），App 侧文案不替系统说话
+                requestWriteAccess(uris) { viewModel.moveFiles(uris, relPath, report) }
             }
         }
     }
@@ -284,9 +361,20 @@ class MainActivity : ComponentActivity() {
             val description = if (updates.has("description")) updates.getString("description") else null
             val sourceUrl = if (updates.has("sourceUrl")) updates.getString("sourceUrl") else null
             if (tags == null && description == null && sourceUrl == null) {
-                // 走到这里的实际只有 `{"name": …}`（查看器的重命名弹窗）。文件重命名改的是
-                // MediaStore 的 DISPLAY_NAME、不是元数据行，本地库侧归 M4b。
-                toastSoon("重命名", "M4b")
+                // 走到这里的实际只有 `{"name": …}`（查看器的重命名弹窗）：重命名改的是
+                // MediaStore 的 DISPLAY_NAME（M4b 1.5 接通写原语，先过批量写授权），
+                // 元数据行挂在同一 file_id 上不动（规划五要点②）。查看器已就地更新了
+                // 自己列表里的名字，失败时靠重扫对账纠正。
+                val newName = updates.optString("name")
+                if (newName.isNotEmpty()) {
+                    fileOpWithWriteAccessUris(listOf(fileId)) { uris ->
+                        viewModel.renameFiles(listOf(uris.first() to newName)) { n ->
+                            if (n == 0) {
+                                Toast.makeText(this@MainActivity, "重命名失败", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
                 return
             }
             viewModel.saveFileUpdates(fileId, tags, description, sourceUrl) { ok ->
@@ -296,10 +384,69 @@ class MainActivity : ComponentActivity() {
 
         override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M6")
         override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
-        override fun onCopyToFolder(fileId: String) = toastSoon("复制到文件夹", "M4b")
-        override fun onMoveToFolder(fileId: String) = toastSoon("移动到文件夹", "M4b")
-        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) =
-            toastSoon("文件夹选择", "M4b")
+
+        /** M4b 1.5：查看器「更多」的复制/移动 → FolderPickerDialog（folderTree 从 VM 快照构造）。 */
+        override fun onCopyToFolder(fileId: String) {
+            view.showFolderPickerDialog("copy", fileId, folderTreeJson()) { name ->
+                onViewerNewAlbum(fileId, name, "copy")
+            }
+        }
+
+        override fun onMoveToFolder(fileId: String) {
+            view.showFolderPickerDialog("move", fileId, folderTreeJson()) { name ->
+                onViewerNewAlbum(fileId, name, "move")
+            }
+        }
+
+        /**
+         * M4b 1.5：查看器弹窗确认（1.4 的 onFolderPickerConfirm 从 Toast 改为真执行；
+         * move 时查看器自己已把这张从序列里摘掉，宿主只管落库，失败靠重扫对账纠正）。
+         */
+        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
+            performCopyMoveToFolder(listOf(fileId), targetFolderId, type)
+        }
+    }
+
+    /** FolderPickerDialog 的 folderTreeJson：Kotlin 侧是扁平 bucket 列表（D18），全为根节点。 */
+    private fun folderTreeJson(): String {
+        val folders = viewModel.folders.value
+        val folderArr = org.json.JSONArray()
+        val roots = org.json.JSONArray()
+        folders.forEach { f ->
+            roots.put(f.id)
+            folderArr.put(
+                org.json.JSONObject()
+                    .put("id", f.id)
+                    .put("name", f.name)
+                    .put("parentId", JSONObject.NULL)
+                    .put("children", org.json.JSONArray()),
+            )
+        }
+        return org.json.JSONObject()
+            .put("roots", roots)
+            .put("folders", folderArr)
+            .toString()
+    }
+
+    /**
+     * 查看器侧「+ 新建相册」（M4b 1.3，与网格侧同一语义）：重名 → View 体系的合并确认
+     * （D13：弹窗两处实现、写入路径只有一条）；不重名 → 校验后建在 Pictures/<名字>。
+     */
+    private fun onViewerNewAlbum(fileId: String, albumName: String, type: String) {
+        val existing = viewModel.folders.value.firstOrNull { it.name == albumName }
+        if (existing != null) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("合并到已有相册")
+                .setMessage("已有同名相册「${existing.name}」（${existing.imageCount} 张）。将把所选文件并入该相册。")
+                .setPositiveButton("并入") { d, _ ->
+                    d.dismiss()
+                    performCopyMoveToFolder(listOf(fileId), existing.id, type)
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+        performCopyMoveToNewAlbum(listOf(fileId), albumName, type)
     }
 
     /** 未落地能力的可见占位（M3 3.3：静默无响应在真机上会被当成 bug 报回来）。 */
@@ -357,6 +504,14 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    // —— M4b 1.4 排查：确认触摸事件是否进入应用（收口时删）——
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (ev.action == android.view.MotionEvent.ACTION_DOWN) {
+            Log.i("AuroraMenu", "dispatch DOWN x=${ev.x.toInt()} y=${ev.y.toInt()}")
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -373,17 +528,21 @@ class MainActivity : ComponentActivity() {
                     viewModel.reloadImages()
                 }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
-                // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）
+                // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）。M4b 阶段 3 起
+                // scope 文本搜索的数据源（标签/元数据快照 + 所属文件夹名）一并喂入。
+                val currentFolderName = appState.activeTab.folderId?.let { id ->
+                    viewModel.folders.value.firstOrNull { it.id == id }?.name
+                }.orEmpty()
                 val displayImages = rememberDisplayImages(
                     viewModel.images.value,
                     appState.activeTab,
                     appState.sortBy,
                     appState.sortDirection,
+                    tagsByFile = viewModel.tagsByFile.value,
+                    metadataById = viewModel.metadataById.value,
+                    viewFolderName = currentFolderName,
                 )
-                val currentFolderName = appState.activeTab.folderId?.let { id ->
-                    viewModel.folders.value.firstOrNull { it.id == id }?.name
-                }.orEmpty()
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
                         state = appState,
                         folders = viewModel.folders.value,
@@ -488,6 +647,31 @@ class MainActivity : ComponentActivity() {
                                     if (ok) "已设为封面" else "设置封面失败",
                                     Toast.LENGTH_SHORT,
                                 ).show()
+                            }
+                        },
+                        // —— M4b 1.4/1.3 文件操作（弹窗在 App 内，执行在宿主）——
+                        onCopyMoveFiles = { fileIds, folderId, type ->
+                            performCopyMoveToFolder(fileIds, folderId, type) {
+                                appState.exitSelectionMode()
+                            }
+                        },
+                        onCopyMoveToNewAlbum = { fileIds, albumName, type ->
+                            performCopyMoveToNewAlbum(fileIds, albumName, type) {
+                                appState.exitSelectionMode()
+                            }
+                        },
+                        onResolveSelectionFileIds = { ids, onReady ->
+                            viewModel.resolveSelectionFileIds(ids, onReady)
+                        },
+                        onRenameFile = { fileId, newName ->
+                            fileOpWithWriteAccessUris(listOf(fileId)) { uris ->
+                                viewModel.renameFiles(listOf(uris.first() to newName)) { n ->
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        if (n > 0) "已重命名" else "重命名失败",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
                             }
                         },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
@@ -711,6 +895,15 @@ fun App(
     onDeleteTopic: (uniffi.aurora_core.FfiTopic) -> Unit = {},
     /** 4.3 设为专题封面（详情选择模式的触屏同位入口）。 */
     onSetTopicCover: (topicId: String, fileId: String) -> Unit = { _, _ -> },
+    // —— M4b 1.4 文件操作（网格入口；执行在宿主，弹窗状态在本组合）——
+    /** 复制/移动到既有相册（宿主解析 RELATIVE_PATH + 授权 + 调写原语）。 */
+    onCopyMoveFiles: (fileIds: List<String>, targetFolderId: String, type: String) -> Unit = { _, _, _ -> },
+    /** 复制/移动到**新相册**（1.3 懒创建；宿主校验名字后建在 Pictures/<名字>）。 */
+    onCopyMoveToNewAlbum: (fileIds: List<String>, albumName: String, type: String) -> Unit = { _, _, _ -> },
+    /** 总览选中的文件夹卡片展开成成员图片 id（复制/移动/删除的统一前置）。 */
+    onResolveSelectionFileIds: (Set<String>, (List<String>) -> Unit) -> Unit = { _, _ -> },
+    /** 网格重命名（1.4 单选菜单项；宿主过写授权后改 DISPLAY_NAME）。 */
+    onRenameFile: (fileId: String, newName: String) -> Unit = { _, _ -> },
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
 ) {
@@ -737,6 +930,13 @@ fun App(
     // M4a 4.3 专题卡片长按菜单 → 重命名 / 删除确认弹窗的目标
     var renameTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
     var deleteTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
+    // M4b 1.4 目标选择器（copy|move + 已展开成图片 id 的操作集）
+    var pickerType by remember { mutableStateOf<String?>(null) }
+    var pickerFileIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    // M4b 1.3 新建相册的重名合并确认（相册 + 待执行的 type/fileIds）
+    var albumMerge by remember { mutableStateOf<Triple<uniffi.aurora_core.Folder, String, List<String>>?>(null) }
+    // M4b 1.4 网格重命名的目标文件（单选菜单项触发；弹窗复用查看器 RenameDialog 形制）
+    var renameFileId by remember { mutableStateOf<String?>(null) }
     // 3.2④ 建专题弹窗的目标父级：总览按钮=null（根专题），详情子专题区=当前专题
     var createTopicParent by remember { mutableStateOf<String?>(null) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
@@ -764,6 +964,8 @@ fun App(
     val inTagsOverview = tab.viewMode == ViewMode.TAGS_OVERVIEW
     val inPeopleOverview = tab.viewMode == ViewMode.PEOPLE_OVERVIEW
     val inTopicsOverview = tab.viewMode == ViewMode.TOPICS_OVERVIEW
+    // M4b 阶段 4：画布占位视图（入口已达成，视图本体归 M5）
+    val inCanvas = tab.viewMode == ViewMode.CANVAS
     val inTopicsList = inTopicsOverview && tab.activeTopicId == null
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
@@ -804,12 +1006,13 @@ fun App(
         sortTopicsForDisplay(childTopics, topicSort, topicSortAscending)
     }
 
-    // 「更多」菜单项（3.2 归入入口 + M4a 4.3 收口的标签三项；桌面同位是文件右键
-    // 菜单 ContextMenu.tsx 的文件分支——「添加到主题 / 编辑标签 / 复制标签 / 粘贴标签」，
-    // 其余项的归属：复制/移动/重命名归 M4b（桌面安卓版先例：不适用的项直接不出现）、
-    // AI/比较归 M6）：
-    //  - 文件夹网格里多选 → 加入专题 / 粘贴标签，单选另有 编辑标签 / 复制标签
+    // 「更多」菜单项（3.2 归入入口 + M4a 4.3 收口的标签三项 + M4b 1.4 文件操作三项；
+    // 桌面同位是文件右键菜单 ContextMenu.tsx 的文件分支——「添加到主题 / 编辑标签 /
+    // 复制标签 / 粘贴标签 / 重命名 / 复制到 / 移动到」；AI/比较归 M6）：
+    //  - 文件夹网格里多选 → 加入专题 / 粘贴标签 / 复制到 / 移动到，单选另有 编辑标签 / 复制标签 / 重命名
     //  - 专题详情里多选 → 从专题移除（对称操作）
+    //  - 总览选中的是文件夹卡片 → 复制到 / 移动到 / 删除（成员展开后落写原语）
+    val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview)
     val moreActions = when {
         inBrowser -> buildList {
             add(SelectionMoreAction("加入专题…") { showTopicPicker = true })
@@ -818,6 +1021,17 @@ fun App(
                 add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
             }
             add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
+            add(SelectionMoreAction("复制到…") {
+                pickerType = "copy"
+                pickerFileIds = tab.selectedFileIds.toList()
+            })
+            add(SelectionMoreAction("移动到…") {
+                pickerType = "move"
+                pickerFileIds = tab.selectedFileIds.toList()
+            })
+            if (tab.selectedFileIds.size == 1) {
+                add(SelectionMoreAction("重命名…") { renameFileId = tab.selectedFileIds.first() })
+            }
         }
         inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> buildList {
             if (tab.selectedFileIds.size == 1) {
@@ -833,6 +1047,21 @@ fun App(
             add(SelectionMoreAction("从专题移除") {
                 onRemoveFromTopic(tab.activeTopicId!!, tab.selectedFileIds)
             })
+        }
+        inFoldersOverview && tab.selectedFileIds.isNotEmpty() -> buildList {
+            add(SelectionMoreAction("复制到…") {
+                onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
+                    pickerType = "copy"
+                    pickerFileIds = ids
+                }
+            })
+            add(SelectionMoreAction("移动到…") {
+                onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
+                    pickerType = "move"
+                    pickerFileIds = ids
+                }
+            })
+            add(SelectionMoreAction("删除") { showDeleteConfirm = true })
         }
         else -> emptyList()
     }
@@ -876,6 +1105,9 @@ fun App(
         when {
             !state.selectionMode -> state.enterSelectionMode(folder.id)
             folder.id !in tab.selectedFileIds -> state.rangeSelect(folder.id, currentFolderIds.value)
+            // 已选中卡片长按 = 打开选中集菜单（M4b 1.4：复制到/移动到/删除；此前
+            // 「更多」在总览是 Toast 占位）
+            else -> moreExpanded = true
         }
     }
 
@@ -930,6 +1162,9 @@ fun App(
                 tagsOverviewSelected = inTagsOverview,
                 topicsOverviewSelected = inTopicsOverview,
                 foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
+                // 画布行：点击进占位视图（M4b 阶段 4）
+                onCanvasClick = { state.openCanvas() },
+                canvasSelected = inCanvas,
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )
@@ -950,13 +1185,16 @@ fun App(
                     onDelete = { showDeleteConfirm = true },
                     onShare = { onShareSelection(tab.selectedFileIds) },
                     onMore = {
-                        // 仅剩总览（文件夹卡片选择）会走到这里——文件网格的「更多」
-                        // 已是菜单（moreActions），见 SelectionBar
-                        Toast.makeText(context, "更多操作将随 M4b 提供", Toast.LENGTH_SHORT).show()
+                        // 各选择视图的 moreActions 已全部非空（M4b 1.4 收口：总览的
+                        // 复制到/移动到/删除），这里只剩空集兜底，不再有 Toast 占位
                     },
                     moreActions = moreActions,
                     moreExpanded = moreExpanded,
-                    onMoreExpandedChange = { moreExpanded = it },
+                    onMoreExpandedChange = {
+                        // M4b 1.4 排查日志：谁在开/关选中集菜单
+                        Log.i("AuroraMenu", "moreExpanded -> $it")
+                        moreExpanded = it
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
@@ -967,12 +1205,13 @@ fun App(
                         inPeopleOverview -> "人物"
                         inTopicDetail -> currentTopicName ?: "专题"
                         inTopicsList -> "专题"
+                        inCanvas -> "画布"
                         else -> currentFolder?.name ?: "文件夹"
                     },
                     canBack = tab.history.canBack,
                     onBack = { state.goBack() },
                     // 总览是从别处推入历史栈的位置，可退；文件夹总览（栈底）不显示返回键
-                    showBack = inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview,
+                    showBack = inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inCanvas,
                     sidebarVisible = state.layout.isSidebarVisible,
                     onToggleSidebar = { state.toggleSidebar() },
                     searchQuery = tab.searchQuery,
@@ -985,6 +1224,11 @@ fun App(
                         inBrowser -> "搜索图片"
                         else -> "搜索文件夹"
                     },
+                    // M4b 阶段 3：scope 下拉只在 BROWSER（文件夹内/标签筛选）显示，
+                    // 对齐 React 在 people/tags 总览隐藏；总览按文件夹名过滤无 scope 语义
+                    searchScope = tab.searchScope,
+                    onSearchScopeChange = { state.setSearchScope(it) },
+                    showScope = inBrowser,
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,
@@ -1172,9 +1416,13 @@ fun App(
                         )
                     }
                 }
+                // M4b 阶段 4：画布占位视图（验收标准「画布入口可点进（视图本体仍属
+                // M5）」；M3 3.3 可见占位口径——静默空屏在真机会被当成 bug 报回来）
+                inCanvas -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text("画布视图将随 M5 提供", color = AuroraTheme.colors.textSecondary)
+                }
                 // 文件夹内网格（选择/查看器共用同一展示序列）
-                inBrowser -> {
-                    if (displayImages.isEmpty()) {
+                inBrowser -> {                    if (displayImages.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
                             val emptyText = when {
@@ -1311,6 +1559,68 @@ fun App(
                 onAddToTopic(topic.id, tab.selectedFileIds)
             },
         )
+    }
+
+    // —— M4b 1.4 目标相册选择器 + 1.3 新建相册（含重名合并拦截）——
+    pickerType?.let { type ->
+        TargetPickerDialog(
+            folders = folders,
+            type = type,
+            onDismiss = { pickerType = null },
+            onPickFolder = { folder ->
+                val fileIds = pickerFileIds
+                pickerType = null
+                onCopyMoveFiles(fileIds, folder.id, type)
+            },
+            onPickNewAlbum = { name ->
+                val fileIds = pickerFileIds
+                pickerType = null
+                // 细则 iii：与已有相册同名 → 合并确认，不静默合并；确认后并入该相册
+                // 实际的 RELATIVE_PATH（可能是 DCIM 等非 Pictures 目录）
+                val existing = folders.firstOrNull { it.name == name }
+                if (existing != null) albumMerge = Triple(existing, type, fileIds)
+                else onCopyMoveToNewAlbum(fileIds, name, type)
+            },
+        )
+    }
+
+    albumMerge?.let { (folder, type, fileIds) ->
+        AlertDialog(
+            onDismissRequest = { albumMerge = null },
+            title = { Text("合并到已有相册") },
+            text = {
+                Text(
+                    "已有同名相册「${folder.name}」（${folder.imageCount} 张）。将把所选 ${fileIds.size} 个文件并入该相册。",
+                    color = AuroraTheme.colors.textPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    albumMerge = null
+                    onCopyMoveFiles(fileIds, folder.id, type)
+                }) {
+                    Text("并入", color = AuroraTheme.colors.primaryDeep)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { albumMerge = null }) {
+                    Text("取消", color = AuroraTheme.colors.textPrimary)
+                }
+            },
+        )
+    }
+
+    // M4b 1.4 网格重命名：复用查看器的 RenameDialog 形制（View 体系弹窗，一次性；
+    // 从 LaunchedEffect 拉起，先清状态——取消即整条流程结束）
+    LaunchedEffect(renameFileId) {
+        val fid = renameFileId ?: return@LaunchedEffect
+        renameFileId = null
+        val currentName = images.firstOrNull { it.id == fid }?.name ?: ""
+        RenameDialog(
+            context = context,
+            currentName = currentName,
+            onConfirm = { newName -> onRenameFile(fid, newName) },
+        ).show()
     }
 
     // M4a 4.3 编辑标签（长按菜单单选项触发）；保存走 2.1 的唯一写入口

@@ -1796,8 +1796,15 @@ class NativeGalleryView @JvmOverloads constructor(
      * 显示文件夹选择弹窗（UI 与 WebView FolderPickerModal 一致）。
      * 用户选择目标文件夹后调用 listener?.onFolderPickerConfirm(fileId, targetId, type)。
      * type: "copy" 或 "move"；move 时确认后还会从当前列表移除该图片。
+     * M4b 1.3：[onNewAlbumPicked] 透传给弹窗的「+ 新建相册」（名字输入确认后回调并
+     * 关闭弹窗；宿主做重名合并拦截与落库）。
      */
-    fun showFolderPickerDialog(type: String, fileId: String, folderTreeJson: String) {
+    fun showFolderPickerDialog(
+        type: String,
+        fileId: String,
+        folderTreeJson: String,
+        onNewAlbumPicked: ((albumName: String) -> Unit)? = null,
+    ) {
         if (images.indexOfFirst { it.fileId == fileId } < 0) return
         FolderPickerDialog(
             context = context,
@@ -1810,7 +1817,8 @@ class NativeGalleryView @JvmOverloads constructor(
                 if (confirmedType == "move") {
                     confirmMoveOut(fileId)
                 }
-            }
+            },
+            onNewAlbumPicked = onNewAlbumPicked,
         ).show()
     }
 

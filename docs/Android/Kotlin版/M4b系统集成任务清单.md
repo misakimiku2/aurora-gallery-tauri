@@ -159,10 +159,10 @@
 | 2.1 设置持久化与入口 | 待办 | |
 | 2.2 通用面板（语言开关） | 待办 | |
 | 2.3 存储面板 | 待办 | |
-| 3 搜索 scope | 待办 | |
+| 3 搜索 scope 下拉 | 完成（2026-09-23） | `filterImages` 加 scope/tagsByFile/metadataById/viewFolderName 参数（默认值保持旧签名行为），`rememberDisplayImages` 透传并把 `tab.searchScope` 与两份快照、视图文件夹名列入 remember 键；TopBar 搜索胶囊头部加 scope 按钮（文字+chevron，AuroraDropdown 四项：搜索全部/文件名/标签/文件夹，zh 串同 React translations），仅在 BROWSER 视图显示（对齐 React 在 people/tags 总览隐藏）；`AppState.setSearchScope` 新增。**与 React 的已知语义差异（登记）**：FOLDER scope 匹配的是**当前视图的文件夹名**（序列级判定，单文件夹视图内全有或全无）——Image DTO 不带所属文件夹，标签全库视图无法逐图判定；React 的「按每张图所属文件夹筛」如需要再立 FFI 扩项。模拟器实测：ALL 命中「描述含词、文件名不含」用例（m4bdesc→renamed_01.jpg）、FILE 同词为空、下拉选中态勾选正确。 |
 | 4 画布入口 | 待办 | |
 | 5 任务通知（按 D17） | 待办 | |
-| 6 收口核对 | 待办 | |
+| 6 收口核对 | 进行中 | **6.4 已销账**：总览选择栏「更多」的 Toast 占位已随 1.4 换成真菜单（SelectionBar onMore 退化成空集兜底）。**6.3 状态栏（2026-09-23 更新，推翻「零代码」预期）**：在 pixel_9 AVD（挖孔屏，状态栏 frame 高 142px）上实测发现应用 edge-to-edge 渲染、TopBar 整行按钮被状态栏盖住**完全不可点**（事件被 statusBars insets 区消费，dispatchTouchEvent 有日志佐证）——根布局补 `statusBarsPadding()` 修复，TopBar 恢复可点（搜索/排序/日期/侧栏开关全部实测正常）；查看器沉浸随系统栏隐藏自动回收该 padding，不受影响。矩阵表 6 状态栏行按「补 inset 修复」登记。**6.1/6.2 待验收阶段收口。** |
 | 7 验收与回填 | 待办 | |
 
 ## 8. 交接要点（开工前读；M4a §8 的通用坑不重复抄）

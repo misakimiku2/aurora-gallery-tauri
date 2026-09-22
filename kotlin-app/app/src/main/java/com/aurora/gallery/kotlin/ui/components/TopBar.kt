@@ -96,6 +96,7 @@ import androidx.savedstate.findViewTreeSavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.aurora.gallery.kotlin.state.DateFilter
 import com.aurora.gallery.kotlin.state.DateFilterMode
+import com.aurora.gallery.kotlin.state.SearchScope
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
@@ -149,6 +150,11 @@ fun TopBar(
     onSearchOpenChange: (Boolean) -> Unit,
     /** 搜索胶囊的占位文案（文件夹内部 = 搜索图片，总览 = 搜索文件夹）。 */
     searchPlaceholder: String = "搜索图片",
+    /** 搜索范围（M4b 阶段 3：scope 下拉，对齐 React TopBar :968-999）。 */
+    searchScope: SearchScope = SearchScope.ALL,
+    onSearchScopeChange: (SearchScope) -> Unit = {},
+    /** 是否显示 scope 下拉（仅 BROWSER 视图；对齐 React 在 people/tags 总览隐藏）。 */
+    showScope: Boolean = false,
     dateFilter: DateFilter,
     onDateFilterChange: (DateFilter) -> Unit,
     sortBy: SortOption,
@@ -225,7 +231,10 @@ fun TopBar(
             }
         }
         if (showSearch && !searchOpen) {
-            TopBarButton(onClick = { onSearchOpenChange(true) }) {
+            TopBarButton(onClick = {
+                android.util.Log.i("AuroraMenu", "TopBar search click -> open")
+                onSearchOpenChange(true)
+            }) {
                 Icon(
                     imageVector = IconSearch,
                     contentDescription = "搜索",
@@ -249,6 +258,9 @@ fun TopBar(
                     query = searchQuery,
                     onQueryChange = onSearchQueryChange,
                     placeholder = searchPlaceholder,
+                    scope = searchScope,
+                    onScopeChange = onSearchScopeChange,
+                    showScope = showScope,
                     onClose = {
                         onSearchQueryChange("")
                         onSearchOpenChange(false)
@@ -478,7 +490,12 @@ internal fun AuroraDropdown(
         val dialog = Dialog(context)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.setCanceledOnTouchOutside(true)
-        dialog.setOnDismissListener { latestOnDismiss() }
+        // M4b 1.4 排查日志：系统侧 dismiss（点外部/返回）都会走到这里；配合宿主的
+        // expanded 状态日志能定位「菜单自己关了」是谁触发的
+        dialog.setOnDismissListener {
+            android.util.Log.i("AuroraMenu", "AuroraDropdown dismissed -> onDismissRequest")
+            latestOnDismiss()
+        }
 
         val composeView = ComposeView(context).apply {
             // 弹层是独立组合：挂宿主 Activity 的生命周期/状态注册表，Recomposer 才有宿主
@@ -681,6 +698,9 @@ private fun SearchPill(
     query: String,
     onQueryChange: (String) -> Unit,
     placeholder: String,
+    scope: SearchScope = SearchScope.ALL,
+    onScopeChange: (SearchScope) -> Unit = {},
+    showScope: Boolean = false,
     onClose: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
@@ -699,6 +719,51 @@ private fun SearchPill(
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // M4b 阶段 3：scope 下拉（对齐 React TopBar :968-999 的 icon+chevron 按钮，
+        // 触屏上用「文字 + chevron」比纯图标更可读，其余形制对齐）
+        if (showScope) {
+            var scopeAnchor by remember { mutableStateOf(Rect.Zero) }
+            var scopeOpen by remember { mutableStateOf(false) }
+            Box(Modifier.onGloballyPositioned { scopeAnchor = it.boundsInWindow() }) {
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { scopeOpen = !scopeOpen }
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = scopeLabelOf(scope),
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        maxLines = 1,
+                    )
+                    Icon(
+                        imageVector = ScopeIconChevronDown,
+                        contentDescription = "搜索范围",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+                AuroraDropdown(
+                    expanded = scopeOpen,
+                    anchorBoundsInWindow = scopeAnchor,
+                    onDismissRequest = { scopeOpen = false },
+                ) {
+                    SearchScope.entries.forEach { s ->
+                        AuroraMenuItem(
+                            text = scopeLabelOf(s),
+                            onClick = {
+                                scopeOpen = false
+                                onScopeChange(s)
+                            },
+                            checked = s == scope,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+        }
         Icon(
             imageVector = IconSearch,
             contentDescription = null,
@@ -739,6 +804,36 @@ private fun SearchPill(
             )
         }
     }
+}
+
+/** scope 下拉的选项文案（zh，与 React `translations.ts` 的 `search.scope*` 同串）。 */
+private fun scopeLabelOf(scope: SearchScope): String = when (scope) {
+    SearchScope.ALL -> "搜索全部"
+    SearchScope.FILE -> "文件名"
+    SearchScope.TAG -> "标签"
+    SearchScope.FOLDER -> "文件夹"
+}
+
+/** scope 按钮的 chevron（lucide chevron-down，本文件就近自绘一份）。 */
+private val ScopeIconChevronDown: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "ScopeChevronDown",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        ) {
+            moveTo(6f, 9f)
+            lineTo(12f, 15f)
+            lineTo(18f, 9f)
+        }
+    }.build()
 }
 
 /**

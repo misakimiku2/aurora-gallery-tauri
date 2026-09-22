@@ -46,6 +46,10 @@ data class FolderTreeData(val roots: List<String>, val folders: Map<String, Fold
  *     onConfirm = { fileId, targetId, type -> ... }
  * ).show()
  * ```
+ *
+ * M4b 1.3：底部「+ 新建相册」入口（懒创建，与网格侧 TargetPickerDialog 同一语义、
+ * 同一条写入路径——D13：两处弹窗、宿主执行只有一份）。[onNewAlbumPicked] 在用户输入
+ * 名字确认后回调，宿主负责重名合并拦截与落库；回调后本弹窗自动关闭。
  */
 class FolderPickerDialog(
     private val context: Context,
@@ -53,7 +57,8 @@ class FolderPickerDialog(
     private val type: String,
     private val fileId: String,
     private val folderTreeJson: String,
-    private val onConfirm: (fileId: String, targetFolderId: String, type: String) -> Unit
+    private val onConfirm: (fileId: String, targetFolderId: String, type: String) -> Unit,
+    private val onNewAlbumPicked: ((albumName: String) -> Unit)? = null,
 ) {
     fun show() {
         val tree = parseFolderTree(folderTreeJson) ?: return
@@ -134,6 +139,41 @@ class FolderPickerDialog(
         }
         treeContainer.addView(listView)
         container.addView(treeContainer)
+
+        // 「+ 新建相册」（M4b 1.3：宿主做合并拦截；点了就地弹名字输入）
+        if (onNewAlbumPicked != null) {
+            container.addView(TextView(context).apply {
+                text = "＋ 新建相册"
+                setTextColor(theme.colorAccent())
+                textSize = 14f
+                paint.isFakeBoldText = true
+                val pad = (density * 8).toInt()
+                setPadding(pad, pad, pad, pad)
+                background = DialogUtils.createRoundedBg(theme.colorTextBoxBg(), 8f, theme.colorBorder(), 1f, context)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { bottomMargin = (density * 8).toInt() }
+                // 触屏目标 ≥48dp（desktop-to-android 规范）
+                minimumHeight = (density * 48).toInt()
+                setOnClickListener {
+                    val input = EditText(context).apply { hint = "相册名称（建在 Pictures 下）" }
+                    android.app.AlertDialog.Builder(context)
+                        .setTitle("新建相册")
+                        .setView(input)
+                        .setPositiveButton("继续") { d, _ ->
+                            val name = input.text.toString().trim()
+                            d.dismiss()
+                            if (name.isNotEmpty()) {
+                                dialog.dismiss()
+                                onNewAlbumPicked.invoke(name)
+                            }
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            })
+        }
 
         // 按钮行
         val buttonRow = LinearLayout(context).apply {

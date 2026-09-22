@@ -303,6 +303,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
+     * 选中集（图片和/或总览的文件夹卡片）展开成**图片 id 列表**（M4b 1.4 复制/移动的
+     * 前置；文件夹读库展开，与 [resolveSelectionUris] 同源同语义）。
+     */
+    fun resolveSelectionFileIds(ids: Set<String>, onReady: (List<String>) -> Unit) {
+        viewModelScope.launch {
+            val out = withContext(Dispatchers.IO) {
+                val folderById = folders.value.associateBy { it.id }
+                val out = ArrayList<String>(ids.size)
+                for (id in ids) {
+                    if (folderById.containsKey(id)) {
+                        listImages(id).forEach { out += it.id }
+                    } else {
+                        out += id
+                    }
+                }
+                out
+            }
+            onReady(out)
+        }
+    }
+
+    /**
      * 重命名（改 DISPLAY_NAME）。[targets] = (uri, 新名)；调用方先过宿主授权（单选场景
      * 只有一个 uri，同样走 [MainActivity.requestWriteAccess] 一条路径）。
      */
