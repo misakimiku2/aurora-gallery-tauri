@@ -151,7 +151,7 @@
 | 任务 | 状态 | 结果与备注 |
 |---|---|---|
 | 0 决策拍板 | 完成（2026-09-23，全部按 §6 起草人建议采纳，验收人可随时推翻单项） | **D15**＝SharedPreferences（清单起草人可定项；不导出 blob，不为「将来三端一致」提前建抽象）。**D16**＝LAN/AI 面板随 M6（空壳会被当 bug 报回来，4.2 同款问题；规划 §6 范围句与矩阵表 6 行已同步改「设置通用/存储两面板」）。**D17**＝做扫描通知基础版（自建 Channel + 进度/终态，无按钮回传；M6 只加按钮）。**D18**＝维持扁平、矩阵表 2 行改「完整（扁平，对齐 React 平板）」（树形是造出来的层级）。**D19**＝做：语言/调试日志/默认布局与排序持久化/缓存清理/备份导出导入；不做并登记：主题暗色/自启动/退出行为/folderIconStyle；随 M6：autoExtractPalette/AI 开关；animateOnSelect 随实现核对。**D20**＝不做文件夹重命名（MediaStore 无 bucket 改名原语），矩阵表 3 行备注登记；复制/移动照做。 |
-| 1.1 MediaStore 写原语 | 待办 | |
+| 1.1 MediaStore 写原语 | 完成（2026-09-23） | `GalleryViewModel` 三个原语收 **content uri**（UI 边界 id→uri 只解析一次，授权同用一批）：`renameFiles` 改 DISPLAY_NAME / `moveFiles` 改 RELATIVE_PATH（API<29 改 DATA 兜底）/ `copyFiles` insert+字节流拷贝（免写授权）。授权在宿主 `requestWriteAccess`：API≥30 `createWriteRequest` 攒一批一次弹（实测 2 张一张弹窗「modify 2 photos」），<30 走 WRITE_EXTERNAL_STORAGE 运行时权限（manifest maxSdk=29 已补）。写后主动 `scanAndReconcile`+`reloadImages`。模拟器实测：重命名/移动 **_id 不变**（元数据自然挂住，五要点②）、复制成功、move 2/2。调试钩子 `aurora.debug.FILEOP`（op= rename/move/copy + uris/target/name）供 UI 入口落地前 adb 驱动。**环境坑**：新 AVD 上 `adb push` 后 `cmd media_scanner scan` 会把行挂成 `is_pending=1`（应用查不到、shell 能查到），须逐行 `content update --bind is_pending:i:0` 清掉。 |
 | 1.2 索引联动与元数据搬运 | 待办 | |
 | 1.3 新建相册 | 待办 | |
 | 1.4 网格入口 | 待办 | |

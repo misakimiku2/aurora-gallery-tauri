@@ -123,6 +123,82 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // —— M4b 1.1 文件操作的批量授权（重命名/移动走 createWriteRequest，复制不弹）——
+
+    /** [requestWriteAccess] 发起的系统授权弹窗回来后要继续的动作（一次一条）。 */
+    private var pendingWriteCallback: (() -> Unit)? = null
+
+    /**
+     * createWriteRequest 的弹窗结果：允许 → 继续挂起的写操作；拒绝 → 只提示，动作丢弃。
+     * 授权针对**一批** uri（多选攒一次请求，规划五要点①），继续时整批一起执行。
+     */
+    private val writeLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val callback = pendingWriteCallback
+        pendingWriteCallback = null
+        if (result.resultCode == RESULT_OK) {
+            callback?.invoke()
+        } else {
+            Toast.makeText(this, "未获系统写入授权，操作已取消", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** API < 30 的写权限兜底（manifest WRITE_EXTERNAL_STORAGE maxSdkVersion=29）。 */
+    private val writePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val callback = pendingWriteCallback
+        pendingWriteCallback = null
+        if (granted) {
+            callback?.invoke()
+        } else {
+            Toast.makeText(this, "未获存储写权限，操作已取消", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 对一批文件请求 MediaStore 写授权（改已有行：重命名/移动），允许后继续 [onGranted]。
+     * API ≥ 30 走 createWriteRequest（已授权过的行系统直接放行，不重复弹窗）；< 30 走
+     * WRITE_EXTERNAL_STORAGE 运行时权限。复制（insert 新行）不经过这里。
+     */
+    private fun requestWriteAccess(uris: List<Uri>, onGranted: () -> Unit) {
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                pendingWriteCallback = onGranted
+                val pi = MediaStore.createWriteRequest(contentResolver, uris.distinct())
+                writeLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+            } catch (e: Exception) {
+                pendingWriteCallback = null
+                Log.w("AuroraKotlin", "[FileOp] createWriteRequest failed", e)
+                Toast.makeText(this, "授权请求失败", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            val permission = Manifest.permission.WRITE_EXTERNAL_STORAGE
+            if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+                onGranted()
+            } else {
+                pendingWriteCallback = onGranted
+                writePermissionLauncher.launch(permission)
+            }
+        }
+    }
+
+    /**
+     * 文件操作统一入口：先按 file id 解析出 content uri（读索引），再过写授权，允许后
+     * 执行 [op]。复制不走这里（无授权），直接调 [GalleryViewModel.copyFiles]。
+     */
+    private fun fileOpWithWriteAccess(fileIds: Collection<String>, op: () -> Unit) {
+        viewModel.resolveFileUris(fileIds) { uris ->
+            if (uris.isEmpty()) {
+                Toast.makeText(this, "没有可操作的文件", Toast.LENGTH_SHORT).show()
+            } else {
+                requestWriteAccess(uris, op)
+            }
+        }
+    }
+
     // —— M3 查看器（D7：Compose 条件层承载，实例由本 Activity 持有）——
 
     /**
@@ -445,6 +521,12 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.FFI_SMOKE"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
+            ContextCompat.registerReceiver(
+                this,
+                fileOpDebugReceiver,
+                IntentFilter("aurora.debug.FILEOP"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
         }
     }
 
@@ -521,6 +603,46 @@ class MainActivity : ComponentActivity() {
     private val ffiDebugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             runFfiSmoke(intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString())
+        }
+    }
+
+    /**
+     * M4b 1.1 冒烟钩子：UI 入口（1.4/1.5）落地前用 adb 直接驱动写原语（含真实批量授权
+     * 弹窗），结果进日志 + Toast。uri 可用 `adb shell content query --uri
+     * content://media/external/images/media --projection _id,_display_name,relative_path` 取。
+     * ```
+     * adb shell am broadcast -a aurora.debug.FILEOP --es op move \
+     *   --es uris "content://media/external/images/media/1,content://media/external/images/media/2" \
+     *   --es target "Pictures/Dst"        # rename 另加 --es name renamed.jpg；copy 无需授权
+     * ```
+     */
+    private val fileOpDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val op = intent.getStringExtra("op") ?: return
+            val uris = intent.getStringExtra("uris")
+                ?.split(',')
+                ?.mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+                ?.map(Uri::parse)
+                .orEmpty()
+            val target = intent.getStringExtra("target").orEmpty()
+            Log.i("AuroraKotlin", "[DebugFileOp] op=$op uris=$uris target=$target")
+            val report: (String) -> Unit = { msg ->
+                Log.i("AuroraKotlin", "[DebugFileOp] $msg")
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+            }
+            when (op) {
+                "rename" -> {
+                    val name = intent.getStringExtra("name") ?: return
+                    val uri = uris.firstOrNull() ?: return
+                    requestWriteAccess(listOf(uri)) {
+                        viewModel.renameFiles(listOf(uri to name)) { n -> report("重命名完成 $n") }
+                    }
+                }
+                "move" -> requestWriteAccess(uris) {
+                    viewModel.moveFiles(uris, target) { n -> report("移动完成 $n") }
+                }
+                "copy" -> viewModel.copyFiles(uris, target) { n -> report("复制完成 $n") }
+            }
         }
     }
 

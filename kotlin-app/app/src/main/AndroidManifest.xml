@@ -4,6 +4,8 @@
     <!-- MediaStore 图片读取（Android 13+ 用 READ_MEDIA_IMAGES，更低版本用 READ_EXTERNAL_STORAGE） -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- M4b 1.1：API < 30 的重命名/移动兜底（更高版本走 createWriteRequest，不需要这条） -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
     <application
         android:allowBackup="true"

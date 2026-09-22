@@ -2,6 +2,7 @@ package com.aurora.gallery.kotlin
 
 import android.app.Application
 import android.content.ContentUris
+import android.content.ContentValues
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -279,6 +280,200 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             onDone(deleted)
         }
     }
+
+    // ===== M4b 1.1 本地库文件操作（MediaStore 写原语）=====
+    //
+    // 与桌面 file_operations.rs 不同源（那边是文件系统语义 + 路径哈希迁移元数据；这边
+    // 是 MediaStore 行操作），实现不互抄。三个原语都收 **content uri**（UI 边界把
+    // file id 解析成 uri 只做一次，写授权也要用同一批 uri），公共纪律：
+    //  - 授权在宿主（[MainActivity.requestWriteAccess]，createWriteRequest 攒一批一次弹）；
+    //    复制是 insert 新行（App 拥有新行），不需要写授权；
+    //  - 重命名/移动只改 MediaStore 行的 DISPLAY_NAME/RELATIVE_PATH，_id 与 content_uri
+    //    不变 → file_id 不变 → 元数据自然还挂着（规划五要点②），不写任何迁移代码；
+    //  - 全部 Dispatchers.IO + 逐条 try/catch（deleteDirect 同款，成功多少算多少）；
+    //  - 完成后主动 scanAndReconcile + reloadImages：observer 的 1s 防抖会兜底，但主动
+    //    触发让 UI 即时反映，不赌时序（五要点③「UI 不能等下次扫描才变」）。
+
+    /** 选中集上下文菜单/查看器共用：把文件 id 解析成 content uri（读索引，不挑当前视图）。 */
+    fun resolveFileUris(fileIds: Collection<String>, onReady: (List<android.net.Uri>) -> Unit) {
+        viewModelScope.launch {
+            onReady(resolveUris(fileIds).map { it.second })
+        }
+    }
+
+    /**
+     * 重命名（改 DISPLAY_NAME）。[targets] = (uri, 新名)；调用方先过宿主授权（单选场景
+     * 只有一个 uri，同样走 [MainActivity.requestWriteAccess] 一条路径）。
+     */
+    fun renameFiles(targets: List<Pair<android.net.Uri, String>>, onDone: (Int) -> Unit = {}) {
+        if (targets.isEmpty()) {
+            onDone(0)
+            return
+        }
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                var count = 0
+                for ((uri, newName) in targets) {
+                    try {
+                        val values = ContentValues().apply {
+                            put(MediaStore.Images.Media.DISPLAY_NAME, newName)
+                        }
+                        if (appContext.contentResolver.update(uri, values, null, null) > 0) count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[FileOp] rename failed $uri -> $newName", e)
+                    }
+                }
+                count
+            }
+            Log.i(TAG, "[FileOp] renamed=$n/${targets.size}")
+            if (n > 0) refreshAfterWrite()
+            onDone(n)
+        }
+    }
+
+    /**
+     * 移动到目标相册（改 RELATIVE_PATH 跨 bucket）。[targetRelPath] 由宿主解析好传入
+     * （既有相册的 RELATIVE_PATH 或新相册的 `Pictures/<名字>`，见 resolveFolderRelPath /
+     * MainActivity 的新建相册分支）；授权（批量一次）由调用方先行完成。
+     */
+    fun moveFiles(uris: List<android.net.Uri>, targetRelPath: String, onDone: (Int) -> Unit = {}) {
+        if (uris.isEmpty()) {
+            onDone(0)
+            return
+        }
+        val relPath = targetRelPath.ensureTrailingSlash()
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                var count = 0
+                for (uri in uris) {
+                    try {
+                        val values = ContentValues()
+                        if (Build.VERSION.SDK_INT >= 29) {
+                            values.put(MediaStore.Images.Media.RELATIVE_PATH, relPath)
+                        } else {
+                            // API < 29 没有 RELATIVE_PATH 列：按旧语义直接改 DATA 全路径
+                            val name = queryDisplayName(uri) ?: continue
+                            values.put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
+                        }
+                        if (appContext.contentResolver.update(uri, values, null, null) > 0) count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[FileOp] move failed $uri -> $relPath", e)
+                    }
+                }
+                count
+            }
+            Log.i(TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
+            if (n > 0) refreshAfterWrite()
+            onDone(n)
+        }
+    }
+
+    /**
+     * 复制到目标相册（insert 新行 + 字节流拷贝）。不需要写授权（App 拥有新行，只要读
+     * 权限）。元数据/标签搬运在 1.2（FFI 导出 generateId 后补）。
+     */
+    fun copyFiles(uris: List<android.net.Uri>, targetRelPath: String, onDone: (Int) -> Unit = {}) {
+        if (uris.isEmpty()) {
+            onDone(0)
+            return
+        }
+        val relPath = targetRelPath.ensureTrailingSlash()
+        viewModelScope.launch {
+            val n = withContext(Dispatchers.IO) {
+                var count = 0
+                for (source in uris) {
+                    try {
+                        val uri = insertImageCopy(source, relPath) ?: continue
+                        appContext.contentResolver.openInputStream(source)?.use { input ->
+                            appContext.contentResolver.openOutputStream(uri)?.use { output ->
+                                input.copyTo(output)
+                            } ?: throw IllegalStateException("openOutputStream failed: $uri")
+                        } ?: throw IllegalStateException("openInputStream failed: $source")
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[FileOp] copy failed $source -> $relPath", e)
+                    }
+                }
+                count
+            }
+            Log.i(TAG, "[FileOp] copied=$n/${uris.size} -> $relPath")
+            if (n > 0) refreshAfterWrite()
+            onDone(n)
+        }
+    }
+
+    /** 逐条写操作后的主动刷新（防抖 observer 只是兜底）。 */
+    private suspend fun refreshAfterWrite() {
+        try {
+            scanAndReconcile()
+            reloadImages()
+        } catch (e: Exception) {
+            Log.w(TAG, "[FileOp] post-write refresh failed", e)
+        }
+    }
+
+    /** file_id → content uri（FFI 索引为源，概览页 stale 的 images.value 不掺和）。 */
+    private suspend fun resolveUris(fileIds: Collection<String>): List<Pair<String, android.net.Uri>> =
+        withContext(Dispatchers.IO) {
+            val byId = listImagesByIds(fileIds.toList()).associateBy { it.id }
+            fileIds.mapNotNull { id -> byId[id]?.let { id to android.net.Uri.parse(it.contentUri) } }
+        }
+
+    /** 源行的 DISPLAY_NAME（API < 29 移动时拼 DATA 用）。 */
+    private fun queryDisplayName(uri: android.net.Uri): String? =
+        appContext.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.Images.Media.DISPLAY_NAME),
+            null, null, null,
+        )?.use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** insert 一行并返回新 uri（携带源的尺寸/日期等列；R+ 走 VOLUME_EXTERNAL_PRIMARY）。 */
+    private fun insertImageCopy(source: android.net.Uri, relPath: String): android.net.Uri? {
+        val resolver = appContext.contentResolver
+        val projection = arrayOf(
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.WIDTH,
+            MediaStore.Images.Media.HEIGHT,
+            MediaStore.Images.Media.SIZE,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.DATE_MODIFIED,
+        )
+        resolver.query(source, projection, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return null
+            val name = c.getString(0) ?: return null
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                if (!c.isNull(1)) put(MediaStore.Images.Media.MIME_TYPE, c.getString(1))
+                if (!c.isNull(2)) put(MediaStore.Images.Media.WIDTH, c.getInt(2))
+                if (!c.isNull(3)) put(MediaStore.Images.Media.HEIGHT, c.getInt(3))
+                put(MediaStore.Images.Media.SIZE, if (c.isNull(4)) 0L else c.getLong(4))
+                if (!c.isNull(5)) put(MediaStore.Images.Media.DATE_ADDED, c.getLong(5))
+                if (!c.isNull(6)) put(MediaStore.Images.Media.DATE_MODIFIED, c.getLong(6))
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, relPath)
+                } else {
+                    put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
+                }
+            }
+            val collection = if (Build.VERSION.SDK_INT >= 29) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            }
+            return resolver.insert(collection, values)
+        }
+        return null
+    }
+
+    /** API < 29 的目标全路径（共享存储根 + RELATIVE_PATH 语义 + 文件名）。 */
+    private fun legacyDataPath(relPath: String, name: String): String {
+        val base = android.os.Environment.getExternalStorageDirectory().absolutePath
+        return "$base/$relPath/$name"
+    }
+
+    private fun String.ensureTrailingSlash(): String =
+        if (isEmpty() || endsWith('/')) this else "$this/"
 
     /**
      * 媒体读权限检查。ViewModel 里兜这道闸是因为热刷新的入口（ContentObserver）在本类里：
