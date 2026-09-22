@@ -382,6 +382,16 @@ internal class StickyHeaderDecoration(
         val anchor = findHeaderBefore(firstPos)
         if (anchor < 0) return
 
+        // 锚定组的行内标题自身还完整露在吸顶线以下时不画 sticky——否则列表顶端
+        // 会出现「行内标题 + sticky 标题」上下两条重复标题（M4c 修复）。
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChildAt(i)
+            if (parent.getChildAdapterPosition(child) == anchor) {
+                if (child.top >= parent.paddingTop) return
+                break
+            }
+        }
+
         val view = headerView ?: createHeader().also { headerView = it }
         bindHeader(view, anchor)
 

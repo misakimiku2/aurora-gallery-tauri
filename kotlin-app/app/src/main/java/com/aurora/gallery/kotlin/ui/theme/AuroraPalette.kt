@@ -11,8 +11,10 @@ import androidx.compose.ui.graphics.Color
  * Compose 侧由 [AuroraColorScheme] 包一层 `Color(...)`，View 侧直接用 Int。
  *
  * 取值规则：八个与 M1 共用的角色沿用既有 token 值（改动会让已封版的 M1 网格变色）；
- * 查看器独有的弹窗/标签/占位角色沿用查看器原值。深色档目前不渲染——M1 固定浅色
- * （`MainActivity` 的 `AuroraTheme(darkTheme = false)`），查看器跟随同一开关。
+ * 查看器独有的弹窗/标签/占位角色沿用查看器原值。深色档 M1 曾固定不渲染（恒浅色），
+ * M4c 起由设置驱动点亮：MainActivity 按 settings.theme 推导 dark 后，Compose 侧换
+ * [dark]、查看器经 applyViewerTheme 下次 open 换档、网格经 FileGrid 的 applyThemeColors
+ * 重绑换色。
  */
 data class AuroraPalette(
     // —— 与 M1 网格共用的八个角色（值须与 AuroraColorScheme 的历史值一致）——

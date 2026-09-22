@@ -213,6 +213,16 @@ fun FoldersOverview(
     val sidebarSynced = remember { mutableStateOf(sidebarVisible) }
     val spanSyncTick = remember { mutableIntStateOf(0) }
 
+    // 主题换色（M4c）：AuroraTheme.colors 变化时把三色推入 adapter 并全量重绑。
+    // adapter 的 remember 无 key，构造色只对首帧有效；applyThemeColors 无变化时 no-op。
+    LaunchedEffect(colors) {
+        gridAdapter.applyThemeColors(
+            colors.surface.toArgb(),
+            colors.textPrimary.toArgb(),
+            colors.textSecondary.toArgb(),
+        )
+    }
+
     // 三档捏合：档位是应用级状态（AppState.gridLevel），这里只读参数 + 写回回调
     val currentLevel = rememberUpdatedState(level)
     // factory 闭包只创建一次，gapPx 直接捕获会在旋转（平板/手机间距变化）后读到旧值。
@@ -444,9 +454,11 @@ fun FoldersOverview(
 
 private class FolderAdapter(
     private val loader: ThumbnailLoader,
-    private val surfaceColor: Int,
-    private val textPrimaryColor: Int,
-    private val textSecondaryColor: Int,
+    // 主题三色用 var（M4c）：适配器被 remember 持有，构造色只对首帧有效，主题切换
+    // 经 applyThemeColors 推入并重绑（同 FileGridAdapter）。
+    private var surfaceColor: Int,
+    private var textPrimaryColor: Int,
+    private var textSecondaryColor: Int,
     private val onClick: (Folder) -> Unit,
     private val onLongClick: (Folder) -> Unit,
 ) : RecyclerView.Adapter<FolderAdapter.VH>() {
@@ -473,6 +485,22 @@ private class FolderAdapter(
         folders.clear()
         folders.addAll(list)
         notifyDataSetChanged()
+    }
+
+    /**
+     * 主题换色（M4c）：更新三色并全量重绑。无变化时 no-op（挂载后的首次
+     * LaunchedEffect 不触发无谓重绑）。attached 视图的重刷落点：名字色在
+     * applySelectedName（bind 路径已重刷）、封面占位底在 onBindViewHolder 补刷。
+     */
+    fun applyThemeColors(surface: Int, textPrimary: Int, textSecondary: Int): Boolean {
+        if (surfaceColor == surface && textPrimaryColor == textPrimary && textSecondaryColor == textSecondary) {
+            return false
+        }
+        surfaceColor = surface
+        textPrimaryColor = textPrimary
+        textSecondaryColor = textSecondary
+        notifyDataSetChanged()
+        return true
     }
 
     /**
@@ -663,6 +691,8 @@ private class FolderAdapter(
 
         val folder = folders[position]
         holder.name.text = folder.name
+        // 主题换色（M4c）：封面占位底在 onCreateViewHolder 上色后随池复用，bind 重刷
+        holder.cover.setBackgroundColor(surfaceColor)
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
 

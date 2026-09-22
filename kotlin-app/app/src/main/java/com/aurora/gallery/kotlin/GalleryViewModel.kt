@@ -161,6 +161,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.sortBy = settings.value.defaultSortBy
         appState.sortDirection = settings.value.defaultSortDirection
         appState.updateActiveTab { it.copy(layoutMode = settings.value.defaultLayout) }
+        // M4c：默认分组同理（GroupBy 渲染能力 M1 已有，这里只补持久化默认值）
+        appState.groupBy = settings.value.defaultGroupBy
     }
 
     /** 语言切换（M4a 顺延项 1）：换 locale → 重算标签快照 → 侧栏分组顺序变。 */
@@ -192,6 +194,24 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         settingsStore.save(settings.value)
         appState.sortBy = by
         appState.sortDirection = direction
+    }
+
+    /** 默认分组变更：同上（M4c，即时应用到当前网格 + 重启还在）。 */
+    fun applyDefaultGroupBy(groupBy: com.aurora.gallery.kotlin.ui.components.GroupBy) {
+        settings.value = settings.value.copy(defaultGroupBy = groupBy)
+        settingsStore.save(settings.value)
+        appState.groupBy = groupBy
+    }
+
+    /**
+     * 主题档变更（M4c，"light" | "dark" | "system"）：只落设置。生效链在 MainActivity
+     * —— setContent 按 settings.theme + 系统 uiMode 推导 dark 后驱动 AuroraTheme、
+     * 窗口底色/状态栏外观与查看器 isDark（"system" 的系统档变化走 onConfigurationChanged）。
+     */
+    fun setTheme(theme: String) {
+        if (theme == settings.value.theme) return
+        settings.value = settings.value.copy(theme = theme)
+        settingsStore.save(settings.value)
     }
 
     /**

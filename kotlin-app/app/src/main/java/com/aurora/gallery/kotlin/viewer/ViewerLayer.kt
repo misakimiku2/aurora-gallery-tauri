@@ -86,7 +86,13 @@ fun NativeViewerLayer(
 }
 
 /**
- * `open()` 的 options。M1/M3 应用固定浅色（`MainActivity` 的 `AuroraTheme(darkTheme = false)`），
- * 这里显式传 isDark=false，让查看器与网格用同一档色；将来深色跟系统走时只需改这一处。
+ * `open()` 的 options。isDark 由 MainActivity 的 SideEffect 按 settings.theme 推导后经
+ * [applyViewerTheme] 写入——查看器在每次 open 时读取，与 Compose 侧 `AuroraTheme(darkTheme=)`
+ * 同一个值；已开着不重开（换主题瞬间查看器若在前台，收掉再开即换色，登记为已知边界）。
  */
 private val viewerOptions = JSONObject().put("isDark", false)
+
+/** 主题档落定后同步查看器 options（M4c；下一次 open 生效）。 */
+internal fun applyViewerTheme(dark: Boolean) {
+    viewerOptions.put("isDark", dark)
+}

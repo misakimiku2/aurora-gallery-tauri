@@ -194,12 +194,26 @@ fun FileGrid(
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
             primaryColor = colors.primary.toArgb(),
+            contentColor = colors.content.toArgb(),
             onClick = onItemClick,
             onLongClick = { currentOnItemLongClick.value(it) },
             onToggleGroup = { id ->
                 collapsedIds = if (id in collapsedIds) collapsedIds - id else collapsedIds + id
             },
         ).also { it.pinchFlip = pinchFlip }
+    }
+
+    // 主题换色（M4c）：AuroraTheme.colors 随主题档/系统深色变化时把四色推入 adapter
+    // 并全量重绑。adapter 的 remember 无 key，构造色只对首帧有效；applyThemeColors
+    // 无变化时 no-op，首组合不会多一次重绑。
+    LaunchedEffect(colors) {
+        adapter.applyThemeColors(
+            colors.surface.toArgb(),
+            colors.textPrimary.toArgb(),
+            colors.textSecondary.toArgb(),
+            colors.primary.toArgb(),
+            colors.content.toArgb(),
+        )
     }
 
     // 瀑布流的进度驱动 FLIP：列分配是确定性算法（逐 item 放入最短列），离线模拟出新档位
@@ -886,12 +900,19 @@ fun FileGrid(
                             rv.context,
                             colors.textPrimary.toArgb(),
                             colors.textSecondary.toArgb(),
-                        ).also { refs = it }.root
+                        )
+                            .also { refs = it }
+                            .root
+                            // M4c：sticky 标题补 content 底色——原透明背景在顶部时与行内
+                            // 首个标题叠影（两份「JPEG/18」错位透出）
+                            .apply { setBackgroundColor(colors.content.toArgb()) }
                     },
                     bindHeader = { _, position ->
                         val item = adapter.itemAt(position) as? GridItem.Header
                         if (item != null) {
                             refs?.apply {
+                                // 主题换色（M4c）：装饰创建色可能过期，吸顶重绑时按当前主题重刷
+                                adapter.restyleStickyHeader(this)
                                 title.text = item.title
                                 count.text = "${item.count}"
                                 arrow.text = if (item.id in currentCollapsed.value) "▸" else "▾"
@@ -1505,14 +1526,52 @@ private fun applyModeSwitchFlip(
 
 private class FileGridAdapter(
     private val loader: ThumbnailLoader,
-    private val surfaceColor: Int,
-    private val textPrimaryColor: Int,
-    private val textSecondaryColor: Int,
-    private val primaryColor: Int,
+    // 主题四色用 var（M4c）：适配器被 remember 无 key 持有，构造色只对首帧有效，
+    // 主题切换经 [applyThemeColors] 推入并重绑。
+    private var surfaceColor: Int,
+    private var textPrimaryColor: Int,
+    private var textSecondaryColor: Int,
+    private var primaryColor: Int,
+    private var contentColor: Int,
     private val onClick: (Image) -> Unit,
     private val onLongClick: (Image) -> Unit,
     private val onToggleGroup: (String) -> Unit,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    /**
+     * 主题换色（M4c）：更新四色并全量重绑。无变化时 no-op——挂载后的首次
+     * LaunchedEffect 不触发无谓重绑，也不碰「切换动画依赖 resetFlipTransform 前提」
+     * 的幂等约定。attached 视图的重刷落点：文件名色在 applySelectedName（bind 路径）、
+     * 封面占位底在 [bindPhoto]、分组标题色在 [bindHeader]。
+     */
+    fun applyThemeColors(
+        surface: Int,
+        textPrimary: Int,
+        textSecondary: Int,
+        primary: Int,
+        content: Int,
+    ): Boolean {
+        if (surfaceColor == surface && textPrimaryColor == textPrimary &&
+            textSecondaryColor == textSecondary && primaryColor == primary && contentColor == content
+        ) {
+            return false
+        }
+        surfaceColor = surface
+        textPrimaryColor = textPrimary
+        textSecondaryColor = textSecondary
+        primaryColor = primary
+        contentColor = content
+        notifyDataSetChanged()
+        return true
+    }
+
+    /** sticky 标题卡按当前主题色重刷（M4c）：StickyHeaderDecoration 的 bind 回调用。 */
+    fun restyleStickyHeader(refs: HeaderRefs) {
+        refs.title.setTextColor(textPrimaryColor)
+        refs.count.setTextColor(textSecondaryColor)
+        refs.arrow.setTextColor(textSecondaryColor)
+        refs.root.setBackgroundColor(contentColor)
+    }
 
     private val items = mutableListOf<GridItem>()
     private var selectedIds: Set<String> = emptySet()
@@ -1814,6 +1873,8 @@ private class FileGridAdapter(
 
     private fun bindHeader(holder: HeaderVH, position: Int) {
         val item = items[position] as? GridItem.Header ?: return
+        // 主题换色（M4c）：标题行视图在 onCreateViewHolder 上色后随池复用，bind 重刷
+        restyleStickyHeader(holder.refs)
         holder.refs.title.text = item.title
         holder.refs.count.text = "${item.count}"
         holder.refs.arrow.text = if (item.id in collapsedIds) "▸" else "▾"
@@ -1823,6 +1884,8 @@ private class FileGridAdapter(
         val item = items[position] as? GridItem.Photo ?: return
         val image = item.image
         holder.refs.name.text = image.name
+        // 主题换色（M4c）：封面占位底在 onCreateViewHolder 上色后随池复用，bind 重刷
+        holder.refs.cover.setBackgroundColor(surfaceColor)
 
         val selected = image.id in selectedIds
         holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
