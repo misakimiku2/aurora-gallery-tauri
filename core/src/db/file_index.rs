@@ -338,7 +338,9 @@ mod reconcile_tests {
     #[test]
     fn reconcile_keeps_snapshot_and_prunes_stale() {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
-        create_table(&conn).expect("create table");
+        // 对账现在会连带清理 topic_files 孤儿（M4b 1.2），测试库需要全量建表（生产
+        // 顺序也是 init_db 全量建表在前）
+        crate::db::init_db(&conn).expect("init db");
 
         // 旧索引：folder A（图 a1）、folder B（图 b1）+ 一张父已不存在的孤儿图
         let stale = vec![
@@ -371,7 +373,7 @@ mod reconcile_tests {
     #[test]
     fn reconcile_repeat_run_is_idempotent() {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
-        create_table(&conn).expect("create table");
+        crate::db::init_db(&conn).expect("init db");
 
         let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
         let images = vec![entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image")];
@@ -408,6 +410,78 @@ mod reconcile_tests {
         let out = images_by_ids(&conn, &ids).expect("query");
         let got: Vec<&str> = out.iter().map(|e| e.file_id.as_str()).collect();
         assert_eq!(got, vec!["i2", "i1", "i2"], "保留入参顺序、跳缺失、滤非图片");
+    }
+
+    /// M4b 1.2 顺手核对（M4a 顺延项 7）：对账要清掉指向已消失图片的 topic_files
+    /// 孤儿成员，并把 topics.file_count 缓存对齐实际成员数（「卡片 2 vs 详情 1」的
+    /// 偏大方向根因）。
+    #[test]
+    fn reconcile_prunes_orphan_topic_members_and_refreshes_count() {
+        use crate::db::topics;
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        crate::db::init_db(&conn).expect("init db");
+
+        let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
+        let images = vec![
+            entry("img1", Some("A"), "uri://img1", "a.jpg", "Image"),
+            entry("img2", Some("A"), "uri://img2", "b.jpg", "Image"),
+        ];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile");
+
+        let topic = topics::Topic {
+            id: "t1".into(),
+            parent_id: None,
+            name: "专题".into(),
+            description: None,
+            topic_type: Some("TOPIC".into()),
+            cover_file_id: None,
+            background_file_id: None,
+            cover_crop: None,
+            people_ids: vec![],
+            file_ids: vec![],
+            source_url: None,
+            created_at: Some(0),
+            updated_at: Some(0),
+            source_type: None,
+            work_name: None,
+            work_name_cn: None,
+            file_count: 0,
+        };
+        topics::upsert_topic(&conn, &topic).expect("create topic");
+        topics::set_topic_files(&conn, "t1", &["img1".into(), "img2".into(), "ghost".into()])
+            .expect("set members");
+        // set 后缓存 = 3（原始行数，含 ghost）
+        let (count, members) = topic_state(&conn, "t1");
+        assert_eq!(count, 3, "set_topic_files 后缓存=原始行数");
+        assert_eq!(members.len(), 3);
+
+        // 新快照里 img2 消失（被删）：对账应清掉它的成员行（ghost 也是），缓存对齐 1
+        let images = vec![entry("img1", Some("A"), "uri://img1", "a.jpg", "Image")];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile 2");
+
+        let (count, members) = topic_state(&conn, "t1");
+        assert_eq!(members, vec!["img1".to_string()], "孤儿成员被清掉");
+        assert_eq!(count, 1, "file_count 缓存对齐实际成员数");
+
+        // upsert_topic（改名字等元数据）不得用调用方快照的过期 fileCount 打回缓存
+        let mut stale = topic.clone();
+        stale.name = "改名".into();
+        stale.file_count = 999;
+        topics::upsert_topic(&conn, &stale).expect("upsert with stale count");
+        let (count, _) = topic_state(&conn, "t1");
+        assert_eq!(count, 1, "upsert_topic 保留缓存列，不写入调用方值");
+
+        fn topic_state(conn: &Connection, id: &str) -> (i32, Vec<String>) {
+            let count: i32 = conn
+                .query_row(
+                    "SELECT file_count FROM topics WHERE id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .expect("read count");
+            let members = topics::get_topic_files(conn, id).expect("members");
+            (count, members)
+        }
     }
 }
 
@@ -542,6 +616,22 @@ pub fn reconcile_mediastore_snapshot(
         )?;
         tx.execute(
             "DELETE FROM file_index WHERE file_type = 'Image' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
+            [],
+        )?;
+
+        // M4b 1.2 顺手核对（M4a 顺延项 7）：图片从索引消失（被删/被对账清掉）后，
+        // topic_files 里的成员行没人清——「卡片 fileCount 2 vs 详情 1」的偏大方向即
+        // 由此而来（卡片数 = 缓存列 = 原始行数，详情 = list_images_by_ids 静默跳过
+        // 缺行）。这里清掉孤儿成员并把 file_count 缓存对齐实际成员数。此函数只有
+        // 安卓 MediaStore 对账调用（桌面走文件系统同步，不经这里）。
+        tx.execute(
+            "DELETE FROM topic_files WHERE file_id NOT IN (
+                SELECT file_id FROM file_index WHERE file_type = 'Image')",
+            [],
+        )?;
+        tx.execute(
+            "UPDATE topics SET file_count = (
+                SELECT COUNT(*) FROM topic_files WHERE topic_id = topics.id)",
             [],
         )?;
     }

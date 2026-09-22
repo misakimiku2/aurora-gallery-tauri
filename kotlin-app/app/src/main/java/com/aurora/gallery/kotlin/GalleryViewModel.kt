@@ -39,6 +39,7 @@ import uniffi.aurora_core.getAllTopics
 import uniffi.aurora_core.getGroupedTags
 import uniffi.aurora_core.getFileMetadata
 import uniffi.aurora_core.getTopicFiles
+import uniffi.aurora_core.generateId
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
@@ -369,8 +370,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 复制到目标相册（insert 新行 + 字节流拷贝）。不需要写授权（App 拥有新行，只要读
-     * 权限）。元数据/标签搬运在 1.2（FFI 导出 generateId 后补）。
+     * 复制到目标相册（insert 新行 + 字节流拷贝 + **元数据/标签搬运**）。不需要写授权
+     * （App 拥有新行，只要读权限）。
+     *
+     * 搬运（M4b 1.2 方案 A，规划五要点④「副本带着原标签」）：新 uri 经 FFI `generateId`
+     * 算出新 file_id（与扫描对账同一纯函数，必然同值），源行的 file_metadata 读出后
+     * copy 成新行、源标签 `setFileTags` 写到新 id。顺序安全性：此时副本行已在 MediaStore，
+     * 写后的对账（[refreshAfterWrite]）会把新 id 纳入 file_index——先写的元数据/标签
+     * 不会被当孤儿清掉。
      */
     fun copyFiles(uris: List<android.net.Uri>, targetRelPath: String, onDone: (Int) -> Unit = {}) {
         if (uris.isEmpty()) {
@@ -389,6 +396,27 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                                 input.copyTo(output)
                             } ?: throw IllegalStateException("openOutputStream failed: $uri")
                         } ?: throw IllegalStateException("openInputStream failed: $source")
+                        // 元数据/标签搬运；失败只记日志（副本本体已落地，别让它回滚计数）。
+                        // uri 必须重导成扫描管道同款规范形式：insert 返回的是
+                        // external_primary 形式，与 scanMediaStore 拼的 external 形式指向
+                        // 同一行但字符串不同 → generateId 哈希不同 → 元数据写到索引永远
+                        // 对不上的孤儿 id 上（本轮实测踩过）。
+                        try {
+                            val canonicalUri = ContentUris.withAppendedId(
+                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                                ContentUris.parseId(uri),
+                            )
+                            val newId = generateId(canonicalUri.toString())
+                            val sourceId = generateId(source.toString())
+                            getFileMetadata(sourceId)?.let { meta ->
+                                upsertFileMetadata(meta.copy(fileId = newId, path = canonicalUri.toString()))
+                            }
+                            getAllFileTags().firstOrNull { it.fileId == sourceId }?.tags?.let { tags ->
+                                if (tags.isNotEmpty()) setFileTags(newId, tags)
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
+                        }
                         count++
                     } catch (e: Exception) {
                         Log.w(TAG, "[FileOp] copy failed $source -> $relPath", e)
@@ -399,6 +427,37 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.i(TAG, "[FileOp] copied=$n/${uris.size} -> $relPath")
             if (n > 0) refreshAfterWrite()
             onDone(n)
+        }
+    }
+
+    /**
+     * 既有相册的 folder_id → RELATIVE_PATH（移动/复制的目标值）。folder.id =
+     * generate_id(bucket_id)（Rust 对账同款），这里现场从 MediaStore 查 (BUCKET_ID,
+     * RELATIVE_PATH) 对并用同一纯函数反查——**不算出来的映射不做缓存**，空相册按 1.3
+     * 的懒创建语义本就不该存在；查不到（理论上只剩 0 图的瞬时态）返回 null 由调用方提示。
+     */
+    fun resolveFolderRelPath(folderId: String, onReady: (String?) -> Unit) {
+        viewModelScope.launch {
+            val relPath = withContext(Dispatchers.IO) {
+                appContext.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf(
+                        MediaStore.Images.Media.BUCKET_ID,
+                        MediaStore.Images.Media.RELATIVE_PATH,
+                    ),
+                    null, null, null,
+                )?.use { c ->
+                    val bucketCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
+                    val relCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+                    while (c.moveToNext()) {
+                        if (generateId(c.getLong(bucketCol).toString()) == folderId) {
+                            return@use c.getString(relCol)
+                        }
+                    }
+                    null
+                }
+            }
+            onReady(relPath)
         }
     }
 

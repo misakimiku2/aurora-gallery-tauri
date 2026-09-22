@@ -185,7 +185,11 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
             source_type = excluded.source_type,
             work_name = excluded.work_name,
             work_name_cn = excluded.work_name_cn,
-            file_count = excluded.file_count",
+            -- file_count 是 topic_files 行数的**缓存列**，只由 update_file_count 维护；
+            -- upsert 覆盖它会让调用方带的过期快照值打回刚刷新的计数（M4b 1.2 顺手核对：
+            -- M4a 期间「卡片 0 vs 详情 5」的 fileCount 不同步即由此而来——归入专题后
+            -- 首图自动成封面会带着旧 fileCount 再 upsert 一次）。已有行保留现值。
+            file_count = topics.file_count",
         params![
             topic.id,
             topic.parent_id,

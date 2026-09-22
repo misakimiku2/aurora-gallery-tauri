@@ -528,6 +528,15 @@ pub fn generate_thumbnail(data: Vec<u8>) -> Result<Vec<u8>, AuroraError> {
     Ok(cursor.into_inner())
 }
 
+/// `db::generate_id` 的导出（M4b 1.2 方案 A）：Kotlin 复制文件后对新 content_uri
+/// 算出 `file_id`，把源文件的元数据/标签搬到新 id 上。**纯函数**，不碰数据库——
+/// 与扫描对账（`upsert_media_images` 内部同一函数）对同一 uri 必然算出同一 id，
+/// 这是副本元数据搬运确定性的根据。
+#[uniffi::export]
+pub fn generate_id(content_uri: String) -> String {
+    db::generate_id(&content_uri)
+}
+
 // ===== 人物（对应 db_commands.rs 的 4 个 command）=====
 
 #[uniffi::export]

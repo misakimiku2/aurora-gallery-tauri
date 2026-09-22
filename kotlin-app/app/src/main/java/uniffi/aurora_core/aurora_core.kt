@@ -688,6 +688,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_find_topics_containing_file(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_generate_id(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_generate_thumbnail(
     ): Int
     external fun uniffi_aurora_core_checksum_func_get_all_file_metadata(
@@ -774,6 +776,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_delete_topic(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_find_topics_containing_file(`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_generate_id(`contentUri`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_generate_thumbnail(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -974,6 +978,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_find_topics_containing_file() != 54482) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_generate_id() != 60562) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_generate_thumbnail() != 12901) {
@@ -2870,6 +2877,23 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`fileId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * `db::generate_id` 的导出（M4b 1.2 方案 A）：Kotlin 复制文件后对新 content_uri
+         * 算出 `file_id`，把源文件的元数据/标签搬到新 id 上。**纯函数**，不碰数据库——
+         * 与扫描对账（`upsert_media_images` 内部同一函数）对同一 uri 必然算出同一 id，
+         * 这是副本元数据搬运确定性的根据。
+         */ fun `generateId`(`contentUri`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_generate_id(
+    
+        
+        FfiConverterString.lower(`contentUri`),_status)
 }
     )
     }
