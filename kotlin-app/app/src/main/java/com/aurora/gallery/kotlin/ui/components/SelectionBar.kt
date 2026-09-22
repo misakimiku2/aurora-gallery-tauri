@@ -272,14 +272,30 @@ private val SelIconShare: ImageVector by lazy {
     }
 }
 
-/** lucide ellipsis-vertical：更多（三个点用圆头线帽放大，同 Tag 铆点技法）。 */
+/** lucide ellipsis-vertical：更多。 */
+// M4b 反馈：原先三个点用「0.01 单位线段 + 圆头笔帽」画（同 Tag 铆点技法），直径只有
+// ≈2 视口单位，在 20dp 图标上渲染出 ≈1.7dp 的点，和同排其他线性图标相比明显偏小。
+// 改为 r=2 的实心圆（直径 4 视口单位 ≈3.3dp），视觉重量与 2f 笔画相当。
 private val SelIconMore: ImageVector by lazy {
-    selIconBuilder("SelMore") {
-        moveTo(12f, 5f)
-        lineTo(12.01f, 5f)
-        moveTo(12f, 12f)
-        lineTo(12.01f, 12f)
-        moveTo(12f, 19f)
-        lineTo(12.01f, 19f)
-    }
+    ImageVector.Builder(
+        name = "SelMore",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            selDot(12f, 5f)
+            selDot(12f, 12f)
+            selDot(12f, 19f)
+        }
+    }.build()
+}
+
+/** 圆点子路径：实心圆（NonZero 填充下多个子路径互不干扰）。 */
+private fun androidx.compose.ui.graphics.vector.PathBuilder.selDot(cx: Float, cy: Float, r: Float = 2f) {
+    moveTo(cx - r, cy)
+    arcTo(r, r, 0f, false, true, cx + r, cy)
+    arcTo(r, r, 0f, false, true, cx - r, cy)
+    close()
 }
