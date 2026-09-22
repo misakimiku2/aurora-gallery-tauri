@@ -193,6 +193,12 @@ fun TopBar(
     sortChoices: List<SortOption> = listOf(SortOption.NAME, SortOption.DATE, SortOption.SIZE),
     /** 排序菜单是否含分组小节（总览是文件夹卡片，无分组概念，对齐 React 总览隐藏 groupBy）。 */
     showGroupBy: Boolean = true,
+    /**
+     * 设置入口兜底（M4c D21）：仅横屏手机（宽 ≥600dp 且高 <480dp）传入——这一形态侧栏
+     * 固定 Section 总高超屏、底部「设置」行被裁切不可达（M2 侧栏结构封版，不在其上动刀），
+     * 设置入口临时挂到顶栏。平板/竖屏手机走侧栏入口，传 null 不渲染。
+     */
+    onOpenSettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
@@ -378,6 +384,18 @@ fun TopBar(
                     imageVector = IconTag,
                     contentDescription = "标签筛选",
                     tint = if (tagsSheetOpen) colors.primary else colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        if (onOpenSettings != null) {
+            TopBarButton(
+                onClick = onOpenSettings,
+            ) {
+                Icon(
+                    imageVector = IconSettings2,
+                    contentDescription = "设置",
+                    tint = colors.textSecondary,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -1374,6 +1392,24 @@ private val IconTag: ImageVector by lazy {
         // 铆点 circle(7.5, 7.5, r=0.5)：stroke 圆头放大成可见小点
         moveTo(7.5f, 7.5f)
         lineTo(7.51f, 7.5f)
+    }
+}
+
+/** lucide settings-2：双横线 + 双旋钮（设置入口，M4c 横屏手机顶栏兜底）。 */
+private val IconSettings2: ImageVector by lazy {
+    iconBuilder("Settings2") {
+        moveTo(20f, 7f)
+        lineTo(11f, 7f)
+        moveTo(14f, 17f)
+        lineTo(5f, 17f)
+        // circle(17, 6, r=3)
+        moveTo(14f, 6f)
+        arcTo(3f, 3f, 0f, true, true, 20f, 6f)
+        arcTo(3f, 3f, 0f, true, true, 14f, 6f)
+        // circle(7, 17, r=3)
+        moveTo(4f, 17f)
+        arcTo(3f, 3f, 0f, true, true, 10f, 17f)
+        arcTo(3f, 3f, 0f, true, true, 4f, 17f)
     }
 }
 

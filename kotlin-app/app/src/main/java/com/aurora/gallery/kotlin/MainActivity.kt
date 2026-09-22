@@ -36,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -65,7 +67,7 @@ import com.aurora.gallery.kotlin.ui.components.TopicSectionHeader
 import com.aurora.gallery.kotlin.ui.components.TopicSortOption
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
-import com.aurora.gallery.kotlin.ui.components.SettingsDialog
+import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -78,11 +80,14 @@ import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
 import android.view.View
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
+import com.aurora.gallery.kotlin.viewer.applyViewerTheme
 import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -98,6 +103,13 @@ class MainActivity : ComponentActivity() {
 
     /** M4b 2.1 设置面板开合（侧栏「设置」行触发；对话框在 setContent 里渲染）。 */
     private var showSettings by mutableStateOf(false)
+
+    /**
+     * 系统深色档快照（M4c）：settings.theme = "system" 时的实际档位来源。manifest 声明了
+     * uiMode configChange（切系统深浅不重建 Activity），系统档变化只有
+     * [onConfigurationChanged] 能接住——onCreate 先取一次初值供冷启动定档。
+     */
+    private var systemDark by mutableStateOf(false)
 
     /**
      * 数据与 UI 状态都住在 GalleryViewModel（跨旋转重建保留）。factory 只在 ViewModel
@@ -220,10 +232,11 @@ class MainActivity : ComponentActivity() {
             dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
         val cacheDir = cacheDir
         val total = if (cacheDir.exists()) dirSize(cacheDir) else 0L
+        // M4c：去掉 M4b 的「=」前缀（测试反馈观感异常），改「约」表达估算值语义
         return when {
-            total >= 1L shl 20 -> "=%.1f MB".format(total.toDouble() / (1L shl 20))
-            total >= 1024 -> "=%.1f KB".format(total.toDouble() / 1024)
-            else -> "=$total B"
+            total >= 1L shl 20 -> "约 %.1f MB".format(total.toDouble() / (1L shl 20))
+            total >= 1024 -> "约 %.1f KB".format(total.toDouble() / 1024)
+            else -> "$total B"
         }
     }
 
@@ -703,6 +716,60 @@ class MainActivity : ComponentActivity() {
         if (immersive) window.statusBarColor = android.graphics.Color.TRANSPARENT
     }
 
+    // —— M4c 主题管线 ——
+
+    /** settings.theme → 是否深色（M4c）。"system" 跟随 [systemDark]；组合内调用可触发重组。 */
+    private fun isDarkTheme(): Boolean = when (viewModel.settings.value.theme) {
+        AppSettings.THEME_DARK -> true
+        AppSettings.THEME_LIGHT -> false
+        else -> systemDark
+    }
+
+    private fun isSystemDark(): Boolean =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        systemDark =
+            (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    /**
+     * 窗口层主题同步（M4c）：窗口底色 = palette.content——edge-to-edge 下系统栏镂空区露的
+     * 也是这层；statusBarColor 在 API 35+ 被 edge-to-edge 忽略，低版本写它对齐观感。状态栏
+     * 图标深浅随档切。查看器沉浸会自行接管/还原状态栏色，这里写的是非沉浸基准值，
+     * SideEffect 每次重组幂等重写，两条路径最终一致。
+     */
+    private fun applyWindowTheme(dark: Boolean) {
+        val palette = AuroraPalettes.of(dark)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(palette.content))
+        @Suppress("DEPRECATION")
+        window.statusBarColor = palette.content
+        WindowCompat.getInsetsController(window, window.decorView)
+            ?.isAppearanceLightStatusBars = !dark
+    }
+
+    /** 应用版本（关于页显示，M4c）：PackageManager 取 versionName，失败退空串。 */
+    private val appVersion: String by lazy {
+        try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /** 关于页外链（GitHub/Issues，M4c）：系统浏览器打开；无浏览器等失败仅提示。 */
+    private fun openExternalUrl(url: String) {
+        runCatching {
+            startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+            )
+        }.onFailure {
+            Toast.makeText(this, "无法打开链接", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onDestroy() {
         viewer?.destroy()
         viewer = null
@@ -720,10 +787,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // M4c 主题生效链的源头：先取系统深浅档（"system" 用），再按设置档把窗口底色
+        // 在首帧前上好——深色档冷启动不闪白。
+        systemDark = isSystemDark()
+        applyWindowTheme(isDarkTheme())
+
         setContent {
-            // 必须与窗口 XML 主题（Theme.AuroraKotlin = Material.Light，固定浅色）一致：
-            // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
-            AuroraTheme(darkTheme = false) {
+            // 主题档由设置驱动（M4c，D23）：settings.theme 直接选档，"system" 跟随
+            // [systemDark]。XML 主题（Theme.AuroraKotlin = Material.Light）只作进程兜底，
+            // 运行期窗口底色/状态栏外观经 [applyWindowTheme] 与调色板同步；网格与查看器
+            // 同读一张 AuroraPalette（FileGrid 走 Compose 注入色 + applyThemeColors 重绑，
+            // 查看器经 applyViewerTheme 下次 open 生效）。取代 M1 的「固定浅色 + XML 必须
+            // 一致」约束——那约束防的「深调色板画在白窗底」现在由窗口底色同步根除。
+            val dark = isDarkTheme()
+            AuroraTheme(darkTheme = dark) {
+                SideEffect {
+                    applyWindowTheme(dark)
+                    applyViewerTheme(dark)
+                }
                 val appState = viewModel.appState
                 val tab = appState.activeTab
                 // 当前该显示哪批图（文件夹 / 标签命中 / 专题成员）：导航与标签筛选都收敛到
@@ -891,17 +972,21 @@ class MainActivity : ComponentActivity() {
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
                 )
-                // M4b 2.1 设置面板（侧栏「设置」行触发）
+                // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
                 if (showSettings) {
-                    SettingsDialog(
+                    SettingsHost(
                         settings = viewModel.settings.value,
                         cacheSizeText = computeCacheSizeText(),
+                        appVersion = appVersion,
                         onLanguageChange = { viewModel.setLanguage(it) },
+                        onThemeChange = { viewModel.setTheme(it) },
                         onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
                         onDefaultSortChange = { by, dir -> viewModel.applyDefaultSort(by, dir) },
+                        onDefaultGroupByChange = { viewModel.applyDefaultGroupBy(it) },
                         onClearCache = { clearCache() },
                         onExportBackup = { exportBackup() },
                         onImportBackup = { importBackupLauncher.launch(arrayOf("application/json")) },
+                        onOpenUrl = { openExternalUrl(it) },
                         onDismiss = { showSettings = false },
                     )
                 }
@@ -1148,6 +1233,11 @@ fun App(
     val currentFolder = tab.folderId?.let { id -> folders.firstOrNull { it.id == id } }
     val context = LocalContext.current
     val density = LocalDensity.current
+    // M4c D21：横屏手机 = 宽 ≥600dp 且高 <480dp——设置双形态断点外的第三形态，
+    // 侧栏「设置」行被裁切，入口挂顶栏（onOpenSettings 传 TopBar）
+    val isLandscapePhone = LocalConfiguration.current.let {
+        it.screenWidthDp >= 600 && it.screenHeightDp < 480
+    }
     // 4.4 下拉刷新的触发阈值（80dp，React threshold 同值）
     val ptrThresholdPx = with(density) { 80.dp.toPx() }
 
@@ -1493,6 +1583,12 @@ fun App(
                     showDateFilter = !inTopicsOverview,
                     showGroupBy = inBrowser,
                     showTags = !inTopicsOverview,
+                    // M4c D21：横屏手机侧栏底部「设置」行被裁切不可达，设置入口挂顶栏兜底
+                    onOpenSettings = if (isLandscapePhone) {
+                        { onOpenSettings() }
+                    } else {
+                        null
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
