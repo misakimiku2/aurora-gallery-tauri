@@ -14,6 +14,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.SettingsStore
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
 import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
@@ -107,6 +108,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
 
+    /** 设置的唯一读写口（2.1，D15=SharedPreferences；专题排序已并入）。 */
+    val settingsStore = SettingsStore(appContext)
+
     val thumbnailLoader = ThumbnailLoader(appContext)
 
     /** 本次 ViewModel 生存期内是否已启动过扫描；旋转重建复用同一实例，直接跳过重扫。 */
@@ -141,9 +145,50 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
+    /**
+     * 应用设置（M4b 2.1/2.2，D15=SharedPreferences）。当前唯一的响应式消费方是
+     * 语言开关（标签 collation）；其余项只在设置面板读写。声明在 init 之前供其应用默认值。
+     */
+    val settings = mutableStateOf(settingsStore.load())
+
     init {
         // 初始化 Rust 数据库（filesDir 下）；DB_POOL 已初始化时 Rust 侧 set 幂等忽略
         initDb(File(appContext.filesDir, "aurora.db").absolutePath)
+        // M4b 2.1：默认布局与排序持久化——应用设置里的默认值压在 AppState 的初始值上
+        appState.sortBy = settings.value.defaultSortBy
+        appState.sortDirection = settings.value.defaultSortDirection
+        appState.updateActiveTab { it.copy(layoutMode = settings.value.defaultLayout) }
+    }
+
+    /** 语言切换（M4a 顺延项 1）：换 locale → 重算标签快照 → 侧栏分组顺序变。 */
+    fun setLanguage(language: String) {
+        if (language == settings.value.language) return
+        settings.value = settings.value.copy(language = language)
+        settingsStore.save(settings.value)
+        viewModelScope.launch { reloadTagState() }
+    }
+
+    /** 备份导入后的快照重算（词表/人物/专题都可能有变）。 */
+    fun refreshTagSnapshots() {
+        viewModelScope.launch {
+            reloadTagState()
+            reloadTopics()
+        }
+    }
+
+    /** 默认布局变更：落设置并即时应用到当前标签（2.1「改一项 → 重启还在」+ 所见即所得）。 */
+    fun applyDefaultLayout(layout: com.aurora.gallery.kotlin.ui.components.LayoutMode) {
+        settings.value = settings.value.copy(defaultLayout = layout)
+        settingsStore.save(settings.value)
+        appState.updateActiveTab { it.copy(layoutMode = layout) }
+    }
+
+    /** 默认排序变更：同上。 */
+    fun applyDefaultSort(by: com.aurora.gallery.kotlin.state.SortOption, direction: com.aurora.gallery.kotlin.state.SortDirection) {
+        settings.value = settings.value.copy(defaultSortBy = by, defaultSortDirection = direction)
+        settingsStore.save(settings.value)
+        appState.sortBy = by
+        appState.sortDirection = direction
     }
 
     /**
@@ -976,7 +1021,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     suspend fun reloadTagState() {
         try {
             val snapshot = withContext(Dispatchers.IO) {
-                Triple(getAllFileTags(), getAllFileMetadata(), getGroupedTags(TAG_LOCALE))
+                Triple(getAllFileTags(), getAllFileMetadata(), getGroupedTags(settings.value.language))
             }
             tagsByFile.value = snapshot.first.associate { it.fileId to it.tags }
             metadataById.value = snapshot.second.associateBy { it.fileId }
@@ -1073,10 +1118,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
 
         /**
-         * 标签分组/组内排序用的 locale。Kotlin 侧的语言开关随 M4b 的设置面板才存在，
-         * 本轮恒 `zh`（与 React 版 `settings.language` 默认值一致）。
+         * 标签分组/组内排序用的 locale。M4b 2.2 起随设置面板的语言开关切换
+         * （M4a 期间恒 `zh`，TAG_LOCALE 常量已由 [settings] 取代）。
          */
-        private const val TAG_LOCALE = "zh"
+        // （TAG_LOCALE 常量已移除，见 reloadTagState）
 
         /**
          * factory 只在 ViewModel 首次创建时求值：旋转重建复用已有实例，不会重跑，

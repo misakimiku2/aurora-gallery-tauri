@@ -233,6 +233,8 @@ fun TreeSidebar(
     onCanvasClick: (() -> Unit)? = null,
     /** 正处于画布占位视图（Section 头部按画布绿高亮）。 */
     canvasSelected: Boolean = false,
+    /** 设置行点击（M4b 2.1；面板由宿主承载）。 */
+    onSettingsClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -404,6 +406,18 @@ fun TreeSidebar(
             onClick = onCanvasClick,
             selected = canvasSelected,
             selectedColor = SECTION_EMERALD,
+            expandable = false,
+        )
+
+        Spacer(Modifier.height(8.dp))
+        // 设置（M4b 2.1）：入口在侧栏底部（React 在工具栏齿轮，触屏收敛到侧栏避免
+        // TopBar 过挤）；无展开语义
+        SectionHeader(
+            title = "设置",
+            icon = IconSettings,
+            iconTint = AuroraTheme.colors.textSecondary,
+            expanded = false,
+            onClick = onSettingsClick,
             expandable = false,
         )
     }
@@ -945,6 +959,30 @@ private val IconScan: ImageVector by lazy {
         lineTo(3f, 17f)
         moveTo(7f, 12f)
         lineTo(17f, 12f)
+    }
+}
+
+/** lucide sliders-horizontal（设置行）：三条横线 + 滑块圆点。 */
+private val IconSettings: ImageVector by lazy {
+    iconBuilder("SettingsSliders") {
+        moveTo(21f, 4f)
+        lineTo(14f, 4f)
+        moveTo(10f, 4f)
+        lineTo(3f, 4f)
+        moveTo(12f, 2f)
+        lineTo(12.01f, 2f)
+        moveTo(21f, 12f)
+        lineTo(12f, 12f)
+        moveTo(8f, 12f)
+        lineTo(3f, 12f)
+        moveTo(10f, 10f)
+        lineTo(10.01f, 10f)
+        moveTo(21f, 20f)
+        lineTo(16f, 20f)
+        moveTo(12f, 20f)
+        lineTo(3f, 20f)
+        moveTo(14f, 18f)
+        lineTo(14.01f, 18f)
     }
 }
 

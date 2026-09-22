@@ -156,9 +156,9 @@
 | 1.3 新建相册 | 待办 | |
 | 1.4 网格入口 | 待办 | |
 | 1.5 查看器入口 | 待办 | |
-| 2.1 设置持久化与入口 | 待办 | |
-| 2.2 通用面板（语言开关） | 待办 | |
-| 2.3 存储面板 | 待办 | |
+| 2.1 设置持久化与入口 | 完成（2026-09-23） | `SettingsStore`（SharedPreferences `aurora_settings`，D15）+ `AppSettings`（语言/默认布局/默认排序/排序方向）；**专题排序 `aurora_topics` 已并入**（旧键只读迁移，行为不变）。入口 = 侧栏底部「设置」行（sliders 图标；React 在工具栏齿轮，触屏收敛到侧栏避免 TopBar 过挤）→ `SettingsDialog`。默认布局/排序启动时压到 AppState 初值。实测：改语言 → force-stop 重启仍保留（`aurora_settings.xml` 落盘核对）。 |
+| 2.2 通用面板（语言开关） | 完成（2026-09-23） | 语言开关接入：`TAG_LOCALE` 常量 → `settings.language`，`setLanguage` 换源后 `reloadTagState()` 重算（M4a 顺延项 1 收口）。默认布局/排序/方向三项持久化。**D19 登记不做**：主题暗色（恒浅色）、自启动/退出行为（桌面专属）、folderIconStyle、animateOnSelect（Kotlin 无对应卡片动画）、调试日志（Kotlin 无对应开关面，如需再立项）。`en` 档 collation 备注：语言切 en 后 `getGroupedTags("en")` 生效、侧栏按 en collation 重排；真实标签库下的 5/665 位置差异按 M4a 1.3 判据记入矩阵表 4 备注（本轮词表仅 1 个 ASCII 词，差异不可见，验收阶段如有需要再复核）。 |
+| 2.3 存储面板 | 完成（2026-09-23，基础版） | 缓存清理：cacheDir 全量（覆盖 `thumbnails` 网格缩略图目录 + `coil_viewer_cache` 查看器 200MB 磁盘缓存），Toast 报释放量；对话框实时显示缓存大小。备份导出：`{tags: 词表, people: {id:{name,description,count}}, topics: {id:{id,name,parentId,description,type,peopleIds}}}`（字段对齐 React StoragePanel 导出，`MediaStore.Downloads` 落 `Download/aurora_metadata_backup_YYYY-MM-DD.json`，React 导出为词表+人物+简化专题元数据、**不含文件标签/描述**——以 React 实际为准，未自行扩）。备份导入：SAF（OpenDocument）选 JSON → 词表并集（add_tag_to_vocabulary 去重）+ 人物/专题按 id 去重合并（upsert，仅新增缺失项，同 React 合并语义）→ 快照重算。主色调数据库/错误文件管理两节随 M6。实测：导出文件落盘（66B：1 词表词 + 空人物/专题）。 |
 | 3 搜索 scope 下拉 | 完成（2026-09-23） | `filterImages` 加 scope/tagsByFile/metadataById/viewFolderName 参数（默认值保持旧签名行为），`rememberDisplayImages` 透传并把 `tab.searchScope` 与两份快照、视图文件夹名列入 remember 键；TopBar 搜索胶囊头部加 scope 按钮（文字+chevron，AuroraDropdown 四项：搜索全部/文件名/标签/文件夹，zh 串同 React translations），仅在 BROWSER 视图显示（对齐 React 在 people/tags 总览隐藏）；`AppState.setSearchScope` 新增。**与 React 的已知语义差异（登记）**：FOLDER scope 匹配的是**当前视图的文件夹名**（序列级判定，单文件夹视图内全有或全无）——Image DTO 不带所属文件夹，标签全库视图无法逐图判定；React 的「按每张图所属文件夹筛」如需要再立 FFI 扩项。模拟器实测：ALL 命中「描述含词、文件名不含」用例（m4bdesc→renamed_01.jpg）、FILE 同词为空、下拉选中态勾选正确。 |
 | 4 画布入口 | 待办 | |
 | 5 任务通知（按 D17） | 待办 | |

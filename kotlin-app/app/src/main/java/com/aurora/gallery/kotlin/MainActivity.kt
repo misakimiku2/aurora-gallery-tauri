@@ -21,6 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,6 +65,7 @@ import com.aurora.gallery.kotlin.ui.components.TopicSectionHeader
 import com.aurora.gallery.kotlin.ui.components.TopicSortOption
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
+import com.aurora.gallery.kotlin.ui.components.SettingsDialog
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -92,6 +95,9 @@ import org.json.JSONException
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
+
+    /** M4b 2.1 设置面板开合（侧栏「设置」行触发；对话框在 setContent 里渲染）。 */
+    private var showSettings by mutableStateOf(false)
 
     /**
      * 数据与 UI 状态都住在 GalleryViewModel（跨旋转重建保留）。factory 只在 ViewModel
@@ -206,6 +212,206 @@ class MainActivity : ComponentActivity() {
         fileOpWithWriteAccessUris(fileIds) { op() }
     }
 
+    // —— M4b 2.3 设置面板：缓存清理 + 备份导出/导入 ——
+
+    private fun computeCacheSizeText(): String {
+        fun dirSize(dir: java.io.File): Long =
+            dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+        val cacheDir = cacheDir
+        val total = if (cacheDir.exists()) dirSize(cacheDir) else 0L
+        return when {
+            total >= 1L shl 20 -> "=%.1f MB".format(total.toDouble() / (1L shl 20))
+            total >= 1024 -> "=%.1f KB".format(total.toDouble() / 1024)
+            else -> "=$total B"
+        }
+    }
+
+    private fun clearCache() {
+        lifecycleScope.launch {
+            val freed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                fun dirSize(dir: java.io.File): Long =
+                    dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+                val before = if (cacheDir.exists()) dirSize(cacheDir) else 0L
+                cacheDir.deleteRecursively()
+                cacheDir.mkdirs()
+                before
+            }
+            Toast.makeText(
+                this@MainActivity,
+                "缓存已清理（释放 %.1f MB）".format(freed.toDouble() / (1L shl 20)),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    /** 备份导入（2.3）：SAF 选 JSON → 词表并集 + 人物/专题按 id 去重合并（React 同语义）。 */
+    private val importBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) importBackupFrom(uri)
+    }
+
+    private fun importBackupFrom(uri: Uri) {
+        lifecycleScope.launch {
+            val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                var tagsAdded = 0
+                var peopleAdded = 0
+                var topicsAdded = 0
+                try {
+                    val text = contentResolver.openInputStream(uri)?.use { input ->
+                        input.readBytes().toString(Charsets.UTF_8)
+                    } ?: throw IllegalStateException("openInputStream failed")
+                    val json = org.json.JSONObject(text)
+                    val tags = json.optJSONArray("tags")
+                    val existingIds = HashSet<String>()
+                    if (tags != null) {
+                        val grouped = uniffi.aurora_core.getGroupedTags(viewModel.settings.value.language)
+                        grouped.forEach { g -> g.tags.forEach { existingIds.add(it.tag) } }
+                        for (i in 0 until tags.length()) {
+                            val tag = tags.getString(i).trim()
+                            if (tag.isNotEmpty() && tag !in existingIds) {
+                                uniffi.aurora_core.addTagToVocabulary(tag)
+                                tagsAdded++
+                            }
+                        }
+                    }
+                    val people = json.optJSONObject("people")
+                    if (people != null) {
+                        val existing = uniffi.aurora_core.getAllPeople().associateBy { it.id }
+                        for (key in people.keys()) {
+                            if (key in existing) continue
+                            val p = people.getJSONObject(key)
+                            uniffi.aurora_core.upsertPerson(
+                                uniffi.aurora_core.FfiPerson(
+                                    id = p.optString("id", key),
+                                    name = p.optString("name", key),
+                                    coverFileId = "",
+                                    count = 0,
+                                    description = p.optString("description").takeIf { it.isNotEmpty() },
+                                    faceBox = null,
+                                    updatedAt = null,
+                                    characterTagName = null,
+                                    characterTagIndex = null,
+                                ),
+                            )
+                            peopleAdded++
+                        }
+                    }
+                    val topics = json.optJSONObject("topics")
+                    if (topics != null) {
+                        val existing = uniffi.aurora_core.getAllTopics().associateBy { it.id }
+                        for (key in topics.keys()) {
+                            if (key in existing) continue
+                            val t = topics.getJSONObject(key)
+                            val peopleIds = mutableListOf<String>()
+                            t.optJSONArray("peopleIds")?.let { arr ->
+                                for (i in 0 until arr.length()) peopleIds.add(arr.getString(i))
+                            }
+                            val now = System.currentTimeMillis()
+                            uniffi.aurora_core.upsertTopic(
+                                uniffi.aurora_core.FfiTopic(
+                                    id = t.optString("id", key),
+                                    parentId = t.optString("parentId").takeIf { it.isNotEmpty() },
+                                    name = t.optString("name", key),
+                                    description = t.optString("description").takeIf { it.isNotEmpty() },
+                                    topicType = t.optString("type", "TOPIC").ifEmpty { "TOPIC" },
+                                    coverFileId = null,
+                                    backgroundFileId = null,
+                                    coverCrop = null,
+                                    peopleIds = peopleIds,
+                                    fileIds = emptyList(),
+                                    sourceUrl = null,
+                                    createdAt = now,
+                                    updatedAt = now,
+                                    sourceType = null,
+                                    workName = null,
+                                    workNameCn = null,
+                                    fileCount = 0,
+                                ),
+                            )
+                            topicsAdded++
+                        }
+                    }
+                    "已导入：词表 +$tagsAdded，人物 +$peopleAdded，专题 +$topicsAdded"
+                } catch (e: Exception) {
+                    Log.w("AuroraKotlin", "[Settings] import backup failed", e)
+                    "导入失败（格式或读取错误）"
+                }
+            }
+            if (report.startsWith("已导入")) viewModel.refreshTagSnapshots()
+            Toast.makeText(this@MainActivity, report, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** 备份导出（2.3，字段对齐 React StoragePanel 导出：词表 + 人物 + 简化专题）。 */
+    private fun exportBackup() {
+        lifecycleScope.launch {
+            val json = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val grouped = uniffi.aurora_core.getGroupedTags(viewModel.settings.value.language)
+                val tags = grouped.flatMap { g -> g.tags.map { it.tag } }
+                val people = uniffi.aurora_core.getAllPeople()
+                val topics = uniffi.aurora_core.getAllTopics()
+                val peopleJson = org.json.JSONObject()
+                people.forEach { p ->
+                    peopleJson.put(
+                        p.id,
+                        org.json.JSONObject()
+                            .put("name", p.name)
+                            .put("description", p.description ?: JSONObject.NULL)
+                            .put("count", p.count),
+                    )
+                }
+                val topicsJson = org.json.JSONObject()
+                topics.forEach { t ->
+                    topicsJson.put(
+                        t.id,
+                        org.json.JSONObject()
+                            .put("id", t.id)
+                            .put("name", t.name)
+                            .put("parentId", t.parentId ?: JSONObject.NULL)
+                            .put("description", t.description ?: JSONObject.NULL)
+                            .put("type", t.topicType ?: "TOPIC")
+                            .put("peopleIds", org.json.JSONArray(t.peopleIds)),
+                    )
+                }
+                org.json.JSONObject()
+                    .put("tags", org.json.JSONArray(tags))
+                    .put("people", peopleJson)
+                    .put("topics", topicsJson)
+                    .toString(2)
+            }
+            try {
+                val fileName = "aurora_metadata_backup_${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())}.json"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/json")
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/")
+                        put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                }
+                val collection = if (Build.VERSION.SDK_INT >= 29) {
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                } else {
+                    Uri.parse("${android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)}/$fileName")
+                }
+                val uri = contentResolver.insert(collection, values)
+                    ?: throw IllegalStateException("insert failed")
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray())
+                } ?: throw IllegalStateException("openOutputStream failed")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    contentResolver.update(uri, android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                    }, null, null)
+                }
+                Toast.makeText(this@MainActivity, "已导出到 Download/$fileName", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Log.w("AuroraKotlin", "[Settings] export backup failed", e)
+                Toast.makeText(this@MainActivity, "导出失败", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     // —— M4b 1.4/1.3 复制/移动/重命名的宿主执行（网格与查看器共用一条写入路径）——
     // 弹窗层状态（目标选择器/合并确认/重命名目标）在 App() 组合里；这里只提供
     // 「已确定目标后的执行」：解析 RELATIVE_PATH、批量授权、调写原语、反馈。
@@ -674,17 +880,32 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        onOpenSettings = { showSettings = true },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
                     )
-                    // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
-                    ViewerLayerHost(
-                        state = appState,
-                        displayImages = displayImages,
-                        viewerProvider = ::ensureViewer,
-                        parentName = currentFolderName,
-                        tagsByFile = viewModel.tagsByFile.value,
-                        metadataById = viewModel.metadataById.value,
+                // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
+                ViewerLayerHost(
+                    state = appState,
+                    displayImages = displayImages,
+                    viewerProvider = ::ensureViewer,
+                    parentName = currentFolderName,
+                    tagsByFile = viewModel.tagsByFile.value,
+                    metadataById = viewModel.metadataById.value,
+                )
+                // M4b 2.1 设置面板（侧栏「设置」行触发）
+                if (showSettings) {
+                    SettingsDialog(
+                        settings = viewModel.settings.value,
+                        cacheSizeText = computeCacheSizeText(),
+                        onLanguageChange = { viewModel.setLanguage(it) },
+                        onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
+                        onDefaultSortChange = { by, dir -> viewModel.applyDefaultSort(by, dir) },
+                        onClearCache = { clearCache() },
+                        onExportBackup = { exportBackup() },
+                        onImportBackup = { importBackupLauncher.launch(arrayOf("application/json")) },
+                        onDismiss = { showSettings = false },
                     )
+                }
                 }
             }
         }
@@ -904,6 +1125,8 @@ fun App(
     onResolveSelectionFileIds: (Set<String>, (List<String>) -> Unit) -> Unit = { _, _ -> },
     /** 网格重命名（1.4 单选菜单项；宿主过写授权后改 DISPLAY_NAME）。 */
     onRenameFile: (fileId: String, newName: String) -> Unit = { _, _ -> },
+    /** 打开设置面板（M4b 2.1；对话框由宿主层渲染）。 */
+    onOpenSettings: () -> Unit = {},
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
 ) {
@@ -983,15 +1206,15 @@ fun App(
     } ?: false
 
     // —— M4a 3.3 专题排序 + 总览搜索（对齐桌面 TopicModule）——
-    // 排序：桌面 localStorage `aurora_topic_sort_mode/order` 同语义，这里 SharedPreferences
-    // 持久化（默认 按时间/降序，同桌面默认）。比较逻辑在 sortTopicsForDisplay（展示层）。
-    val topicSortPrefs = remember { context.getSharedPreferences("aurora_topics", Context.MODE_PRIVATE) }
+    // 排序：桌面 localStorage `aurora_topic_sort_mode/order` 同语义。M4b 2.1 起并入
+    // SettingsStore（旧 `aurora_topics` 键只读迁移）。比较逻辑在 sortTopicsForDisplay。
+    val topicSortStore = remember { com.aurora.gallery.kotlin.state.SettingsStore(context) }
     var topicSort by remember {
         mutableStateOf(
-            if (topicSortPrefs.getBoolean("sortByName", false)) TopicSortOption.NAME else TopicSortOption.TIME,
+            if (topicSortStore.loadTopicSortByName()) TopicSortOption.NAME else TopicSortOption.TIME,
         )
     }
-    var topicSortAscending by remember { mutableStateOf(topicSortPrefs.getBoolean("sortAscending", false)) }
+    var topicSortAscending by remember { mutableStateOf(topicSortStore.loadTopicSortAscending()) }
     // 总览搜索：按名称过滤根专题（桌面 topics-overview 的顶栏搜索同款）
     val topicQuery = tab.searchQuery.trim()
     val visibleRootTopics = remember(rootTopics, topicQuery) {
@@ -1165,6 +1388,8 @@ fun App(
                 // 画布行：点击进占位视图（M4b 阶段 4）
                 onCanvasClick = { state.openCanvas() },
                 canvasSelected = inCanvas,
+                // 设置行：打开设置面板（M4b 2.1）
+                onSettingsClick = onOpenSettings,
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )
@@ -1289,10 +1514,7 @@ fun App(
                     onSortChange = { option, ascending ->
                         topicSort = option
                         topicSortAscending = ascending
-                        topicSortPrefs.edit()
-                            .putBoolean("sortByName", option == TopicSortOption.NAME)
-                            .putBoolean("sortAscending", ascending)
-                            .apply()
+                        topicSortStore.saveTopicSort(option == TopicSortOption.NAME, ascending)
                     },
                     sidebarVisible = state.layout.isSidebarVisible,
                     initialScrollAnchor = state.topicsOverviewScrollAnchor,
