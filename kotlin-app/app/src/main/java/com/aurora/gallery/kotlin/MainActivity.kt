@@ -117,6 +117,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) viewModel.startScanIfNeeded()
+        requestNotificationPermissionIfNeeded()
     }
 
     /**
@@ -1060,6 +1061,19 @@ class MainActivity : ComponentActivity() {
             Build.HARDWARE.contains("ranchu") ||
             Build.PRODUCT.contains("sdk")
 
+    /** 阶段 5：通知权限（API 33+ 运行时请求；拒绝则扫描通知静默不发，不影响功能）。 */
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 拒绝也不阻断：通知只是增强 */ }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     private fun requestMediaPermissionIfNeeded() {
         val permission = if (Build.VERSION.SDK_INT >= 33) {
             Manifest.permission.READ_MEDIA_IMAGES
@@ -1068,6 +1082,7 @@ class MainActivity : ComponentActivity() {
         }
         if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
             viewModel.startScanIfNeeded()
+            requestNotificationPermissionIfNeeded()
         } else {
             requestPermission.launch(permission)
         }

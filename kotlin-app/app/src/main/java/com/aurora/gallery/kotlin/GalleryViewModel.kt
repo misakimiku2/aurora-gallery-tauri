@@ -111,6 +111,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 设置的唯一读写口（2.1，D15=SharedPreferences；专题排序已并入）。 */
     val settingsStore = SettingsStore(appContext)
 
+    /** 扫描通知（阶段 5，D17 基础版：初始扫描与手动刷新上进度/完成通知）。 */
+    private val scanNotifier = ScanNotifier(appContext)
+
     val thumbnailLoader = ThumbnailLoader(appContext)
 
     /** 本次 ViewModel 生存期内是否已启动过扫描；旋转重建复用同一实例，直接跳过重扫。 */
@@ -208,7 +211,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             reloadTopics()
             if (cached.isEmpty()) scanning.value = true
             try {
-                scanAndReconcile()
+                scanAndReconcile(notifyScan = true)
             } catch (e: Exception) {
                 // 扫描/入库失败时保留缓存列表（M1 阶段 1 简单容错）
                 Log.w(TAG, "[Scan] failed", e)
@@ -270,7 +273,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
         viewModelScope.launch {
             try {
-                scanAndReconcile()
+                scanAndReconcile(notifyScan = true)
                 reloadImages()
                 Log.i(TAG, "[Scan] manual refresh done")
             } catch (e: Exception) {
@@ -616,10 +619,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
-    /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表 + 标签快照。 */
-    private suspend fun scanAndReconcile() = scanMutex.withLock {
+    /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表 + 标签快照。
+     *
+     * [notifyScan] = true 时走阶段 5 的扫描通知（初始扫描与手动刷新；热刷新不通知）。
+     */
+    private suspend fun scanAndReconcile(notifyScan: Boolean = false) = scanMutex.withLock {
         val t0 = android.os.SystemClock.elapsedRealtime()
         val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
+        if (notifyScan) scanNotifier.progress()
         Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
         withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
         Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
@@ -630,6 +637,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // fileCount 一并刷新。
         reloadTagState()
         reloadTopics()
+        if (notifyScan) scanNotifier.done(folders = folders.value.size, images = imgs.size)
     }
 
     /**
