@@ -988,20 +988,29 @@ class MainActivity : ComponentActivity() {
                         onLoadPickerImages = viewModel::loadCanvasPickerImages,
                         onSetImmersive = { setImmersiveMode(it) },
                         // M5 3.1：网格选中集加入画布（FFI 解析宽高 → 装箱落 store）
-                        onAddSelectionToCanvas = { ids ->
+                        onAddSelectionToCanvas = { ids, onDone ->
                             viewModel.canvasSourcesFor(ids) { sources ->
                                 when (val r = viewModel.canvasStore.addImages(sources)) {
-                                    is AddResult.Added -> Toast.makeText(
-                                        this@MainActivity,
-                                        "已加入画布 ${r.added} 张（${viewModel.canvasStore.count}/24）",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                    AddResult.AllDuplicates -> Toast.makeText(
-                                        this@MainActivity, "所选图片都已在画布中", Toast.LENGTH_SHORT,
-                                    ).show()
-                                    AddResult.Full -> Toast.makeText(
-                                        this@MainActivity, "画布已满（24/24）", Toast.LENGTH_SHORT,
-                                    ).show()
+                                    is AddResult.Added -> {
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "已加入画布 ${r.added} 张（${viewModel.canvasStore.count}/24）",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                        onDone(r.added > 0)
+                                    }
+                                    AddResult.AllDuplicates -> {
+                                        Toast.makeText(
+                                            this@MainActivity, "所选图片都已在画布中", Toast.LENGTH_SHORT,
+                                        ).show()
+                                        onDone(false)
+                                    }
+                                    AddResult.Full -> {
+                                        Toast.makeText(
+                                            this@MainActivity, "画布已满（24/24）", Toast.LENGTH_SHORT,
+                                        ).show()
+                                        onDone(false)
+                                    }
                                 }
                             }
                         },
@@ -1274,8 +1283,8 @@ fun App(
     onOpenSettings: () -> Unit = {},
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
-    /** M5 3.1：选中集加入画布（宿主解析 FFI 源 + 落 store + 反馈）。 */
-    onAddSelectionToCanvas: (Collection<String>) -> Unit = {},
+    /** M5 3.1：选中集加入画布（宿主解析 FFI 源 + 落 store + 反馈）；[onDone] 报告是否真有加入。 */
+    onAddSelectionToCanvas: (Collection<String>, onDone: (Boolean) -> Unit) -> Unit = { _, _ -> },
     /** M5 3.3：添加图片弹窗的四类数据源取数（宿主转 GalleryViewModel）。 */
     onLoadPickerImages: (String, String, (List<Image>) -> Unit) -> Unit = { _, _, _ -> },
     /** M5 4：画布沉浸开关（宿主转 setImmersiveMode）。 */
@@ -1409,7 +1418,12 @@ fun App(
                             Toast.makeText(context, "画布已满（24/24）", Toast.LENGTH_SHORT).show()
                         canvasStore.count + ids.size > 24 ->
                             Toast.makeText(context, "画布最多 24 张，还可加 ${24 - canvasStore.count} 张", Toast.LENGTH_SHORT).show()
-                        else -> onAddSelectionToCanvas(ids)
+                        else -> {
+                            // 加入成功后**直接跳进画布**看装箱结果（2026-09-24 用户反馈）
+                            onAddSelectionToCanvas(ids) { added ->
+                                if (added) state.openCanvas()
+                            }
+                        }
                     }
                 })
             }

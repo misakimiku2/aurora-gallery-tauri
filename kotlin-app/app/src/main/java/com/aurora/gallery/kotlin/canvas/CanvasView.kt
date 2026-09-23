@@ -870,7 +870,7 @@ class CanvasView @JvmOverloads constructor(
         canvas.rotate(item.rotation)
         canvas.drawRect(-sw / 2f, -sh / 2f, sw / 2f, sh / 2f, editBorderPaint)
 
-        // 8 枚缩放柄（白底蓝边圆 + 斜向双箭头简笔）
+        // 8 枚缩放柄（白底蓝边圆 + lucide scaling 图标，对齐 React ScaleIcon）
         val handles = listOf(
             -sw / 2f to -sh / 2f, 0f to -sh / 2f, sw / 2f to -sh / 2f,
             -sw / 2f to 0f, sw / 2f to 0f,
@@ -879,9 +879,9 @@ class CanvasView @JvmOverloads constructor(
         for ((hx, hy) in handles) {
             canvas.drawCircle(hx, hy, handleRadiusPx, handleFillPaint)
             canvas.drawCircle(hx, hy, handleRadiusPx, handleStrokePaint)
-            canvas.drawLine(hx - handleRadiusPx * 0.45f, hy + handleRadiusPx * 0.45f, hx + handleRadiusPx * 0.45f, hy - handleRadiusPx * 0.45f, handleGlyphPaint)
+            drawScaleGlyph(canvas, hx, hy)
         }
-        // 4 枚旋转柄（四角外，圆 + 弧线简笔）
+        // 4 枚旋转柄（四角外，圆 + lucide 旋转箭头图标，对齐 React RotateIcon）
         val ro = rotateOffsetPx
         val rotateCorners = listOf(
             -sw / 2f - ro to -sh / 2f - ro,
@@ -892,13 +892,45 @@ class CanvasView @JvmOverloads constructor(
         for ((hx, hy) in rotateCorners) {
             canvas.drawCircle(hx, hy, handleRadiusPx, handleFillPaint)
             canvas.drawCircle(hx, hy, handleRadiusPx, handleStrokePaint)
-            canvas.drawArc(
-                hx - handleRadiusPx * 0.45f, hy - handleRadiusPx * 0.45f,
-                hx + handleRadiusPx * 0.45f, hy + handleRadiusPx * 0.45f,
-                0f, 300f, false, handleGlyphPaint,
-            )
+            drawRotateGlyph(canvas, hx, hy)
         }
         canvas.restore()
+    }
+
+    /**
+     * 缩放柄图标：React `ScaleIcon`（lucide scaling，24 视口）逐线转译——
+     * `M15 3H21V9`（右上角折线）/ `M9 21H3V15`（左下角折线）/ `M21 3L14 10` / `M3 21L10 14`。
+     * 视口原点 (12,12) 映射到柄圆心，缩放系数 = 柄半径/12（React 图标 15px 在 30px 柄内）。
+     */
+    private fun drawScaleGlyph(canvas: Canvas, cx: Float, cy: Float) {
+        val k = handleRadiusPx / 12f
+        fun px(x: Float) = cx + (x - 12f) * k
+        fun py(y: Float) = cy + (y - 12f) * k
+        canvas.drawLine(px(15f), py(3f), px(21f), py(3f), handleGlyphPaint)
+        canvas.drawLine(px(21f), py(3f), px(21f), py(9f), handleGlyphPaint)
+        canvas.drawLine(px(9f), py(21f), px(3f), py(21f), handleGlyphPaint)
+        canvas.drawLine(px(3f), py(21f), px(3f), py(15f), handleGlyphPaint)
+        canvas.drawLine(px(21f), py(3f), px(14f), py(10f), handleGlyphPaint)
+        canvas.drawLine(px(3f), py(21f), px(10f), py(14f), handleGlyphPaint)
+    }
+
+    /**
+     * 旋转柄图标：React `RotateIcon`（24 视口）——右上角折线 `M21.5 2V8H15.5` +
+     * 大圆弧（React `M21.34 15.57 A10 10 0 1 1 …`：圆心 ≈(11.6,11.9) r=10，
+     * 起点角 ≈21°、顺时针扫 ≈310°）。
+     */
+    private fun drawRotateGlyph(canvas: Canvas, cx: Float, cy: Float) {
+        val k = handleRadiusPx / 12f
+        fun px(x: Float) = cx + (x - 12f) * k
+        fun py(y: Float) = cy + (y - 12f) * k
+        canvas.drawLine(px(21.5f), py(2f), px(21.5f), py(8f), handleGlyphPaint)
+        canvas.drawLine(px(21.5f), py(8f), px(15.5f), py(8f), handleGlyphPaint)
+        val arcR = 10f * k
+        canvas.drawArc(
+            px(11.6f) - arcR, py(11.9f) - arcR,
+            px(11.6f) + arcR, py(11.9f) + arcR,
+            21f, 310f, false, handleGlyphPaint,
+        )
     }
 
     // ------------------------------------------------------------ 绘制
