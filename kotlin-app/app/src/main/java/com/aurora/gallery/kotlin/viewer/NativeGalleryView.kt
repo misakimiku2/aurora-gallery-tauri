@@ -104,6 +104,8 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onUpdateSlideshowConfig(configJson: String)
         /** 用户在文件夹选择弹窗中确认了目标文件夹。type: "copy" 或 "move" */
         fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String)
+        // M5 3.2：用户点击了「加入画布」（仅平板显示此菜单项，D28）
+        fun onAddToCanvas(fileId: String)
     }
 
     data class ImageItem(
@@ -1793,17 +1795,22 @@ class NativeGalleryView @JvmOverloads constructor(
 
     private fun showMoreMenu(anchor: View) {
         val item = images.getOrNull(currentIndex) ?: return
+        // M5 3.2：「加入画布」仅平板显示（D28）；LAN 图不走画布取流管线，一并隐藏
+        val isTablet = resources.configuration.screenWidthDp >= 600 &&
+            resources.configuration.screenHeightDp >= 480
+        val canvasItem = MoreMenuItem("加入画布", colorTextPrimary()) { listener?.onAddToCanvas(item.fileId) }
         MoreMenuPopup(
             context = context,
             theme = this,
             anchor = anchor,
-            menuItems = listOf(
-                MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() },
-                MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() },
-                MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) },
-                MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) },
-                MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() }
-            )
+            menuItems = buildList {
+                if (isTablet && !item.isLan) add(canvasItem)
+                add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
+                add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })
+                add(MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) })
+                add(MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) })
+                add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
+            }
         ).show()
     }
 

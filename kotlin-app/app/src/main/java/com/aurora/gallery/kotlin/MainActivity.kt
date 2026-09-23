@@ -82,7 +82,8 @@ import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
 import android.view.View
-import com.aurora.gallery.kotlin.canvas.CanvasHost
+import com.aurora.gallery.kotlin.canvas.CanvasScreen
+import com.aurora.gallery.kotlin.canvas.AddResult
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.viewer.applyViewerTheme
@@ -624,6 +625,25 @@ class MainActivity : ComponentActivity() {
         override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
             performCopyMoveToFolder(listOf(fileId), targetFolderId, type)
         }
+
+        /** M5 3.2：查看器「加入画布」（仅平板菜单可达；FFI 解析宽高 → 装箱落 store）。 */
+        override fun onAddToCanvas(fileId: String) {
+            viewModel.canvasSourcesFor(listOf(fileId)) { sources ->
+                when (val r = viewModel.canvasStore.addImages(sources)) {
+                    is AddResult.Added -> Toast.makeText(
+                        this@MainActivity,
+                        "已加入画布（${viewModel.canvasStore.count}/24）",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    AddResult.AllDuplicates -> Toast.makeText(
+                        this@MainActivity, "这张已在画布中", Toast.LENGTH_SHORT,
+                    ).show()
+                    AddResult.Full -> Toast.makeText(
+                        this@MainActivity, "画布已满（24/24）", Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
     }
 
     /** FolderPickerDialog 的 folderTreeJson：Kotlin 侧是扁平 bucket 列表（D18），全为根节点。 */
@@ -965,6 +985,26 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenSettings = { showSettings = true },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
+                        onLoadPickerImages = viewModel::loadCanvasPickerImages,
+                        onSetImmersive = { setImmersiveMode(it) },
+                        // M5 3.1：网格选中集加入画布（FFI 解析宽高 → 装箱落 store）
+                        onAddSelectionToCanvas = { ids ->
+                            viewModel.canvasSourcesFor(ids) { sources ->
+                                when (val r = viewModel.canvasStore.addImages(sources)) {
+                                    is AddResult.Added -> Toast.makeText(
+                                        this@MainActivity,
+                                        "已加入画布 ${r.added} 张（${viewModel.canvasStore.count}/24）",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    AddResult.AllDuplicates -> Toast.makeText(
+                                        this@MainActivity, "所选图片都已在画布中", Toast.LENGTH_SHORT,
+                                    ).show()
+                                    AddResult.Full -> Toast.makeText(
+                                        this@MainActivity, "画布已满（24/24）", Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                        },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 ViewerLayerHost(
@@ -1253,6 +1293,12 @@ fun App(
     onOpenSettings: () -> Unit = {},
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
+    /** M5 3.1：选中集加入画布（宿主解析 FFI 源 + 落 store + 反馈）。 */
+    onAddSelectionToCanvas: (Collection<String>) -> Unit = {},
+    /** M5 3.3：添加图片弹窗的四类数据源取数（宿主转 GalleryViewModel）。 */
+    onLoadPickerImages: (String, String, (List<Image>) -> Unit) -> Unit = { _, _, _ -> },
+    /** M5 4：画布沉浸开关（宿主转 setImmersiveMode）。 */
+    onSetImmersive: (Boolean) -> Unit = {},
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1263,6 +1309,11 @@ fun App(
     // 侧栏「设置」行被裁切，入口挂顶栏（onOpenSettings 传 TopBar）
     val isLandscapePhone = LocalConfiguration.current.let {
         it.screenWidthDp >= 600 && it.screenHeightDp < 480
+    }
+    // M5 D28：平板形态（宽 ≥600dp 且高 ≥480dp，横屏手机不算）——画布是平板专属能力，
+    // 侧栏「画布」行与网格/查看器的画布入口都按此门控
+    val isTablet = LocalConfiguration.current.let {
+        it.screenWidthDp >= 600 && it.screenHeightDp >= 480
     }
     // 4.4 下拉刷新的触发阈值（80dp，React threshold 同值）
     val ptrThresholdPx = with(density) { 80.dp.toPx() }
@@ -1367,6 +1418,20 @@ fun App(
     val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview)
     val moreActions = when {
         inBrowser -> buildList {
+            // M5 3.1：画布组置顶（仅平板，D28）。单实例（D21）语义 =「加入画布」，
+            // 不做「新建画布」入口；计数显示全画布 N/24，超 24 拦截 Toast
+            if (isTablet) {
+                add(SelectionMoreAction("加入画布（${canvasStore.count}/24）") {
+                    val ids = tab.selectedFileIds
+                    when {
+                        canvasStore.isFull ->
+                            Toast.makeText(context, "画布已满（24/24）", Toast.LENGTH_SHORT).show()
+                        canvasStore.count + ids.size > 24 ->
+                            Toast.makeText(context, "画布最多 24 张，还可加 ${24 - canvasStore.count} 张", Toast.LENGTH_SHORT).show()
+                        else -> onAddSelectionToCanvas(ids)
+                    }
+                })
+            }
             add(SelectionMoreAction("加入专题…") { showTopicPicker = true })
             if (tab.selectedFileIds.size == 1) {
                 add(SelectionMoreAction("编辑标签…") { editTagsFileId = tab.selectedFileIds.first() })
@@ -1514,7 +1579,8 @@ fun App(
                 tagsOverviewSelected = inTagsOverview,
                 topicsOverviewSelected = inTopicsOverview,
                 foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
-                // 画布行：点击进占位视图（M4b 阶段 4）
+                // 画布行：点击进画布视图；手机不显示（D28 平板专属）
+                showCanvas = isTablet,
                 onCanvasClick = { state.openCanvas() },
                 canvasSelected = inCanvas,
                 // 设置行：打开设置面板（M4b 2.1）
@@ -1524,7 +1590,10 @@ fun App(
             )
         }
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）
+            // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）；
+            // 画布屏自带顶栏，此处让位（M5 3.4）
+            // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）；
+            // 画布屏自带顶栏（M5 3.4），此处两者都让位
             if (state.selectionMode) {
             SelectionBar(
                 selectedCount = tab.selectedFileIds.size,
@@ -1551,7 +1620,7 @@ fun App(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-            } else {
+            } else if (!inCanvas) {
                 TopBar(
                     title = when {
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
@@ -1773,11 +1842,20 @@ fun App(
                         )
                     }
                 }
-                // M5 1.2：画布视图本体（View 体系 CanvasView 由 CanvasHost 承载；
-                // 顶栏复用通用 TopBar 的返回/侧栏开关，画布专属 TopBar 随 3.4）
-                inCanvas -> CanvasHost(
+                // M5 1.2：画布屏（专属顶栏 + CanvasView + 沉浸浮钮；顶栏随 CanvasScreen，
+                // 通用 TopBar 在画布让位）
+                inCanvas -> CanvasScreen(
                     store = canvasStore,
                     dark = darkTheme,
+                    thumbnailLoader = thumbnailLoader,
+                    sidebarVisible = state.layout.isSidebarVisible,
+                    folders = folders,
+                    topics = topics,
+                    tagGroups = tagGroups,
+                    onLoadPickerImages = onLoadPickerImages,
+                    onBack = { state.goBack() },
+                    onToggleSidebar = { state.toggleSidebar() },
+                    onSetImmersive = onSetImmersive,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 // 文件夹内网格（选择/查看器共用同一展示序列）

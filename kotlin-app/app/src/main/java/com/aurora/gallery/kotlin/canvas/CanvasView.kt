@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
@@ -86,6 +87,27 @@ class CanvasView @JvmOverloads constructor(
     private val plainStroke = Paint().apply { style = Paint.Style.STROKE }
     private val bitmapPaint = Paint().apply { isFilterBitmap = true }
     private val dotPaint = Paint().apply { style = Paint.Style.FILL }
+    // 编辑框（2.1）：React 边框 #3b82f6 = palette.primary；柄白底蓝边
+    private val editBorderPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        color = 0xFF3B82F6.toInt()
+    }
+    private val handleFillPaint = Paint().apply {
+        style = Paint.Style.FILL
+        color = Color.WHITE
+    }
+    private val handleStrokePaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        color = 0xFF3B82F6.toInt()
+    }
+    private val handleGlyphPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f
+        strokeCap = android.graphics.Paint.Cap.ROUND
+        color = 0xFF3B82F6.toInt()
+    }
     private val dstRect = RectF()
 
     /** 点阵背景平铺（BitmapShader 一次 drawRect；React 逐点 arc 在 CPU 光栅化下太贵）。 */
@@ -366,6 +388,7 @@ class CanvasView @JvmOverloads constructor(
         // 长按**已选中**图 500ms 进编辑模式（React :1021-1031；只在非编辑态挂此计时器）
         store?.enterEditMode()
         drag.active = false
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         invalidate()
     }
 
@@ -399,6 +422,11 @@ class CanvasView @JvmOverloads constructor(
                 touchStartY = event.y
                 touchStartAt = android.os.SystemClock.uptimeMillis()
                 val touchedId = hitTest(event.x, event.y, s)
+                // 编辑模式：手柄/框内优先成为编辑拖动（2.1）
+                if (s.isEditMode && beginEditDrag(event.x, event.y, s)) {
+                    drag.active = false
+                    return true
+                }
                 // 编辑模式且按在已选图上：不启动画布拖动（React :1010-1019 的语义）
                 drag.active = !(s.isEditMode && touchedId != null && touchedId in s.selectedIds)
                 drag.startX = event.x
@@ -415,6 +443,8 @@ class CanvasView @JvmOverloads constructor(
                     // 双指落下：取消长按、退出编辑（React :962-964）
                     cancelLongPressTimer()
                     s.exitEditMode()
+                    editDragType = null
+                    snapGuides = emptyList()
                     drag.active = false
                     pinch.active = true
                     val dx = event.getX(0) - event.getX(1)
@@ -427,7 +457,9 @@ class CanvasView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (pinch.active && event.pointerCount >= 2) {
+                if (editDragType != null) {
+                    processEditDrag(event.x, event.y, s)
+                } else if (pinch.active && event.pointerCount >= 2) {
                     val dx = event.getX(0) - event.getX(1)
                     val dy = event.getY(0) - event.getY(1)
                     val dist = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
@@ -464,6 +496,9 @@ class CanvasView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 cancelLongPressTimer()
+                val wasEditDrag = editDragType != null
+                editDragType = null
+                snapGuides = emptyList()
                 val wasPinch = pinch.active
                 pinch.active = false
                 val wasDrag = drag.active
@@ -471,6 +506,10 @@ class CanvasView @JvmOverloads constructor(
                 // 手势结束：按需重解码高档
                 updateTierForScale()
                 ensureVisibleDecodes()
+                if (wasEditDrag) {
+                    invalidate()
+                    return true
+                }
 
                 val dx = event.x - touchStartX
                 val dy = event.y - touchStartY
@@ -487,6 +526,8 @@ class CanvasView @JvmOverloads constructor(
                 cancelLongPressTimer()
                 pinch.active = false
                 drag.active = false
+                editDragType = null
+                snapGuides = emptyList()
             }
         }
         return true
@@ -532,6 +573,332 @@ class CanvasView @JvmOverloads constructor(
         invalidate()
     }
 
+    // ------------------------------------------------------------ 编辑模式（2.1，按阶段 0.1 手势清单实现）
+
+    /** 编辑框手柄的屏幕尺寸（dp）。React 安卓分支 30px 手柄 + 旋转柄外偏 -40px。 */
+    private val handleRadiusPx = 15f * density
+    private val rotateOffsetPx = 25f * density
+    /** 手柄命中半径：视觉 15dp，命中扩到 24dp（触控目标 ≥48dp）。 */
+    private val handleHitRadiusPx = 24f * density
+
+    /** 编辑拖动类型："move" / 八向缩放 "tl","tc","tr","ml","mr","bl","bc","br" / "rotate"。 */
+    private var editDragType: String? = null
+    private var editRotateHandleCorner = 't'
+
+    /** 编辑拖动起点状态（EditOverlay startState:103-110 的对应物）。 */
+    private class EditStartState {
+        var pivotX = 0f; var pivotY = 0f
+        var itemR = 0f
+        var aspect = 1f
+        var centerX = 0f; var centerY = 0f
+        var startAngle = 0f
+        var itemX = 0f; var itemY = 0f
+        var startWorldX = 0f; var startWorldY = 0f
+        var clickOffsetX = 0f; var clickOffsetY = 0f
+    }
+
+    private val editStart = EditStartState()
+    /** 吸附参考线（world 坐标；move 时更新，松手清除）。 */
+    private var snapGuides: List<SnapGuide> = emptyList()
+
+    private class SnapGuide(val isX: Boolean, val pos: Float, val start: Float, val end: Float)
+
+    private val snapGuidePaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f
+        color = 0xFF34D399.toInt() // React 吸附线 emerald-400 #34d399（TreeSidebar SECTION_EMERALD 同族语义色）
+        pathEffect = DashPathEffect(floatArrayOf(8f, 6f), 0f)
+    }
+
+    private fun beginEditDrag(x: Float, y: Float, s: CanvasStore): Boolean {
+        val item = s.activeItemId?.let { s.itemById[it] } ?: return false
+        val scale = s.viewport.scale
+        val scx = item.centerX * scale + s.viewport.x
+        val scy = item.centerY * scale + s.viewport.y
+        val sw = item.width * scale
+        val sh = item.height * scale
+        // 触点转到 item 本地（屏）坐标
+        val rad = Math.toRadians(item.rotation.toDouble())
+        val cos = kotlin.math.cos(rad).toFloat()
+        val sin = kotlin.math.sin(rad).toFloat()
+        fun toLocal(px: Float, py: Float): Pair<Float, Float> {
+            val dx = px - scx; val dy = py - scy
+            return (dx * cos + dy * sin) to (-dx * sin + dy * cos)
+        }
+        val (lx, ly) = toLocal(x, y)
+
+        // 1) 旋转柄（四角外 offset -40px，中心 ≈ 角外 25dp）
+        val rotateCorners = listOf(
+            't' to (-sw / 2f - rotateOffsetPx to -sh / 2f - rotateOffsetPx),
+            'r' to (sw / 2f + rotateOffsetPx to -sh / 2f - rotateOffsetPx),
+            'l' to (-sw / 2f - rotateOffsetPx to sh / 2f + rotateOffsetPx),
+            'b' to (sw / 2f + rotateOffsetPx to sh / 2f + rotateOffsetPx),
+        )
+        for ((corner, pos) in rotateCorners) {
+            if (kotlin.math.abs(lx - pos.first) <= handleHitRadiusPx &&
+                kotlin.math.abs(ly - pos.second) <= handleHitRadiusPx
+            ) {
+                editRotateHandleCorner = corner
+                startEdit(item, x, y, s, "rotate")
+                return true
+            }
+        }
+        // 2) 缩放柄（8 枚）
+        val scaleHandles = mapOf(
+            "tl" to (-sw / 2f to -sh / 2f), "tc" to (0f to -sh / 2f), "tr" to (sw / 2f to -sh / 2f),
+            "ml" to (-sw / 2f to 0f), "mr" to (sw / 2f to 0f),
+            "bl" to (-sw / 2f to sh / 2f), "bc" to (0f to sh / 2f), "br" to (sw / 2f to sh / 2f),
+        )
+        for ((type, pos) in scaleHandles) {
+            if (kotlin.math.abs(lx - pos.first) <= handleHitRadiusPx &&
+                kotlin.math.abs(ly - pos.second) <= handleHitRadiusPx
+            ) {
+                startEdit(item, x, y, s, type)
+                return true
+            }
+        }
+        // 3) 框内 = move（命中检测已确认点在 item 内——ACTION_DOWN 的 touchedId 判定）
+        if (kotlin.math.abs(lx) <= sw / 2f && kotlin.math.abs(ly) <= sh / 2f) {
+            startEdit(item, x, y, s, "move")
+            return true
+        }
+        return false
+    }
+
+    private fun startEdit(item: CanvasItem, x: Float, y: Float, s: CanvasStore, type: String) {
+        val typeWithRotate = if (type == "rotate") type + editRotateHandleCorner else type
+        val scale = s.viewport.scale
+        val (wx, wy) = toWorld(x, y, s)
+        val cx = item.centerX
+        val cy = item.centerY
+        val rad = Math.toRadians(item.rotation.toDouble())
+        val cos = kotlin.math.cos(rad).toFloat()
+        val sin = kotlin.math.sin(rad).toFloat()
+
+        // 对侧锚点（React startInteraction :302-319；'l'→px=+1 = 锚在右缘）
+        var px = 0f; var py = 0f
+        if ('l' in typeWithRotate) px = 1f else if ('r' in typeWithRotate) px = -1f
+        if ('t' in typeWithRotate) py = 1f else if ('b' in typeWithRotate) py = -1f
+        val lpx = px * item.width / 2f
+        val lpy = py * item.height / 2f
+        editStart.pivotX = cx + (lpx * cos - lpy * sin)
+        editStart.pivotY = cy + (lpx * sin + lpy * cos)
+
+        // 抓取偏移（拖柄不跳变；React clickOffset :328-337）
+        var hx = 0f; var hy = 0f
+        if ('l' in typeWithRotate) hx = -item.width / 2f else if ('r' in typeWithRotate) hx = item.width / 2f
+        if ('t' in typeWithRotate) hy = -item.height / 2f else if ('b' in typeWithRotate) hy = item.height / 2f
+        val vx = wx - editStart.pivotX
+        val vy = wy - editStart.pivotY
+        val rCos = kotlin.math.cos(-rad).toFloat()
+        val rSin = kotlin.math.sin(-rad).toFloat()
+        val localMouseX = vx * rCos - vy * rSin
+        val localMouseY = vx * rSin + vy * rCos
+        editStart.clickOffsetX = (hx - px * item.width / 2f) - localMouseX
+        editStart.clickOffsetY = (hy - py * item.height / 2f) - localMouseY
+
+        editStart.itemR = item.rotation
+        editStart.aspect = item.width / kotlin.math.max(1f, item.height)
+        editStart.centerX = cx; editStart.centerY = cy
+        editStart.startAngle = (Math.atan2(
+            (wy - cy).toDouble(),
+            (wx - cx).toDouble(),
+        )).toFloat()
+        editStart.itemX = item.x; editStart.itemY = item.y
+        editStart.startWorldX = wx; editStart.startWorldY = wy
+        editDragType = type
+    }
+
+    /** 编辑拖动进行中（EditOverlay processDrag:126-290 逐字转译 + 吸附）。 */
+    private fun processEditDrag(x: Float, y: Float, s: CanvasStore) {
+        val item = s.activeItemId?.let { s.itemById[it] } ?: return
+        val (wx, wy) = toWorld(x, y, s)
+        when (editDragType) {
+            "move" -> {
+                var newX = editStart.itemX + (wx - editStart.startWorldX)
+                var newY = editStart.itemY + (wy - editStart.startWorldY)
+                val pair = applySnap(item, newX, newY, s)
+                newX = pair.first; newY = pair.second
+                s.updateItemTransform(item.fileId, x = newX, y = newY)
+            }
+            "rotate" -> {
+                val angleNow = Math.atan2(
+                    (wy - editStart.centerY).toDouble(),
+                    (wx - editStart.centerX).toDouble(),
+                ).toFloat()
+                var deg = (angleNow - editStart.startAngle) * 180f / Math.PI.toFloat() + editStart.itemR
+                // 归一到 (-180, 180]，避免累计浮点漂移
+                deg = ((deg % 360f) + 540f) % 360f - 180f
+                s.updateItemTransform(item.fileId, rotation = deg)
+            }
+            else -> {
+                // 八向等比缩放（锚点=对侧，EditOverlay :232-289）
+                val type = editDragType ?: return
+                val rad = Math.toRadians(editStart.itemR.toDouble())
+                val cos = kotlin.math.cos(-rad).toFloat()
+                val sin = kotlin.math.sin(-rad).toFloat()
+                val vx = wx - editStart.pivotX
+                val vy = wy - editStart.pivotY
+                val localMouseX = vx * cos - vy * sin
+                val localMouseY = vx * sin + vy * cos
+                val pcx = localMouseX + editStart.clickOffsetX
+                val pcy = localMouseY + editStart.clickOffsetY
+                var w = kotlin.math.abs(pcx)
+                var h = kotlin.math.abs(pcy)
+                when {
+                    type == "ml" || type == "mr" -> h = w / editStart.aspect
+                    type == "tc" || type == "bc" -> w = h * editStart.aspect
+                    else -> if (w / editStart.aspect > h) h = w / editStart.aspect else w = h * editStart.aspect
+                }
+                w = kotlin.math.max(50f, w)
+                h = kotlin.math.max(50f, h)
+                var kx = 0f; var ky = 0f
+                if ('l' in type) kx = 1f else if ('r' in type) kx = -1f
+                if ('t' in type) ky = 1f else if ('b' in type) ky = -1f
+                val offX = -kx * w / 2f
+                val offY = -ky * h / 2f
+                val cosR = kotlin.math.cos(rad).toFloat()
+                val sinR = kotlin.math.sin(rad).toFloat()
+                val newCx = editStart.pivotX + (offX * cosR - offY * sinR)
+                val newCy = editStart.pivotY + (offX * sinR + offY * cosR)
+                s.updateItemTransform(
+                    item.fileId,
+                    x = newCx - w / 2f,
+                    y = newCy - h / 2f,
+                    width = w,
+                    height = h,
+                )
+            }
+        }
+        invalidate()
+    }
+
+    /**
+     * 移动吸附（EditOverlay :126-219）：对其他未选中项的旋转 AABB 做边缘/中线吸附——
+     * 每轴独立取最近候选（我的左缘/右缘/中线 ↔ 对方的左缘/右缘/中线），触发阈值
+     * 15 屏幕像素，近邻窗口 200 屏幕像素。
+     */
+    private fun applySnap(active: CanvasItem, newX: Float, newY: Float, s: CanvasStore): Pair<Float, Float> {
+        if (!s.isSnappingEnabled) {
+            snapGuides = emptyList()
+            return newX to newY
+        }
+        val scale = s.viewport.scale
+        val threshold = 15f / scale
+        val proximity = 200f / scale
+        val selectedSet = s.selectedIds.toSet()
+        var bestX = newX; var bestY = newY
+        var minDx = threshold; var minDy = threshold
+        var guideX: SnapGuide? = null
+        var guideY: SnapGuide? = null
+        val m = active.copy(x = newX, y = newY).aabb()
+        val mCx = (m.minX + m.maxX) / 2f
+        val mCy = (m.minY + m.maxY) / 2f
+        for (other in s.items) {
+            if (other.fileId == active.fileId || other.fileId in selectedSet) continue
+            val o = other.aabb()
+            val oCx = (o.minX + o.maxX) / 2f
+            val oCy = (o.minY + o.maxY) / 2f
+            val nearY = (m.minY < o.maxY + proximity) && (m.maxY > o.minY - proximity)
+            val nearX = (m.minX < o.maxX + proximity) && (m.maxX > o.minX - proximity)
+            if (nearY) {
+                // X 向候选：(对方值, 我方参照缘, 距离)
+                val candidates = listOf(
+                    Triple(o.minX, m.minX, kotlin.math.abs(m.minX - o.minX)),
+                    Triple(o.maxX, m.minX, kotlin.math.abs(m.minX - o.maxX)),
+                    Triple(o.minX, m.maxX, kotlin.math.abs(m.maxX - o.minX)),
+                    Triple(o.maxX, m.maxX, kotlin.math.abs(m.maxX - o.maxX)),
+                    Triple(oCx, mCx, kotlin.math.abs(mCx - oCx)),
+                )
+                for ((target, ref, dist) in candidates) {
+                    if (dist < minDx) {
+                        minDx = dist
+                        bestX = newX + (target - ref)
+                        guideX = SnapGuide(true, target, kotlin.math.min(m.minY, o.minY), kotlin.math.max(m.maxY, o.maxY))
+                    }
+                }
+            }
+            if (nearX) {
+                val candidates = listOf(
+                    Triple(o.minY, m.minY, kotlin.math.abs(m.minY - o.minY)),
+                    Triple(o.maxY, m.minY, kotlin.math.abs(m.minY - o.maxY)),
+                    Triple(o.minY, m.maxY, kotlin.math.abs(m.maxY - o.minY)),
+                    Triple(o.maxY, m.maxY, kotlin.math.abs(m.maxY - o.maxY)),
+                    Triple(oCy, mCy, kotlin.math.abs(mCy - oCy)),
+                )
+                for ((target, ref, dist) in candidates) {
+                    if (dist < minDy) {
+                        minDy = dist
+                        bestY = newY + (target - ref)
+                        guideY = SnapGuide(false, target, kotlin.math.min(m.minX, o.minX), kotlin.math.max(m.maxX, o.maxX))
+                    }
+                }
+            }
+        }
+        snapGuides = listOfNotNull(guideX, guideY)
+        return bestX to bestY
+    }
+
+    /** 编辑框 + 手柄 + 吸附线（屏幕空间，手柄恒定尺寸；React EditOverlay 渲染同位）。 */
+    private fun drawEditOverlay(canvas: Canvas, s: CanvasStore) {
+        val item = s.activeItemId?.let { s.itemById[it] } ?: return
+        val scale = s.viewport.scale
+        val scx = item.centerX * scale + s.viewport.x
+        val scy = item.centerY * scale + s.viewport.y
+        val sw = item.width * scale
+        val sh = item.height * scale
+
+        // 吸附参考线（世界→屏幕）
+        for (g in snapGuides) {
+            if (g.isX) {
+                val sx = g.pos * scale + s.viewport.x
+                val sy0 = g.start * scale + s.viewport.y
+                val sy1 = g.end * scale + s.viewport.y
+                canvas.drawLine(sx, sy0, sx, sy1, snapGuidePaint)
+            } else {
+                val sy = g.pos * scale + s.viewport.y
+                val sx0 = g.start * scale + s.viewport.x
+                val sx1 = g.end * scale + s.viewport.x
+                canvas.drawLine(sx0, sy, sx1, sy, snapGuidePaint)
+            }
+        }
+
+        canvas.save()
+        canvas.translate(scx, scy)
+        canvas.rotate(item.rotation)
+        canvas.drawRect(-sw / 2f, -sh / 2f, sw / 2f, sh / 2f, editBorderPaint)
+
+        // 8 枚缩放柄（白底蓝边圆 + 斜向双箭头简笔）
+        val handles = listOf(
+            -sw / 2f to -sh / 2f, 0f to -sh / 2f, sw / 2f to -sh / 2f,
+            -sw / 2f to 0f, sw / 2f to 0f,
+            -sw / 2f to sh / 2f, 0f to sh / 2f, sw / 2f to sh / 2f,
+        )
+        for ((hx, hy) in handles) {
+            canvas.drawCircle(hx, hy, handleRadiusPx, handleFillPaint)
+            canvas.drawCircle(hx, hy, handleRadiusPx, handleStrokePaint)
+            canvas.drawLine(hx - handleRadiusPx * 0.45f, hy + handleRadiusPx * 0.45f, hx + handleRadiusPx * 0.45f, hy - handleRadiusPx * 0.45f, handleGlyphPaint)
+        }
+        // 4 枚旋转柄（四角外，圆 + 弧线简笔）
+        val ro = rotateOffsetPx
+        val rotateCorners = listOf(
+            -sw / 2f - ro to -sh / 2f - ro,
+            sw / 2f + ro to -sh / 2f - ro,
+            -sw / 2f - ro to sh / 2f + ro,
+            sw / 2f + ro to sh / 2f + ro,
+        )
+        for ((hx, hy) in rotateCorners) {
+            canvas.drawCircle(hx, hy, handleRadiusPx, handleFillPaint)
+            canvas.drawCircle(hx, hy, handleRadiusPx, handleStrokePaint)
+            canvas.drawArc(
+                hx - handleRadiusPx * 0.45f, hy - handleRadiusPx * 0.45f,
+                hx + handleRadiusPx * 0.45f, hy + handleRadiusPx * 0.45f,
+                0f, 300f, false, handleGlyphPaint,
+            )
+        }
+        canvas.restore()
+    }
+
     // ------------------------------------------------------------ 绘制
 
     private fun visibleWorldAABB(s: CanvasStore): CanvasAABB? {
@@ -572,6 +939,9 @@ class CanvasView @JvmOverloads constructor(
             }
         }
         canvas.restoreToCount(save)
+
+        // 编辑框/手柄/吸附线在屏幕空间绘制（手柄恒定尺寸，不随世界缩放）
+        if (s.isEditMode) drawEditOverlay(canvas, s)
 
         if (t0 > 0L) {
             val cost = android.os.SystemClock.uptimeMillis() - t0

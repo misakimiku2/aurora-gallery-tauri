@@ -229,10 +229,15 @@ fun TreeSidebar(
      * 专题/标签总览里，行再亮着就会跟专题粉/标签蓝同屏双亮（3.2 验收反馈 ②）。
      */
     browserActive: Boolean = false,
-    /** 画布 Section 头部行主体点击 = 进画布占位视图（M4b 阶段 4；视图归 M5）。 */
+    /** 画布 Section 头部行主体点击 = 进画布视图（M5；视图本体随 M5 落地）。 */
     onCanvasClick: (() -> Unit)? = null,
-    /** 正处于画布占位视图（Section 头部按画布绿高亮）。 */
+    /** 正处于画布视图（Section 头部按画布绿高亮）。 */
     canvasSelected: Boolean = false,
+    /**
+     * 画布行显隐（M5 D28）：画布是平板专属能力，手机侧栏不渲染这一行
+     * （判定在宿主：宽 ≥600dp 且高 ≥480dp）。
+     */
+    showCanvas: Boolean = true,
     /** 设置行点击（M4b 2.1；面板由宿主承载）。 */
     onSettingsClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -396,18 +401,20 @@ fun TreeSidebar(
         }
 
         Spacer(Modifier.height(8.dp))
-        // 画布：M4b 阶段 4 起入口可点（进占位视图，无展开语义；视图本体归 M5，
-        // 对齐桌面 CanvasSection）
-        SectionHeader(
-            title = "画布",
-            icon = IconScan,
-            iconTint = SECTION_EMERALD,
-            expanded = false,
-            onClick = onCanvasClick,
-            selected = canvasSelected,
-            selectedColor = SECTION_EMERALD,
-            expandable = false,
-        )
+        // 画布：入口可点进画布视图（无展开语义，对齐桌面 CanvasSection）；
+        // 手机不渲染（D28 平板专属，M5）
+        if (showCanvas) {
+            SectionHeader(
+                title = "画布",
+                icon = IconScan,
+                iconTint = SECTION_EMERALD,
+                expanded = false,
+                onClick = onCanvasClick,
+                selected = canvasSelected,
+                selectedColor = SECTION_EMERALD,
+                expandable = false,
+            )
+        }
 
         Spacer(Modifier.height(8.dp))
         // 设置（M4b 2.1）：入口在侧栏底部（React 在工具栏齿轮，触屏收敛到侧栏避免

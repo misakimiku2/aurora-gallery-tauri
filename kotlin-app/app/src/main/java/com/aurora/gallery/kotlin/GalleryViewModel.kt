@@ -179,6 +179,54 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         viewModelScope.launch { reloadTagState() }
     }
 
+    // —— M5 画布数据助手（3.1/3.2/3.3 入口共用的取数口；id/宽高一律以 FFI 索引为准）——
+
+    /**
+     * 把一批 file id 解析成画布装箱输入（id/宽高/contentUri 都来自 `list_images_by_ids`，
+     * 与网格/查看器的 file id 同源；宽高空缺兜底 React 同款 1000×750）。
+     */
+    fun canvasSourcesFor(fileIds: Collection<String>, onReady: (List<com.aurora.gallery.kotlin.canvas.CanvasPackSource>) -> Unit) {
+        viewModelScope.launch {
+            val sources = withContext(Dispatchers.IO) {
+                listImagesByIds(fileIds.toList()).map { img ->
+                    com.aurora.gallery.kotlin.canvas.CanvasPackSource(
+                        id = img.id,
+                        width = img.width?.toFloat() ?: 1000f,
+                        height = img.height?.toFloat() ?: 750f,
+                        contentUri = img.contentUri,
+                    )
+                }
+            }
+            onReady(sources)
+        }
+    }
+
+    /**
+     * 添加图片弹窗（3.3）的四类数据源：all=全库（各相册并集）、folder=相册、
+     * topic=专题成员、tag=标签命中。全走 FFI，保证 id 与画布去重键一致。
+     */
+    fun loadCanvasPickerImages(scope: String, key: String, onReady: (List<Image>) -> Unit) {
+        viewModelScope.launch {
+            val imgs = withContext(Dispatchers.IO) {
+                runCatching {
+                    when (scope) {
+                        "all" -> folders.value.flatMap { listImages(it.id) }.distinctBy { it.id }
+                        "folder" -> key.takeIf { it.isNotEmpty() }?.let { listImages(it) } ?: emptyList()
+                        "topic" -> key.takeIf { it.isNotEmpty() }
+                            ?.let { t -> getTopicFiles(t).takeIf { it.isNotEmpty() }?.let { listImagesByIds(it) } }
+                            ?: emptyList()
+                        "tag" -> key.takeIf { it.isNotEmpty() }?.let { listImagesByTags(listOf(it)) } ?: emptyList()
+                        else -> emptyList()
+                    }
+                }.getOrElse {
+                    Log.w(TAG, "[Canvas] picker load failed scope=$scope key=$key", it)
+                    emptyList()
+                }
+            }
+            onReady(imgs)
+        }
+    }
+
     /**
      * M5 开发钩子（adb 广播 `aurora.debug.CANVAS --es op seed` 触发，**收口时随钩子删除**）：
      * 向画布播种 24 张测试图——`Pictures/spike`（377MB BMP 压力集）优先，不足从全库补。
