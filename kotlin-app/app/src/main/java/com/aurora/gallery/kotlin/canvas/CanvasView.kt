@@ -55,7 +55,11 @@ class CanvasView @JvmOverloads constructor(
     companion object {
         internal const val TAG = "AuroraCanvas"
 
-        /** React 捏合限界 0.01–20（viewport.ts 同款默认，zoomAtPoint 内亦钳制）。 */
+        /**
+         * 点阵世界间距 = React drawCanvas `baseSpacing = 40`（ImageComparer.tsx :595，
+         * world 单位；屏上格距 = 40×scale，CSS-px 阈值换算见 [drawDotGrid]）。
+         * 2026-09-24 与桌面逐参数对齐时核对原值未变（旧 KDoc 误写成捏合限界）。
+         */
         private const val DOT_SPACING_WORLD = 40f
 
         /** 解码档位系数（相对 item 世界尺寸的倍数）。 */
@@ -86,7 +90,16 @@ class CanvasView @JvmOverloads constructor(
     private val selectedStroke = Paint().apply { style = Paint.Style.STROKE }
     private val plainStroke = Paint().apply { style = Paint.Style.STROKE }
     private val bitmapPaint = Paint().apply { isFilterBitmap = true }
-    private val dotPaint = Paint().apply { style = Paint.Style.FILL }
+    // 初始即给浅色点色兜底（宿主 applyTheme 前若先绘制不至于全透明），正式换档在
+    // applyTheme。0x33 = 51 = 0.2×255（React :585 浅色 α）
+    private val dotPaint = Paint().apply {
+        style = Paint.Style.FILL
+        color = 0x336B7280.toInt()
+    }
+    // 平铺 shader 的绘制笔必须**不透明**：tile 位图里的点已自带 0.2/0.25 点色 alpha，
+    // 若复用带 alpha 的 dotPaint 挂 shader，两层 alpha 相乘（0.25×0.25≈0.06），点阵
+    // 淡到不可见——2026-09-24 模拟器实测点亮度增量仅 8 灰阶（桌面 31）的根因
+    private val dotShaderDrawPaint = Paint()
     private val density = resources.displayMetrics.density
     // 编辑框（2.1）：React 边框 #3b82f6 = palette.primary；柄白底蓝边。
     // 线宽按 React 的 CSS px（≈dp）乘 density：编辑框 1px、柄圆环 1.5px（EditOverlay :602/:628）
@@ -156,8 +169,12 @@ class CanvasView @JvmOverloads constructor(
         placeholderPaint.color = 0xFF111827.toInt()
         selectedStroke.color = palette.primary
         plainStroke.color = palette.hairline
-        dotPaint.color = palette.textSecondary
-        dotPaint.alpha = if (dark) 64 else 51 // React: 0.25 深 / 0.2 浅
+        // 点阵点色 = React drawCanvas :585 原值逐字对齐（2026-09-24）：浅色
+        // rgba(107,114,128,0.2) = gray-500 #6B7280 @ α0.2（0x33=51）、深色
+        // rgba(156,163,175,0.25) = gray-400 #9CA3AF @ α0.25（0x40=64）。此前取
+        // palette.textSecondary（#737373/#A3A3A3，neutral 系）——色相不符且观感更淡，
+        // 是「点阵比桌面单调」的根因之一；textSecondary 是全局文本角色，不能为点阵改值
+        dotPaint.color = if (dark) 0x409CA3AF.toInt() else 0x336B7280.toInt()
         dotShader = null // 换档重建点阵
         invalidate()
     }
@@ -1006,34 +1023,56 @@ class CanvasView @JvmOverloads constructor(
         canvas.restore()
     }
 
-    /** 点阵背景（React :594-617 的 spacing/step 语义；实现为 BitmapShader 平铺）。 */
+    /**
+     * 点阵背景（React ImageComparer drawCanvas :594-617 逐参数对齐，2026-09-24；
+     * 实现仍为 BitmapShader 一次 drawRect 平铺——React 逐点 arc 在 CPU 光栅化下太贵）。
+     *
+     * 桌面原值（CSS px 语义）：
+     *  - 间距：`gridSize = 40 × scale`；< 15 时 `step = max(1, floor(30/gridSize))`
+     *    倍乘；< 8 不画（:595-604）；
+     *  - 半径：`scale < 0.2 ? 1.5 : 1.2` CSS px（:608）；
+     *  - 相位：`offset = transform.x/y % gridSize`（:606-607）。
+     *
+     * 单位换算（2026-09-24 二次校准，用户实测定标）：网格以 **CSS px 语义**直接套桌面
+     * 公式——屏上间距 = 40 CSS px × scale，与桌面同名缩放下观感一致；density 只用于
+     * 把 CSS 网格折成 view px 光栅化（×density），不参与缩放语义。此前 ×density 得
+     * 80 CSS px（太疏）、÷density 得 20 CSS px（太密，用户实测「最多 20px 左右」）。
+     */
     private fun drawDotGrid(canvas: Canvas, s: CanvasStore) {
-
-        var gridSize = DOT_SPACING_WORLD * s.viewport.scale
-        if (gridSize < 15f) {
-            gridSize *= max(1f, kotlin.math.floor(30f / gridSize))
+        val cssScale = s.viewport.scale
+        var gridSizeCss = DOT_SPACING_WORLD * cssScale
+        if (gridSizeCss < 15f) {
+            gridSizeCss *= max(1f, kotlin.math.floor(30f / gridSizeCss))
         }
-        if (gridSize < 8f) return
-        if (dotShader == null || kotlin.math.abs(dotShaderSize - gridSize) > 0.5f) {
-            dotShader = buildDotShader(gridSize)
-            dotShaderSize = gridSize
+        if (gridSizeCss < 8f) return
+        val gridSizePx = gridSizeCss * density
+        if (dotShader == null || kotlin.math.abs(dotShaderSize - gridSizePx) > 0.5f) {
+            dotShader = buildDotShader(gridSizePx, cssScale < 0.2f)
+            dotShaderSize = gridSizePx
         }
         val shader = dotShader ?: return
         val m = Matrix()
-        val ox = s.viewport.x % gridSize
-        val oy = s.viewport.y % gridSize
+        val ox = s.viewport.x % gridSizePx
+        val oy = s.viewport.y % gridSizePx
         m.setTranslate(ox, oy)
         shader.setLocalMatrix(m)
-        dotPaint.shader = shader
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dotPaint)
-        dotPaint.shader = null
+        // 不透明笔铺 tile（点色 alpha 已在 tile 位图里，勿再用 dotPaint 二次折损）
+        dotShaderDrawPaint.shader = shader
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dotShaderDrawPaint)
+        dotShaderDrawPaint.shader = null
     }
 
-    private fun buildDotShader(gridSize: Float): BitmapShader {
-        val sizePx = gridSize.toInt().coerceIn(8, 256)
+    /**
+     * 平铺位图：单点居中（半径 < 半格，不跨 tile 边裁切，REPEAT 无缝）。半径 = React
+     * :608 原值——`zoomedOut` 即桌面 `scale < 0.2` 时 1.5，否则 1.2，单位 CSS px 乘
+     * density 转 view px。此前条件写成 `dotShaderSize < 8f`：gridSize < 8 在
+     * [drawDotGrid] 已 early-return，条件恒假 → 1.5 档是死分支，缩小视图时点不增粗。
+     */
+    private fun buildDotShader(gridSizePx: Float, zoomedOut: Boolean): BitmapShader {
+        val sizePx = gridSizePx.toInt().coerceIn(8, 256)
         val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
-        val radius = if (dotShaderSize < 8f) 1.5f else 1.2f
+        val radius = (if (zoomedOut) 1.5f else 1.2f) * density
         c.drawCircle(sizePx / 2f, sizePx / 2f, radius, dotPaint)
         return BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }

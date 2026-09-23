@@ -69,6 +69,12 @@ import uniffi.aurora_core.TagGroup
  * Maximize2/Minimize2 双态，触摸显示 3s 渐隐）+
  * 返回链（菜单 → 沉浸 → 编辑 → 选中 → 退画布，对齐 React android-back-press :2158-2192）。
  *
+ * 真全屏（2026-09-24 用户要求）：沉浸态下整个顶栏**不参与组合**（`if (!immersive)` 直接
+ * 不渲染，而非仅藏可见性），画面只剩点阵画布本体 + 沉浸浮钮；系统栏由宿主
+ * `MainActivity.setImmersiveMode` 隐藏（画布随之顶到状态栏之下）。侧栏开关随顶栏一起
+ * 不可达——沉浸中无法再从按钮展开侧栏；退出沉浸后顶栏恢复、侧栏按进入前状态还原
+ * （enterImmersive 记录 / exitImmersive 还原 / onDispose 兜底）。
+ *
  * 单实例口径（D21/D28）：无画布名；计数全画布 N/24。「更多」二选一（React :1955）：
  * 有选中 = 轻整理集（2.2），无选中 = 吸附开关 / 查看全部 / 重置画布 / 清空画布；
  * 添加图片已从菜单提为顶栏独立按钮（2026-09-24 用户要求，React 安卓分支同款 Plus :133-141）。
@@ -107,6 +113,8 @@ fun CanvasScreen(
         }
     }
 
+    // 沉浸进出（2026-09-24 真全屏口径）：顶栏隐藏由 Column 里 `if (!immersive)` 组合条件
+    // 承担，这里只负责侧栏（进入前状态记录/还原）与系统栏（转宿主 setImmersiveMode）。
     fun enterImmersive() {
         sidebarBeforeImmersive = sidebarVisible
         if (sidebarVisible) onToggleSidebar()
@@ -146,7 +154,10 @@ fun CanvasScreen(
 
     Column(modifier.fillMaxSize().background(colors.content)) {
         // —— 画布顶栏（3.4）——
-        Row(
+        // 真全屏（2026-09-24 用户要求）：沉浸态整个顶栏不参与组合（非仅隐藏可见性），
+        // 画布区随之顶到系统栏之下；侧栏开关/返回/计数徽标/标题/添加图片/更多菜单全部
+        // 随顶栏一起不可达，沉浸中无法再从按钮展开侧栏。退出沉浸后此处原样恢复组合。
+        if (!immersive) Row(
             Modifier
                 .fillMaxWidth()
                 .height(56.dp)
@@ -269,6 +280,8 @@ fun CanvasScreen(
         }
 
         // —— 画布主体 + 沉浸浮钮（任意触摸显示，3s 渐隐；React :2534-2545）——
+        // 真全屏（2026-09-24）：沉浸态顶栏不组合后，本区域是唯一保留的 UI，占满整个
+        // Column（顶到状态栏之下）；浮钮在沉浸态仍按触摸显示 / 3s 渐隐工作。
         Box(
             Modifier
                 .fillMaxWidth()
