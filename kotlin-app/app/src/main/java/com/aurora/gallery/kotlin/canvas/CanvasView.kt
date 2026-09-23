@@ -150,7 +150,9 @@ class CanvasView @JvmOverloads constructor(
         this.dark = dark
         palette = AuroraPalettes.of(dark)
         bgPaint.color = palette.content
-        placeholderPaint.color = palette.placeholderBg
+        // 占位块固定深色 #111827（React drawCanvas :637 明暗两档同值）：浅色画布上
+        // 未解码项若用 palette.placeholderBg（近白）会隐形——2026-09-23 黑盒验收问题 1/7 根因
+        placeholderPaint.color = 0xFF111827.toInt()
         selectedStroke.color = palette.primary
         plainStroke.color = palette.hairline
         dotPaint.color = palette.textSecondary

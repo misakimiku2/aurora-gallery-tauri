@@ -145,25 +145,32 @@ fun CanvasScreen(
                 .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CanvasTopButton(onClick = onBack, contentDescription = "返回") { Icon(IconBack, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(22.dp)) }
-            Spacer(Modifier.width(4.dp))
-            Text(
-                "${store.count}/24",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.textSecondary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(colors.surface.copy(alpha = 0.53f))
-                    .padding(horizontal = 10.dp, vertical = 3.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text("画布", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
-            Spacer(Modifier.weight(1f))
+            // 侧栏开关在**原位**（最左，对齐主界面 TopBar 的排布；2026-09-23 用户反馈）
             CanvasTopButton(
                 onClick = onToggleSidebar,
                 contentDescription = if (sidebarVisible) "收起侧栏" else "展开侧栏",
             ) { Icon(IconSidebar, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(22.dp)) }
+            Spacer(Modifier.width(4.dp))
+            CanvasTopButton(onClick = onBack, contentDescription = "返回") { Icon(IconBack, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(22.dp)) }
+            // 名称与数量居中（2026-09-23 用户反馈）：左右各一份 weight 空白把它推到中间
+            Row(
+                Modifier.weight(1f),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${store.count}/24",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.textSecondary,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(colors.surface.copy(alpha = 0.53f))
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("画布", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = colors.textPrimary)
+            }
             Box(Modifier.onGloballyPositioned { moreAnchor = it.boundsInWindow() }) {
                 CanvasTopButton(onClick = { menuExpanded = true }, contentDescription = "更多") { Icon(IconMore, contentDescription = null, tint = colors.textSecondary, modifier = Modifier.size(22.dp)) }
                 AuroraDropdown(
@@ -385,15 +392,32 @@ private val IconSidebar: ImageVector by lazy {
     }
 }
 
+/**
+ * 「更多」三点：**实心圆 r=2**（直径 4 视口单位，与 2f 笔画视觉重量相当）。
+ * 不能用「0.01 单位线段+圆头笔帽」画——22dp 下只有 ≈1.7dp 的点（SelectionBar 的
+ * SelIconMore 同款教训，2026-09-23 用户再次反馈）。
+ */
 private val IconMore: ImageVector by lazy {
-    canvasIcon("CanvasMore") {
-        moveTo(12f, 5f)
-        lineTo(12.01f, 5f)
-        moveTo(12f, 12f)
-        lineTo(12.01f, 12f)
-        moveTo(12f, 19f)
-        lineTo(12.01f, 19f)
-    }
+    ImageVector.Builder(
+        name = "CanvasMore",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            moreDot(12f, 5f)
+            moreDot(12f, 12f)
+            moreDot(12f, 19f)
+        }
+    }.build()
+}
+
+private fun androidx.compose.ui.graphics.vector.PathBuilder.moreDot(cx: Float, cy: Float, r: Float = 2f) {
+    moveTo(cx - r, cy)
+    arcTo(r, r, 0f, false, true, cx + r, cy)
+    arcTo(r, r, 0f, false, true, cx - r, cy)
+    close()
 }
 
 /** 沉浸/退出双态图标（maximize2 / minimize2 合一：双向斜箭头）。 */
@@ -516,7 +540,9 @@ private fun AddImagesToCanvasDialog(
                                 thumbnailLoader = thumbnailLoader,
                                 onToggle = {
                                     when {
-                                        already -> Unit
+                                        already -> android.widget.Toast.makeText(
+                                            context, "这张已在画布中", android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
                                         img.id in checked -> checked = checked - img.id
                                         checked.size < capacity -> checked = checked + img.id
                                         else -> android.widget.Toast.makeText(
@@ -600,7 +626,11 @@ private fun PickerCell(
                 contentDescription = image.name,
                 modifier = Modifier.fillMaxSize(),
             )
-        }
+        } ?: androidx.compose.material3.CircularProgressIndicator(
+            modifier = Modifier.align(Alignment.Center).size(20.dp),
+            strokeWidth = 2.dp,
+            color = colors.primary,
+        )
         if (checked) {
             Text(
                 "✓",
