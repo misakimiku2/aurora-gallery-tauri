@@ -6,6 +6,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -149,6 +151,8 @@ private fun CategoryContent(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    /** false = 不渲染与分类同名的首个节标题（手机二级页：顶栏已是分类名，重复）。 */
+    includeSectionHeaders: Boolean = true,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -162,6 +166,7 @@ private fun CategoryContent(
     if (SettingsCategory.GENERAL in categories) {
         GeneralContent(
             settings = settings,
+            includeSectionHeaders = includeSectionHeaders,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
@@ -172,6 +177,7 @@ private fun CategoryContent(
     if (SettingsCategory.STORAGE in categories) {
         StorageContent(
             cacheSizeText = cacheSizeText,
+            includeSectionHeaders = includeSectionHeaders,
             onClearCache = onClearCache,
             onExportBackup = onExportBackup,
             onImportBackup = onImportBackup,
@@ -181,6 +187,7 @@ private fun CategoryContent(
         PlaceholderContent(
             sectionTitle = "AI 智能",
             sectionIcon = IconBot,
+            includeSectionHeaders = includeSectionHeaders,
             icon = IconBot,
             title = "AI 任务",
             description = "将随 M6 提供：自动打标签 / 描述生成 / 语义搜索与模型配置",
@@ -190,13 +197,18 @@ private fun CategoryContent(
         PlaceholderContent(
             sectionTitle = "局域网共享",
             sectionIcon = IconWifi,
+            includeSectionHeaders = includeSectionHeaders,
             icon = IconWifiOff,
             title = "桌面互联",
             description = "将随 M6 提供：局域网共享 / 扫码连接 / 文件互传",
         )
     }
     if (SettingsCategory.ABOUT in categories) {
-        AboutContent(appVersion = appVersion, onOpenUrl = onOpenUrl)
+        AboutContent(
+            appVersion = appVersion,
+            includeSectionHeaders = includeSectionHeaders,
+            onOpenUrl = onOpenUrl,
+        )
     }
 }
 
@@ -204,13 +216,18 @@ private fun CategoryContent(
 @Composable
 private fun GeneralContent(
     settings: AppSettings,
+    includeSectionHeaders: Boolean = true,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
     onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
 ) {
-    SettingsSection("常规")
+    if (includeSectionHeaders) {
+        SettingsSection("常规")
+    } else {
+        Spacer(Modifier.size(4.dp))
+    }
     SettingsLabel("语言")
     Row(Modifier.padding(top = 8.dp)) {
         SettingsIconOption(
@@ -385,11 +402,16 @@ private fun GeneralContent(
 @Composable
 private fun StorageContent(
     cacheSizeText: String,
+    includeSectionHeaders: Boolean = true,
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
 ) {
-    SettingsSection("存储")
+    if (includeSectionHeaders) {
+        SettingsSection("存储")
+    } else {
+        Spacer(Modifier.size(4.dp))
+    }
     SettingsCard {
         SettingsRow(label = "缓存（缩略图 + 查看器）", value = cacheSizeText) {
             SettingsAction("清理缓存", onClearCache)
@@ -418,11 +440,14 @@ private fun StorageContent(
 private fun PlaceholderContent(
     sectionTitle: String,
     sectionIcon: ImageVector,
+    includeSectionHeaders: Boolean = true,
     icon: ImageVector,
     title: String,
     description: String,
 ) {
-    SettingsSection(sectionTitle, icon = sectionIcon)
+    if (includeSectionHeaders) {
+        SettingsSection(sectionTitle, icon = sectionIcon)
+    }
     SettingsPlaceholderCard(icon = icon, title = title, description = description)
 }
 
@@ -430,10 +455,13 @@ private fun PlaceholderContent(
 @Composable
 private fun AboutContent(
     appVersion: String,
+    includeSectionHeaders: Boolean = true,
     onOpenUrl: (String) -> Unit,
 ) {
     val colors = AuroraTheme.colors
-    SettingsSection("关于", icon = IconInfo)
+    if (includeSectionHeaders) {
+        SettingsSection("关于", icon = IconInfo)
+    }
     // 软件信息卡：渐变底（桌面 from-blue-500/10 to-purple-500/10 rounded-2xl）
     Box(
         Modifier
@@ -746,7 +774,8 @@ private fun SettingsPhonePage(
             }
             val page = current
             if (page == null) {
-                // 一级：分类导航（图标 + 标题 + 右箭头）
+                // 一级：分类导航（图标 + 标题 + 右箭头）。默认无底色，按压时才上灰（验收
+                // 人反馈常驻灰底像全部选中；不用 ripple，底色变化与平板选中态同语言）
                 Column(
                     Modifier
                         .weight(1f)
@@ -755,17 +784,22 @@ private fun SettingsPhonePage(
                         .padding(top = 8.dp),
                 ) {
                     SettingsCategory.entries.forEach { category ->
+                        val navInteraction = remember { MutableInteractionSource() }
+                        val pressed by navInteraction.collectIsPressedAsState()
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 8.dp),
                             shape = RoundedCornerShape(12.dp),
-                            color = colors.surface,
+                            color = if (pressed) colors.surface else Color.Transparent,
                         ) {
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .clickable { current = category }
+                                    .clickable(
+                                        interactionSource = navInteraction,
+                                        indication = null,
+                                    ) { current = category }
                                     .padding(horizontal = 14.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -789,7 +823,8 @@ private fun SettingsPhonePage(
                     }
                 }
             } else {
-                // 二级：该分类内容（平板与手机共用同一 CategoryContent）
+                // 二级：该分类内容（平板与手机共用同一 CategoryContent；顶栏已是分类名，
+                // 首个同名节标题不再渲染）
                 Column(
                     Modifier
                         .weight(1f)
@@ -802,6 +837,7 @@ private fun SettingsPhonePage(
                         settings = settings,
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
+                        includeSectionHeaders = false,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
