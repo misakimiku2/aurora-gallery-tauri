@@ -687,7 +687,8 @@ private fun SettingsTabletDialog(
     }
 }
 
-// —— 手机：全屏设置页 ——
+// —— 手机：两级全屏设置页（一级分类导航 / 二级分类内容，2026-09-23 验收人反馈：
+//    全部内容堆一页太杂乱；平板双栏本身就是「导航 + 内容」二级结构，不动） ——
 
 @Composable
 private fun SettingsPhonePage(
@@ -706,8 +707,12 @@ private fun SettingsPhonePage(
     onDismiss: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
-    // 本页只在 showSettings 时组合，且组合序在主返回链之后——back 先关设置页
-    BackHandler(onBack = onDismiss)
+    // null = 一级导航页；非 null = 二级分类内容页。back 逐级退（二级→一级→关设置）
+    var current by remember { mutableStateOf<SettingsCategory?>(null) }
+    // 本页只在 showSettings 时组合，且组合序在主返回链之后——back 先于主返回链消费
+    BackHandler {
+        if (current != null) current = null else onDismiss()
+    }
     Surface(Modifier.fillMaxSize(), color = colors.content) {
         Column(
             Modifier
@@ -725,35 +730,89 @@ private fun SettingsPhonePage(
                     Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .clickable(onClick = onDismiss),
+                        .clickable {
+                            if (current != null) current = null else onDismiss()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     BackArrowIcon(tint = colors.textPrimary)
                 }
-                Text("设置", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
-            }
-            Column(
-                Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 24.dp),
-            ) {
-                CategoryContent(
-                    categories = SettingsCategory.entries.toList(),
-                    settings = settings,
-                    cacheSizeText = cacheSizeText,
-                    appVersion = appVersion,
-                    onLanguageChange = onLanguageChange,
-                    onThemeChange = onThemeChange,
-                    onDefaultLayoutChange = onDefaultLayoutChange,
-                    onDefaultSortChange = onDefaultSortChange,
-                    onDefaultGroupByChange = onDefaultGroupByChange,
-                    onClearCache = onClearCache,
-                    onExportBackup = onExportBackup,
-                    onImportBackup = onImportBackup,
-                    onOpenUrl = onOpenUrl,
+                Text(
+                    current?.label ?: "设置",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
                 )
+            }
+            val page = current
+            if (page == null) {
+                // 一级：分类导航（图标 + 标题 + 右箭头）
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 8.dp),
+                ) {
+                    SettingsCategory.entries.forEach { category ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            color = colors.surface,
+                        ) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { current = category }
+                                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    imageVector = category.icon,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.size(14.dp))
+                                Text(
+                                    category.label,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = colors.textPrimary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                ChevronIcon(tint = colors.textSecondary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 二级：该分类内容（平板与手机共用同一 CategoryContent）
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 24.dp),
+                ) {
+                    CategoryContent(
+                        categories = listOf(page),
+                        settings = settings,
+                        cacheSizeText = cacheSizeText,
+                        appVersion = appVersion,
+                        onLanguageChange = onLanguageChange,
+                        onThemeChange = onThemeChange,
+                        onDefaultLayoutChange = onDefaultLayoutChange,
+                        onDefaultSortChange = onDefaultSortChange,
+                        onDefaultGroupByChange = onDefaultGroupByChange,
+                        onClearCache = onClearCache,
+                        onExportBackup = onExportBackup,
+                        onImportBackup = onImportBackup,
+                        onOpenUrl = onOpenUrl,
+                    )
+                }
             }
         }
     }
@@ -1244,6 +1303,29 @@ private fun BackArrowIcon(tint: Color) {
             tint,
             Offset(s.width * 0.32f, s.height * 0.5f),
             Offset(s.width * 0.62f, s.height * 0.82f),
+            w,
+            cap = StrokeCap.Round,
+        )
+    }
+}
+
+/** 右箭头（›），一级导航行尾用。 */
+@Composable
+private fun ChevronIcon(tint: Color) {
+    Canvas(Modifier.size(16.dp)) {
+        val s = size
+        val w = s.width * 0.13f
+        drawLine(
+            tint,
+            Offset(s.width * 0.35f, s.height * 0.2f),
+            Offset(s.width * 0.68f, s.height * 0.5f),
+            w,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            tint,
+            Offset(s.width * 0.68f, s.height * 0.5f),
+            Offset(s.width * 0.35f, s.height * 0.8f),
             w,
             cap = StrokeCap.Round,
         )

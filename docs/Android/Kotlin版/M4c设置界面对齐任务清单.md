@@ -75,6 +75,7 @@
 - **关于页对齐桌面 AboutPanel**：软件信息大卡（蓝紫渐变底 + 极光渐变 logo 块 + tagline「现代化的图片管理与浏览工具」+ v0.1.0/稳定版双徽标）、技术栈版本三卡（应用版本 / Compose 2024.09 / 内核 Rust·UniFFI）、相关链接两卡（GitHub·查看源代码 / 问题反馈·报告 Bug 或建议）、Made with ❤ 致谢页脚；检查更新维持不做（D27）。
 - **文字对齐桌面**：导航「通用」改「常规」（`settings.catGeneral`）；分组文案改「不分组/按类型/按日期」（`groupBy.*`）。
 - **编译期教训（记档）**：`ImageVector.Builder.path(...)` 是**扩展函数**（`androidx.compose.ui.graphics.vector.path`），漏 import 报「Unresolved reference: path」且连带 lambda 内全部方法 unresolved——极易误判为版本问题；`PathBuilder` 的三次曲线是 **curveTo**（不是 android.graphics.Path 的 cubicTo）。
+- **手机端二级化（v2 三补，验收人反馈「全堆一页太杂乱」）**：手机形态改为两级页面——一级 = 分类导航卡列表（图标 + 标题 + 右箭头，surface 卡），二级 = 该分类内容页（顶栏标题随分类切换、内容复用同一 CategoryContent）；返回逐级退（二级→一级→关设置），平板双栏不动。
 
 ## 6. 决策表
 
