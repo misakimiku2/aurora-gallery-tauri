@@ -268,11 +268,11 @@ class CanvasLogicTest {
         s.addImages(listOf(CanvasPackSource("a", 1000f, 750f)))
         assertTrue(s.autoFitPending)
         assertFalse(s.userInteracted)
-        // 有效容器消费 pending 并给出 fit
-        assertTrue(s.applyAutoFitIfPending(1000f, 800f))
-        assertFalse(s.autoFitPending)
-        // 已消费后不再重复执行
-        assertFalse(s.applyAutoFitIfPending(1000f, 800f))
+        // 有效容器给出 fit；消费后不再重复给出
+        val fit = s.pendingAutoFit(1000f, 800f)
+        assertTrue(fit != null && fit.scale > 0f)
+        s.clearAutoFitPending()
+        assertNull(s.pendingAutoFit(1000f, 800f))
     }
 
     @Test

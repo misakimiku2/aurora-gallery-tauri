@@ -285,16 +285,18 @@ class CanvasStore {
     }
 
     /**
-     * autoFit（1.4）：[autoFitPending] 且有内容且容器有效时，算 fit 变换写入视口并消费
-     * pending。返回是否真的执行（调用方可借此触发动画）。
+     * autoFit（1.4）：[autoFitPending] 时计算 fit 变换**返回而不落视口**（调用方动画
+     * 到位后调 [clearAutoFitPending]）。React 的 shouldAutoFitAfterLoadRef + resetViewport
+     * 动画同语义。无可 fit 内容或容器无效返回 null（pending 保留）。
      */
-    fun applyAutoFitIfPending(containerWidth: Float, containerHeight: Float): Boolean {
-        if (!autoFitPending) return false
-        val bounds = contentBounds() ?: return false
-        val fit = computeFitTransform(containerWidth, containerHeight, bounds) ?: return false
+    fun pendingAutoFit(containerWidth: Float, containerHeight: Float): CanvasViewport? {
+        if (!autoFitPending) return null
+        val bounds = contentBounds() ?: return null
+        return computeFitTransform(containerWidth, containerHeight, bounds)
+    }
+
+    fun clearAutoFitPending() {
         autoFitPending = false
-        viewport = fit
-        return true
     }
 
     /** 「查看全部」/「重置画布」的主动 fit（不经 pending，直接动画到位）。 */

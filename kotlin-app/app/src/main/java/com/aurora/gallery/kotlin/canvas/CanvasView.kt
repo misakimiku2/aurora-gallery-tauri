@@ -12,7 +12,9 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.net.Uri
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalette
@@ -284,11 +286,12 @@ class CanvasView @JvmOverloads constructor(
     private fun autoFitIfPending() {
         val s = store ?: return
         if (width == 0 || height == 0) return
-        if (s.applyAutoFitIfPending(width.toFloat(), height.toFloat())) {
-            updateTierForScale()
-            ensureVisibleDecodes()
-            invalidate()
-        }
+        val fit = s.pendingAutoFit(width.toFloat(), height.toFloat()) ?: return
+        s.clearAutoFitPending()
+        animateViewportTo(fit)
+        updateTierForScale()
+        ensureVisibleDecodes()
+        invalidate()
     }
 
     /** 「查看全部」/「重置画布」后的主动 fit（动画到位）。 */
@@ -298,6 +301,235 @@ class CanvasView @JvmOverloads constructor(
         val fit = computeFitTransform(width.toFloat(), height.toFloat(), bounds) ?: return
         s.markInteracted()
         animateViewportTo(fit)
+    }
+
+    /**
+     * 「查看此图」/双击图：动画到以 [item] 居中、padding 60、scale 上限 1.2（硬顶 5.0）
+     * 的视口（React handleViewImageForId:1634-1665 同款）；缩放跨度 >10×/<0.1× 时先走
+     * 几何平均的中间步骤防卡死。
+     */
+    fun zoomToItem(item: CanvasItem) {
+        val s = store ?: return
+        val padding = 60f
+        val sx = (width - padding * 2f) / item.width
+        val sy = (height - padding * 2f) / item.height
+        val targetScale = min(min(sx, sy), min(1.2f, 5f))
+        val targetX = width / 2f - item.centerX * targetScale
+        val targetY = height / 2f - item.centerY * targetScale
+        val ratio = targetScale / s.viewport.scale
+        s.markInteracted()
+        if (ratio > 10f || ratio < 0.1f) {
+            val midScale = kotlin.math.sqrt(s.viewport.scale * targetScale)
+            animateViewportTo(
+                CanvasViewport(width / 2f - item.centerX * midScale, height / 2f - item.centerY * midScale, midScale),
+            )
+            postDelayed({
+                animateViewportTo(CanvasViewport(targetX, targetY, targetScale))
+            }, 50L)
+        } else {
+            animateViewportTo(CanvasViewport(targetX, targetY, targetScale))
+        }
+    }
+
+    // ------------------------------------------------------------ 手势（1.3，对齐 React :956-1187 的触屏语义）
+
+    private class DragState {
+        var active = false
+        var startX = 0f
+        var startY = 0f
+        var initialTransform = CanvasViewport()
+    }
+
+    private class PinchState {
+        var active = false
+        var initialDistance = 0f
+        var initialMidX = 0f
+        var initialMidY = 0f
+        var initialTransform = CanvasViewport()
+    }
+
+    private val drag = DragState()
+    private val pinch = PinchState()
+
+    /** 点按起点（React touchStartPosRef：x/y 是 window 坐标，这里用 view 坐标）。 */
+    private var touchStartX = 0f
+    private var touchStartY = 0f
+    private var touchStartAt = 0L
+
+    /** 上一次点按（双击判定：400ms / 30px 窗口，React lastTapRef 同款）。 */
+    private var lastTapX = 0f
+    private var lastTapY = 0f
+    private var lastTapAt = 0L
+    private var lastTapTargetId: String? = null
+
+    private val longPressRunnable = Runnable {
+        // 长按**已选中**图 500ms 进编辑模式（React :1021-1031；只在非编辑态挂此计时器）
+        store?.enterEditMode()
+        drag.active = false
+        invalidate()
+    }
+
+    private val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop
+
+    private fun cancelLongPressTimer() {
+        removeCallbacks(longPressRunnable)
+    }
+
+    /** 屏幕（view）坐标 → 世界坐标。 */
+    private fun toWorld(x: Float, y: Float, s: CanvasStore): Pair<Float, Float> =
+        (x - s.viewport.x) / s.viewport.scale to (y - s.viewport.y) / s.viewport.scale
+
+    /** 命中检测：自 z 序顶到底（React :998-1008 同序）。 */
+    private fun hitTest(x: Float, y: Float, s: CanvasStore): String? {
+        val (wx, wy) = toWorld(x, y, s)
+        for (id in s.zOrderIds.asReversed()) {
+            val item = s.itemById[id] ?: continue
+            if (hitTestItem(wx, wy, item)) return id
+        }
+        return null
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val s = store ?: return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                cancelViewportAnimation()
+                touchStartX = event.x
+                touchStartY = event.y
+                touchStartAt = android.os.SystemClock.uptimeMillis()
+                val touchedId = hitTest(event.x, event.y, s)
+                // 编辑模式且按在已选图上：不启动画布拖动（React :1010-1019 的语义）
+                drag.active = !(s.isEditMode && touchedId != null && touchedId in s.selectedIds)
+                drag.startX = event.x
+                drag.startY = event.y
+                drag.initialTransform = s.viewport
+                if (!s.isEditMode && touchedId != null && touchedId in s.selectedIds) {
+                    cancelLongPressTimer()
+                    postDelayed(longPressRunnable, 500L)
+                }
+            }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount >= 2) {
+                    // 双指落下：取消长按、退出编辑（React :962-964）
+                    cancelLongPressTimer()
+                    s.exitEditMode()
+                    drag.active = false
+                    pinch.active = true
+                    val dx = event.getX(0) - event.getX(1)
+                    val dy = event.getY(0) - event.getY(1)
+                    pinch.initialDistance = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
+                    pinch.initialMidX = (event.getX(0) + event.getX(1)) / 2f
+                    pinch.initialMidY = (event.getY(0) + event.getY(1)) / 2f
+                    pinch.initialTransform = s.viewport
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (pinch.active && event.pointerCount >= 2) {
+                    val dx = event.getX(0) - event.getX(1)
+                    val dy = event.getY(0) - event.getY(1)
+                    val dist = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(1f)
+                    val midX = (event.getX(0) + event.getX(1)) / 2f
+                    val midY = (event.getY(0) + event.getY(1)) / 2f
+                    // 捏合 = 围绕初始中点缩放 + 中点平移复合（React :1050-1061 公式照搬）
+                    val init = pinch.initialTransform
+                    val newScale = (init.scale * dist / pinch.initialDistance)
+                        .coerceIn(CANVAS_MIN_SCALE, CANVAS_MAX_SCALE)
+                    val scaleChange = newScale / init.scale
+                    val nx = midX - (pinch.initialMidX - init.x) * scaleChange + (midX - pinch.initialMidX)
+                    val ny = midY - (pinch.initialMidY - init.y) * scaleChange + (midY - pinch.initialMidY)
+                    s.applyViewport(CanvasViewport(nx, ny, newScale))
+                    s.markInteracted()
+                    invalidate()
+                } else if (drag.active && event.pointerCount == 1) {
+                    val dx = event.x - drag.startX
+                    val dy = event.y - drag.startY
+                    // >5px 生效并取消长按计时（React :1071）
+                    if (kotlin.math.sqrt(dx * dx + dy * dy) > 5f) {
+                        cancelLongPressTimer()
+                        val init = drag.initialTransform
+                        s.applyViewport(CanvasViewport(init.x + dx, init.y + dy, init.scale))
+                        s.markInteracted()
+                        invalidate()
+                    }
+                } else if (event.pointerCount == 1) {
+                    // 未激活拖动（编辑模式按住已选图）：移动超 slop 取消长按
+                    val dx = event.x - touchStartX
+                    val dy = event.y - touchStartY
+                    if (kotlin.math.sqrt(dx * dx + dy * dy) > touchSlopPx) cancelLongPressTimer()
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                cancelLongPressTimer()
+                val wasPinch = pinch.active
+                pinch.active = false
+                val wasDrag = drag.active
+                drag.active = false
+                // 手势结束：按需重解码高档
+                updateTierForScale()
+                ensureVisibleDecodes()
+
+                val dx = event.x - touchStartX
+                val dy = event.y - touchStartY
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                val elapsed = android.os.SystemClock.uptimeMillis() - touchStartAt
+                if (!wasPinch && dist < 10f && elapsed < 300L) {
+                    handleTap(event.x, event.y, s)
+                } else if (wasDrag || wasPinch) {
+                    onChangeGestureSettled()
+                }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                cancelLongPressTimer()
+                pinch.active = false
+                drag.active = false
+            }
+        }
+        return true
+    }
+
+    /** 点按（React 触屏分支 :1132-1163）：双击判定 → 选中/取消。 */
+    private fun handleTap(x: Float, y: Float, s: CanvasStore) {
+        val clickedId = hitTest(x, y, s)
+        val now = android.os.SystemClock.uptimeMillis()
+        val isDoubleTap = kotlin.math.abs(x - lastTapX) < 30f &&
+            kotlin.math.abs(y - lastTapY) < 30f &&
+            (now - lastTapAt) < 400L
+        if (isDoubleTap) {
+            if (clickedId != null && lastTapTargetId == clickedId) {
+                // 双击同一图 = zoom 动画查看此图
+                s.itemById[clickedId]?.let(::zoomToItem)
+            } else {
+                // 双击空白 / 不同目标 = 查看全部
+                fitToContent()
+            }
+            lastTapTargetId = null
+            lastTapAt = 0L
+        } else {
+            lastTapX = x
+            lastTapY = y
+            lastTapAt = now
+            lastTapTargetId = clickedId
+            when {
+                clickedId != null && s.selectedIds.singleOrNull() == clickedId -> {
+                    // 已单选的项再点 = 无操作（React :1151-1153；保持编辑态不被打断）
+                }
+                clickedId != null -> s.selectSingle(clickedId)
+                else -> s.clearSelection()
+            }
+            invalidate()
+        }
+    }
+
+    /** 捏合/拖动结束后的档位对齐（重解码高档）。 */
+    private fun onChangeGestureSettled() {
+        updateTierForScale()
+        ensureVisibleDecodes()
+        invalidate()
     }
 
     // ------------------------------------------------------------ 绘制
