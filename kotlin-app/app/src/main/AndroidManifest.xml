@@ -25,6 +25,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- M5 阶段 0.2 渲染 spike（一次性，结论落清单后连同本行一起删除） -->
+        <activity
+            android:name=".spike.CanvasSpikeActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AuroraKotlin" />
     </application>
 
 </manifest>
