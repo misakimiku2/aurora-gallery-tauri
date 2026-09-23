@@ -658,13 +658,15 @@ internal fun AuroraMenuHeader(text: String) {
 /**
  * 菜单条目（React `mx-2 px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white`）：
  * 按压 = 蓝底白字（触屏的 hover 等价物）；[checked] 画选中勾（常规蓝色、按压白色），
- * [trailing] 是非勾选型尾部图标（如升降序的箭头）。行高 ≥48dp（触屏最小命中目标）。
+ * [leading] 是文字前的前导图标槽（非空时后跟 6dp 间距），[trailing] 是非勾选型尾部图标
+ * （如升降序的箭头）。行高 ≥48dp（触屏最小命中目标）。
  */
 @Composable
 internal fun AuroraMenuItem(
     text: String,
     onClick: () -> Unit,
     checked: Boolean = false,
+    leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     /** 覆盖文字色（危险项红色等）；按压态仍强制白字。 */
     textColor: Color? = null,
@@ -684,11 +686,18 @@ internal fun AuroraMenuItem(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, fontSize = 14.sp, color = when {
-            pressed -> Color.White
-            textColor != null -> textColor
-            else -> colors.textPrimary
-        })
+        // 前导图标与文字成组左靠（React 菜单 icon+label 同款）；右侧留给勾/尾部图标
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (leading != null) {
+                leading()
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(text, fontSize = 14.sp, color = when {
+                pressed -> Color.White
+                textColor != null -> textColor
+                else -> colors.textPrimary
+            })
+        }
         when {
             checked -> Icon(
                 CheckMark,

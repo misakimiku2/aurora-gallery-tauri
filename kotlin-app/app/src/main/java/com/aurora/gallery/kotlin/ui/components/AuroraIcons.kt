@@ -43,7 +43,7 @@ internal fun PathBuilder.roundedRect(x: Float, y: Float, w: Float, h: Float, r: 
     moveTo(x + r, y)
     lineTo(x + w - r, y)
     arcTo(r, r, 0f, false, true, x + w, y + r)
-    lineTo(x, y + h - r)
+    lineTo(x + w, y + h - r)
     arcTo(r, r, 0f, false, true, x + w - r, y + h)
     lineTo(x + r, y + h)
     arcTo(r, r, 0f, false, true, x, y + h - r)
@@ -480,4 +480,155 @@ internal val IconHeartFill: ImageVector by lazy {
             close()
         }
     }.build()
+}
+
+// —— 画布菜单 / 画布工具（CanvasMenu、沉浸态、添加图片等引用）——
+
+/** lucide scan（画布菜单「查看全部」）：四角括号。 */
+internal val IconScan: ImageVector by lazy {
+    auroraIcon("Scan") {
+        moveTo(3f, 7f)
+        lineTo(3f, 5f)
+        arcTo(2f, 2f, 0f, false, true, 5f, 3f)
+        lineTo(7f, 3f)
+        moveTo(17f, 3f)
+        lineTo(19f, 3f)
+        arcTo(2f, 2f, 0f, false, true, 21f, 5f)
+        lineTo(21f, 7f)
+        moveTo(21f, 17f)
+        lineTo(21f, 19f)
+        arcTo(2f, 2f, 0f, false, true, 19f, 21f)
+        lineTo(17f, 21f)
+        moveTo(7f, 21f)
+        lineTo(5f, 21f)
+        arcTo(2f, 2f, 0f, false, true, 3f, 19f)
+        lineTo(3f, 17f)
+    }
+}
+
+/** lucide refresh-ccw（画布菜单「重置」）：逆时针双弧箭头（弧均 sweep=false）。 */
+internal val IconRefreshCcw: ImageVector by lazy {
+    auroraIcon("RefreshCcw") {
+        moveTo(21f, 12f)
+        arcTo(9f, 9f, 0f, false, false, 12f, 3f)
+        arcTo(9.75f, 9.75f, 0f, false, false, 5.26f, 5.74f)
+        lineTo(3f, 8f)
+        moveTo(3f, 3f)
+        lineTo(3f, 8f)
+        lineTo(8f, 8f)
+        moveTo(3f, 12f)
+        arcTo(9f, 9f, 0f, false, false, 12f, 21f)
+        arcTo(9.75f, 9.75f, 0f, false, false, 18.74f, 18.26f)
+        lineTo(21f, 16f)
+        moveTo(16f, 16f)
+        lineTo(21f, 16f)
+        lineTo(21f, 21f)
+    }
+}
+
+/** lucide magnet（画布菜单「吸附功能」）。 */
+internal val IconMagnet: ImageVector by lazy {
+    auroraIcon("Magnet") {
+        moveTo(6f, 15f)
+        lineTo(2f, 11f)
+        lineTo(8.75f, 4.23f)
+        arcTo(7.79f, 7.79f, 0f, false, true, 19.75f, 15.23f)
+        lineTo(13f, 22f)
+        lineTo(9f, 18f)
+        lineTo(15.39f, 11.64f)
+        arcTo(2.14f, 2.14f, 0f, false, false, 12.39f, 8.64f)
+        lineTo(6f, 15f)
+        moveTo(5f, 8f)
+        lineTo(9f, 12f)
+        moveTo(12f, 15f)
+        lineTo(16f, 19f)
+    }
+}
+
+/** lucide trash-2（画布菜单「移除/清空」）：垃圾桶 + 两竖线。 */
+internal val IconTrash2: ImageVector by lazy {
+    auroraIcon("Trash2") {
+        moveTo(3f, 6f)
+        lineTo(21f, 6f)
+        moveTo(19f, 6f)
+        lineTo(19f, 20f)
+        curveTo(19f, 21f, 18f, 22f, 17f, 22f)
+        lineTo(7f, 22f)
+        curveTo(6f, 22f, 5f, 21f, 5f, 20f)
+        lineTo(5f, 6f)
+        moveTo(8f, 6f)
+        lineTo(8f, 4f)
+        curveTo(8f, 3f, 9f, 2f, 10f, 2f)
+        lineTo(14f, 2f)
+        curveTo(15f, 2f, 16f, 3f, 16f, 4f)
+        lineTo(16f, 6f)
+        moveTo(10f, 11f)
+        lineTo(10f, 17f)
+        moveTo(14f, 11f)
+        lineTo(14f, 17f)
+    }
+}
+
+/** lucide maximize（画布菜单「查看此图/放置到顶层」等）：四角外扩括号。 */
+internal val IconMaximize: ImageVector by lazy {
+    auroraIcon("Maximize") {
+        moveTo(8f, 3f)
+        lineTo(5f, 3f)
+        arcTo(2f, 2f, 0f, false, false, 3f, 5f)
+        lineTo(3f, 8f)
+        moveTo(21f, 8f)
+        lineTo(21f, 5f)
+        arcTo(2f, 2f, 0f, false, false, 19f, 3f)
+        lineTo(16f, 3f)
+        moveTo(3f, 16f)
+        lineTo(3f, 19f)
+        arcTo(2f, 2f, 0f, false, false, 5f, 21f)
+        lineTo(8f, 21f)
+        moveTo(16f, 21f)
+        lineTo(19f, 21f)
+        arcTo(2f, 2f, 0f, false, false, 21f, 19f)
+        lineTo(21f, 16f)
+    }
+}
+
+/** lucide minimize-2（画布沉浸退出态）：双向内收斜箭头。 */
+internal val IconMinimize2: ImageVector by lazy {
+    auroraIcon("Minimize2") {
+        moveTo(4f, 14f)
+        lineTo(10f, 14f)
+        lineTo(10f, 20f)
+        moveTo(20f, 10f)
+        lineTo(14f, 10f)
+        lineTo(14f, 4f)
+        moveTo(14f, 10f)
+        lineTo(21f, 3f)
+        moveTo(3f, 21f)
+        lineTo(10f, 14f)
+    }
+}
+
+/** lucide plus（画布「添加图片」按钮）。 */
+internal val IconPlus: ImageVector by lazy {
+    auroraIcon("Plus") {
+        moveTo(5f, 12f)
+        lineTo(19f, 12f)
+        moveTo(12f, 5f)
+        lineTo(12f, 19f)
+    }
+}
+
+/** lucide maximize-2（画布沉浸进入态）：双向外扩斜箭头。 */
+internal val IconMaximize2: ImageVector by lazy {
+    auroraIcon("Maximize2") {
+        moveTo(15f, 3f)
+        lineTo(21f, 3f)
+        lineTo(21f, 9f)
+        moveTo(9f, 21f)
+        lineTo(3f, 21f)
+        lineTo(3f, 15f)
+        moveTo(21f, 3f)
+        lineTo(14f, 10f)
+        moveTo(3f, 21f)
+        lineTo(10f, 14f)
+    }
 }

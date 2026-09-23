@@ -1040,28 +1040,7 @@ internal val IconLayoutBig: ImageVector by lazy {
     }.build()
 }
 
-/** lucide Plus。 */
-internal val IconPlus: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "Plus",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).apply {
-        path(
-            stroke = SolidColor(Color.Black),
-            strokeLineWidth = 2f,
-            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
-            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
-        ) {
-            moveTo(5f, 12f)
-            lineTo(19f, 12f)
-            moveTo(12f, 5f)
-            lineTo(12f, 19f)
-        }
-    }.build()
-}
+/** lucide Plus：已上移 AuroraIcons.kt 共享（M5 画布菜单同名同形，直接引用）。 */
 
 /** lucide User（人物计数）。 */
 internal val IconUser: ImageVector by lazy {

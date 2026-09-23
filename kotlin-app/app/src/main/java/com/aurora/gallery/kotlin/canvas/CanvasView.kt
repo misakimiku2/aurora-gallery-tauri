@@ -87,10 +87,12 @@ class CanvasView @JvmOverloads constructor(
     private val plainStroke = Paint().apply { style = Paint.Style.STROKE }
     private val bitmapPaint = Paint().apply { isFilterBitmap = true }
     private val dotPaint = Paint().apply { style = Paint.Style.FILL }
-    // 编辑框（2.1）：React 边框 #3b82f6 = palette.primary；柄白底蓝边
+    private val density = resources.displayMetrics.density
+    // 编辑框（2.1）：React 边框 #3b82f6 = palette.primary；柄白底蓝边。
+    // 线宽按 React 的 CSS px（≈dp）乘 density：编辑框 1px、柄圆环 1.5px（EditOverlay :602/:628）
     private val editBorderPaint = Paint().apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.5f
+        strokeWidth = 1f * density
         color = 0xFF3B82F6.toInt()
     }
     private val handleFillPaint = Paint().apply {
@@ -99,12 +101,13 @@ class CanvasView @JvmOverloads constructor(
     }
     private val handleStrokePaint = Paint().apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.5f
+        strokeWidth = 1.5f * density
         color = 0xFF3B82F6.toInt()
     }
     private val handleGlyphPaint = Paint().apply {
         style = Paint.Style.STROKE
-        strokeWidth = 1.6f
+        // React strokeWidth=2（24 视口）落在柄径一半的图标盒上：2×15/24 = 1.25dp
+        strokeWidth = 1.25f * density
         strokeCap = android.graphics.Paint.Cap.ROUND
         color = 0xFF3B82F6.toInt()
     }
@@ -126,8 +129,6 @@ class CanvasView @JvmOverloads constructor(
     // —— 视口动画（React startAnimation 同款：单循环 lerp，约 40ms 时间缓动）——
     private var animTarget: CanvasViewport? = null
     private var animLastFrameNs = 0L
-
-    private val density = resources.displayMetrics.density
 
     // ------------------------------------------------------------ 生命周期
 
@@ -900,10 +901,10 @@ class CanvasView @JvmOverloads constructor(
     /**
      * 缩放柄图标：React `ScaleIcon`（lucide scaling，24 视口）逐线转译——
      * `M15 3H21V9`（右上角折线）/ `M9 21H3V15`（左下角折线）/ `M21 3L14 10` / `M3 21L10 14`。
-     * 视口原点 (12,12) 映射到柄圆心，缩放系数 = 柄半径/12（React 图标 15px 在 30px 柄内）。
+     * React 图标盒 = 柄径一半（`size={s * 0.5}`，EditOverlay :655）：24 视口 → k = 柄半径/24。
      */
     private fun drawScaleGlyph(canvas: Canvas, cx: Float, cy: Float) {
-        val k = handleRadiusPx / 12f
+        val k = handleRadiusPx / 24f
         fun px(x: Float) = cx + (x - 12f) * k
         fun py(y: Float) = cy + (y - 12f) * k
         canvas.drawLine(px(15f), py(3f), px(21f), py(3f), handleGlyphPaint)
@@ -916,20 +917,20 @@ class CanvasView @JvmOverloads constructor(
 
     /**
      * 旋转柄图标：React `RotateIcon`（24 视口）——右上角折线 `M21.5 2V8H15.5` +
-     * 大圆弧（React `M21.34 15.57 A10 10 0 1 1 …`：圆心 ≈(11.6,11.9) r=10，
-     * 起点角 ≈21°、顺时针扫 ≈310°）。
+     * 大圆弧 `M21.34 15.57A10 10 0 1 1-.57-8.38`（起点 (21.34,15.57)、终点 (20.77,7.19)；
+     * 弦心距解出圆心恰为视口中心 (12,12)、r=10：起点角 20.94°、顺时针扫 310.3°，
+     * 缺口正对右上角折线）。图标盒同缩放柄 = 柄径一半。
      */
     private fun drawRotateGlyph(canvas: Canvas, cx: Float, cy: Float) {
-        val k = handleRadiusPx / 12f
+        val k = handleRadiusPx / 24f
         fun px(x: Float) = cx + (x - 12f) * k
         fun py(y: Float) = cy + (y - 12f) * k
         canvas.drawLine(px(21.5f), py(2f), px(21.5f), py(8f), handleGlyphPaint)
         canvas.drawLine(px(21.5f), py(8f), px(15.5f), py(8f), handleGlyphPaint)
         val arcR = 10f * k
         canvas.drawArc(
-            px(11.6f) - arcR, py(11.9f) - arcR,
-            px(11.6f) + arcR, py(11.9f) + arcR,
-            21f, 310f, false, handleGlyphPaint,
+            cx - arcR, cy - arcR, cx + arcR, cy + arcR,
+            20.94f, 310.3f, false, handleGlyphPaint,
         )
     }
 

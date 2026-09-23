@@ -406,7 +406,7 @@ fun TreeSidebar(
         if (showCanvas) {
             SectionHeader(
                 title = "画布",
-                icon = IconScan,
+                icon = IconScanMidline,
                 iconTint = SECTION_EMERALD,
                 expanded = false,
                 onClick = onCanvasClick,
@@ -885,8 +885,8 @@ private val IconTagBadge: ImageVector by lazy {
     }
 }
 
-/** lucide Scan（画布 Section）：四角取景框 + 中线。 */
-private val IconScan: ImageVector by lazy {
+/** lucide Scan + 中线（画布 Section 变体；与 AuroraIcons 的标准 IconScan 区分）。 */
+private val IconScanMidline: ImageVector by lazy {
     iconBuilder("Scan") {
         moveTo(3f, 7f)
         lineTo(3f, 5f)

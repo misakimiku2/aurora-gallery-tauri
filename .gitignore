@@ -54,4 +54,5 @@ core/target/
 kotlin-app/.gradle/
 kotlin-app/build/
 kotlin-app/app/build/
+kotlin-app/build2/
 kotlin-app/local.properties
