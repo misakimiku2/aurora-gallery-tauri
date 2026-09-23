@@ -1059,12 +1059,6 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.FILEOP"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
-            ContextCompat.registerReceiver(
-                this,
-                canvasDebugReceiver,
-                IntentFilter("aurora.debug.CANVAS"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
         }
     }
 
@@ -1180,19 +1174,6 @@ class MainActivity : ComponentActivity() {
                     viewModel.moveFiles(uris, target) { n -> report("移动完成 $n") }
                 }
                 "copy" -> viewModel.copyFiles(uris, target) { n -> report("复制完成 $n") }
-            }
-        }
-    }
-
-    /**
-     * M5 开发钩子（模拟器/Debug 构建，收口删）：`adb shell am broadcast
-     * -a aurora.debug.CANVAS --es op seed|clear` 播种/清空画布。
-     */
-    private val canvasDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.getStringExtra("op")) {
-                "seed" -> viewModel.debugSeedCanvas()
-                "clear" -> viewModel.canvasStore.clear()
             }
         }
     }

@@ -23,9 +23,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * 专题详情**不设独立 ViewMode**（对齐 React：topics-overview + activeTopicId 非空即
  * 详情），见 [TabState.activeTopicId]。
  *
- * [CANVAS]（M4b 阶段 4）：侧栏「画布」入口的占位视图。React 的「画布」= 新建
- * isCompareMode 标签页进 ImageComparer 全屏，没有独立 ViewMode；Kotlin 侧占位页独立
- * 成模式，视图本体随 M5 落地时复用这个位置。
+ * [CANVAS]（M4b 阶段 4 引入）：侧栏「画布」入口对应的视图模式。React 的「画布」=
+ * 新建 isCompareMode 标签页进 ImageComparer 全屏，没有独立 ViewMode；Kotlin 侧独立
+ * 成模式，视图本体已随 M5 落地（CanvasScreen/CanvasView）。
  */
 enum class ViewMode {
     FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW, TOPICS_OVERVIEW, CANVAS,

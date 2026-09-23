@@ -229,7 +229,7 @@ fun TreeSidebar(
      * 专题/标签总览里，行再亮着就会跟专题粉/标签蓝同屏双亮（3.2 验收反馈 ②）。
      */
     browserActive: Boolean = false,
-    /** 画布 Section 头部行主体点击 = 进画布视图（M5；视图本体随 M5 落地）。 */
+    /** 画布 Section 头部行主体点击 = 进画布视图（M5；平板专属，见 showCanvas）。 */
     onCanvasClick: (() -> Unit)? = null,
     /** 正处于画布视图（Section 头部按画布绿高亮）。 */
     canvasSelected: Boolean = false,

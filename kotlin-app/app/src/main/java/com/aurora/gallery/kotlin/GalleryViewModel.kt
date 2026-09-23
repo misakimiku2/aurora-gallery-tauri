@@ -226,49 +226,6 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             onReady(imgs)
         }
     }
-
-    /**
-     * M5 开发钩子（adb 广播 `aurora.debug.CANVAS --es op seed` 触发，**收口时随钩子删除**）：
-     * 向画布播种 24 张测试图——`Pictures/spike`（377MB BMP 压力集）优先，不足从全库补。
-     * 宽高取 MediaStore 列，列值 <8（如 spike 这批 BMP 行=1×1）时读 Bitmap 头部兜底，
-     * 仍无效退 React 同款 1000×750。
-     */
-    fun debugSeedCanvas() {
-        viewModelScope.launch {
-            val sources = withContext(Dispatchers.IO) {
-                val all = scanMediaStore()
-                val spike = all.filter { it.bucketName == "spike" }
-                val rest = all.filter { it.bucketName != "spike" }
-                (spike + rest).take(24).map { img ->
-                    val (w, h) = resolveDimsForCanvas(img.contentUri, img.width, img.height)
-                    com.aurora.gallery.kotlin.canvas.CanvasPackSource(
-                        uniffi.aurora_core.generateId(img.contentUri), w, h, img.contentUri,
-                    )
-                }
-            }
-            canvasStore.addImages(sources)
-            Log.i(TAG, "[Canvas] debug seed done, count=${canvasStore.count}")
-        }
-    }
-
-    private fun resolveDimsForCanvas(contentUri: String, w: Int?, h: Int?): Pair<Float, Float> {
-        var fw = w?.toFloat() ?: 0f
-        var fh = h?.toFloat() ?: 0f
-        if (fw < 8f || fh < 8f) {
-            runCatching {
-                appContext.contentResolver.openInputStream(android.net.Uri.parse(contentUri))?.use { input ->
-                    val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    android.graphics.BitmapFactory.decodeStream(input, null, opts)
-                    if (opts.outWidth > 0) fw = opts.outWidth.toFloat()
-                    if (opts.outHeight > 0) fh = opts.outHeight.toFloat()
-                }
-            }
-        }
-        if (fw < 1f) fw = 1000f
-        if (fh < 1f) fh = 750f
-        return fw to fh
-    }
-
     /** 备份导入后的快照重算（词表/人物/专题都可能有变）。 */
     fun refreshTagSnapshots() {
         viewModelScope.launch {
