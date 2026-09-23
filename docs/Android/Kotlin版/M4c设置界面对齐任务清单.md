@@ -1,6 +1,6 @@
 # M4c 设置界面对齐任务清单
 
-> 版本： v1（2026-09-23 执行完成并自验回填）
+> 版本： v2（2026-09-23 二轮迭代——v1 交付后验收人反馈「图形化不足 + 要 M6 占位类 + 关于样式对齐桌面」，补 2.6 图形化重构并回填；§2.6/§7 行 6 为本轮新增）
 > 状态： **已达成（2026-09-23 自验 + mobile-ui-tester 黑盒 14 用例）**。D26/D27 已拍板（结论记 §7 行 0）；手机/平板双模拟器实测通过，tester 报告的 5 个问题中 4 个当场修复回验、1 个判定误报（§7 行 4）。
 > 前置： [M4b系统集成任务清单](./M4b系统集成任务清单.md) 已达成（2026-09-23）——本里程碑是其设置面板（2.1/2.2/2.3）的形制重构与项目范围终版筛选，能力面（缓存清理/备份导出导入/语言开关）不重做。
 > 配套： [规划](./安卓Kotlin版并行开发规划.md)（§6 M4c 行）｜[矩阵](./三端功能矩阵.md)（表 6 三行）｜[M4b 清单](./M4b系统集成任务清单.md)（D15/D19 被本里程碑 D27 部分修订）
@@ -68,6 +68,14 @@
 - mobile-ui-tester 黑盒 14 用例（手机 8 + 平板 6）：0 崩溃 0 ANR；5 个问题见 §7 行 4 处置。
 - 顺手修复的 M1 遗留：`StickyHeaderDecoration` 在列表顶端与行内标题叠加出双标题——锚定组行内标题完整露在吸顶线以下时不再绘制 sticky（滚动后照常接管，实测回验）。
 
+### 2.6 图形化与占位类（v2 二轮迭代，验收人对照桌面截图反馈）
+- **共享图标集 `AuroraIcons.kt`（新文件）**：lucide 线性画法（24 视口/2 线宽/圆头）从 TopBar 上移共享，M4c 新增约 20 个图标（导航 sliders/database/brian/wifi/info、主题 sun/moon/monitor、视图 grid-3x3/layout-grid/layout-template、排序 type/calendar/harddrive/箭头、分组 layers、占位与关于区 palette/shield/code/external-link/heart-fill 等）。**跨文件同名图标合并**：TopBar 的 IconLayoutGrid/IconLayoutTemplate、TreeSidebar 的 IconHardDrive/IconWifiOff（M3 调过的完整残弧版上移）/IconBrain（M4a 脑叶版上移替换 Bot 简形）、TopicsOverview 的 IconExternalLink——四处 private/internal 定义删除，统一引用共享版。
+- **控件图形化（对齐 GeneralPanel 的 lucide 引用）**：主题三档**预览卡**（白/深灰/渐变预览块 + Sun/Moon/Monitor + 选中蓝边与右上角对勾角标）；默认视图模式与分组方式**图标卡**（2dp 选中边框）；排序方式/方向**竖排按钮组**（图标 + 右侧勾，双列布局对齐桌面 grid-cols-2）；语言按钮带 Globe 图标；节标题带蓝色图标（外观 Palette / 默认布局 LayoutGrid / 关于 Info）。
+- **M6 占位类（对齐 React 安卓端导航结构）**：导航渲染五类——常规/存储/AI 智能/局域网共享/关于（AI视觉/性能维持桌面专属不显示）；AI 智能与局域网共享为**占位类**（图标导航 + 占位说明卡「将随 M6 提供：…」，沿 M4b 1.5「未落地能力的可见占位」先例）；存储类内新增**主色调数据库占位节**。
+- **关于页对齐桌面 AboutPanel**：软件信息大卡（蓝紫渐变底 + 极光渐变 logo 块 + tagline「现代化的图片管理与浏览工具」+ v0.1.0/稳定版双徽标）、技术栈版本三卡（应用版本 / Compose 2024.09 / 内核 Rust·UniFFI）、相关链接两卡（GitHub·查看源代码 / 问题反馈·报告 Bug 或建议）、Made with ❤ 致谢页脚；检查更新维持不做（D27）。
+- **文字对齐桌面**：导航「通用」改「常规」（`settings.catGeneral`）；分组文案改「不分组/按类型/按日期」（`groupBy.*`）。
+- **编译期教训（记档）**：`ImageVector.Builder.path(...)` 是**扩展函数**（`androidx.compose.ui.graphics.vector.path`），漏 import 报「Unresolved reference: path」且连带 lambda 内全部方法 unresolved——极易误判为版本问题；`PathBuilder` 的三次曲线是 **curveTo**（不是 android.graphics.Path 的 cubicTo）。
+
 ## 6. 决策表
 
 | 编号 | 决策 | 结论 |
@@ -83,3 +91,4 @@
 - **行 3（功能回归）**：PASS——语言/默认视图/排序/方向/分组芯片即时应用；清理缓存 Toast + 数值刷新；导出落 Download；GitHub 行拉起浏览器返回不丢状态；默认分组持久化（重启进 bulk 直带分组标题）。
 - **行 4（tester 报告处置）**：5 问题——①横屏手机侧栏设置入口裁切（高）：TopBar 兜底入口，修；②横屏对话框底部溢出（高）：断点补高度条件 + 对话框高度上限扣系统栏，修；③分组表头顶部重复（中）：StickyHeaderDecoration 顶端不画，修；④手机浅色状态栏不变色（中）：**误报**（截图核对为浅底深字，正确）；⑤缓存值「=」前缀（低）：改「约」，修。
 - **行 5（遗留）**：①查看器开着时切主题不即时换色（收掉再开生效，D26 边界登记）；②M5 占用 D21–D25 起草编号、未拍板——后续里程碑起草先查本清单尾号。
+- **行 6（v2 图形化回验）**：PASS——平板双栏：导航五类带图标、主题预览卡（角标随选中）、视图/分组图标卡、排序双列按钮组、主色调占位节、AI/局域网占位页、关于页全版式（渐变大卡/技术栈三卡/链接卡/致谢）；手机全屏页同套内容单列排布；浅色↔深色切换即时换装且各控件两档渲染正确。

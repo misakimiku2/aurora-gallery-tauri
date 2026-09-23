@@ -1322,40 +1322,12 @@ private fun buildMonthCells(year: Int, month0: Int): List<DayCell> {
 }
 
 // ---- 自绘图标：lucide 线性风格（对齐 React 版 lucide-react 图标，24 视口 / 2 线宽 / 圆头）----
-
-private const val STROKE = 2f
+// M4c 2.6：builder 上移 [AuroraIcons]（设置页图形化复用同一套画法），此处仅别名转发。
 
 private fun iconBuilder(
     name: String,
     block: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
-): ImageVector = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = STROKE,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) { block() }
-}.build()
-
-/** 在 [PathBuilder] 上画圆角矩形（lucide 的 rect rx）。 */
-private fun androidx.compose.ui.graphics.vector.PathBuilder.roundedRect(x: Float, y: Float, w: Float, h: Float, r: Float) {
-    moveTo(x + r, y)
-    lineTo(x + w - r, y)
-    arcTo(r, r, 0f, false, true, x + w, y + r)
-    lineTo(x + w, y + h - r)
-    arcTo(r, r, 0f, false, true, x + w - r, y + h)
-    lineTo(x + r, y + h)
-    arcTo(r, r, 0f, false, true, x, y + h - r)
-    lineTo(x, y + r)
-    arcTo(r, r, 0f, false, true, x + r, y)
-    close()
-}
+): ImageVector = auroraIcon(name, block)
 
 private val IconChevronLeft: ImageVector by lazy {
     iconBuilder("ChevronLeft") {
@@ -1476,25 +1448,8 @@ private val IconGrid: ImageVector by lazy {
     }
 }
 
-private val IconLayoutGrid: ImageVector by lazy {
-    iconBuilder("LayoutGrid") {
-        roundedRect(3f, 3f, 7f, 7f, 1f)
-        roundedRect(14f, 3f, 7f, 7f, 1f)
-        roundedRect(14f, 14f, 7f, 7f, 1f)
-        roundedRect(3f, 14f, 7f, 7f, 1f)
-    }
-}
-
-/** lucide LayoutTemplate（视图排布按钮的瀑布流档）。 */
-private val IconLayoutTemplate: ImageVector by lazy {
-    iconBuilder("LayoutTemplate") {
-        roundedRect(3f, 3f, 18f, 18f, 2f)
-        moveTo(3f, 9f)
-        lineTo(21f, 9f)
-        moveTo(9f, 21f)
-        lineTo(9f, 9f)
-    }
-}
+// IconLayoutGrid / IconLayoutTemplate（视图排布按钮的自适应/瀑布流档）已上移
+// AuroraIcons.kt 共享（M4c 2.6），本文件直接引用同包共享版本。
 
 /** 菜单勾选（material 核心图标集中的 Check，与 lucide 视觉一致）。 */
 private val CheckMark: ImageVector by lazy {

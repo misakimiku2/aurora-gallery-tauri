@@ -1135,37 +1135,8 @@ internal val IconImages: ImageVector by lazy {
     }.build()
 }
 
-/** lucide ExternalLink（来源链接胶囊）。 */
-internal val IconExternalLink: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "TopicExternalLink",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).apply {
-        path(
-            stroke = SolidColor(Color.Black),
-            strokeLineWidth = 2f,
-            strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
-            strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
-        ) {
-            moveTo(15f, 3f)
-            lineTo(21f, 3f)
-            lineTo(21f, 9f)
-            moveTo(10f, 14f)
-            lineTo(21f, 3f)
-            moveTo(18f, 13f)
-            lineTo(18f, 19f)
-            arcTo(2f, 2f, 0f, false, true, 16f, 21f)
-            lineTo(5f, 21f)
-            arcTo(2f, 2f, 0f, false, true, 3f, 19f)
-            lineTo(3f, 8f)
-            arcTo(2f, 2f, 0f, false, true, 5f, 6f)
-            lineTo(11f, 6f)
-        }
-    }.build()
-}
+// IconExternalLink（来源链接胶囊）已上移 AuroraIcons.kt 共享（M4c 2.6），此处直接
+// 引用同包共享版本（路径与原实现一致）。
 
 /** lucide ArrowDownUp（排序；主菜单同款图标与升降序箭头共用）。 */
 internal val IconSortArrows: ImageVector by lazy {

@@ -784,19 +784,7 @@ private val SIDEBAR_GRAY_400 = Color(0xFF9CA3AF)
 
 private const val STROKE = 2f
 
-/** 在 [PathBuilder] 上画圆角矩形（lucide 的 rect rx；与 TopBar.kt 同款）。 */
-private fun androidx.compose.ui.graphics.vector.PathBuilder.roundedRect(x: Float, y: Float, w: Float, h: Float, r: Float) {
-    moveTo(x + r, y)
-    lineTo(x + w - r, y)
-    arcTo(r, r, 0f, false, true, x + w, y + r)
-    lineTo(x + w, y + h - r)
-    arcTo(r, r, 0f, false, true, x + w - r, y + h)
-    lineTo(x + r, y + h)
-    arcTo(r, r, 0f, false, true, x, y + h - r)
-    lineTo(x, y + r)
-    arcTo(r, r, 0f, false, true, x + r, y)
-    close()
-}
+// roundedRect 扩展已上移 AuroraIcons.kt 共享（M4c 2.6），本文件沿用同名共享版本。
 
 private fun iconBuilder(
     name: String,
@@ -835,61 +823,13 @@ private val IconLayout: ImageVector by lazy {
     }
 }
 
-/** lucide HardDrive（本地相册 Section）。 */
-private val IconHardDrive: ImageVector by lazy {
-    iconBuilder("HardDrive") {
-        moveTo(5.45f, 5.11f)
-        lineTo(2f, 12f)
-        lineTo(2f, 18f)
-        arcTo(2f, 2f, 0f, false, true, 4f, 20f)
-        lineTo(20f, 20f)
-        arcTo(2f, 2f, 0f, false, true, 22f, 18f)
-        lineTo(22f, 12f)
-        lineTo(18.55f, 5.11f)
-        arcTo(2f, 2f, 0f, false, true, 16.76f, 4f)
-        lineTo(7.24f, 4f)
-        arcTo(2f, 2f, 0f, false, true, 5.45f, 5.11f)
-        close()
-        moveTo(2f, 12f)
-        lineTo(22f, 12f)
-        // 指示灯两点（圆头线帽放大成点）
-        moveTo(6f, 16f)
-        lineTo(6.01f, 16f)
-        moveTo(10f, 16f)
-        lineTo(10.01f, 16f)
-    }
-}
+// IconHardDrive / IconWifiOff（本地相册/网络 Section）已上移 AuroraIcons.kt 共享
+// （M4c 2.6），本文件直接引用同包共享版本。
 
 /**
  * lucide WifiOff（网络 Section 断连态；圆弧用三次贝塞尔近似 lucide 的椭圆弧，
  * 16dp 显示尺寸下观感一致：两段残弧 + 底部点 + 左上到右下斜杠）。
  */
-private val IconWifiOff: ImageVector by lazy {
-    iconBuilder("WifiOff") {
-        // 底部点
-        moveTo(12f, 20f)
-        lineTo(12.01f, 20f)
-        // 内弧（完整）
-        moveTo(8.5f, 16.43f)
-        curveTo(9.9f, 15.1f, 14.1f, 15.1f, 15.5f, 16.43f)
-        // 中弧左残段（斜杠截断）
-        moveTo(5f, 12.86f)
-        curveTo(6.6f, 12.1f, 8.3f, 11.2f, 10.17f, 10.17f)
-        // 中弧右残段
-        moveTo(19f, 12.86f)
-        curveTo(18.4f, 12.4f, 17.7f, 11.9f, 16.99f, 11.34f)
-        // 外弧左残段
-        moveTo(2f, 8.82f)
-        curveTo(3.3f, 8.1f, 4.6f, 7.1f, 6.18f, 6.18f)
-        // 外弧右残段
-        moveTo(22f, 8.82f)
-        curveTo(18f, 7.2f, 14.3f, 5.7f, 10.71f, 5.06f)
-        // 斜杠
-        moveTo(2f, 2f)
-        lineTo(22f, 22f)
-    }
-}
-
 /**
  * lucide Brain（人物 Section；两个对称脑叶 + 中缝细节，lucide 的 8 段小弧在 16dp 下
  * 并入轮廓——贝塞尔近似脑叶云形，观感对齐桌面）。
