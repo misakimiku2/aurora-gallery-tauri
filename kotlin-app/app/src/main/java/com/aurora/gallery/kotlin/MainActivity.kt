@@ -82,6 +82,7 @@ import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
 import android.view.View
+import com.aurora.gallery.kotlin.canvas.CanvasHost
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.viewer.applyViewerTheme
@@ -831,6 +832,8 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
                         state = appState,
+                        darkTheme = dark,
+                        canvasStore = viewModel.canvasStore,
                         folders = viewModel.folders.value,
                         images = viewModel.images.value,
                         displayImages = displayImages,
@@ -1016,6 +1019,12 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.FILEOP"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
+            ContextCompat.registerReceiver(
+                this,
+                canvasDebugReceiver,
+                IntentFilter("aurora.debug.CANVAS"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
         }
     }
 
@@ -1135,6 +1144,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * M5 开发钩子（模拟器/Debug 构建，收口删）：`adb shell am broadcast
+     * -a aurora.debug.CANVAS --es op seed|clear` 播种/清空画布。
+     */
+    private val canvasDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getStringExtra("op")) {
+                "seed" -> viewModel.debugSeedCanvas()
+                "clear" -> viewModel.canvasStore.clear()
+            }
+        }
+    }
+
     private fun isEmulator(): Boolean =
         Build.FINGERPRINT.startsWith("generic") ||
             Build.FINGERPRINT.startsWith("unknown") ||
@@ -1175,6 +1197,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun App(
     state: AppState,
+    /** 当前是否深色档（画布 View 的取色入参；M4c 主题链在 setContent 推导）。 */
+    darkTheme: Boolean = false,
+    /** 画布状态（M5 1.2；实例在 GalleryViewModel，进程内保活）。 */
+    canvasStore: com.aurora.gallery.kotlin.canvas.CanvasStore,
     folders: List<Folder>,
     images: List<Image>,
     /** 展示序列（过滤+排序后）由组合根算好传入：查看器的进入序列必须是同一条（M3 2.2）。 */
@@ -1747,11 +1773,13 @@ fun App(
                         )
                     }
                 }
-                // M4b 阶段 4：画布占位视图（验收标准「画布入口可点进（视图本体仍属
-                // M5）」；M3 3.3 可见占位口径——静默空屏在真机会被当成 bug 报回来）
-                inCanvas -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    Text("画布视图将随 M5 提供", color = AuroraTheme.colors.textSecondary)
-                }
+                // M5 1.2：画布视图本体（View 体系 CanvasView 由 CanvasHost 承载；
+                // 顶栏复用通用 TopBar 的返回/侧栏开关，画布专属 TopBar 随 3.4）
+                inCanvas -> CanvasHost(
+                    store = canvasStore,
+                    dark = darkTheme,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
                 // 文件夹内网格（选择/查看器共用同一展示序列）
                 inBrowser -> {                    if (displayImages.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {

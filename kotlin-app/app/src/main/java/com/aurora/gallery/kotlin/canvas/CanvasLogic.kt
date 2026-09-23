@@ -18,8 +18,15 @@ import kotlin.math.sqrt
  * 二维仿射（无旋转分量，旋转挂在 item 上）——照搬。
  */
 
-/** 装箱输入：fileId + 自然宽高（无尺寸兜底由调用方按 React 语义给 1000×750）。 */
-data class CanvasPackSource(val id: String, val width: Float, val height: Float)
+/** 装箱输入：fileId + 自然宽高（无尺寸兜底由调用方按 React 语义给 1000×750）；
+ * contentUri 不参与装箱，由 [CanvasStore][com.aurora.gallery.kotlin.canvas.CanvasStore]
+ * 留作取图解析（画布解码要用，纯逻辑函数不碰）。 */
+data class CanvasPackSource(
+    val id: String,
+    val width: Float,
+    val height: Float,
+    val contentUri: String = "",
+)
 
 /** 装箱输出：世界坐标矩形（首张以原点为中心，对齐 layout.ts 的 (-w/2, -h/2)）。 */
 data class CanvasPackedRect(val id: String, val x: Float, val y: Float, val width: Float, val height: Float)

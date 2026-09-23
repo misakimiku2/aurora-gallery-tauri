@@ -75,21 +75,31 @@ class CanvasStore {
     /** 吸附开关（React isSnappingEnabled 默认开；「吸附功能: ON/OFF」菜单项消费）。 */
     var isSnappingEnabled by mutableStateOf(true)
 
-    /** 视口变换（世界→屏幕）。 */
-    var viewport by mutableStateOf(CanvasViewport())
+    /**
+     * 视口变换（世界→屏幕）。**刻意不是 Compose state**：它被 CanvasView 在布局/
+     * 手势路径高频写入，而没有任何组合订阅者（绘制走 View.invalidate）——曾经是
+     * mutableStateOf，在 onSizeChanged（布局 pass 中）写入时与本模拟器的合成管线
+     * 冲突（chrome 整层停更），见清单 0.2/1.2 备注。
+     */
+    var viewport: CanvasViewport = CanvasViewport()
         private set
 
     /** 用户手动操作过视口（autoFit 语义与 React userInteractedRef 同位）。 */
-    var userInteracted by mutableStateOf(false)
+    var userInteracted: Boolean = false
         private set
 
     /** 有图加载完成后该做一次 autoFit（React shouldAutoFitAfterLoadRef 同位）。 */
-    var autoFitPending by mutableStateOf(false)
+    var autoFitPending: Boolean = false
         private set
 
     val count: Int get() = items.size
     val isFull: Boolean get() = items.size >= CANVAS_CAPACITY
     val itemById: Map<String, CanvasItem> get() = items.associateBy { it.fileId }
+
+    /** fileId → content uri（加图时登记，CanvasView 解码取流用；非 Compose 状态）。 */
+    private val contentUris = HashMap<String, String>()
+
+    fun contentUriOf(fileId: String): String? = contentUris[fileId]
 
     /** 最后选中的项（React activeImageIds 末项 = 菜单/编辑框的 activeItem）。 */
     val activeItemId: String? get() = selectedIds.lastOrNull()
@@ -125,6 +135,7 @@ class CanvasStore {
             )
         }
         zOrderIds = zOrderIds + packed.map { it.id }
+        for (src in accepted) contentUris[src.id] = src.contentUri
         autoFitPending = true
         userInteracted = false
         return if (skipped > 0) AddResult.Added(accepted.size, skipped) else AddResult.Added(accepted.size, 0)
@@ -136,6 +147,7 @@ class CanvasStore {
         items = items.filter { it.fileId !in ids }
         zOrderIds = zOrderIds.filter { it !in ids }
         selectedIds = selectedIds.filter { it !in ids }
+        ids.forEach { contentUris.remove(it) }
         if (activeItemId == null) isEditMode = false
     }
 
@@ -179,6 +191,7 @@ class CanvasStore {
         items = emptyList()
         zOrderIds = emptyList()
         selectedIds = emptyList()
+        contentUris.clear()
         isEditMode = false
         viewport = CanvasViewport()
         autoFitPending = false

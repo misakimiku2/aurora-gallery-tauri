@@ -34,11 +34,8 @@ import com.aurora.gallery.kotlin.ui.theme.withAlpha
 import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
-import coil.disk.DiskCache
-import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import coil.size.Precision
-import coil.util.DebugLogger
 import com.aurora.gallery.kotlin.viewer.dialogs.DeleteConfirmDialog
 import com.aurora.gallery.kotlin.viewer.dialogs.DescriptionEditDialog
 import com.aurora.gallery.kotlin.viewer.dialogs.DialogTheme
@@ -53,7 +50,6 @@ import com.aurora.gallery.kotlin.viewer.dialogs.SourceUrlEditDialog
 import com.aurora.gallery.kotlin.viewer.dialogs.TagEditDialog
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 
@@ -138,31 +134,9 @@ class NativeGalleryView @JvmOverloads constructor(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private val imageLoader: ImageLoader by lazy {
-        ImageLoader.Builder(context)
-            .memoryCache {
-                MemoryCache.Builder(context).maxSizePercent(0.30).build()
-            }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(File(context.cacheDir, "coil_viewer_cache"))
-                    .maxSizeBytes(200L * 1024 * 1024)
-                    .build()
-            }
-            .crossfade(false)
-            .precision(Precision.INEXACT)
-            .components {
-                // API 28+: ImageDecoderDecoder 支持 animated WebP + animated GIF（硬件解码）
-                // API < 28: GifDecoder 仅支持 animated GIF（软件解码，无 animated WebP 支持）
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    add(ImageDecoderDecoder.Factory())
-                } else {
-                    add(GifDecoder.Factory())
-                }
-            }
-            // 解码失败只报「加载失败」查不了真机问题（如 content:// 取流、缓存键、降级路径），
-            // 让 Coil 自己把堆栈打出来
-            .logger(DebugLogger(level = Log.ERROR))
-            .build()
+        // M5 1.2 起与画布共享进程级实例（D25：同内存缓存 + 同磁盘缓存 journal；
+        // 配置原样搬进 SharedCoil，行为不变）
+        SharedCoil.get(context)
     }
 
     private val images = mutableListOf<ImageItem>()
