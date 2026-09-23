@@ -63,4 +63,6 @@ dependencies {
     // M3 查看器：GifDecoder / ImageDecoderDecoder（动画 GIF 与动画 WebP）
     implementation("io.coil-kt:coil-gif:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // M5 1.1：装箱/视口/几何纯函数的 JVM 单测（对拍 React 同输入同输出）
+    testImplementation("junit:junit:4.13.2")
 }

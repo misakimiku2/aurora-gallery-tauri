@@ -108,6 +108,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
 
+    /**
+     * 画布状态（M5 1.1，D21 单实例）：items/视口/z 序/选中/编辑态的唯一写者。
+     * 进程内保活——退出画布视图数据不丢，进程被杀回空（React tab 内存态同语义）。
+     */
+    val canvasStore = com.aurora.gallery.kotlin.canvas.CanvasStore()
+
     /** 设置的唯一读写口（2.1，D15=SharedPreferences；专题排序已并入）。 */
     val settingsStore = SettingsStore(appContext)
 
