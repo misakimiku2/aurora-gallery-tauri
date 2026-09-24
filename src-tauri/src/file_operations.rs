@@ -357,21 +357,31 @@ pub async fn rename_file_with_pools(
         tx.commit().map_err(|e| format!("提交快速事务失败: {}", e))?;
     }
 
-    let old_clone = old_path.clone();
-    let new_clone = new_path.clone();
-    let pool_clone = app_db.clone();
-    let color_db_clone = color_db.clone();
+    if is_dir {
+        // 目录改名：子树行数不定，index/metadata/colors 前缀迁移放后台。
+        // migrate_*_dir 的第 0 步按「目标路径=残留」清理，只对目录有意义——
+        // 文件走这里会把刚迁到新路径的 index/metadata 行删掉（M6a 联调实测：
+        // 文件 rename 后元数据丢失、条目从 browse 消失）。
+        let old_clone = old_path.clone();
+        let new_clone = new_path.clone();
+        let pool_clone = app_db.clone();
+        let color_db_clone = color_db.clone();
 
-    tokio::spawn(async move {
-        let res = tokio::task::spawn_blocking(move || {
-            let conn = pool_clone.get_connection();
-            let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
-            let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_clone, &new_clone);
-            let _ = color_db_clone.move_colors(&old_clone, &new_clone);
-        }).await;
+        tokio::spawn(async move {
+            let res = tokio::task::spawn_blocking(move || {
+                let conn = pool_clone.get_connection();
+                let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
+                let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_clone, &new_clone);
+                let _ = color_db_clone.move_colors(&old_clone, &new_clone);
+            }).await;
 
-        let _ = res;
-    });
+            let _ = res;
+        });
+    } else {
+        // 文件改名：index/metadata 已在上方事务同步迁好，colors 同步迁
+        //（move_colors 单文件语义=按路径原地改写，无清残留步骤）。
+        let _ = color_db.move_colors(&old_path, &new_path);
+    }
 
     Ok(())
 }
