@@ -310,13 +310,21 @@ pub async fn create_folder(path: String, app: tauri::AppHandle) -> Result<(), St
     Ok(())
 }
 
-#[tauri::command]
-pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) -> Result<(), String> {
+/// 重命名文件/目录并同步迁移 file_index / file_metadata / colors。
+/// 独立于 Tauri 命令的复用原语：lan_share 写端点（M6a 1.4）传自身持有的
+/// db 池调用同一套「动文件+迁库」逻辑，避免第二套实现。
+pub async fn rename_file_with_pools(
+    old_path: &str,
+    new_path: &str,
+    app_db: &AppDbPool,
+    color_db: &color_db::ColorDbPool,
+) -> Result<(), String> {
+    let old_path = old_path.to_string();
+    let new_path = new_path.to_string();
     fs::rename(&old_path, &new_path)
         .map_err(|e| format!("物理重命名失败 (可能文件被占用): {}", e))?;
 
     let is_dir = Path::new(&new_path).is_dir();
-    let app_db = app.state::<AppDbPool>();
 
     {
         let mut conn = app_db.get_connection();
@@ -351,15 +359,15 @@ pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHand
 
     let old_clone = old_path.clone();
     let new_clone = new_path.clone();
-    let pool_clone = app_db.inner().clone();
-    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let pool_clone = app_db.clone();
+    let color_db_clone = color_db.clone();
 
     tokio::spawn(async move {
         let res = tokio::task::spawn_blocking(move || {
             let conn = pool_clone.get_connection();
             let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
             let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_clone, &new_clone);
-            let _ = color_db.move_colors(&old_clone, &new_clone);
+            let _ = color_db_clone.move_colors(&old_clone, &new_clone);
         }).await;
 
         let _ = res;
@@ -369,11 +377,25 @@ pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHand
 }
 
 #[tauri::command]
-pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let app_db = app.state::<AppDbPool>().inner().clone();
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    rename_file_with_pools(&old_path, &new_path, &app_db, &color_db).await
+}
+
+/// 复制文件/目录的库侧数据：file_metadata、colors、file_index（副本立即对
+/// DB 路径可见）。桌面 `db_copy_file_metadata` 命令与 lan_share copy 端点共用。
+pub async fn copy_file_metadata_with_pools(
+    src_path: &str,
+    dest_path: &str,
+    app_db: &AppDbPool,
+    color_db: &color_db::ColorDbPool,
+) -> Result<(), String> {
+    let src_path = src_path.to_string();
+    let dest_path = dest_path.to_string();
     let dest_p = Path::new(&dest_path);
     let is_dir = dest_p.is_dir();
-    let app_db = app.state::<AppDbPool>();
-    
+
     let src_normalized = normalize_path(&src_path);
     let dest_normalized = normalize_path(&dest_path);
 
@@ -389,18 +411,17 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
         }
     }
 
-    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
     let _ = color_db.copy_colors(&src_path, &dest_path);
-    
+
     {
         let mut conn_mut = app_db.get_connection();
-        
+
         if is_dir {
             let _ = db::file_index::delete_entries_by_path(&conn_mut, &dest_normalized);
-            
+
             let src_dir_prefix = if src_normalized.ends_with('/') { src_normalized.clone() } else { format!("{}/", src_normalized) };
             let dest_dir_prefix = if dest_normalized.ends_with('/') { dest_normalized.clone() } else { format!("{}/", dest_normalized) };
-            
+
             if let Ok(all_entries) = db::file_index::get_entries_under_path(&conn_mut, &src_normalized) {
                 let new_entries: Vec<db::file_index::FileIndexEntry> = all_entries
                     .iter()
@@ -408,7 +429,7 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
                         if entry.path.starts_with(&src_dir_prefix) {
                             let relative_path = &entry.path[src_dir_prefix.len()..];
                             let new_path = format!("{}{}", dest_dir_prefix, relative_path);
-                            
+
                             Some(db::file_index::FileIndexEntry {
                                 file_id: generate_id(&new_path),
                                 parent_id: Some(generate_id(&normalize_path(Path::new(&new_path).parent().and_then(|p| p.to_str()).unwrap_or("")))),
@@ -427,7 +448,7 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
                         }
                     })
                     .collect();
-                
+
                 if !new_entries.is_empty() {
                     let _ = db::file_index::batch_upsert(&mut conn_mut, &new_entries);
                 }
@@ -437,7 +458,7 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
                 let new_id = generate_id(&dest_normalized);
                 let file_name = dest_p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                 let ext = dest_p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
-                
+
                 let mut width = None;
                 let mut height = None;
                 let mut format = None;
@@ -460,7 +481,7 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
                     created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                     modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                 };
-                
+
                 let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
             }
         }
@@ -470,7 +491,20 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
 }
 
 #[tauri::command]
-pub async fn delete_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let app_db = app.state::<AppDbPool>().inner().clone();
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    copy_file_metadata_with_pools(&src_path, &dest_path, &app_db, &color_db).await
+}
+
+/// 删除文件/目录并同步清理 file_index / file_metadata / colors。
+/// lan_share delete 端点与桌面命令共用（M6a 1.4）。
+pub async fn delete_file_with_pools(
+    path: &str,
+    app_db: &AppDbPool,
+    color_db: &color_db::ColorDbPool,
+) -> Result<(), String> {
+    let path = path.to_string();
     let file_path = Path::new(&path);
     if file_path.is_dir() {
         fs::remove_dir_all(file_path)
@@ -480,15 +514,20 @@ pub async fn delete_file(path: String, app: tauri::AppHandle) -> Result<(), Stri
             .map_err(|e| format!("Failed to delete file: {}", e))?;
     }
 
-    let app_db = app.state::<AppDbPool>();
     let conn = app_db.get_connection();
     let _ = db::file_index::delete_entries_by_path(&conn, &path);
     let _ = db::file_metadata::delete_metadata_by_path(&conn, &path);
-    
-    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+
     let _ = color_db.delete_colors_by_path(&path);
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let app_db = app.state::<AppDbPool>().inner().clone();
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    delete_file_with_pools(&path, &app_db, &color_db).await
 }
 
 #[tauri::command]
@@ -536,53 +575,56 @@ pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, String> {
+/// 复制文件/目录（纯文件系统，不动库；库侧数据由 copy_file_metadata_with_pools 负责）。
+/// 返回实际落盘的规范化路径（目标重名时自动 `name_copy.ext` / `name_copy2.ext`）。
+pub async fn copy_file_fs(src_path: &str, dest_path: &str) -> Result<String, String> {
+    let src_path = src_path.to_string();
+    let dest_path = dest_path.to_string();
     let src = Path::new(&src_path);
     let mut dest = Path::new(&dest_path);
-    
+
     if !src.exists() {
         return Err(format!("Source does not exist: {}", src_path));
     }
-    
+
     let is_dir = src.is_dir();
-    
+
     let src_normalized = normalize_path(&src_path);
     let dest_normalized = normalize_path(&dest_path);
-    
+
     if src_normalized == dest_normalized {
         if is_dir {
             return Err(format!("Cannot copy directory to itself: {}", src_path));
         }
     }
-    
+
     let final_dest_path = if !is_dir && dest.exists() {
         generate_unique_file_path(&dest_path)
     } else {
         dest_path.clone()
     };
-    
+
     dest = Path::new(&final_dest_path);
-    
+
     if let Some(dest_parent) = dest.parent() {
         if !dest_parent.exists() {
             fs::create_dir_all(dest_parent)
                 .map_err(|e| format!("Failed to create destination directory: {}", e))?;
         }
     }
-    
+
     #[cfg(windows)]
     {
         use std::process::Command;
-        
+
         let max_retries = 3;
         let mut last_error: Option<std::io::Error> = None;
-        
+
         for attempt in 0..max_retries {
             if is_dir {
                 let src_win = src_path.replace("/", "\\");
                 let dest_win = final_dest_path.replace("/", "\\");
-                
+
                 let output = Command::new("robocopy")
                     .arg(&src_win)
                     .arg(&dest_win)
@@ -596,7 +638,7 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                     .arg("/W:1")
                     .output()
                     .map_err(|e| format!("Failed to execute robocopy command: {}", e))?;
-                
+
                 let exit_code = output.status.code().unwrap_or(0);
                 if exit_code <= 1 {
                     let norm = normalize_path(&final_dest_path);
@@ -618,22 +660,22 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                     }
                 }
             }
-            
+
             if attempt < max_retries - 1 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
         }
-        
+
         if let Some(e) = last_error {
             return Err(format!("Failed to copy after {} attempts: {}", max_retries, e));
         }
     }
-    
+
     #[cfg(not(windows))]
     {
         let max_retries = 3;
         let mut last_error: Option<std::io::Error> = None;
-        
+
         for attempt in 0..max_retries {
             if is_dir {
                 match fs_extra::dir::copy(src, dest, &fs_extra::dir::CopyOptions::new()) {
@@ -656,29 +698,42 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                     }
                 }
             }
-            
+
             if attempt < max_retries - 1 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
         }
-        
+
         if let Some(e) = last_error {
             return Err(format!("Failed to copy after {} attempts: {}", max_retries, e));
         }
     }
-    
+
     Err("Unknown error occurred while copying".to_string())
 }
 
 #[tauri::command]
-pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, String> {
+    copy_file_fs(&src_path, &dest_path).await
+}
+
+/// 移动文件/目录并同步迁移 file_index / file_metadata / colors。
+/// lan_share move 端点与桌面命令共用（M6a 1.4）。
+pub async fn move_file_with_pools(
+    src_path: &str,
+    dest_path: &str,
+    app_db: &AppDbPool,
+    color_db: &color_db::ColorDbPool,
+) -> Result<(), String> {
+    let src_path = src_path.to_string();
+    let dest_path = dest_path.to_string();
     let src = Path::new(&src_path);
     let dest = Path::new(&dest_path);
-    
+
     if !src.exists() {
         return Err(format!("源文件不存在: {}", src_path));
     }
-    
+
     let is_dir = src.is_dir();
 
     if let Some(parent) = dest.parent() {
@@ -687,7 +742,7 @@ pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandl
                 .map_err(|e| format!("创建目标目录失败: {}", e))?;
         }
     }
-    
+
     let max_retries = 3;
     let mut success = false;
     let mut last_error: Option<std::io::Error> = None;
@@ -704,7 +759,7 @@ pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandl
             }
         }
     }
-    
+
     if !success && !is_dir {
         if let Ok(_) = fs::copy(src, dest) {
             if let Ok(_) = fs::remove_file(src) {
@@ -714,19 +769,18 @@ pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandl
             }
         }
     }
-    
+
     if !success {
         return Err(format!("无法移动文件/文件夹 (可能被锁定或跨卷): {:?}", last_error));
     }
 
-    let app_db = app.state::<AppDbPool>();
     if is_dir {
         let mut conn = app_db.get_connection();
         let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
-        
+
         let _ = db::file_index::migrate_index_dir(&tx, &src_path, &dest_path);
         let _ = db::file_metadata::migrate_metadata_dir(&tx, &src_path, &dest_path);
-        
+
         tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     } else {
         let old_id = generate_id(&src_path);
@@ -736,41 +790,51 @@ pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandl
 
         let _ = db::file_index::migrate_index_dir(&tx, &src_path, &dest_path);
         let _ = db::file_metadata::migrate_metadata(&tx, &old_id, &new_id, &dest_path);
-        
+
         tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     }
-    
-    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+
     let _ = color_db.move_colors(&src_path, &dest_path);
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>, app: tauri::AppHandle) -> Result<(), String> {
+pub async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let app_db = app.state::<AppDbPool>().inner().clone();
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    move_file_with_pools(&src_path, &dest_path, &app_db, &color_db).await
+}
+
+/// 写入文件字节并补入 file_index（单文件增量入索引路径，图片类型）。
+/// lan_share upload 端点与桌面命令共用——写完即对 DB 路径可见，无需整库重扫。
+pub async fn write_file_bytes_indexed(
+    file_path: &str,
+    bytes: &[u8],
+    app_db: &AppDbPool,
+) -> Result<(), String> {
     use std::io::Write;
-    
-    let path = Path::new(&file_path);
-    
+
+    let path = Path::new(file_path);
+
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
     }
-    
+
     let max_retries = 3;
     let mut attempt = 0;
     let mut last_error: Option<std::io::Error> = None;
-    
+
     while attempt < max_retries {
         match fs::File::create(path) {
             Ok(mut file) => {
-                match file.write_all(&bytes) {
+                match file.write_all(bytes) {
                     Ok(_) => {
-                        let app_db = app.state::<AppDbPool>();
                         let mut conn = app_db.get_connection();
-                        let normalized_path = normalize_path(&file_path);
+                        let normalized_path = normalize_path(file_path);
                         let id = generate_id(&normalized_path);
                         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                         let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
@@ -810,10 +874,16 @@ pub async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>, app: tauri
             }
         }
     }
-    
+
     if let Some(e) = last_error {
         Err(format!("Failed to write file after {} attempts: {}", max_retries, e))
     } else {
         Err("Unknown error occurred while writing file".to_string())
     }
+}
+
+#[tauri::command]
+pub async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>, app: tauri::AppHandle) -> Result<(), String> {
+    let app_db = app.state::<AppDbPool>().inner().clone();
+    write_file_bytes_indexed(&file_path, &bytes, &app_db).await
 }

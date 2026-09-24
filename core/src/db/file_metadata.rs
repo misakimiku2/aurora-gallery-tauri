@@ -66,6 +66,48 @@ pub fn get_metadata_by_id(conn: &Connection, file_id: &str) -> Result<Option<Fil
     }
 }
 
+/// 按 file_id 列表批量取元数据（单条 SQL IN 查询，分块防超占位符上限）。
+/// 返回 HashMap<file_id, FileMetadata>，查不到的 id 不在映射中——调用方按需给默认值。
+/// M6a 互联批量读端点用，避免逐条 N+1 查询。
+pub fn get_metadata_by_ids(
+    conn: &Connection,
+    file_ids: &[String],
+) -> Result<std::collections::HashMap<String, FileMetadata>> {
+    let mut out = std::collections::HashMap::new();
+    if file_ids.is_empty() {
+        return Ok(out);
+    }
+    // SQLite 默认变量上限 999（新版 32766），按 500 分块稳妥。
+    const CHUNK: usize = 500;
+    for chunk in file_ids.chunks(CHUNK) {
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+        let sql = format!(
+            "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at
+             FROM file_metadata WHERE file_id IN ({})",
+            placeholders.join(",")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok(FileMetadata {
+                file_id: row.get(0)?,
+                path: row.get(1)?,
+                tags: row.get(2)?,
+                description: row.get(3)?,
+                source_url: row.get(4)?,
+                ai_data: row.get(5)?,
+                category: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        for r in rows {
+            let m = r?;
+            out.insert(m.file_id.clone(), m);
+        }
+    }
+    Ok(out)
+}
+
 pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
     let mut stmt = conn.prepare(
         "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at FROM file_metadata"
@@ -270,8 +312,7 @@ pub fn migrate_metadata_dir(conn: &Connection, old_path: &str, new_path: &str) -
     Ok(())
 }
 
-pub fn copy_metadata_dir(conn: &Connection, src_path: &str, dest_path: &str) -> Result<()> {
-    let src_normalized = src_path.replace("\\", "/");
+pub fn copy_metadata_dir(conn: &Connection, src_path: &str, dest_path: &str) -> Result<()> {    let src_normalized = src_path.replace("\\", "/");
     let dest_normalized = dest_path.replace("\\", "/");
     
     let mut stmt = conn.prepare(
@@ -300,6 +341,47 @@ pub fn copy_metadata_dir(conn: &Connection, src_path: &str, dest_path: &str) -> 
     for (src_id, dest_id, dest_full_path) in tasks {
         copy_metadata(conn, &src_id, &dest_id, &dest_full_path)?;
     }
-    
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        crate::db::init_db(&conn).expect("init db");
+        conn
+    }
+
+    #[test]
+    fn get_metadata_by_ids_returns_only_requested() {
+        let conn = setup();
+        for (id, path) in [("id_a", "/a.png"), ("id_b", "/b.png")] {
+            upsert_file_metadata(
+                &conn,
+                &FileMetadata {
+                    file_id: id.into(),
+                    path: path.into(),
+                    tags: Some(serde_json::json!(["t1"])),
+                    description: Some("d".into()),
+                    source_url: None,
+                    ai_data: None,
+                    category: None,
+                    updated_at: Some(1),
+                },
+            )
+            .unwrap();
+        }
+
+        let got = get_metadata_by_ids(&conn, &["id_a".to_string(), "id_missing".to_string()]).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got["id_a"].description.as_deref(), Some("d"));
+        assert!(!got.contains_key("id_missing"));
+
+        // 空入参直接返回空映射
+        assert!(get_metadata_by_ids(&conn, &[]).unwrap().is_empty());
+    }
 }

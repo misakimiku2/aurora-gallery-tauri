@@ -6,14 +6,19 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tower_http::cors::{Any, CorsLayer};
 
 use super::device_manager::DeviceManager;
+use super::metadata::{
+    MetadataBatchRequest, MetadataBatchResponse, MetadataItem, MetadataPatchRequest,
+    PersonPatchRequest, TopicCreateRequest, TopicIdQuery, TopicMemberRemoveQuery,
+    TopicMembersRequest, TopicMembersResponse,
+};
 use super::session::SessionManager;
 use super::types::*;
 use crate::db::AppDbPool;
@@ -36,6 +41,652 @@ fn emit_devices_changed(app_handle: &AppHandle) {
     if let Err(e) = app_handle.emit("lan-share-devices-changed", ()) {
         log::warn!("[LAN Share] 发送 lan-share-devices-changed 事件失败: {}", e);
     }
+}
+
+/// M6a 1.5：互联写操作后通知桌面前端刷新对应数据（照抄 emit_devices_changed
+/// 范式：事件不带数据负载，前端收到后按 kind 回拉）。kind ∈ metadata|files|people|topics。
+fn emit_data_changed(app_handle: &AppHandle, kind: &str) {
+    if let Err(e) = app_handle.emit("lan-share-data-changed", serde_json::json!({ "kind": kind })) {
+        log::warn!("[LAN Share] 发送 lan-share-data-changed 事件失败: {}", e);
+    }
+}
+
+/// 写端点公共前置：Bearer token 校验 + allow_edit 门禁（D32 默认全开，手动收紧后 403）。
+async fn require_edit_permission(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Session, Response> {
+    let token = extract_token(headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
+
+    {
+        let config = state.config.read().await;
+        if !config.allow_edit {
+            log::warn!("[LAN Share] 写操作被拒绝 - 权限不足, 设备: {}", session.device_name);
+            return Err(error_response(StatusCode::FORBIDDEN, "Edit not allowed"));
+        }
+    }
+
+    state.devices.update_activity(&session.device_id).await;
+    Ok(session)
+}
+
+/// 元数据/people/topics 端点的 db 池（桌面端 lan_share_start 必注入，缺失属异常配置）。
+fn require_db_pool(state: &AppState) -> Result<Arc<AppDbPool>, Response> {
+    state.db_pool.clone()
+        .ok_or_else(|| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Database not available"))
+}
+
+/// 文件操作端点需要的双池（file_operations 原语同时联动 metadata.db 与 colors.db）。
+fn require_db_pools(
+    state: &AppState,
+) -> Result<(Arc<AppDbPool>, Arc<crate::color_db::ColorDbPool>), Response> {
+    let app_db = require_db_pool(state)?;
+    let color_db = state.color_db_pool.clone()
+        .ok_or_else(|| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Color database not available"))?;
+    Ok((app_db, color_db))
+}
+
+/// 把 LAN 传入的不透明 path 解析到共享根下的绝对路径（与 browse/thumbnail 的
+/// root_path.join 语义一致，不解析不规范化客户端串本身）。越出共享根 → 400。
+fn resolve_under_root(state: &AppState, path: &str) -> Result<std::path::PathBuf, Response> {
+    let full = state.root_path.join(path);
+    if !full.starts_with(state.root_path.as_path()) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
+    }
+    Ok(full)
+}
+
+/// 把新词并入桌面词表（user_data.json 的 customTags 并集后写回）。
+/// 与前端 debounce 全量保存存在 last-writer-wins 窗口，M6a 接受该竞态
+/// （前端收到 data-changed 后会重读词表）。
+async fn merge_tags_into_desktop_vocabulary(
+    app_handle: &AppHandle,
+    tags: &[String],
+) -> Result<(), String> {
+    if tags.is_empty() {
+        return Ok(());
+    }
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    let config_path = app_data_dir.join("user_data.json");
+    let mut user_data = if config_path.exists() {
+        let json_str = tokio::fs::read_to_string(&config_path).await.map_err(|e| e.to_string())?;
+        serde_json::from_str::<serde_json::Value>(&json_str).unwrap_or(serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if super::metadata::merge_tags_into_user_data(&mut user_data, tags) {
+        let json = serde_json::to_string_pretty(&user_data).map_err(|e| e.to_string())?;
+        tokio::fs::write(&config_path, json).await.map_err(|e| e.to_string())?;
+        log::info!("[LAN Share] 新标签已并入桌面词表（候选 {} 个）", tags.len());
+    }
+    Ok(())
+}
+
+// ============ M6a 新端点：元数据 ============
+
+/// POST /api/metadata/batch：path → file_id → file_metadata 批量读（单条 IN 查询）。
+/// 每个入参 path 恰好一项，查不到给空默认，绝不因个别 path 失败整批报错。
+pub async fn handle_metadata_batch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<MetadataBatchRequest>,
+) -> Result<Json<MetadataBatchResponse>, Response> {
+    let token = extract_token(&headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
+    state.devices.update_activity(&session.device_id).await;
+
+    let root = state.root_path.clone();
+    // (客户端不透明 path, Option<file_id>)；越出共享根的 path 按 None 处理（空默认，不泄漏根外元数据）
+    let entries: Vec<(String, Option<String>)> = payload.paths.iter().map(|p| {
+        let full = root.join(p);
+        if full.starts_with(root.as_path()) {
+            (p.clone(), Some(crate::db::generate_id(&full.to_string_lossy())))
+        } else {
+            (p.clone(), None)
+        }
+    }).collect();
+
+    let empty_item = |p: &str| MetadataItem {
+        path: p.to_string(),
+        tags: Vec::new(),
+        description: String::new(),
+        source_url: String::new(),
+    };
+
+    let items = if let Some(pool) = state.db_pool.clone() {
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get_connection();
+            let ids: Vec<String> = entries.iter().filter_map(|(_, id)| id.clone()).collect();
+            let map = crate::db::file_metadata::get_metadata_by_ids(&conn, &ids)
+                .unwrap_or_default();
+            entries.iter()
+                .map(|(p, id)| {
+                    match id.as_ref().and_then(|fid| map.get(fid)) {
+                        Some(m) => super::metadata::metadata_to_item(p, m),
+                        None => empty_item(p),
+                    }
+                })
+                .collect::<Vec<_>>()
+        }).await.map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+    } else {
+        entries.iter().map(|(p, _)| empty_item(p)).collect()
+    };
+
+    Ok(Json(MetadataBatchResponse { items }))
+}
+
+/// PUT /api/metadata：整行读改写（读旧行 → 只覆盖 patch 字段 → 整行写回），
+/// 新词并入桌面词表，发 data-changed{kind:"metadata"}。
+pub async fn handle_metadata_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<MetadataPatchRequest>,
+) -> Result<Json<MetadataItem>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    let full = resolve_under_root(&state, &payload.path)?;
+    let db_path = crate::db::normalize_path(&full.to_string_lossy());
+    let file_id = crate::db::generate_id(&db_path);
+    let pool = require_db_pool(&state)?;
+
+    let client_path = payload.path.clone();
+    let new_tags = payload.patch.tags.clone();
+    let patch = payload.patch;
+
+    let merged = tokio::task::spawn_blocking(move || -> Result<crate::db::file_metadata::FileMetadata, String> {
+        let conn = pool.get_connection();
+        let existing = crate::db::file_metadata::get_metadata_by_id(&conn, &file_id)
+            .map_err(|e| e.to_string())?;
+        let row = super::metadata::merge_metadata_patch(existing, &file_id, &db_path, &patch);
+        crate::db::file_metadata::upsert_file_metadata(&conn, &row).map_err(|e| e.to_string())?;
+        Ok(row)
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    if let Some(ref tags) = new_tags {
+        if let Err(e) = merge_tags_into_desktop_vocabulary(&state.app_handle, tags).await {
+            log::warn!("[LAN Share] 词表并入失败（元数据已写入）: {}", e);
+        }
+    }
+
+    log::info!("[LAN Share] 元数据更新 - 设备: {}, path: {}", session.device_name, client_path);
+    emit_data_changed(&state.app_handle, "metadata");
+
+    Ok(Json(super::metadata::metadata_to_item(&client_path, &merged)))
+}
+
+// ============ M6a 新端点：people ============
+
+#[derive(Debug, Serialize)]
+pub struct PeopleResponse {
+    pub people: Vec<crate::db::persons::Person>,
+}
+
+/// GET /api/people：core Person 模型 camelCase 原样序列化。
+pub async fn handle_people(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<PeopleResponse>, Response> {
+    let token = extract_token(&headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
+    state.devices.update_activity(&session.device_id).await;
+
+    let pool = require_db_pool(&state)?;
+    let people = tokio::task::spawn_blocking(move || {
+        let conn = pool.get_connection();
+        crate::db::persons::get_all_people(&conn).unwrap_or_default()
+    }).await.unwrap_or_default();
+
+    Ok(Json(PeopleResponse { people }))
+}
+
+/// PUT /api/person：重命名/换头像/改描述（整行读改写）。
+/// avatar_path 是共享根相对 path，服务端换算 cover_file_id；换头像清空 faceBox。
+pub async fn handle_person_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<PersonPatchRequest>,
+) -> Result<Json<crate::db::persons::Person>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    let cover_file_id = match &payload.avatar_path {
+        Some(p) => {
+            let full = resolve_under_root(&state, p)?;
+            Some(crate::db::generate_id(&full.to_string_lossy()))
+        }
+        None => None,
+    };
+
+    let pool = require_db_pool(&state)?;
+    let person_id = payload.id.clone();
+    let name = payload.name.clone();
+    let description = payload.description.clone();
+
+    let updated = tokio::task::spawn_blocking(move || -> Result<Option<crate::db::persons::Person>, String> {
+        let conn = pool.get_connection();
+        let mut person = match crate::db::persons::get_person_by_id(&conn, &person_id)
+            .map_err(|e| e.to_string())?
+        {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        if let Some(n) = name {
+            person.name = n;
+        }
+        if let Some(d) = description {
+            person.description = Some(d);
+        }
+        if let Some(c) = cover_file_id {
+            person.cover_file_id = c;
+            // faceBox 坐标属于旧头像，换头像即失效
+            person.face_box = None;
+        }
+        person.updated_at = Some(chrono::Utc::now().timestamp_millis());
+        crate::db::persons::upsert_person(&conn, &person).map_err(|e| e.to_string())?;
+        Ok(Some(person))
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let person = match updated {
+        Some(p) => p,
+        None => return Err(error_response(StatusCode::NOT_FOUND, "Person not found")),
+    };
+
+    log::info!("[LAN Share] 人物更新 - 设备: {}, id: {}", session.device_name, person.id);
+    emit_data_changed(&state.app_handle, "people");
+
+    Ok(Json(person))
+}
+
+// ============ M6a 新端点：topics ============
+
+#[derive(Debug, Serialize)]
+pub struct TopicsResponse {
+    pub topics: Vec<crate::db::topics::Topic>,
+}
+
+/// GET /api/topics：core Topic 模型 camelCase 原样序列化（列表 fileIds 恒空，成员懒加载）。
+pub async fn handle_topics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<TopicsResponse>, Response> {
+    let token = extract_token(&headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
+    state.devices.update_activity(&session.device_id).await;
+
+    let pool = require_db_pool(&state)?;
+    let topics = tokio::task::spawn_blocking(move || {
+        let conn = pool.get_connection();
+        crate::db::topics::get_all_topics(&conn).unwrap_or_default()
+    }).await.unwrap_or_default();
+
+    Ok(Json(TopicsResponse { topics }))
+}
+
+/// 专题 id 形制对齐桌面端：9 位随机串（useTopics.handleCreateTopic 的 id 约定）。
+fn generate_topic_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()[..9].to_string()
+}
+
+/// POST /api/topic：建专题（id/时间戳由服务端生成）。
+pub async fn handle_topic_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<TopicCreateRequest>,
+) -> Result<Json<crate::db::topics::Topic>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    let pool = require_db_pool(&state)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let topic = crate::db::topics::Topic {
+        id: generate_topic_id(),
+        parent_id: payload.parent_id,
+        name: payload.name,
+        description: payload.description,
+        topic_type: Some("TOPIC".to_string()),
+        cover_file_id: None,
+        background_file_id: None,
+        cover_crop: None,
+        people_ids: Vec::new(),
+        file_ids: Vec::new(),
+        source_url: None,
+        created_at: Some(now),
+        updated_at: Some(now),
+        source_type: None,
+        work_name: None,
+        work_name_cn: None,
+        file_count: 0,
+    };
+
+    let topic_clone = topic.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get_connection();
+        crate::db::topics::upsert_topic(&conn, &topic_clone)
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    log::info!("[LAN Share] 专题创建 - 设备: {}, id: {}, name: {}", session.device_name, topic.id, topic.name);
+    emit_data_changed(&state.app_handle, "topics");
+
+    Ok(Json(topic))
+}
+
+/// DELETE /api/topic?id=：删专题（级联清 topic_files / topic_people）。
+pub async fn handle_topic_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TopicIdQuery>,
+) -> Result<Json<OperationResponse>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    let pool = require_db_pool(&state)?;
+    let topic_id = query.id.clone();
+    let deleted = tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        let conn = pool.get_connection();
+        let exists = crate::db::topics::get_all_topics(&conn)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|t| t.id == topic_id);
+        if !exists {
+            return Ok(false);
+        }
+        crate::db::topics::delete_topic(&conn, &topic_id).map_err(|e| e.to_string())?;
+        Ok(true)
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    if !deleted {
+        return Err(error_response(StatusCode::NOT_FOUND, "Topic not found"));
+    }
+
+    log::info!("[LAN Share] 专题删除 - 设备: {}, id: {}", session.device_name, query.id);
+    emit_data_changed(&state.app_handle, "topics");
+
+    Ok(Json(OperationResponse { success: true, path: None, error: None }))
+}
+
+/// POST /api/topic/members：加成员（paths 换算 file_id + people_ids 直传）。
+pub async fn handle_topic_members_add(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<TopicMembersRequest>,
+) -> Result<Json<TopicMembersResponse>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    if payload.paths.is_none() && payload.people_ids.is_none() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "paths or people_ids required"));
+    }
+
+    let root = state.root_path.clone();
+    let file_ids: Vec<String> = payload.paths.unwrap_or_default().iter().filter_map(|p| {
+        let full = root.join(p);
+        if full.starts_with(root.as_path()) {
+            Some(crate::db::generate_id(&full.to_string_lossy()))
+        } else {
+            None
+        }
+    }).collect();
+    let people_ids = payload.people_ids.unwrap_or_default();
+
+    let pool = require_db_pool(&state)?;
+    let topic_id = payload.topic_id.clone();
+    let file_count = tokio::task::spawn_blocking(move || -> Result<Option<i32>, String> {
+        let conn = pool.get_connection();
+        let exists = crate::db::topics::get_all_topics(&conn)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|t| t.id == topic_id);
+        if !exists {
+            return Ok(None);
+        }
+        if !file_ids.is_empty() {
+            crate::db::topics::add_files_to_topic(&conn, &topic_id, &file_ids).map_err(|e| e.to_string())?;
+        }
+        if !people_ids.is_empty() {
+            crate::db::topics::add_people_to_topic(&conn, &topic_id, &people_ids).map_err(|e| e.to_string())?;
+        }
+        let count = crate::db::topics::get_all_topics(&conn)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .find(|t| t.id == topic_id)
+            .map(|t| t.file_count);
+        Ok(count)
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let file_count = match file_count {
+        Some(c) => c,
+        None => return Err(error_response(StatusCode::NOT_FOUND, "Topic not found")),
+    };
+
+    log::info!("[LAN Share] 专题加成员 - 设备: {}, id: {}", session.device_name, payload.topic_id);
+    emit_data_changed(&state.app_handle, "topics");
+
+    Ok(Json(TopicMembersResponse { success: true, file_count }))
+}
+
+/// DELETE /api/topic/members?topic_id=&path= / ?topic_id=&people_id=：删单成员。
+pub async fn handle_topic_members_remove(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TopicMemberRemoveQuery>,
+) -> Result<Json<TopicMembersResponse>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+
+    let file_id = match &query.path {
+        Some(p) => {
+            let full = resolve_under_root(&state, p)?;
+            Some(crate::db::generate_id(&full.to_string_lossy()))
+        }
+        None => None,
+    };
+    if file_id.is_none() && query.people_id.is_none() {
+        return Err(error_response(StatusCode::BAD_REQUEST, "path or people_id required"));
+    }
+
+    let pool = require_db_pool(&state)?;
+    let topic_id = query.topic_id.clone();
+    let people_id = query.people_id;
+    let file_count = tokio::task::spawn_blocking(move || -> Result<Option<i32>, String> {
+        let conn = pool.get_connection();
+        let exists = crate::db::topics::get_all_topics(&conn)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|t| t.id == topic_id);
+        if !exists {
+            return Ok(None);
+        }
+        if let Some(fid) = &file_id {
+            crate::db::topics::remove_file_from_topic(&conn, &topic_id, fid).map_err(|e| e.to_string())?;
+        }
+        if let Some(pid) = &people_id {
+            crate::db::topics::remove_person_from_topic(&conn, &topic_id, pid).map_err(|e| e.to_string())?;
+        }
+        let count = crate::db::topics::get_all_topics(&conn)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .find(|t| t.id == topic_id)
+            .map(|t| t.file_count);
+        Ok(count)
+    }).await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    let file_count = match file_count {
+        Some(c) => c,
+        None => return Err(error_response(StatusCode::NOT_FOUND, "Topic not found")),
+    };
+
+    log::info!("[LAN Share] 专题删成员 - 设备: {}, id: {}", session.device_name, query.topic_id);
+    emit_data_changed(&state.app_handle, "topics");
+
+    Ok(Json(TopicMembersResponse { success: true, file_count }))
+}
+
+// ============ M6a 新端点：文件 move / copy ============
+
+/// POST /api/file/move：批量移入 target_dir（新 path = target_dir/原文件名，
+/// 目标已存在该项失败，不覆盖不自动改名）。走 file_operations::move_file
+/// 原语（file_id / file_metadata / colors 联动迁移）。
+pub async fn handle_file_move(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<FileBatchRequest>,
+) -> Result<Json<FileBatchResponse>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+    let (app_db, color_db) = require_db_pools(&state)?;
+
+    if has_traversal(&payload.target_dir) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
+    }
+    let target_dir = payload.target_dir.trim().trim_start_matches('/').to_string();
+    let root = state.root_path.clone();
+    let dest_dir = root.join(&target_dir);
+    if !dest_dir.starts_with(root.as_path()) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "Invalid target directory"));
+    }
+    if !dest_dir.is_dir() {
+        return Err(error_response(StatusCode::NOT_FOUND, "Target directory not found"));
+    }
+
+    let root_str = root.to_string_lossy().to_string();
+    let mut items = Vec::new();
+    let mut any_success = false;
+
+    for p in &payload.paths {
+        let full = root.join(p);
+        if !full.exists() || !full.starts_with(root.as_path()) {
+            items.push(FileOperationItem {
+                path: p.clone(), success: false, new_path: None,
+                error: Some("File not found".to_string()),
+            });
+            continue;
+        }
+        let name = full.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let dest_full = dest_dir.join(&name);
+        if dest_full.exists() {
+            items.push(FileOperationItem {
+                path: p.clone(), success: false, new_path: None,
+                error: Some("Target already exists".to_string()),
+            });
+            continue;
+        }
+
+        match crate::file_operations::move_file_with_pools(
+            &full.to_string_lossy(),
+            &dest_full.to_string_lossy(),
+            &app_db,
+            &color_db,
+        ).await {
+            Ok(_) => {
+                any_success = true;
+                items.push(FileOperationItem {
+                    path: p.clone(),
+                    success: true,
+                    new_path: Some(to_relative_path(&dest_full.to_string_lossy(), &root_str)),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                items.push(FileOperationItem {
+                    path: p.clone(), success: false, new_path: None, error: Some(e),
+                });
+            }
+        }
+    }
+
+    if any_success {
+        emit_data_changed(&state.app_handle, "files");
+    }
+    log::info!("[LAN Share] 批量移动 - 设备: {}, {} 项 -> {}", session.device_name, items.len(), target_dir);
+    Ok(Json(FileBatchResponse { items }))
+}
+
+/// POST /api/file/copy：批量复制到 target_dir（重名自动 name_copy.ext，
+/// new_path 回传实际落盘路径）。文件走 copy_file_fs，库侧数据（元数据/索引/
+/// colors）走 copy_file_metadata_with_pools，副本对桌面 browse 立即可见。
+pub async fn handle_file_copy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<FileBatchRequest>,
+) -> Result<Json<FileBatchResponse>, Response> {
+    let session = require_edit_permission(&state, &headers).await?;
+    let (app_db, color_db) = require_db_pools(&state)?;
+
+    if has_traversal(&payload.target_dir) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
+    }
+    let target_dir = payload.target_dir.trim().trim_start_matches('/').to_string();
+    let root = state.root_path.clone();
+    let dest_dir = root.join(&target_dir);
+    if !dest_dir.starts_with(root.as_path()) {
+        return Err(error_response(StatusCode::BAD_REQUEST, "Invalid target directory"));
+    }
+
+    let root_str = root.to_string_lossy().to_string();
+    let mut items = Vec::new();
+    let mut any_success = false;
+
+    for p in &payload.paths {
+        let full = root.join(p);
+        if !full.exists() || !full.starts_with(root.as_path()) {
+            items.push(FileOperationItem {
+                path: p.clone(), success: false, new_path: None,
+                error: Some("File not found".to_string()),
+            });
+            continue;
+        }
+        let name = full.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let dest_full = dest_dir.join(&name);
+
+        let src_str = full.to_string_lossy().to_string();
+        // copy_file_fs 返回实际落盘的规范化绝对路径（含重名自动改名）
+        let final_dest = match crate::file_operations::copy_file_fs(&src_str, &dest_full.to_string_lossy()).await {
+            Ok(p) => p,
+            Err(e) => {
+                items.push(FileOperationItem {
+                    path: p.clone(), success: false, new_path: None, error: Some(e),
+                });
+                continue;
+            }
+        };
+
+        match crate::file_operations::copy_file_metadata_with_pools(&src_str, &final_dest, &app_db, &color_db).await {
+            Ok(_) => {
+                any_success = true;
+                items.push(FileOperationItem {
+                    path: p.clone(),
+                    success: true,
+                    new_path: Some(to_relative_path(&final_dest, &root_str)),
+                    error: None,
+                });
+            }
+            Err(e) => {
+                items.push(FileOperationItem {
+                    path: p.clone(), success: false, new_path: None, error: Some(e),
+                });
+            }
+        }
+    }
+
+    if any_success {
+        emit_data_changed(&state.app_handle, "files");
+    }
+    log::info!("[LAN Share] 批量复制 - 设备: {}, {} 项 -> {}", session.device_name, items.len(), target_dir);
+    Ok(Json(FileBatchResponse { items }))
 }
 
 /// 双向连接融合：客户端认证时携带了 peer_server 信息，通知前端自动
@@ -387,6 +1038,26 @@ pub async fn handle_browse(
 
             match crate::db::file_index::get_children_by_parent_path(&conn, &normalized_parent_path_clone) {
                 Ok(children) => {
+                    // 切根防线（0.1 失配修复）：DB 条目必须落在当前共享根下。
+                    // 共享根切换后旧索引未失效时，查到的条目带旧根的绝对路径——
+                    // 此时弃用 DB 结果、走 FS 回退（与 all_image_folders 的回退
+                    // 行为对齐），不允许 browse 吐旧索引。
+                    let root_norm = crate::db::normalize_path(&root_path_clone.to_string_lossy())
+                        .replace('\\', "/")
+                        .to_lowercase();
+                    let root_prefix = format!("{}/", root_norm);
+                    let stale_index = children.iter().any(|e| {
+                        let p = e.path.replace('\\', "/").to_lowercase();
+                        p != root_norm && !p.starts_with(&root_prefix)
+                    });
+                    if stale_index {
+                        log::warn!(
+                            "[LAN Share] 索引根目录与当前共享根不一致（共享根疑似已切换），弃用 DB 结果回退文件系统: {}",
+                            root_path_clone.display()
+                        );
+                        return None;
+                    }
+
                     if !children.is_empty() {
                         let folder_ids: Vec<String> = children.iter()
                             .filter(|e| e.file_type == "Folder")
@@ -832,10 +1503,12 @@ pub async fn handle_delete(
             error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token")
         })?;
     
-    let config = state.config.read().await;
-    if !config.allow_edit {
-        log::warn!("[LAN Share] 删除被拒绝 - 权限不足, 设备: {}", session.device_name);
-        return Err(error_response(StatusCode::FORBIDDEN, "Edit not allowed"));
+    {
+        let config = state.config.read().await;
+        if !config.allow_edit {
+            log::warn!("[LAN Share] 删除被拒绝 - 权限不足, 设备: {}", session.device_name);
+            return Err(error_response(StatusCode::FORBIDDEN, "Edit not allowed"));
+        }
     }
 
     state.devices.update_activity(&session.device_id).await;
@@ -849,9 +1522,13 @@ pub async fn handle_delete(
         return Err(error_response(StatusCode::NOT_FOUND, "File not found"));
     }
 
-    match fs::remove_file(&full_path).await {
+    // M6a 1.4：从裸 fs::remove_file 改道 file_operations（同步清理
+    // file_index / file_metadata / colors，与桌面本地删除的库状态一致）
+    let (app_db, color_db) = require_db_pools(&state)?;
+    match crate::file_operations::delete_file_with_pools(&full_path.to_string_lossy(), &app_db, &color_db).await {
         Ok(_) => {
             log::info!("[LAN Share] 删除成功 - 路径: {}", query.path);
+            emit_data_changed(&state.app_handle, "files");
             Ok(Json(OperationResponse {
                 success: true,
                 path: None,
@@ -863,7 +1540,7 @@ pub async fn handle_delete(
             Ok(Json(OperationResponse {
                 success: false,
                 path: None,
-                error: Some(e.to_string()),
+                error: Some(e),
             }))
         }
     }
@@ -881,10 +1558,12 @@ pub async fn handle_rename(
             error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token")
         })?;
     
-    let config = state.config.read().await;
-    if !config.allow_edit {
-        log::warn!("[LAN Share] 重命名被拒绝 - 权限不足, 设备: {}", session.device_name);
-        return Err(error_response(StatusCode::FORBIDDEN, "Edit not allowed"));
+    {
+        let config = state.config.read().await;
+        if !config.allow_edit {
+            log::warn!("[LAN Share] 重命名被拒绝 - 权限不足, 设备: {}", session.device_name);
+            return Err(error_response(StatusCode::FORBIDDEN, "Edit not allowed"));
+        }
     }
 
     state.devices.update_activity(&session.device_id).await;
@@ -906,13 +1585,22 @@ pub async fn handle_rename(
         return Err(error_response(StatusCode::CONFLICT, "File already exists"));
     }
 
-    match fs::rename(&old_path, &new_path).await {
+    // M6a 1.4：从裸 fs::rename 改道 file_operations（file_id 迁移 + 
+    // file_index/file_metadata/colors 联动，元数据挂到新 id 上）
+    let (app_db, color_db) = require_db_pools(&state)?;
+    match crate::file_operations::rename_file_with_pools(
+        &old_path.to_string_lossy(),
+        &new_path.to_string_lossy(),
+        &app_db,
+        &color_db,
+    ).await {
         Ok(_) => {
             let new_relative = new_path.strip_prefix(state.root_path.as_path())
                 .unwrap_or(&new_path)
                 .to_string_lossy()
                 .replace('\\', "/");
             log::info!("[LAN Share] 重命名成功 - 新路径: {}", new_relative);
+            emit_data_changed(&state.app_handle, "files");
             Ok(Json(OperationResponse {
                 success: true,
                 path: Some(new_relative),
@@ -924,7 +1612,7 @@ pub async fn handle_rename(
             Ok(Json(OperationResponse {
                 success: false,
                 path: None,
-                error: Some(e.to_string()),
+                error: Some(e),
             }))
         }
     }
@@ -1025,13 +1713,18 @@ pub async fn handle_upload(
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid file name"));
     }
 
-    match fs::write(&dest_file, &file_data).await {
+    // M6a 1.4：写文件改走 write_file_bytes_indexed（file_operations 的单文件
+    // 增量入索路径），上传的新图片立即进 file_index——桌面 browse（DB 路径
+    // 优先）无需重扫即可见
+    let app_db = require_db_pool(&state)?;
+    match crate::file_operations::write_file_bytes_indexed(&dest_file.to_string_lossy(), &file_data, &app_db).await {
         Ok(_) => {
             let relative = dest_file.strip_prefix(state.root_path.as_path())
                 .unwrap_or(&dest_file)
                 .to_string_lossy()
                 .replace('\\', "/");
             log::info!("[LAN Share] 上传成功 - 设备: {}, 路径: {}, 大小: {} bytes", session.device_name, relative, file_data.len());
+            emit_data_changed(&state.app_handle, "files");
             Ok(Json(OperationResponse {
                 success: true,
                 path: Some(relative),
@@ -1043,7 +1736,7 @@ pub async fn handle_upload(
             Ok(Json(OperationResponse {
                 success: false,
                 path: None,
-                error: Some(e.to_string()),
+                error: Some(e),
             }))
         }
     }

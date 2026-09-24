@@ -65,6 +65,48 @@ pub fn get_all_people(conn: &Connection) -> Result<Vec<Person>> {
     Ok(people)
 }
 
+/// 按 id 取单个人物（整行读改写用：LAN 端点先读旧行、应用 patch、再 upsert 整行）。
+pub fn get_person_by_id(conn: &Connection, person_id: &str) -> Result<Option<Person>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, cover_file_id, count, description, 
+                face_box_x, face_box_y, face_box_w, face_box_h, updated_at,
+                character_tag_name, character_tag_index
+         FROM persons WHERE id = ?1"
+    )?;
+
+    let mut person_iter = stmt.query_map(params![person_id], |row| {
+        let face_box_x: Option<f64> = row.get(5)?;
+        let face_box = if let Some(x) = face_box_x {
+            Some(FaceBox {
+                x,
+                y: row.get(6)?,
+                w: row.get(7)?,
+                h: row.get(8)?,
+            })
+        } else {
+            None
+        };
+
+        Ok(Person {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            cover_file_id: row.get(2)?,
+            count: row.get(3)?,
+            description: row.get(4)?,
+            face_box,
+            updated_at: row.get(9)?,
+            character_tag_name: row.get(10)?,
+            character_tag_index: row.get(11)?,
+        })
+    })?;
+
+    if let Some(result) = person_iter.next() {
+        Ok(Some(result?))
+    } else {
+        Ok(None)
+    }
+}
+
 pub fn upsert_person(conn: &Connection, person: &Person) -> Result<()> {
     let (x, y, w, h) = if let Some(box_) = &person.face_box {
         (Some(box_.x), Some(box_.y), Some(box_.w), Some(box_.h))

@@ -1,6 +1,6 @@
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use tower_http::compression::CompressionLayer;
@@ -137,6 +137,16 @@ impl LanShareServer {
             .route("/api/file", delete(handle_delete))
             .route("/api/rename", post(handle_rename))
             .route("/api/upload", post(handle_upload).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))
+            // M6a 阶段 1 新端点（契约定稿：docs/Android/Kotlin版/M6a互联契约定稿.md）
+            .route("/api/metadata/batch", post(handle_metadata_batch))
+            .route("/api/metadata", put(handle_metadata_put))
+            .route("/api/people", get(handle_people))
+            .route("/api/person", put(handle_person_put))
+            .route("/api/topics", get(handle_topics))
+            .route("/api/topic", post(handle_topic_create).delete(handle_topic_delete))
+            .route("/api/topic/members", post(handle_topic_members_add).delete(handle_topic_members_remove))
+            .route("/api/file/move", post(handle_file_move))
+            .route("/api/file/copy", post(handle_file_copy))
             .route("/api/devices", get(handle_devices))
             .route("/api/heartbeat", get(handle_heartbeat))
             .layer(create_cors_layer())

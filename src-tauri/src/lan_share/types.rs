@@ -18,8 +18,9 @@ impl Default for LanShareConfig {
             enabled: false,
             port: 8080,
             access_code: String::new(),
-            allow_edit: false,
-            allow_upload: false,
+            // D32「互联即授权」：默认全权，403 仅在用户手动收紧后出现。
+            allow_edit: true,
+            allow_upload: true,
             server_name: String::new(),
         }
     }
@@ -186,6 +187,30 @@ pub struct OperationResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevicesResponse {
     pub devices: Vec<ConnectedDevice>,
+}
+
+/// move/copy 批量请求（M6a 1.4）：paths 为共享根相对 path 列表，
+/// target_dir 与 upload 的 target_dir 同义（共享根相对目录）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileBatchRequest {
+    pub paths: Vec<String>,
+    pub target_dir: String,
+}
+
+/// move/copy 逐项结果：与入参 paths 同序一一对应，单个失败不整批报错。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileOperationItem {
+    pub path: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileBatchResponse {
+    pub items: Vec<FileOperationItem>,
 }
 
 pub const SESSION_TIMEOUT_SECS: u64 = 3600;
