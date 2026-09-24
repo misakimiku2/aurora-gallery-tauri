@@ -1333,6 +1333,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
+     * LAN 缩略图 URL 构造器（阶段 6：人物「换头像」的目录选择器图片行用；未连接返回
+     * null，宿主退化为恒 null 的构造器，弹窗行只剩占位底）。与 [lanImageUrlOf] 同款
+     * 「会话现取」——构造器快照在组合时求值，断线重连后的重组会换上新的会话。
+     */
+    fun lanThumbnailUrlOf(): ((String) -> String)? {
+        val s = lan.currentSession() ?: return null
+        return { remotePath -> s.client.thumbnailUrl(s.base, s.token, remotePath) }
+    }
+
+    /**
      * LAN 目录的序列取数（reloadImages 的并列入口，M4a 序列源先例）：
      *  - 虚拟根（`__lan_root_images__`）= 会话态里的根散图，**不单独 browse**；
      *  - tag 筛选虚拟目录（`__lan_tag__:<tag>`，阶段 5）= 从 [lanLibraryImages] 会话缓存
@@ -1641,27 +1651,31 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 重命名 / 改描述远端人物（契约 §3.2 整行读改写；[name]/[description] 二选一或同传，
-     * null = 不改；换头像 avatarPath 本期不做、阶段 6 补）。404 = 人物不存在（服务端已删）、
-     * 其余失败同口径：Log.w + onDone(false)。成功后重拉 people() 刷新 [lanPeople]
-     * （重拉失败保留旧列表）。
+     * 重命名 / 换头像 / 改描述远端人物（契约 §3.2 整行读改写；三个可变字段任选，null =
+     * 不改，[avatarPath] 是共享根相对 path——服务端内部换算 cover_file_id，客户端只碰
+     * path）。404 = 人物不存在（服务端已删）、其余失败同口径：Log.w + onDone(false)。
+     * 成功后重拉 people() 刷新 [lanPeople]（重拉失败保留旧列表）。
      */
     fun renameLanPerson(
         personId: String,
         name: String? = null,
         description: String? = null,
+        avatarPath: String? = null,
         onDone: (Boolean) -> Unit = {},
     ) {
         val trimmedName = name?.trim()
         val session = lan.currentSession()
-        if (session == null || (trimmedName == null && description == null) || trimmedName?.isEmpty() == true) {
+        if (session == null ||
+            (trimmedName == null && description == null && avatarPath == null) ||
+            trimmedName?.isEmpty() == true
+        ) {
             onDone(false)
             return
         }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    session.client.putPerson(session.base, session.token, personId, trimmedName, null, description)
+                    session.client.putPerson(session.base, session.token, personId, trimmedName, avatarPath, description)
                 }
             }
             if (result.getOrNull() == null) {
@@ -1672,6 +1686,261 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             reloadLanPeople(session)
             Log.i(TAG, "[Lan] 人物已更新 id=$personId")
             onDone(true)
+        }
+    }
+
+    // ===== M6a 阶段 6：互联态文件操作（rename/delete/move/copy；写路径走 LanClient）=====
+    //
+    // 契约 §1/§5：客户端不监听桌面 data-changed 事件，写成功后以响应里的新 path/逐项
+    // 结果维护会话缓存（换 key / 移除 / 补最小条目）+ refreshLanFolder/refreshLanRoots
+    // 重拉。目录纪律同阶段 5：只动 lan* 内存缓存，绝不触本地库/本地词表（D31）。
+
+    /**
+     * 一次性远端目录 browse（目录选择器等临时场景用）：**不改会话态与门禁位**——
+     * [reloadLanImages] 的门禁同步是「当前浏览视图」语义，弹窗里的顺手 browse 不能动
+     * 主界面的开关。[path] null/空串 = 共享根（服务端 handle_browse 对缺省/空串/`/` 同
+     * 看待，unwrap_or_default 归零，空 `?path=` 即可）。失败（401/404/网络）回 null，
+     * 调用方按「浏览不了」兜底。
+     */
+    fun browseLanPath(path: String?, onReady: (LanBrowseResult?) -> Unit) {
+        val session = lan.currentSession()
+        if (session == null) {
+            onReady(null)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.browse(session.base, session.token, path ?: "") }
+            }
+            result.getOrNull()?.let { onReady(it) } ?: run {
+                Log.w(
+                    TAG,
+                    "[Lan] 临时 browse 失败 path 尾=…${(path ?: "").takeLast(12)}：${result.exceptionOrNull()?.message}",
+                )
+                onReady(null)
+            }
+        }
+    }
+
+    /**
+     * 同目录改名远端文件（契约 §1；[newName] 是裸文件名，目录由服务端拼）。403/404/409
+     * 走异常（runCatching 接住），FS 级失败是 200+success:false——两种失败形态同回
+     * onDone(false, null)，缓存不动。成功：lanRootImages/lanLibraryImages/lanMetaByPath
+     * 以响应新 path **换 key**（path 是身份，旧 key 不换就是幽灵条目），再
+     * refreshLanFolder（当前目录重拉）+ refreshLanRoots（总览/侧栏计数）。
+     */
+    fun renameLanFile(oldPath: String, newName: String, onDone: (ok: Boolean, newPath: String?) -> Unit) {
+        val trimmed = newName.trim()
+        val session = lan.currentSession()
+        if (session == null || trimmed.isEmpty()) {
+            onDone(false, null)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.rename(session.base, session.token, oldPath, trimmed) }
+            }
+            val renamed = result.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] 改名失败 path 尾=…${oldPath.takeLast(12)}：${result.exceptionOrNull()?.message}")
+                onDone(false, null)
+                return@launch
+            }
+            // 成功响应必带新 path；success=false 或缺新 path 都按失败处理——拿旧 path
+            // 冒充新身份会把「换 key」做成自我污染
+            val newPath = renamed.newPath
+            if (!renamed.success || newPath == null) {
+                Log.w(TAG, "[Lan] 改名失败 path 尾=…${oldPath.takeLast(12)}：${renamed.error ?: "success=false"}")
+                onDone(false, null)
+                return@launch
+            }
+            // 换 key：列表按 path 定位替换；两个 map 保持原序换 key 重插（LinkedHashMap）
+            lanRootImages.value = lanRootImages.value.map {
+                if (it.path == oldPath) it.copy(path = newPath, name = trimmed) else it
+            }
+            val library = LinkedHashMap<String, LanRemoteImage>(lanLibraryImages.value.size)
+            lanLibraryImages.value.forEach { (p, img) ->
+                library[if (p == oldPath) newPath else p] =
+                    if (p == oldPath) img.copy(path = newPath, name = trimmed) else img
+            }
+            lanLibraryImages.value = library
+            lanMetaByPath.value[oldPath]?.let { meta ->
+                lanMetaByPath.value = lanMetaByPath.value - oldPath + (newPath to meta.copy(path = newPath))
+            }
+            Log.i(TAG, "[Lan] 已改名 …${oldPath.takeLast(12)} → …${newPath.takeLast(12)}")
+            refreshLanFolder()
+            refreshLanRoots()
+            onDone(true, newPath)
+        }
+    }
+
+    /**
+     * 批量删远端文件（契约 §1 `DELETE /api/file`）：逐个顺序删（上传同款「逐个而非并发」
+     * 先例，进度可读、服务端压力小；单条失败不中断批次，失败明细进日志）。全部完成后把
+     * **真正删掉的** path 从三份会话缓存移除（失败项留在原地，UI 还能看见、可重试），
+     * 再 refreshLanFolder + refreshLanRoots。onDone 的 (ok, fail) 不等重拉完成。
+     */
+    fun deleteLanFiles(paths: List<String>, onDone: (ok: Int, fail: Int) -> Unit) {
+        val session = lan.currentSession()
+        if (session == null || paths.isEmpty()) {
+            onDone(0, paths.size)
+            return
+        }
+        viewModelScope.launch {
+            var okCount = 0
+            val failedPaths = mutableSetOf<String>()
+            paths.forEach { path ->
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { session.client.deleteFile(session.base, session.token, path) }
+                }
+                val item = result.getOrNull()
+                if (item?.success == true) {
+                    okCount++
+                } else {
+                    failedPaths += path
+                    Log.w(
+                        TAG,
+                        "[Lan] 删除失败 path 尾=…${path.takeLast(12)}：" +
+                            "${result.exceptionOrNull()?.message ?: item?.error ?: "success=false"}",
+                    )
+                }
+            }
+            if (okCount > 0) {
+                val deleted = paths.toSet() - failedPaths
+                lanRootImages.value = lanRootImages.value.filter { it.path !in deleted }
+                lanLibraryImages.value = lanLibraryImages.value.filterKeys { it !in deleted }
+                lanMetaByPath.value = lanMetaByPath.value.filterKeys { it !in deleted }
+                Log.i(TAG, "[Lan] 批量删除完成 ok=$okCount fail=${failedPaths.size}")
+                refreshLanFolder()
+                refreshLanRoots()
+            } else {
+                Log.w(TAG, "[Lan] 批量删除全部失败（${paths.size} 项），缓存不动")
+            }
+            onDone(okCount, paths.size - okCount)
+        }
+    }
+
+    /**
+     * 批量移动远端文件进 [targetDir]（契约 §5.1）：一次 [LanClient.moveFiles]，items 与
+     * paths 同序逐项落账——成功项旧 path 出三缓存、新 path 补最小条目；目标目录不存在
+     * 是整批 404（HTTP 异常，全批未动）。
+     */
+    fun moveLanFiles(paths: List<String>, targetDir: String, onDone: (ok: Int, fail: Int, firstError: String?) -> Unit) {
+        val session = lan.currentSession()
+        if (session == null || paths.isEmpty()) {
+            onDone(0, paths.size, null)
+            return
+        }
+        batchLanFileOp(
+            label = "移动",
+            removeSource = true,
+            paths = paths,
+            targetDir = targetDir,
+            session = session,
+            request = { session.client.moveFiles(session.base, session.token, paths, targetDir) },
+            onDone = onDone,
+        )
+    }
+
+    /**
+     * 批量复制远端文件进 [targetDir]（契约 §5.2）：与 [moveLanFiles] 同形，差异在缓存
+     * 语义——旧条目**保留**（本体没动），新条目按响应 new_path（重名自动改名后的实际
+     * 落盘路径）插入；副本元数据由服务端迁移，metadataBatch 回读即可带原 tags。
+     */
+    fun copyLanFiles(paths: List<String>, targetDir: String, onDone: (ok: Int, fail: Int, firstError: String?) -> Unit) {
+        val session = lan.currentSession()
+        if (session == null || paths.isEmpty()) {
+            onDone(0, paths.size, null)
+            return
+        }
+        batchLanFileOp(
+            label = "复制",
+            removeSource = false,
+            paths = paths,
+            targetDir = targetDir,
+            session = session,
+            request = { session.client.copyFiles(session.base, session.token, paths, targetDir) },
+            onDone = onDone,
+        )
+    }
+
+    /**
+     * move/copy 的公共体：一次批量请求 → items 逐项落缓存（[removeSource] 区分 move 删
+     * 旧 / copy 留旧）→ 新 path 元数据回读 upsert → 远端词表重算 → 刷新当前目录与总览。
+     * HTTP 级失败（404 = 目标目录不存在、403 = 门禁关闭、401 = 会话失效）整批未动，
+     * onDone(0, paths.size, message)；item 级失败（源不存在/目标已存在）只计 fail，
+     * 首个错误随 onDone 回给调用方做提示。
+     */
+    private fun batchLanFileOp(
+        label: String,
+        removeSource: Boolean,
+        paths: List<String>,
+        targetDir: String,
+        session: LanManager.LanSession,
+        request: suspend () -> List<LanFileOpItem>,
+        onDone: (ok: Int, fail: Int, firstError: String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { request() }
+            }
+            val items = result.getOrNull() ?: run {
+                Log.w(
+                    TAG,
+                    "[Lan] 批量${label}失败 target 尾=…${targetDir.takeLast(12)}：${result.exceptionOrNull()?.message}",
+                )
+                onDone(0, paths.size, result.exceptionOrNull()?.message)
+                return@launch
+            }
+            var okCount = 0
+            var firstError: String? = null
+            val stalePaths = mutableSetOf<String>()
+            val freshEntries = LinkedHashMap<String, LanRemoteImage>()
+            items.forEach { item ->
+                if (!item.success) {
+                    if (firstError == null) firstError = item.error
+                    return@forEach
+                }
+                val newPath = item.newPath ?: return@forEach // 契约成功项必带，防御不拦主流程
+                okCount++
+                if (removeSource) stalePaths += item.path
+                // 最小条目的 size 从旧条目沿用；旧条目查不到（视频项/过期缓存）就不补——
+                // 凭空造 size=0 的假条目，不如留给 refreshLanRoots 的全量重建兜底
+                val old = lanLibraryImages.value[item.path]
+                    ?: lanRootImages.value.firstOrNull { it.path == item.path }
+                if (old != null) {
+                    freshEntries[newPath] = LanRemoteImage(
+                        name = newPath.substringAfterLast('/'),
+                        path = newPath,
+                        type = "image",
+                        size = old.size,
+                    )
+                }
+            }
+            if (removeSource && stalePaths.isNotEmpty()) {
+                lanRootImages.value = lanRootImages.value.filter { it.path !in stalePaths }
+                lanLibraryImages.value = lanLibraryImages.value.filterKeys { it !in stalePaths }
+                lanMetaByPath.value = lanMetaByPath.value.filterKeys { it !in stalePaths }
+            }
+            if (freshEntries.isNotEmpty()) {
+                lanLibraryImages.value = lanLibraryImages.value + freshEntries
+                // 新位置元数据回读 upsert（move/copy 服务端都迁移元数据）：tag 筛选视图从
+                // lanMetaByPath 取数，缺行 = 新位置从 tag 视图漏项
+                val metaPaths = freshEntries.keys.toList()
+                val meta = withContext(Dispatchers.IO) {
+                    runCatching { session.client.metadataBatch(session.base, session.token, metaPaths) }
+                }
+                meta.getOrNull()?.forEach { lanMetaByPath.value = lanMetaByPath.value + (it.path to it) }
+                    ?: Log.w(TAG, "[Lan] ${label}后元数据回读失败（${metaPaths.size} 项），tag 视图暂缺待重连补齐")
+                // 新元数据可能带来新词/新计数，远端词表分组跟着重算（纯函数，只动内存）
+                rebuildLanRemoteTagGroups()
+            }
+            Log.i(
+                TAG,
+                "[Lan] 批量${label}完成 ok=$okCount fail=${items.size - okCount} target 尾=…${targetDir.takeLast(12)}",
+            )
+            refreshLanFolder()
+            refreshLanRoots()
+            onDone(okCount, items.size - okCount, firstError)
         }
     }
 

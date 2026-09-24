@@ -45,6 +45,12 @@ fun ViewerLayerHost(
      * 退出 LAN 视图由宿主的联动兜住。
      */
     lanImageUrlOf: ((String) -> String)? = null,
+    /**
+     * LAN 编辑门禁位（M6a 阶段 6，allow_edit）：直通时查看器才给 LAN 项提供删除入口
+     * （顶栏删除键 + 「更多」菜单项）。与 [lanImageUrlOf] 同款会话现取——门禁位随每次
+     * 目录 browse 尾随同步，宿主读 mutableState 的最新值传入。
+     */
+    lanAllowEdit: Boolean = false,
 ) {
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
@@ -64,6 +70,7 @@ fun ViewerLayerHost(
         viewer = viewer,
         items = items,
         startIndex = startIndex,
+        lanAllowEdit = lanAllowEdit,
         onRequestClose = { state.closeViewer() },
     )
 }
@@ -83,6 +90,8 @@ fun NativeViewerLayer(
     viewer: NativeGalleryView,
     items: List<NativeGalleryView.ImageItem>,
     startIndex: Int,
+    /** LAN 编辑门禁位（M6a 阶段 6）：同步到查看器实例，删除入口的显隐在现读时生效。 */
+    lanAllowEdit: Boolean = false,
     onRequestClose: () -> Unit,
 ) {
     AndroidView(
@@ -92,6 +101,8 @@ fun NativeViewerLayer(
     val latestItems by rememberUpdatedState(items)
     val latestStart by rememberUpdatedState(startIndex)
     val latestClose by rememberUpdatedState(onRequestClose)
+    // 门禁位推进查看器实例（key = 值本身：浏览中门禁变化也即时生效，菜单构建时现读）
+    LaunchedEffect(lanAllowEdit) { viewer.lanAllowEdit = lanAllowEdit }
     LaunchedEffect(Unit) { viewer.open(latestItems, latestStart, viewerOptions) }
     // 查看器自己实现了 dispatchKeyEvent（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层消化；
     // 这条 BackHandler 是拿不到焦点时的兜底，兜底也要走同一把梯子，否则会一次 back 关掉整个查看器。

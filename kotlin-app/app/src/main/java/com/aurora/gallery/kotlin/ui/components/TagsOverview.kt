@@ -241,8 +241,9 @@ private suspend fun snapshotFlowScrollIndex(
  * 卡片（首字符圆底头像占位——契约 §3.1 无人脸头像可用——+ 名 + 计数 + 网络标识）；
  * 断线/无远端人物维持既有静态占位（逐像素一致）。
  *
- * 编辑入口（同位原则收在总览页，不放侧栏）：长按卡片 → 「重命名」「改描述」。
- * 「换头像」不出现——需要远端目录选择器，阶段 6 LanFolderPicker 落地后再补
+ * 编辑入口（同位原则收在总览页，不放侧栏）：长按卡片 → 「重命名」「改描述」；
+ * 「换头像」（M6a 阶段 6 起，[lanAllowEdit] 直通时）→ LanFolderPickerDialog 选远端图
+ * （宿主把选中 path 交给 renameLanPerson 的 avatarPath）；403 门禁态不出现
  *（M4a「不适用的项不出现」先例）。点击卡片 = 宿主 Toast 占位（契约无成员枚举端点，
  * 不做假筛选）。
  */
@@ -253,12 +254,16 @@ fun PeopleOverview(
     lanPeople: List<LanPerson> = emptyList(),
     /** LAN 会话已连接（当前仅语义标注；显隐由 lanPeople 是否为空决定）。 */
     lanConnected: Boolean = false,
+    /** 编辑门禁位（allow_edit；false 时长按菜单不含「换头像」）。 */
+    lanAllowEdit: Boolean = false,
     /** 卡片点击（宿主 Toast 占位）。 */
     onPersonClick: (LanPerson) -> Unit = {},
     /** 长按菜单「重命名」（宿主弹输入框 → renameLanPerson(id, name, null)）。 */
     onRename: (LanPerson) -> Unit = {},
     /** 长按菜单「改描述」（宿主弹输入框 → renameLanPerson(id, null, description)）。 */
     onDescribe: (LanPerson) -> Unit = {},
+    /** 长按菜单「换头像」（宿主开 AVATAR 模式的 LanFolderPickerDialog 选远端图）。 */
+    onAvatarChange: (LanPerson) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     if (lanPeople.isEmpty()) {
@@ -300,9 +305,11 @@ fun PeopleOverview(
         ) { i ->
             LanPersonCard(
                 person = lanPeople[i],
+                lanAllowEdit = lanAllowEdit,
                 onClick = { onPersonClick(lanPeople[i]) },
                 onRename = { onRename(lanPeople[i]) },
                 onDescribe = { onDescribe(lanPeople[i]) },
+                onAvatarChange = { onAvatarChange(lanPeople[i]) },
             )
         }
     }
@@ -310,7 +317,8 @@ fun PeopleOverview(
 
 /**
  * 远端人物卡（形制对齐 [TagCard] 的白底卡 + 细边框）：头像占位 + 名称 + 计数行（带
- * 网络标识）。长按弹「重命名/改描述」（无「换头像」，见 [PeopleOverview] 注释）。
+ * 网络标识）。长按弹「重命名/改描述」；[lanAllowEdit] 直通时再加「换头像」（阶段 6，
+ * 见 [PeopleOverview] 注释）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -319,6 +327,8 @@ private fun LanPersonCard(
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDescribe: () -> Unit,
+    lanAllowEdit: Boolean = false,
+    onAvatarChange: () -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     var menuOpen by remember { mutableStateOf(false) }
@@ -333,7 +343,8 @@ private fun LanPersonCard(
             .onGloballyPositioned { anchor = it.boundsInWindow() }
             .padding(14.dp),
     ) {
-        // 长按菜单：「重命名」「改描述」；「换头像」不出现（见 [PeopleOverview] 注释）
+        // 长按菜单：「重命名」「改描述」；「换头像」仅编辑门禁位直通时出现（阶段 6 起接
+        // LanFolderPickerDialog 选远端图；403 门禁态不出现——M4a「不适用的项不出现」先例）
         AuroraDropdown(
             expanded = menuOpen,
             anchorBoundsInWindow = anchor,
@@ -353,6 +364,15 @@ private fun LanPersonCard(
                     onDescribe()
                 },
             )
+            if (lanAllowEdit) {
+                AuroraMenuItem(
+                    text = "换头像",
+                    onClick = {
+                        menuOpen = false
+                        onAvatarChange()
+                    },
+                )
+            }
         }
         PersonAvatar(name = person.name, size = 56.dp)
         Spacer(Modifier.size(10.dp))

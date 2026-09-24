@@ -71,8 +71,13 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onClose()
         /** 当前图片索引变化（用户操作或幻灯片）。 */
         fun onNavigate(index: Int)
-        /** 用户点击了删除按钮。 */
-        fun onDelete(fileId: String)
+        /**
+         * 用户在删除确认弹窗点了确认（查看器已把该图从自己的序列摘除并前进）。
+         * [isLan]（M6a 阶段 6）标记被删项是否远端项：宿主按它分流远端 DELETE /api/file
+         * 与本地 MediaStore 链路——两条链路的身份语义不同（远端=path、本地=file_id），
+         * 不能靠调用方上下文推断，必须随事件显式携带。
+         */
+        fun onDelete(fileId: String, isLan: Boolean)
         /** 用户点击了"复制到文件夹"。 */
         fun onCopyToFolder(fileId: String)
         /** 用户点击了"移动到文件夹"。 */
@@ -173,6 +178,14 @@ class NativeGalleryView @JvmOverloads constructor(
     private var palette: AuroraPalette = AuroraPalettes.of(isDarkTheme)
     // 查看器是否打开（open 时设 true，close 时设 false）
     private var isOpen = false
+
+    /**
+     * LAN 编辑门禁位（M6a 阶段 6，allow_edit）：直通时 LAN 项才出现删除入口（顶栏删除键
+     * + 「更多」菜单项），403 门禁态两者都隐（门禁关闭时删除对远端不可用）。var + 宿主
+     * 写入而非构造参：实例跟 Activity 走（Coil 缓存不随进出查看器重建），门禁位随每次
+     * 目录 browse 尾随同步，宿主在组合/更新时把最新值推进来即可（setSlideshow 同款先例）。
+     */
+    var lanAllowEdit: Boolean = false
 
     private fun colorBg() = palette.main
     private fun colorPanel() = palette.panel
@@ -1584,10 +1597,11 @@ class NativeGalleryView @JvmOverloads constructor(
             return
         }
         titleView.text = item.name
-        // M6a 阶段 4：LAN 项隐藏顶栏「删除」——删除是本地 MediaStore 操作，对远端 path
-        // 无意义（网格选择栏同场景是 Toast 拦截；互联态文件操作与删除归阶段 6，
-        // M4a「不适用的项不出现」先例）。分享保留入口（shareCurrentImage 内 !isLan 拦截）。
-        deleteBtn.visibility = if (item.isLan) GONE else VISIBLE
+        // M6a 阶段 6：LAN 项的顶栏删除键按编辑门禁位显隐——allow_edit 直通时与本地同款
+        // 确认弹窗 → confirmDelete（查看器自己摘项前进，宿主 onDelete 分流远端删除链路）；
+        // 403 门禁态仍隐藏（门禁关闭时删除对远端不可用，M4a「不适用的项不出现」先例）。
+        // 分享保留入口（shareCurrentImage 内 !isLan 拦截）。
+        deleteBtn.visibility = if (item.isLan && !lanAllowEdit) GONE else VISIBLE
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
         bottomInfoText.text = "${item.name}\n$sizeStr"
@@ -1737,9 +1751,11 @@ class NativeGalleryView @JvmOverloads constructor(
     private fun confirmDelete(fileId: String) {
         val idx = images.indexOfFirst { it.fileId == fileId }
         if (idx < 0) return
+        // 摘项前先记 isLan：宿主靠它分流远端 DELETE 与本地 MediaStore 链路（身份语义不同）
+        val isLan = images[idx].isLan
         images.removeAt(idx)
         // 通知 JS 端真正删除文件（不再弹 ConfirmModal）
-        listener?.onDelete(fileId)
+        listener?.onDelete(fileId, isLan)
         if (images.isEmpty()) {
             listener?.onClose()
             return
@@ -1819,13 +1835,20 @@ class NativeGalleryView @JvmOverloads constructor(
             theme = this,
             anchor = anchor,
             menuItems = if (item.isLan) {
-                // M6a 阶段 4：LAN 项的菜单（M4a「不适用的项不出现」先例）——删除/重命名/
-                // 复制到/移动到是本地 MediaStore 操作、加入画布走本地取流管线，全部不出现；
-                // 互联态文件操作归阶段 6。「保存到设备」（D34）是 LAN 专属项。
+                // M6a 阶段 6：LAN 项的菜单——「保存到设备」（D34）与「幻灯片设置」之外，
+                // 编辑门禁位直通时补上「删除」（本地同款确认弹窗 → confirmDelete，宿主
+                // onDelete 分流远端链路）；403 门禁态不出现（M4a「不适用的项不出现」先例）。
+                // 重命名/复制到/移动到依旧不出现：重命名会迁移远端身份（path 即 fileId），
+                // 查看器序列按 path 定位会整体失效，登记为范围决策（重命名收在 LAN 网格）；
+                // 复制/移动需要远端目录选择器，查看器内暂不挂 LanFolderPicker（网格选中集
+                // 已可批量操作）。加入画布走本地取流管线，同样不适用。
                 buildList {
                     add(MoreMenuItem("保存到设备", colorTextPrimary()) {
                         listener?.onSaveToDevice(item.fileId, item.path)
                     })
+                    if (lanAllowEdit) {
+                        add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
+                    }
                     add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
                 }
             } else {
@@ -1843,9 +1866,10 @@ class NativeGalleryView @JvmOverloads constructor(
 
     private fun showRenameDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        // 防御（M6a 阶段 5）：重命名是本地 MediaStore 操作，LAN 项的「更多」菜单本就不含
-        // 这一项（见 showMoreMenu 的 isLan 分支）；这里再拦一道，保证远端 path 永远到不了
-        // 本地重命名链路。
+        // 范围决策（M6a 阶段 6，非遗漏）：查看器不做 LAN 重命名——重命名会迁移远端身份
+        // （path 即 fileId），查看器序列/抽屉/缩略图条全按 path 定位，就地改名等于整份
+        // 序列失效；重命名入口收在 LAN 网格（单选「更多 → 重命名…」）。这层护栏保证
+        // 远端 path 永远到不了本地 MediaStore 重命名链路。
         if (item.isLan) return
         RenameDialog(
             context = context,

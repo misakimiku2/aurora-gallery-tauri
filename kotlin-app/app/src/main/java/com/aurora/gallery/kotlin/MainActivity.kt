@@ -69,6 +69,8 @@ import com.aurora.gallery.kotlin.ui.components.TopicSortOption
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.LanTopicPickerDialog
+import com.aurora.gallery.kotlin.ui.components.LanFolderPickerDialog
+import com.aurora.gallery.kotlin.ui.components.LanPickerMode
 import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
@@ -621,9 +623,27 @@ class MainActivity : ComponentActivity() {
          * 3.2 删除：查看器自己已经把这张从它的序列里摘掉并前进到下一张（confirmDelete），
          * 宿主只负责发起真正的删除请求。确认弹窗是查看器内的 `DeleteConfirmDialog`
          * （与网格 4.2 的应用内确认同一形态），不走 [onDeleteSelection] 那条网格链路。
-         * 删完的索引对账交给既有 ContentObserver 重扫。
+         * 本地的删完对账交给既有 ContentObserver 重扫。
+         * M6a 阶段 6：[isLan] 分流远端链路——单张就是一个元素的批次走
+         * [GalleryViewModel.deleteLanFiles]（数据层顺带维护会话缓存 + 重拉），Toast
+         * 口径与网格批量删除一致；入口显隐由查看器按 lanAllowEdit 门禁（阶段 4 的
+         * 「删除归阶段 6」占位由此兑现）。
          */
-        override fun onDelete(fileId: String) {
+        override fun onDelete(fileId: String, isLan: Boolean) {
+            if (isLan) {
+                viewModel.deleteLanFiles(listOf(fileId)) { ok, fail ->
+                    Toast.makeText(
+                        this@MainActivity,
+                        when {
+                            fail == 0 -> "已删除 $ok 张"
+                            ok == 0 -> "删除失败"
+                            else -> "已删除 $ok 张，失败 $fail 张"
+                        },
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                return
+            }
             viewModel.resolveSelectionUris(setOf(fileId)) { uris -> requestDelete(uris) }
         }
 
@@ -1019,6 +1039,9 @@ class MainActivity : ComponentActivity() {
                                 if (uris.isNotEmpty()) shareUris(uris)
                             }
                         },
+                        /** 4.2 删除：解析选中项为 URI 后由宿主发起删除请求（含系统确认）。
+                         *  M6a 阶段 6 起 LAN 态不进这条链路（App 内按 inLanBrowser 分流到
+                         *  [onDeleteLanSelection]，远端 path 过 MediaStore 解析必空）。 */
                         onDeleteSelection = { ids ->
                             viewModel.resolveSelectionUris(ids) { uris ->
                                 if (uris.isNotEmpty()) requestDelete(uris)
@@ -1201,6 +1224,73 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
+                        // —— M6a 阶段 6：互联态文件操作（删除/重命名/移动/复制/换头像）——
+                        /** LAN 选中集批量删除（paths = 远端 path）；Toast 汇总 + 成功退选择。 */
+                        onDeleteLanSelection = { paths ->
+                            viewModel.deleteLanFiles(paths) { ok, fail ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    when {
+                                        fail == 0 -> "已删除 $ok 张"
+                                        ok == 0 -> "删除失败"
+                                        else -> "已删除 $ok 张，失败 $fail 张"
+                                    },
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                // 对齐 onRemoveFromTopic 先例：有成功才退选择（失败项留在
+                                // 网格里可重试，退了选择反而丢上下文）
+                                if (ok > 0) viewModel.appState.exitSelectionMode()
+                            }
+                        },
+                        /** LAN 网格重命名（App 的 RenameDialog 提交；newName 是裸文件名）。 */
+                        onRenameLanFile = { oldPath, newName ->
+                            viewModel.renameLanFile(oldPath, newName) { ok, _ ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已重命名" else "重命名失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                // 项身份随 rename 迁移（服务端换 path），选中集里的旧 path
+                                // 已成悬空 id，退出选择模式比留着幽灵计数干净
+                                if (ok) viewModel.appState.exitSelectionMode()
+                            }
+                        },
+                        /** 目录选择弹窗的一次性远端 browse（VM 保证不动门禁位与主视图状态）。 */
+                        onBrowseLanPath = { path, onReady ->
+                            viewModel.browseLanPath(path, onReady)
+                        },
+                        /** 远端缩略图 URL 构造器（换头像弹窗图片行用；null 会话回 null）。 */
+                        lanThumbnailUrlOf = viewModel.lanThumbnailUrlOf(),
+                        /** LAN 选中集移动/复制到远端目录（type: "move" | "copy"）。 */
+                        onCopyMoveLanFiles = { paths, targetDir, type ->
+                            val verb = if (type == "copy") "复制" else "移动"
+                            val onDone: (Int, Int, String?) -> Unit = { ok, fail, firstError ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    when {
+                                        fail == 0 -> "已$verb $ok 张"
+                                        ok == 0 -> "${verb}失败${firstError?.let { "：$it" } ?: ""}"
+                                        else -> "已$verb $ok 张，失败 $fail 张"
+                                    },
+                                    if (ok == 0) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
+                                ).show()
+                                // move 有成功才退选择（源已不在）；copy 的副本不影响原
+                                // 选中集，退选择对齐本地 performCopyMove 的完成回调
+                                if (ok > 0) viewModel.appState.exitSelectionMode()
+                            }
+                            if (type == "copy") viewModel.copyLanFiles(paths, targetDir, onDone)
+                            else viewModel.moveLanFiles(paths, targetDir, onDone)
+                        },
+                        /** 人物换头像落库（avatarPath = 弹窗选中的远端图 path）。 */
+                        onChangeLanAvatar = { personId, imagePath ->
+                            viewModel.renameLanPerson(personId, avatarPath = imagePath) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "头像已更新" else "换头像失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 ViewerLayerHost(
@@ -1214,6 +1304,8 @@ class MainActivity : ComponentActivity() {
                     lanMetaById = viewModel.lanMetaByPath.value,
                     // M6a 阶段 4：LAN 大图 URL 构造器（查看器 isLan 项的取图源）
                     lanImageUrlOf = viewModel.lanImageUrlOf(),
+                    // M6a 阶段 6：编辑门禁位（查看器 LAN 项的删除入口显隐；同款会话现取）
+                    lanAllowEdit = viewModel.lanAllowEdit.value,
                 )
                 // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
                 if (showSettings) {
@@ -1560,6 +1652,19 @@ fun App(
     onRenameLanPerson: (com.aurora.gallery.kotlin.LanPerson, String) -> Unit = { _, _ -> },
     /** 远端人物改描述（宿主调 renameLanPerson(id, null, description)）。 */
     onDescribeLanPerson: (com.aurora.gallery.kotlin.LanPerson, String) -> Unit = { _, _ -> },
+    // —— M6a 阶段 6：互联态文件操作（执行在宿主，弹窗状态在本组合，与本地文件操作同构）——
+    /** LAN 选中集批量删除（paths = 选中项的远端 path；宿主落写 + Toast + 成功退选择）。 */
+    onDeleteLanSelection: (paths: List<String>) -> Unit = {},
+    /** LAN 网格重命名（oldPath = 远端 path；newName 为裸文件名，目录由服务端拼）。 */
+    onRenameLanFile: (oldPath: String, newName: String) -> Unit = { _, _ -> },
+    /** 目录选择弹窗的一次性远端 browse（宿主转 browseLanPath；失败回 null 弹窗自兜底）。 */
+    onBrowseLanPath: (path: String?, onReady: (LanBrowseResult?) -> Unit) -> Unit = { _, onReady -> onReady(null) },
+    /** 远端缩略图 URL 构造器（AVATAR 模式图片行；null 会话 = null，行退化占位底）。 */
+    lanThumbnailUrlOf: ((String) -> String?)? = null,
+    /** LAN 选中集移动/复制到远端目录（type: "move" | "copy"，对齐本地 onCopyMoveFiles）。 */
+    onCopyMoveLanFiles: (paths: List<String>, targetDir: String, type: String) -> Unit = { _, _, _ -> },
+    /** 人物换头像（personId + 弹窗选中的远端图 path；宿主转 renameLanPerson(avatarPath=)）。 */
+    onChangeLanAvatar: (personId: String, imagePath: String) -> Unit = { _, _ -> },
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1602,6 +1707,11 @@ fun App(
     var deleteLanTopicState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanTopic?>(null) }
     var renameLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
     var describeLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
+    // M6a 阶段 6 互联态文件操作的弹窗目标：重命名的远端 path、目录选择器的模式
+    // （移动/复制/换头像）与换头像的目标人物（AVATAR 模式提交流程要用）
+    var lanRenamePath by remember { mutableStateOf<String?>(null) }
+    var lanPickerMode by remember { mutableStateOf<LanPickerMode?>(null) }
+    var lanAvatarPersonId by remember { mutableStateOf<String?>(null) }
     // M4b 1.4 目标选择器（copy|move + 已展开成图片 id 的操作集）
     var pickerType by remember { mutableStateOf<String?>(null) }
     var pickerFileIds by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1698,13 +1808,20 @@ fun App(
     // LAN 总览不算本地文件夹总览（选择/目标选择器等本地批量操作对远端目录无意义）
     val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inLanOverview)
     val moreActions = when {
-        // M6a 阶段 5：LAN 目录网格的「更多」只加「加入专题…」（lanAllowEdit 直通时，
-        // D32：默认 true，手动收紧才隐藏）；其余——加入画布/标签操作/复制到/移动到/
-        // 重命名——全是本地库操作，对远端 path 不适用，仍不出现（M4a「不适用的项
-        // 不出现」先例）；互联态文件操作归阶段 6
+        // M6a 阶段 6：LAN 目录网格的「更多」已接互联态文件操作（lanAllowEdit 直通时出现，
+        // 403 门禁态全隐）——重命名/删除/复制到/移动到走远端写路径（LanClient 回写桌面），
+        // 选中项身份 = 远端 path（阶段 4 铁律），直接当 paths 传数据层；「加入专题…」是
+        // 阶段 5 既有项。本地画布/标签操作（加入画布/编辑标签/复制粘贴标签）对远端仍不
+        // 适用，不出现（M4a「不适用的项不出现」先例）。
         inBrowser && inLanBrowser -> buildList {
             if (lanAllowEdit) {
                 add(SelectionMoreAction("加入专题…") { showLanTopicPicker = true })
+                if (tab.selectedFileIds.size == 1) {
+                    add(SelectionMoreAction("重命名…") { lanRenamePath = tab.selectedFileIds.first() })
+                }
+                add(SelectionMoreAction("删除") { showDeleteConfirm = true })
+                add(SelectionMoreAction("复制到…") { lanPickerMode = LanPickerMode.COPY })
+                add(SelectionMoreAction("移动到…") { lanPickerMode = LanPickerMode.MOVE })
             }
         }
         inBrowser -> buildList {
@@ -1932,11 +2049,9 @@ fun App(
                         else state.selectAll(ids)
                     },
                     onExit = { state.exitSelectionMode() },
-                    // M6a 阶段 4：LAN 目录网格里删除/分享是本地操作，拦截提示（阶段 6 承接删除）
-                    onDelete = {
-                        if (inLanBrowser) Toast.makeText(context, "局域网图片的删除将随阶段 6 提供", Toast.LENGTH_SHORT).show()
-                        else showDeleteConfirm = true
-                    },
+                    // M6a 阶段 6：删除键 LAN/本地同态（都进确认弹窗，远端/本地的分流在
+                    // 确认回调）；分享仍是本地能力，LAN 拦截提示不变
+                    onDelete = { showDeleteConfirm = true },
                     onShare = {
                         if (inLanBrowser) Toast.makeText(context, "局域网图片不支持分享", Toast.LENGTH_SHORT).show()
                         else onShareSelection(tab.selectedFileIds)
@@ -2056,15 +2171,22 @@ fun App(
                     emptyText = if (tab.searchQuery.isNotBlank()) "无匹配标签" else "暂无标签",
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
-                // 人物总览：远端人物卡网格（M6a 阶段 5，D31）；断线/无远端人物维持空态
+                // 人物总览：远端人物卡网格（M6a 阶段 5，D31）；断线/无远端人物维持空态。
+                // 阶段 6：lanAllowEdit 直通时长按菜单加「换头像」——先记目标人物再开
+                // AVATAR 模式的目录选择弹窗（选图即走，无目录确认）
                 inPeopleOverview -> PeopleOverview(
                     lanPeople = lanPeople,
                     lanConnected = lanSnapshot.state == LanState.CONNECTED,
+                    lanAllowEdit = lanAllowEdit,
                     onPersonClick = { _ ->
                         Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
                     },
                     onRename = { renameLanPersonState = it },
                     onDescribe = { describeLanPersonState = it },
+                    onAvatarChange = { person ->
+                        lanAvatarPersonId = person.id
+                        lanPickerMode = LanPickerMode.AVATAR
+                    },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面；3.3fix 列数预测防跳档）
@@ -2433,6 +2555,32 @@ fun App(
         )
     }
 
+    // M6a 阶段 6 LAN 目录选择弹窗（网格「复制到…/移动到…」与人物卡「换头像」的最后一跳，
+    // 接线区对齐上面的 LanTopicPickerDialog）。选中项身份 = 远端 path，move/copy 直接把
+    // 选中集当 paths 传数据层；browse/缩略图构造器都是宿主转 GalleryViewModel 的会话
+    // 访问器（断线时 lanThumbnailUrlOf 为 null，弹窗图片行退化占位底，不阻塞选择）。
+    lanPickerMode?.let { mode ->
+        LanFolderPickerDialog(
+            mode = mode,
+            browse = { path, onReady -> onBrowseLanPath(path, onReady) },
+            thumbnailUrlOf = lanThumbnailUrlOf ?: { null },
+            onDismiss = { lanPickerMode = null },
+            onPickFolder = { dir ->
+                lanPickerMode = null
+                // MOVE/COPY 都可能有部分失败（逐项语义），汇总与退选择在宿主回调里
+                onCopyMoveLanFiles(tab.selectedFileIds.toList(), dir, if (mode == LanPickerMode.MOVE) "move" else "copy")
+            },
+            onPickImage = { imagePath, _ ->
+                lanPickerMode = null
+                // AVATAR 点图即走：目标人物在入口（人物卡长按「换头像」）已记下；
+                // 悬空防御（正常不可达）直接丢弃，不给半截流程弹第二次
+                val personId = lanAvatarPersonId
+                lanAvatarPersonId = null
+                if (personId != null) onChangeLanAvatar(personId, imagePath)
+            },
+        )
+    }
+
     // M6a 阶段 5 网络专题删除确认（复用本地删除确认形制；契约无专题重命名端点，
     // 远端卡片的长按菜单本就只有「删除」一项）
     deleteLanTopicState?.let { topic ->
@@ -2461,8 +2609,8 @@ fun App(
         )
     }
 
-    // M6a 阶段 5 远端人物 重命名 / 改描述（复用既有输入弹窗形制；换头像需要远端目录
-    // 选择器，阶段 6 LanFolderPicker 落地后再补，入口不出现）
+    // M6a 阶段 5 远端人物 重命名 / 改描述（复用既有输入弹窗形制；阶段 6 起「换头像」
+    // 也已接线，走 AVATAR 模式的 LanFolderPickerDialog，见上面的 picker 接线区）
     renameLanPersonState?.let { person ->
         LanPersonEditDialog(
             title = "重命名人物",
@@ -2554,6 +2702,21 @@ fun App(
         ).show()
     }
 
+    // M6a 阶段 6 LAN 网格重命名：与本地网格重命名同形（同一个 RenameDialog 形制、同款
+    // LaunchedEffect 拉起先清状态）；目标名是裸文件名，目录由服务端拼（契约 §1）。
+    // LAN 项身份随 rename 迁移（服务端换 path），执行在宿主 onRenameLanFile——查看器内
+    // 不做 LAN 重命名是范围决策（身份变化会让查看器序列失效，见 NativeGalleryView 护栏）。
+    LaunchedEffect(lanRenamePath) {
+        val oldPath = lanRenamePath ?: return@LaunchedEffect
+        lanRenamePath = null
+        val currentName = images.firstOrNull { it.id == oldPath }?.name ?: ""
+        RenameDialog(
+            context = context,
+            currentName = currentName,
+            onConfirm = { newName -> onRenameLanFile(oldPath, newName) },
+        ).show()
+    }
+
     // M4a 4.3 编辑标签（长按菜单单选项触发）；保存走 2.1 的唯一写入口
     editTagsFileId?.let { fid ->
         EditTagsDialog(
@@ -2574,16 +2737,24 @@ fun App(
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("删除所选") },
             text = {
+                // LAN 态的删除是远端 DELETE（契约 §1），没有系统相册回收站可找回——
+                // 文案不照抄本地那句「可尝试找回」，免得替服务端许诺它给不了的东西
                 Text(
-                    if (inBrowser || inTopicDetail) "确定删除所选的 $n 张图片吗？删除后可尝试在系统相册的回收站中找回。"
-                    else "确定删除所选 $n 个文件夹内的全部图片吗？删除后可尝试在系统相册的回收站中找回。",
+                    when {
+                        inLanBrowser -> "确定删除所选的 $n 张网络图片吗？删除后不可恢复。"
+                        inBrowser || inTopicDetail -> "确定删除所选的 $n 张图片吗？删除后可尝试在系统相册的回收站中找回。"
+                        else -> "确定删除所选 $n 个文件夹内的全部图片吗？删除后可尝试在系统相册的回收站中找回。"
+                    },
                     color = AuroraTheme.colors.textPrimary,
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     showDeleteConfirm = false
-                    onDeleteSelection(tab.selectedFileIds)
+                    // M6a 阶段 6：按现成 inLanBrowser 分流——远端 path 过本地 MediaStore
+                    // 解析必空，必须在发起前就分开两条链路（身份语义不同）
+                    if (inLanBrowser) onDeleteLanSelection(tab.selectedFileIds.toList())
+                    else onDeleteSelection(tab.selectedFileIds)
                 }) {
                     Text("删除", color = Color(0xFFEF4444))
                 }

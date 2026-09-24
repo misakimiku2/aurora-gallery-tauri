@@ -89,6 +89,12 @@ data class LanOperationResult(
     val error: String?,
 )
 
+/** rename 响应（成功时 [newPath] = 新共享根相对路径；FS 级失败 200+success:false）。 */
+data class LanRenameResult(val success: Boolean, val newPath: String?, val error: String?)
+
+/** move/copy 批量结果的 item（与请求 paths 同序一一对应；copy 重名自动改名）。 */
+data class LanFileOpItem(val path: String, val success: Boolean, val newPath: String?, val error: String?)
+
 // —— M6a 阶段 5：在线元数据 / 人物 / 专题（契约 §2/§3/§4）——
 
 /**
@@ -368,6 +374,64 @@ class LanClient(private val http: OkHttpClient) {
             ),
         )
 
+    // —— M6a 阶段 6：互联态文件操作（契约 §1 rename/delete / §5 move/copy；全吃 allow_edit 门禁）——
+
+    /**
+     * 同目录改名（契约 §1）：[newName] 是**裸文件名**，目录由服务端自己拼——path 是不透明
+     * 字符串，客户端不解析不拼接。403 = allow_edit 门禁关闭、404 = 源不存在、409 = 目标
+     * 重名，均抛 [LanHttpException]；**文件系统级失败也是 200**（success=false + error，
+     * 调用方两种形态都要判）。成功时 [LanRenameResult.newPath] = 新共享根相对路径：
+     * rename 后 file_id 必变，调用方以新 path 刷新缓存（path 身份铁律，契约 §0）。
+     */
+    suspend fun rename(base: String, token: String, oldPath: String, newName: String): LanRenameResult {
+        val body = JSONObject().put("old_path", oldPath).put("new_name", newName)
+        val json = sendJson(base, token, "POST", "/api/rename", body)
+        return LanRenameResult(
+            success = json.optBoolean("success"),
+            // optString 空串归 null：失败形态没有 path 字段，成功形态必带
+            newPath = json.optString("path").takeIf { it.isNotEmpty() },
+            error = json.optString("error").takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /**
+     * 删远端文件（契约 §1）：query 传 path（与 [deleteTopic] 同风格）。403 = 门禁关闭、
+     * 404 = 文件不存在，均抛 [LanHttpException]；FS 级失败（占用/权限等）200 + success=false。
+     */
+    suspend fun deleteFile(base: String, token: String, path: String): LanOperationResult {
+        val json = deleteJson(base, token, "/api/file?path=${lanQueryEncode(path)}")
+        return LanOperationResult(
+            success = json.optBoolean("success"),
+            error = json.optString("error").takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /**
+     * 批量移动进 [targetDir]（契约 §5.1；body 字段 `paths`/`target_dir` 的 snake_case 是
+     * 契约现状，不「纠正」）。响应 `items` 与 [paths] 同序一一对应：目标已存在该项失败
+     * （服务端不覆盖不自动改名）、源不存在也是 item 级失败——但 **target_dir 不存在是
+     * 整个请求 404**（连同 401/403 抛 [LanHttpException]），与 item 级失败是两种形态，
+     * 调用方分开处理。成功项 new_path = target_dir/原文件名。
+     */
+    suspend fun moveFiles(base: String, token: String, paths: List<String>, targetDir: String): List<LanFileOpItem> {
+        val body = JSONObject()
+            .put("paths", org.json.JSONArray(paths))
+            .put("target_dir", targetDir)
+        return parseFileOpItems(sendJson(base, token, "POST", "/api/file/move", body))
+    }
+
+    /**
+     * 批量复制进 [targetDir]（契约 §5.2）：与 [moveFiles] 同形，差异在冲突语义——重名
+     * **自动改名**（name_copy.ext / name_copy2.ext），new_path = 实际落盘路径（元数据随
+     * copy 迁移，副本在桌面库带原 tags）。
+     */
+    suspend fun copyFiles(base: String, token: String, paths: List<String>, targetDir: String): List<LanFileOpItem> {
+        val body = JSONObject()
+            .put("paths", org.json.JSONArray(paths))
+            .put("target_dir", targetDir)
+        return parseFileOpItems(sendJson(base, token, "POST", "/api/file/copy", body))
+    }
+
     // —— URL 拼接（token 进 query，缩略图/大图专用；Coil 的 URL 模型需要）——
 
     fun thumbnailUrl(base: String, token: String, remotePath: String, size: Int = 256): String =
@@ -483,6 +547,21 @@ class LanClient(private val http: OkHttpClient) {
         success = json.optBoolean("success"),
         fileCount = json.optLong("file_count", 0L),
     )
+
+    /** move/copy 响应的 `items`（契约 §5：与请求同序一一对应，逐项带 success/new_path/error）。 */
+    private fun parseFileOpItems(json: JSONObject): List<LanFileOpItem> {
+        val arr = json.optJSONArray("items") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o ->
+                LanFileOpItem(
+                    path = o.optString("path"),
+                    success = o.optBoolean("success"),
+                    newPath = o.optString("new_path").takeIf { it.isNotEmpty() },
+                    error = o.optString("error").takeIf { it.isNotEmpty() },
+                )
+            }
+        }
+    }
 
     private fun parseBrowse(json: JSONObject): LanBrowseResult = LanBrowseResult(
         currentPath = json.optString("current_path"),
