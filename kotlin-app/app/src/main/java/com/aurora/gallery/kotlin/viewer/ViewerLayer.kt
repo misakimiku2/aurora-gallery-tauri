@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import com.aurora.gallery.kotlin.LanMetadataItem
 import com.aurora.gallery.kotlin.state.AppState
 import org.json.JSONObject
 import uniffi.aurora_core.FfiFileMetadata
@@ -33,6 +34,12 @@ fun ViewerLayerHost(
     tagsByFile: Map<String, List<String>> = emptyMap(),
     metadataById: Map<String, FfiFileMetadata> = emptyMap(),
     /**
+     * 远端元数据缓存（M6a 阶段 5）：远端 path → [LanMetadataItem]（GalleryViewModel
+     * 的 lanMetaByPath）。isLan 项的抽屉标签/描述/来源只取这里（[toViewerItem] 的显式
+     * isLan 分支），绝不回读上面两份本地快照。
+     */
+    lanMetaById: Map<String, LanMetadataItem> = emptyMap(),
+    /**
      * LAN 大图 URL 构造器（M6a 阶段 4）：远端 path → imageUrl；未连接为 null。
      * 宿主从 LanManager.currentSession 现取——查看器序列在打开时拷走 URL，断线后
      * 退出 LAN 视图由宿主的联动兜住。
@@ -41,9 +48,15 @@ fun ViewerLayerHost(
 ) {
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
-    val items = remember(displayImages, parentName, tagsByFile, metadataById, lanImageUrlOf) {
-        displayImages.map {
-            it.toViewerItem(parentName, tagsByFile[it.id].orEmpty(), metadataById[it.id], lanImageUrlOf)
+    val items = remember(displayImages, parentName, tagsByFile, metadataById, lanMetaById, lanImageUrlOf) {
+        displayImages.map { img ->
+            // 显式 isLan 分支：远端项的元数据只喂 lanMetaById（fileId=远端 path），本地
+            // 快照两参一律不传——不是靠「key 不撞」的运气，是结构上就不读（D31 铁律）。
+            if (img.contentUri.startsWith("http")) {
+                img.toViewerItem(parentName, emptyList(), null, lanMetaById[img.id], lanImageUrlOf)
+            } else {
+                img.toViewerItem(parentName, tagsByFile[img.id].orEmpty(), metadataById[img.id], null, lanImageUrlOf)
+            }
         }
     }
     val startIndex = displayImages.indexOfFirst { it.id == fileId }.coerceAtLeast(0)

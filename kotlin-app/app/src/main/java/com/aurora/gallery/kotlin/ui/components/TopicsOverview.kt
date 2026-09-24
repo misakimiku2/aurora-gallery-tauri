@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
@@ -117,9 +118,25 @@ fun TopicsOverview(
     onSortChange: (TopicSortOption, Boolean) -> Unit = { _, _ -> },
     /** 侧栏目标可见性（列数预测用，见 KDoc）。 */
     sidebarVisible: Boolean = false,
+    // —— M6a 阶段 5：远端专题并入同一页（D31 拍板：合并不是独立分区）——
+    /** 远端专题（GET /api/topics 会话缓存；本地卡之后追加，带网络标识区分）。 */
+    lanTopics: List<com.aurora.gallery.kotlin.LanTopic> = emptyList(),
+    /** LAN 会话已连接（决定「新建网络专题」入口显隐）。 */
+    lanConnected: Boolean = false,
+    /** 远端专题卡点击（契约无成员枚举端点，宿主 Toast 占位）。 */
+    onLanTopicClick: (com.aurora.gallery.kotlin.LanTopic) -> Unit = {},
+    /** 远端新建入口点击（宿主弹「新建网络专题」对话框 → createLanTopic）。 */
+    onCreateLanTopic: () -> Unit = {},
+    /** 远端卡长按菜单「删除」（宿主弹确认后 deleteLanTopic；契约无重命名端点，菜单仅此一项）。 */
+    onDeleteLanTopic: (com.aurora.gallery.kotlin.LanTopic) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val totals = remember(topics) { topicTreeTotals(topics) }
+    // 远端专题的展示序（尽量套用现有 sortOption）：NAME 按名称排；TIME 排不了——
+    // LanTopic 未解析 createdAt（契约 §4.1 有、客户端模型未消费），维持服务端原序
+    val displayLanTopics = remember(lanTopics, sortOption, sortAscending) {
+        sortLanTopicsForDisplay(lanTopics, sortOption, sortAscending)
+    }
     Column(modifier.fillMaxSize()) {
         // 页头（桌面 renderGallery 标题栏：h2「专题」+ 右侧排序/新建）
         Row(
@@ -145,9 +162,14 @@ fun TopicsOverview(
             TopicSortMenu(option = sortOption, ascending = sortAscending, onChange = onSortChange)
             Spacer(Modifier.size(8.dp))
             NewTopicButton(onClick = onCreateTopic)
+            // M6a 阶段 5：远端新建入口（connected 才出现；图标区分本地/网络归属）
+            if (lanConnected) {
+                Spacer(Modifier.size(8.dp))
+                NewLanTopicButton(onClick = onCreateLanTopic)
+            }
         }
 
-        if (topics.isEmpty()) {
+        if (topics.isEmpty() && lanTopics.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
@@ -235,6 +257,32 @@ fun TopicsOverview(
                     )
                 }
             }
+            // —— 远端专题块（M6a 阶段 5，D31 并入口径）：本地卡之后同页追加，通栏
+            // Section 头 + 网络标识卡。key 加 lan: 前缀，与本地 9 位随机 id 永不互撞。
+            if (displayLanTopics.isNotEmpty()) {
+                item(key = "lan:header", span = { GridItemSpan(maxLineSpan) }) {
+                    LanTopicsSectionHeader(count = displayLanTopics.size)
+                }
+                items(
+                    count = displayLanTopics.size,
+                    key = { i -> "lan:${displayLanTopics[i].id}" },
+                ) { i ->
+                    val topic = displayLanTopics[i]
+                    Box(
+                        Modifier.animateItem(
+                            fadeInSpec = null,
+                            placementSpec = tween(durationMillis = PANEL_ANIMATE_MS, easing = EaseOut),
+                            fadeOutSpec = null,
+                        ),
+                    ) {
+                        LanTopicCard(
+                            topic = topic,
+                            onClick = { onLanTopicClick(topic) },
+                            onDelete = { onDeleteLanTopic(topic) },
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -260,6 +308,25 @@ fun sortTopicsForDisplay(
         TopicSortOption.TIME -> topics.sortedBy { it.createdAt ?: 0L }
     }
     return if (ascending) sorted else sorted.asReversed()
+}
+
+/**
+ * 远端专题的展示排序（尽量套用本地 sortOption；[LanTopic] 模型未解析 createdAt——契约
+ * §4.1 有该字段、客户端按需消费但阶段 5 没用，TIME 档排不了，**维持服务端原序**不做
+ * 任何重排。NAME 档与 [sortTopicsForDisplay] 同一把 Collator）。
+ */
+fun sortLanTopicsForDisplay(
+    topics: List<com.aurora.gallery.kotlin.LanTopic>,
+    option: TopicSortOption,
+    ascending: Boolean,
+): List<com.aurora.gallery.kotlin.LanTopic> = when (option) {
+    TopicSortOption.NAME -> {
+        val collator = Collator.getInstance(Locale.CHINA)
+        val sorted = topics.sortedWith(compareBy(collator) { it.name })
+        if (ascending) sorted else sorted.asReversed()
+    }
+    // 远端 Topic 无可用时间字段：升/降序都回落服务端原序（服务端已按更新时间给序）
+    TopicSortOption.TIME -> topics
 }
 
 /** 递归合计：people 去重并集、fileCount 求和（含全部后代；桌面 :469-504 同口径）。 */
@@ -568,6 +635,198 @@ private fun NewTopicButton(onClick: () -> Unit) {
             fontWeight = FontWeight.Bold,
             color = Color.White,
         )
+    }
+}
+
+/**
+ * 「新建网络专题」入口（M6a 阶段 5；connected 才渲染）：与 [NewTopicButton] 并排，
+ * 描边形制 + 网络 Section 同源翡翠 Wifi 图标做来源区分。触点 ≥48dp。
+ */
+@Composable
+private fun NewLanTopicButton(onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, colors.border, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IconWifi,
+            contentDescription = null,
+            tint = SECTION_EMERALD,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            "新建网络专题",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary,
+        )
+    }
+}
+
+/**
+ * 远端专题块的分节头（网格内通栏，形态对齐 TagsOverview 的组名分隔行）：
+ * 翡翠 Wifi 标识 + 「网络专题」+ 条目数。不可点。
+ */
+@Composable
+private fun LanTopicsSectionHeader(count: Int) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IconWifi,
+            contentDescription = null,
+            tint = SECTION_EMERALD,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            "网络专题",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
+        )
+        Spacer(Modifier.size(10.dp))
+        Text(
+            "$count 项",
+            fontSize = 12.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+/**
+ * 远端专题卡（M6a 阶段 5，D31 并入口径）：与本地 [TopicCard] 同尺寸同圆角同阴影，
+ * 但没有可用的封面（coverFileId 是桌面 file_id，且成员枚举端点缺失拿不到成员 path），
+ * 恒用本地「无封面」同款靛紫渐变占位；顶部标题条带翡翠 Wifi 来源标识 + 底部图片计数。
+ * 点击 = 宿主 Toast 占位（无成员枚举端点，不做假详情）。
+ *
+ * 长按菜单**只有「删除」**——契约无专题重命名端点（M4a「不适用的项不出现」先例），
+ * 「重命名」项不出现；「换头像/设封面」同理不存在。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LanTopicCard(
+    topic: com.aurora.gallery.kotlin.LanTopic,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    var menuOpen by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(0.75f)
+            .shadow(
+                elevation = 5.dp,
+                shape = shape,
+                clip = true,
+                ambientColor = TopicCardShadowColor,
+                spotColor = TopicCardShadowColor,
+            )
+            .background(colors.surface)
+            .border(1.dp, colors.border, shape)
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .onGloballyPositioned { anchor = it.boundsInWindow() },
+    ) {
+        // 长按菜单：仅「删除」（契约无专题重命名端点，「重命名」不出现）
+        AuroraDropdown(
+            expanded = menuOpen,
+            anchorBoundsInWindow = anchor,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            AuroraMenuItem(
+                text = "删除",
+                textColor = Color(0xFFEF4444),
+                onClick = {
+                    menuOpen = false
+                    onDelete()
+                },
+            )
+        }
+        // 无封面占位：与本地 TopicCard 的渐变占位同源（契约拿不到远端封面可用信息）
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        listOf(colors.topicGradientStart, colors.topicGradientEnd),
+                    ),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IconLayoutBig,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.size(48.dp),
+            )
+        }
+
+        // 顶部标题条：网络标识 + 名称（黑渐变 + 白字，对齐本地卡的杂志式标题条）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0x99000000), Color(0x00000000)),
+                    ),
+                )
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 22.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = IconWifi,
+                contentDescription = null,
+                tint = SECTION_EMERALD,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = topic.name.uppercase(Locale.ROOT),
+                fontSize = 20.sp,
+                fontFamily = FontFamily.Serif,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                letterSpacing = 2.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        // 底部计数条（黑渐变 + 图片计数；远端无人物计数口径，只给 fileCount）
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.5f to Color(0x66000000),
+                        1f to Color(0xCC000000),
+                    ),
+                )
+                .padding(start = 12.dp, end = 12.dp, top = 28.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            CardCountRow(
+                icon = IconImages,
+                text = topic.fileCount.coerceAtLeast(0).toString(),
+            )
+        }
     }
 }
 
@@ -993,6 +1252,111 @@ fun TopicPickerDialog(
                                 )
                             }
                         }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("取消", color = colors.textPrimary) }
+        },
+    )
+}
+
+/**
+ * 远端专题选择弹窗（M6a 阶段 5：LAN 目录网格多选「更多」→「加入专题…」的最后一跳）。
+ * 形制复用本地 [TopicPickerDialog]（AlertDialog + panel 底圆角滚动列表），但远端专题
+ * **无子专题语义树**（parentId 虽有值但建专题恒 parent_id=null、详情也不可达），是
+ * 扁平单层列表：行 = 翡翠 Wifi 标识 + 名称 + 图片计数。底部可选「新建网络专题」入口。
+ */
+@Composable
+fun LanTopicPickerDialog(
+    topics: List<com.aurora.gallery.kotlin.LanTopic>,
+    onDismiss: () -> Unit,
+    onPick: (com.aurora.gallery.kotlin.LanTopic) -> Unit,
+    /** 底部「新建网络专题」入口（null = 不出现；宿主转「新建网络专题」对话框）。 */
+    onCreateTopic: (() -> Unit)? = null,
+) {
+    val colors = AuroraTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("加入网络专题") },
+        text = {
+            Column {
+                if (topics.isEmpty()) {
+                    Text(
+                        "远端还没有专题。先建一个，再把选中的图收进去。",
+                        color = colors.textSecondary,
+                    )
+                } else {
+                    Column(
+                        Modifier
+                            .heightIn(max = 380.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.panel)
+                            .padding(6.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        topics.forEach { topic ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .defaultMinSize(minHeight = 48.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onPick(topic) }
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Spacer(Modifier.size(12.dp))
+                                Icon(
+                                    imageVector = IconWifi,
+                                    contentDescription = null,
+                                    tint = SECTION_EMERALD,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.size(10.dp))
+                                Text(
+                                    topic.name,
+                                    fontSize = 15.sp,
+                                    color = colors.textPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    topic.fileCount.toString(),
+                                    fontSize = 12.sp,
+                                    color = colors.textSecondary,
+                                )
+                                Spacer(Modifier.size(8.dp))
+                            }
+                        }
+                    }
+                }
+                if (onCreateTopic != null) {
+                    Spacer(Modifier.size(6.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onCreateTopic)
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Spacer(Modifier.size(12.dp))
+                        Icon(
+                            imageVector = IconPlus,
+                            contentDescription = null,
+                            tint = SECTION_EMERALD,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.size(10.dp))
+                        Text(
+                            "新建网络专题",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.primary,
+                        )
                     }
                 }
             }

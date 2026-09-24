@@ -1,8 +1,10 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +20,16 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -33,10 +39,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aurora.gallery.kotlin.LanPerson
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import uniffi.aurora_core.TagGroup
 
@@ -228,34 +237,225 @@ private suspend fun snapshotFlowScrollIndex(
 }
 
 /**
- * 人物总览（M4a 3.2）。D11=③ 的空壳：数据源在 M6（人脸识别 / AI 打标 / 互联态读桌面库），
- * 本轮只做「有入口、有总览、空态文案正确」，**不造假数据**（清单 3.1 同一口径）。
+ * 人物总览。远端人物卡网格（M6a 阶段 5，D31 并入口径）：connected 且有远端人物时渲染
+ * 卡片（首字符圆底头像占位——契约 §3.1 无人脸头像可用——+ 名 + 计数 + 网络标识）；
+ * 断线/无远端人物维持既有静态占位（逐像素一致）。
+ *
+ * 编辑入口（同位原则收在总览页，不放侧栏）：长按卡片 → 「重命名」「改描述」。
+ * 「换头像」不出现——需要远端目录选择器，阶段 6 LanFolderPicker 落地后再补
+ *（M4a「不适用的项不出现」先例）。点击卡片 = 宿主 Toast 占位（契约无成员枚举端点，
+ * 不做假筛选）。
  */
 @Composable
-fun PeopleOverview(modifier: Modifier = Modifier) {
+fun PeopleOverview(
+    modifier: Modifier = Modifier,
+    /** 远端人物（GET /api/people 会话缓存，原样渲染）。 */
+    lanPeople: List<LanPerson> = emptyList(),
+    /** LAN 会话已连接（当前仅语义标注；显隐由 lanPeople 是否为空决定）。 */
+    lanConnected: Boolean = false,
+    /** 卡片点击（宿主 Toast 占位）。 */
+    onPersonClick: (LanPerson) -> Unit = {},
+    /** 长按菜单「重命名」（宿主弹输入框 → renameLanPerson(id, name, null)）。 */
+    onRename: (LanPerson) -> Unit = {},
+    /** 长按菜单「改描述」（宿主弹输入框 → renameLanPerson(id, null, description)）。 */
+    onDescribe: (LanPerson) -> Unit = {},
+) {
     val colors = AuroraTheme.colors
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                imageVector = IconBrainBig,
-                contentDescription = null,
-                tint = colors.textSecondary.copy(alpha = 0.3f),
-                modifier = Modifier.size(64.dp),
-            )
-            Text(
-                text = "暂无人物",
-                fontSize = 16.sp,
-                color = colors.textSecondary,
-                modifier = Modifier.padding(top = 12.dp),
-            )
-            Text(
-                text = "人物识别将在后续版本提供",
-                fontSize = 12.sp,
-                color = colors.textSecondary.copy(alpha = 0.7f),
-                modifier = Modifier.padding(top = 4.dp),
+    if (lanPeople.isEmpty()) {
+        // 本地人物数据源未落地（M6）：断线/无远端人物维持既有空态
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = IconBrainBig,
+                    contentDescription = null,
+                    tint = colors.textSecondary.copy(alpha = 0.3f),
+                    modifier = Modifier.size(64.dp),
+                )
+                Text(
+                    text = "暂无人物",
+                    fontSize = 16.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    text = "人物识别将在后续版本提供",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 140.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+        modifier = modifier.fillMaxSize(),
+    ) {
+        items(
+            count = lanPeople.size,
+            key = { i -> lanPeople[i].id },
+        ) { i ->
+            LanPersonCard(
+                person = lanPeople[i],
+                onClick = { onPersonClick(lanPeople[i]) },
+                onRename = { onRename(lanPeople[i]) },
+                onDescribe = { onDescribe(lanPeople[i]) },
             )
         }
     }
+}
+
+/**
+ * 远端人物卡（形制对齐 [TagCard] 的白底卡 + 细边框）：头像占位 + 名称 + 计数行（带
+ * 网络标识）。长按弹「重命名/改描述」（无「换头像」，见 [PeopleOverview] 注释）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LanPersonCard(
+    person: LanPerson,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onDescribe: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    var menuOpen by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(colors.content)
+            .border(1.dp, colors.subtle, RoundedCornerShape(8.dp))
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .onGloballyPositioned { anchor = it.boundsInWindow() }
+            .padding(14.dp),
+    ) {
+        // 长按菜单：「重命名」「改描述」；「换头像」不出现（见 [PeopleOverview] 注释）
+        AuroraDropdown(
+            expanded = menuOpen,
+            anchorBoundsInWindow = anchor,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            AuroraMenuItem(
+                text = "重命名",
+                onClick = {
+                    menuOpen = false
+                    onRename()
+                },
+            )
+            AuroraMenuItem(
+                text = "改描述",
+                onClick = {
+                    menuOpen = false
+                    onDescribe()
+                },
+            )
+        }
+        PersonAvatar(name = person.name, size = 56.dp)
+        Spacer(Modifier.size(10.dp))
+        Text(
+            person.name,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.size(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = IconWifi,
+                contentDescription = null,
+                tint = SECTION_EMERALD,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.size(4.dp))
+            Text(
+                person.count.toString(),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.subtle)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 人物头像占位（首字符 + 人物紫圆底；侧栏与总览同源，色值取自 TreeSidebar 的
+ * SECTION_PURPLE）。[size] 侧栏 28dp、总览卡 56dp。
+ */
+@Composable
+private fun PersonAvatar(name: String, size: androidx.compose.ui.unit.Dp) {
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(50))
+            .background(PEOPLE_ACCENT.copy(alpha = 0.18f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            name.firstOrNull()?.uppercase() ?: "?",
+            fontSize = (size.value / 2.6f).sp,
+            fontWeight = FontWeight.Bold,
+            color = PEOPLE_ACCENT,
+        )
+    }
+}
+
+/** 人物紫（对齐侧栏人物 Section 的 purple-500；总览卡的头像/标识用色同源）。 */
+private val PEOPLE_ACCENT = Color(0xFFA855F7)
+
+/**
+ * 远端人物输入弹窗（M6a 阶段 5）：复用 [CreateTopicDialog] 的形制（AlertDialog +
+ * OutlinedTextField + 确认/取消），重命名与改描述共用一个组件。[allowEmpty] =
+ * 允许空串确认（改描述的空串 = 清空描述，契约 §3.2 的整行写语义）；重命名恒 false。
+ */
+@Composable
+fun LanPersonEditDialog(
+    title: String,
+    initialText: String,
+    placeholder: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    allowEmpty: Boolean = false,
+) {
+    val colors = AuroraTheme.colors
+    var text by remember { mutableStateOf(initialText) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                placeholder = { Text(placeholder, color = colors.textSecondary) },
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = allowEmpty || text.isNotBlank(),
+                onClick = { onConfirm(text.trim()) },
+            ) {
+                Text(
+                    confirmLabel,
+                    color = if (allowEmpty || text.isNotBlank()) colors.primaryDeep else colors.textSecondary,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textPrimary)
+            }
+        },
+    )
 }
 
 private val IconBrainBig: ImageVector by lazy {

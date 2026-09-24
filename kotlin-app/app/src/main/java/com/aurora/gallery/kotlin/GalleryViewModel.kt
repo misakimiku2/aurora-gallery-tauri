@@ -21,19 +21,26 @@ import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
 import com.aurora.gallery.kotlin.state.lanFolderId
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
+import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
 import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import uniffi.aurora_core.MediaImage
+import uniffi.aurora_core.RemoteTagCount
 import uniffi.aurora_core.TagGroup
 import uniffi.aurora_core.addFilesToTopic
 import uniffi.aurora_core.addTagsToFiles
@@ -45,6 +52,7 @@ import uniffi.aurora_core.getGroupedTags
 import uniffi.aurora_core.getFileMetadata
 import uniffi.aurora_core.getTopicFiles
 import uniffi.aurora_core.generateId
+import uniffi.aurora_core.groupRemoteTagCounts
 import uniffi.aurora_core.initDb
 import uniffi.aurora_core.listFolders
 import uniffi.aurora_core.listImages
@@ -129,11 +137,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      */
     val lan = LanManager(appContext, settingsStore)
 
-    // —— M6a 阶段 4：LAN 浏览会话态 ——
+    // —— M6a 阶段 4/5：LAN 浏览会话态 ——
     //
     // 纯内存会话数据（断线清空）：**只服务 LAN 视图的显示**，绝不写入本地库/本地词表
-    // （零 FFI 调用，清单 §1 命名空间铁律）。唯一写者是 [onLanSnapshot] 触发的
-    // [refreshLanRootsInternal] 与 [reloadLanImages] 的尾部门禁位同步。
+    // （清单 §1 命名空间铁律；阶段 5 的唯一 FFI 触点 = [rebuildLanRemoteTagGroups] 里的
+    // groupRemoteTagCounts **纯函数**做远端词表分组，排序规则只许有一套、不碰本地库）。
+    // 唯一写者是连接联动触发的 [refreshLanRootsInternal]、[reloadLanImages] 的尾部门禁位
+    // 同步，以及阶段 5 的远端写路径（LanClient + 响应条目乐观更新，见「M6a 阶段 5」区段）。
 
     /** 连接已就绪（snapshot CONNECTED 且 all_image_folders 拉取成功过一次）。 */
     val lanConnected = mutableStateOf(false)
@@ -151,6 +161,34 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** 根级散图（虚拟根的网格内容；浏览不单独 browse，React useLanClientSync 同款）。 */
     private val lanRootImages = mutableStateOf<List<LanRemoteImage>>(emptyList())
+
+    // —— M6a 阶段 5：远端库会话缓存（D31 数据层铁律的落点）——
+    //
+    // 全部纯内存 mutableStateOf，**整个 LAN 会话期间本地词表/本地库/本地过滤零变化**：
+    // 远端写一律走 LanClient（成功后用响应条目做乐观更新），绝不调 saveFileUpdates /
+    // upsertTopic / setFileTags / reloadTagState / reloadTopics 等任何本地写路径——
+    // 远端词表的新词只进下面这几份缓存，桌面词表由服务端自行维护。
+
+    /**
+     * 远端库图片缓存：path → browse 项（全部远端目录 + 根散图合并；type=video 不进，
+     * 对齐 [reloadLanImages] 的网格过滤口径）。tag 筛选虚拟目录的数据源，不再 browse。
+     */
+    val lanLibraryImages = mutableStateOf<Map<String, LanRemoteImage>>(emptyMap())
+
+    /** path → 远端元数据行（metadata/batch 的会话缓存；写成功后用响应条目整行覆盖）。 */
+    val lanMetaByPath = mutableStateOf<Map<String, LanMetadataItem>>(emptyMap())
+
+    /**
+     * 远端词表分组：lanMetaByPath 聚合出的 tag→count 交 groupRemoteTagCounts 纯函数的
+     * 产物。组序/组内序全由 Rust 定（「排序规则只许有一套」），Kotlin 侧不自己排。
+     */
+    val lanRemoteTagGroups = mutableStateOf<List<TagGroup>>(emptyList())
+
+    /** 远端人物（GET /api/people 会话缓存；写成功后重拉刷新，失败保留旧列表）。 */
+    val lanPeople = mutableStateOf<List<LanPerson>>(emptyList())
+
+    /** 远端专题（GET /api/topics 会话缓存；写成功后重拉刷新，失败保留旧列表）。 */
+    val lanTopics = mutableStateOf<List<LanTopic>>(emptyList())
 
     /** 连接成功后的会话拉取协程（刷新时可 join；断线时 cancel）。 */
     private var lanFetchJob: Job? = null
@@ -1089,13 +1127,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     // ===== M6a 阶段 4：LAN 浏览（数据层；UI 只消费这里算好的结构）=====
 
-    /** 清空 LAN 会话态（断线/手动断开联动；不动本地库/词表）。 */
+    /** 清空 LAN 会话态（断线/手动断开联动；不动本地库/词表）。远端条目（含 tag 词表）整体消失。 */
     private fun clearLanSession() {
         lanConnected.value = false
         lanAllowEdit.value = true
         lanAllowUpload.value = false
         lanRootImages.value = emptyList()
         lanOverviewFolders.value = emptyList()
+        lanLibraryImages.value = emptyMap()
+        lanMetaByPath.value = emptyMap()
+        lanRemoteTagGroups.value = emptyList()
+        lanPeople.value = emptyList()
+        lanTopics.value = emptyList()
     }
 
     /** 连接成功（或手动刷新）后的远端根拉取：all_imageFolders 一次带回目录+根散图+门禁位。 */
@@ -1119,7 +1162,103 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 "[Lan] 会话态就绪 folders=${result.folders.size} rootImages=${result.rootImages.size} " +
                     "allowEdit=${result.allowEdit} allowUpload=${result.allowUpload}",
             )
+            // —— 阶段 5：远端库缓存（browse 全目录 → metadata 批读 → 远端词表/people/topics）
+            // —— 整个流程在同一 lanFetchJob 内：断线 cancel 即废（意向守卫语义），不会出现
+            // 半套新缓存盖在断线清理之后。
+            refreshLanLibraryInternal(session, result.folders)
         }
+    }
+
+    /**
+     * 远端库缓存构建（阶段 5；[refreshLanRootsInternal] 的尾段，同一 lanFetchJob 内）：
+     *  1. 逐远端目录 browse 收集全部 image 项（并发 [LAN_BROWSE_CONCURRENCY]；单个目录
+     *     失败 Log.w 跳过不炸整批）→ 合并根散图 → [lanLibraryImages]；
+     *  2. path 分块（[LAN_METADATA_BATCH_CHUNK]）调 metadataBatch → [lanMetaByPath]
+     *     （单块失败只丢那块，词表分组可以只差一块待下次重连补齐）；
+     *  3. tag→count 聚合 → groupRemoteTagCounts 纯函数 → [lanRemoteTagGroups]；
+     *  4. people() / topics() → [lanPeople] / [lanTopics]。
+     *
+     * 失败降级口径：任一环节 Log.w 后用已就绪的部分继续，不抛不炸（对齐 [reloadTagState]
+     * 「读失败保留旧值」的纪律；断线重连会整体重跑）。
+     */
+    private suspend fun refreshLanLibraryInternal(session: LanManager.LanSession, folders: List<LanRemoteFolder>) {
+        // 1) 全目录 browse（并发 4；协程体在主线程汇合，列表只在主线程写，无锁安全）
+        val semaphore = Semaphore(LAN_BROWSE_CONCURRENCY)
+        val browsed = coroutineScope {
+            folders.map { folder ->
+                async {
+                    semaphore.withPermit {
+                        withContext(Dispatchers.IO) {
+                            runCatching { session.client.browse(session.base, session.token, folder.path) }
+                                .onFailure {
+                                    Log.w(TAG, "[Lan] 目录 browse 失败跳过：…${folder.path.takeLast(12)}")
+                                }
+                                .getOrNull()
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        val library = (browsed.filterNotNull().flatMap { it.images } + lanRootImages.value)
+            .filter { it.type != "video" } // 网格口径不含视频（reloadLanImages 同款），缓存保持一致
+            .associateBy { it.path }
+        lanLibraryImages.value = library
+        Log.i(
+            TAG,
+            "[Lan] 远端库就绪 images=${library.size}（含根散图；browse 失败 ${browsed.count { it == null }} 目录）",
+        )
+
+        // 2) metadata 批读（分块 300；契约保证 items 与入参同序同数量，按 path 键回填）
+        val meta = HashMap<String, LanMetadataItem>()
+        library.keys.chunked(LAN_METADATA_BATCH_CHUNK).forEach { chunk ->
+            val items = withContext(Dispatchers.IO) {
+                runCatching { session.client.metadataBatch(session.base, session.token, chunk) }
+            }
+            items.getOrNull()?.forEach { meta[it.path] = it }
+                ?: Log.w(TAG, "[Lan] metadata/batch 单块失败（${chunk.size} 项），远端词表暂缺该块")
+        }
+        lanMetaByPath.value = meta
+        Log.i(TAG, "[Lan] 远端元数据就绪 ${meta.size}/${library.size}")
+
+        // 3) 远端词表分组（唯一 FFI 触点 = groupRemoteTagCounts 纯函数，排序由 Rust 定）
+        rebuildLanRemoteTagGroups()
+
+        // 4) 人物与专题（读失败保留旧列表，桌面阶段 2「读失败保留内存行」同口径）
+        reloadLanPeople(session)
+        reloadLanTopics(session)
+    }
+
+    /**
+     * 重算 [lanRemoteTagGroups]：[lanMetaByPath] 的 tags 做 tag→图片数聚合，交
+     * groupRemoteTagCounts 纯函数分组排序（**Kotlin 侧不自己排**——「排序规则只许有一套」；
+     * 纯函数不碰本地库，远端词表绝不写进本地词表，D31 纪律）。
+     */
+    private suspend fun rebuildLanRemoteTagGroups() {
+        val counts = HashMap<String, Long>()
+        for (item in lanMetaByPath.value.values) {
+            for (tag in item.tags) counts.merge(tag, 1L, Long::plus)
+        }
+        lanRemoteTagGroups.value = withContext(Dispatchers.IO) {
+            groupRemoteTagCounts(counts.map { (tag, n) -> RemoteTagCount(tag, n) }, settings.value.language)
+        }
+    }
+
+    /** 重拉远端人物（失败保留旧列表——对齐桌面阶段 2「读失败保留内存行」口径）。 */
+    private suspend fun reloadLanPeople(session: LanManager.LanSession) {
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching { session.client.people(session.base, session.token) }
+        }
+        loaded.getOrNull()?.let { lanPeople.value = it }
+            ?: Log.w(TAG, "[Lan] people 重拉失败（${loaded.exceptionOrNull()?.message ?: "unknown"}），保留旧列表")
+    }
+
+    /** 重拉远端专题（失败保留旧列表，口径同 [reloadLanPeople]）。 */
+    private suspend fun reloadLanTopics(session: LanManager.LanSession) {
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching { session.client.topics(session.base, session.token) }
+        }
+        loaded.getOrNull()?.let { lanTopics.value = it }
+            ?: Log.w(TAG, "[Lan] topics 重拉失败（${loaded.exceptionOrNull()?.message ?: "unknown"}），保留旧列表")
     }
 
     /** LAN 总览下拉刷新（完成回调对齐本地 refreshManual 的形态）。 */
@@ -1196,6 +1335,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /**
      * LAN 目录的序列取数（reloadImages 的并列入口，M4a 序列源先例）：
      *  - 虚拟根（`__lan_root_images__`）= 会话态里的根散图，**不单独 browse**；
+     *  - tag 筛选虚拟目录（`__lan_tag__:<tag>`，阶段 5）= 从 [lanLibraryImages] 会话缓存
+     *    按 tag 过滤（配合 [lanMetaByPath]），**不 browse、不动门禁位**（tag 视图沿用当前值）；
      *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**过滤不进列表**
      *    （登记差异：React LAN 浏览含视频项；Kotlin 全 App 视频支持待定 M8+）。
      */
@@ -1204,8 +1345,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (key != loadedImagesKey) images.value = emptyList()
         loadedImagesKey = key
         val session = lan.currentSession() ?: return
+        // tag 筛选虚拟目录（阶段 5）：纯内存过滤，不发网络请求。判定必须吃 folderId
+        // 整串（lanTagFilterOrNull 内部自带 lan: 前缀剥离）；对剥完前缀的 remotePath 再调
+        // 会因「lan: 已不在」恒落空、误进 browse 分支（E2E 实测翻过的车）。
+        val tagFilter = folderId.lanTagFilterOrNull()
         val imgs: List<Image> = if (folderId == lanFolderId(LAN_ROOT_IMAGES_ID)) {
             lanRootImages.value.map { lanImageOf(session, it) }
+        } else if (tagFilter != null) {
+            lanLibraryImages.value.values
+                .filter { lanMetaByPath.value[it.path]?.tags?.contains(tagFilter) == true }
+                .map { lanImageOf(session, it) }
         } else {
             val remotePath = folderId.lanRemotePathOrNull() ?: return
             val result = withContext(Dispatchers.IO) {
@@ -1352,6 +1501,178 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         "bmp" -> "image/bmp"
         "heic", "heif" -> "image/heic"
         else -> "application/octet-stream"
+    }
+
+    // ===== M6a 阶段 5：在线元数据 / 人物 / 专题（写路径走 LanClient）=====
+    //
+    // 契约 §6：客户端不监听桌面 data-changed 事件，写操作成功后以**响应条目**做本地乐观
+    // 更新 + 对应列表重拉。D31 数据层铁律落点：以下函数**绝不**触本地库/本地词表/本地
+    // 过滤——不调 saveFileUpdates / upsertTopic / setFileTags / reloadTagState /
+    // reloadTopics 等任何本地写路径；远端词表的新词只进 lanMetaByPath / lanRemoteTagGroups
+    // 内存缓存，桌面词表由服务端自行维护。
+
+    /**
+     * 保存远端文件元数据（标签/描述/来源网址；契约 §2.2 整行读改写）。[tags] null =
+     * 不改、空列表 = 显式清空（[LanMetadataPatch] 同义）；[description]/[sourceUrl]
+     * null = 不改。成功：响应条目整行覆盖 [lanMetaByPath] 并重算 [lanRemoteTagGroups]
+     * （乐观更新，不重拉全量）；失败（含 401/403/网络）：Log.w + onDone(false)，缓存不动。
+     */
+    fun saveLanFileUpdates(
+        path: String,
+        tags: List<String>? = null,
+        description: String? = null,
+        sourceUrl: String? = null,
+        onDone: (Boolean) -> Unit = {},
+    ) {
+        val session = lan.currentSession()
+        if (session == null) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    session.client.putMetadata(
+                        session.base, session.token, path,
+                        LanMetadataPatch(tags = tags, description = description, sourceUrl = sourceUrl),
+                    )
+                }
+            }
+            val updated = result.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] 元数据保存失败 path 尾=…${path.takeLast(12)}：${result.exceptionOrNull()?.message}")
+                onDone(false)
+                return@launch
+            }
+            // 乐观更新：响应条目即服务端整行（以响应里的 path 为身份刷新，契约 §0）
+            lanMetaByPath.value = lanMetaByPath.value + (updated.path to updated)
+            rebuildLanRemoteTagGroups()
+            Log.i(TAG, "[Lan] 元数据已保存 path 尾=…${updated.path.takeLast(12)} tags=${updated.tags.size}")
+            onDone(true)
+        }
+    }
+
+    /**
+     * 建远端专题（契约 §4.2；id 服务端生成，description 仅非 null 才带上）。成功后重拉
+     * topics() 刷新 [lanTopics]（重拉失败保留旧列表），新建的 [LanTopic] 回给调用方
+     * （进详情/提示用）；失败回 null。
+     */
+    fun createLanTopic(name: String, description: String? = null, onDone: (LanTopic?) -> Unit = {}) {
+        val trimmed = name.trim()
+        val session = lan.currentSession()
+        if (trimmed.isEmpty() || session == null) {
+            onDone(null)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.createTopic(session.base, session.token, trimmed, description) }
+            }
+            val topic = result.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] 建专题失败：${result.exceptionOrNull()?.message}")
+                onDone(null)
+                return@launch
+            }
+            reloadLanTopics(session)
+            Log.i(TAG, "[Lan] 专题已建 id=${topic.id}")
+            onDone(topic)
+        }
+    }
+
+    /**
+     * 删远端专题（契约 §4.3，级联删成员关联、图片本身不受影响）。成功后重拉 topics()；
+     * 404（专题不存在）与其余失败同口径：Log.w + onDone(false)。
+     */
+    fun deleteLanTopic(topicId: String, onDone: (Boolean) -> Unit = {}) {
+        val session = lan.currentSession()
+        if (session == null) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.deleteTopic(session.base, session.token, topicId) }
+            }
+            val ok = result.getOrNull()?.success == true
+            if (!ok) {
+                Log.w(
+                    TAG,
+                    "[Lan] 删专题失败 id=$topicId：${result.exceptionOrNull()?.message ?: result.getOrNull()?.error}",
+                )
+                onDone(false)
+                return@launch
+            }
+            reloadLanTopics(session)
+            Log.i(TAG, "[Lan] 专题已删 id=$topicId")
+            onDone(true)
+        }
+    }
+
+    /**
+     * 把选中集（远端 path 列表）归入远端专题（契约 §4.4；本入口只加**文件**成员，
+     * peopleIds 恒空——加人物成员阶段 6 再接）。[paths] 为空直接回 false（两数组都空
+     * 是服务端 400）。成功后重拉 topics()（fileCount 才会新）。
+     */
+    fun addSelectionToLanTopic(topicId: String, paths: List<String>, onDone: (Boolean) -> Unit = {}) {
+        if (paths.isEmpty()) {
+            onDone(false)
+            return
+        }
+        val session = lan.currentSession()
+        if (session == null) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    session.client.addTopicMembers(session.base, session.token, topicId, paths, emptyList())
+                }
+            }
+            val members = result.getOrNull()
+            if (members?.success != true) {
+                Log.w(TAG, "[Lan] 归入专题失败 topic=$topicId：${result.exceptionOrNull()?.message ?: "success=false"}")
+                onDone(false)
+                return@launch
+            }
+            reloadLanTopics(session)
+            Log.i(TAG, "[Lan] 已归入专题 topic=$topicId fileCount=${members.fileCount}")
+            onDone(true)
+        }
+    }
+
+    /**
+     * 重命名 / 改描述远端人物（契约 §3.2 整行读改写；[name]/[description] 二选一或同传，
+     * null = 不改；换头像 avatarPath 本期不做、阶段 6 补）。404 = 人物不存在（服务端已删）、
+     * 其余失败同口径：Log.w + onDone(false)。成功后重拉 people() 刷新 [lanPeople]
+     * （重拉失败保留旧列表）。
+     */
+    fun renameLanPerson(
+        personId: String,
+        name: String? = null,
+        description: String? = null,
+        onDone: (Boolean) -> Unit = {},
+    ) {
+        val trimmedName = name?.trim()
+        val session = lan.currentSession()
+        if (session == null || (trimmedName == null && description == null) || trimmedName?.isEmpty() == true) {
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    session.client.putPerson(session.base, session.token, personId, trimmedName, null, description)
+                }
+            }
+            if (result.getOrNull() == null) {
+                Log.w(TAG, "[Lan] 人物更新失败 id=$personId：${result.exceptionOrNull()?.message}")
+                onDone(false)
+                return@launch
+            }
+            reloadLanPeople(session)
+            Log.i(TAG, "[Lan] 人物已更新 id=$personId")
+            onDone(true)
+        }
     }
 
     /**
@@ -1529,6 +1850,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
         /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
+
+        /** 阶段 5：远端库 browse 并发上限（远端目录可能上百，压并发护服务端与手机网络）。 */
+        private const val LAN_BROWSE_CONCURRENCY = 4
+
+        /** 阶段 5：metadata/batch 单块 path 数（契约无分页，块大小是客户端决定；300 折中单请求体积与失败重试粒度）。 */
+        private const val LAN_METADATA_BATCH_CHUNK = 300
 
         /**
          * 标签分组/组内排序用的 locale。M4b 2.2 起随设置面板的语言开关切换

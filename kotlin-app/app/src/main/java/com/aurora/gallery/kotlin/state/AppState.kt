@@ -52,12 +52,33 @@ const val LAN_FOLDER_ID_PREFIX = "lan:"
  */
 const val LAN_ROOT_IMAGES_ID = "__lan_root_images__"
 
+/**
+ * 远端标签筛选虚拟目录的命名空间标记（M6a 阶段 5；folderId 形如
+ * `lan:__lan_tag__:<tag>`，见 [lanTagFolderId]）。**不是**可 browse 的远端目录——
+ * 序列取数（GalleryViewModel.reloadLanImages）命中它时从远端库会话缓存按 tag 过滤，
+ * 不发任何网络请求。tag 名不透明：含冒号也原样保留（解出后不截断、不加工）。
+ */
+const val LAN_TAG_VIRTUAL_ROOT = "__lan_tag__:"
+
 /** 远端 path → folderId（加 [LAN_FOLDER_ID_PREFIX] 前缀）。 */
 fun lanFolderId(remotePath: String): String = LAN_FOLDER_ID_PREFIX + remotePath
 
 /** folderId → 远端 path（带前缀才剥，返回 null 表示不是 LAN 目录）。 */
 fun String.lanRemotePathOrNull(): String? =
     takeIf { startsWith(LAN_FOLDER_ID_PREFIX) }?.removePrefix(LAN_FOLDER_ID_PREFIX)
+
+/** 远端 tag → folderId（[LAN_FOLDER_ID_PREFIX] + [LAN_TAG_VIRTUAL_ROOT] 双前缀标记）。 */
+fun lanTagFolderId(tag: String): String = lanFolderId(LAN_TAG_VIRTUAL_ROOT + tag)
+
+/**
+ * folderId → 远端 tag（在 [lanRemotePathOrNull] 基础上再判 [LAN_TAG_VIRTUAL_ROOT] 前缀；
+ * 返回 null 表示不是 tag 虚拟目录）。tag 名不透明：removePrefix 只剥头一段标记，
+ * tag 自身含冒号也原样保留。
+ */
+fun String.lanTagFilterOrNull(): String? =
+    lanRemotePathOrNull()
+        ?.takeIf { it.startsWith(LAN_TAG_VIRTUAL_ROOT) }
+        ?.removePrefix(LAN_TAG_VIRTUAL_ROOT)
 
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }

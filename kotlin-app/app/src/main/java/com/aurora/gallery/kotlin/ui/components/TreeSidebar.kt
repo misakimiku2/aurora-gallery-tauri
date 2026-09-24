@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import kotlin.math.roundToInt
 import uniffi.aurora_core.Folder
+import uniffi.aurora_core.TagEntry
 import uniffi.aurora_core.TagGroup
 
 /**
@@ -249,6 +250,19 @@ fun TreeSidebar(
     lanFolders: List<com.aurora.gallery.kotlin.LanRemoteFolder> = emptyList(),
     /** 远端目录行点击（阶段 4 的 LAN 总览入口；本阶段宿主给 Toast 占位）。 */
     onLanFolderClick: (com.aurora.gallery.kotlin.LanRemoteFolder) -> Unit = {},
+    // —— M6a 阶段 5：远端词表/人物并入既有 Section（D31 拍板：合并不是独立分区）——
+    /**
+     * 远端词表分组（数据层 groupRemoteTagCounts 产物）。组序/组内序由 Rust 定（已按组键
+     * 排好），UI 只与本地 [tagGroups] 做按键归并（同键组本地行在前、远端行在后），不重排。
+     * 断线为空 → 渲染与现状完全一致。
+     */
+    lanRemoteTagGroups: List<TagGroup> = emptyList(),
+    /** 远端标签行点击（宿主 openFolder(lanTagFolderId(tag)) 进 tag 筛选虚拟目录）。 */
+    onLanTagClick: (String) -> Unit = {},
+    /** 远端人物（GET /api/people 会话缓存，原样渲染；契约无成员枚举端点，行点击给占位）。 */
+    lanPeople: List<com.aurora.gallery.kotlin.LanPerson> = emptyList(),
+    /** 远端人物行点击（宿主 Toast 占位：无成员枚举端点，不做假筛选）。 */
+    onLanPersonClick: (com.aurora.gallery.kotlin.LanPerson) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -262,8 +276,13 @@ fun TreeSidebar(
             FolderSort.DATE_ASC -> folders.sortedBy { it.modifiedAt }
         }
     }
-    // Section 头部的计数 = 词表里的标签条数（React 侧栏 TagSection 头部同口径）
+    // Section 头部的计数 = 词表里的标签条数（React 侧栏 TagSection 头部同口径；只数本地词表）
     val tagCount = tagGroups.sumOf { it.tags.size }
+    // 标签 Section 的展示序列：本地与远端按组键归并（两侧各自已按键排好，归并不产生新的
+    // 排序语义）。远端为空时恒等于本地行全 false——断线渲染与现状逐像素一致。
+    val mergedTagGroups = remember(tagGroups, lanRemoteTagGroups) {
+        mergeTagGroups(tagGroups, lanRemoteTagGroups)
+    }
 
     Column(
         modifier
@@ -393,7 +412,24 @@ fun TreeSidebar(
             selectedColor = SECTION_PURPLE,
         )
         if (activeSection == SidebarSection.PEOPLE) {
-            EmptyHint("暂无人物")
+            if (lanPeople.isEmpty()) {
+                // 本地人物数据源未落地（M6），断线/无远端人物维持既有空态
+                EmptyHint("暂无人物")
+            } else {
+                // 远端人物行（M6a 阶段 5，D31 并入口径）：契约无人脸头像可用（§3.1
+                // coverFileId 仅作身份），用首字符圆底占位。点击 = 宿主 Toast 占位
+                //（契约无成员枚举端点，不做假筛选）；人物编辑入口在 PeopleOverview 不在侧栏。
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .clipToBounds(),
+                ) {
+                    lanPeople.forEach { person ->
+                        LanPersonRow(person = person, onClick = { onLanPersonClick(person) })
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -411,7 +447,7 @@ fun TreeSidebar(
             selected = tagsOverviewSelected,
         )
         if (activeSection == SidebarSection.TAGS) {
-            if (tagGroups.isEmpty()) {
+            if (mergedTagGroups.isEmpty()) {
                 EmptyHint("暂无标签")
             } else {
                 Column(
@@ -420,15 +456,19 @@ fun TreeSidebar(
                         .verticalScroll(rememberScrollState())
                         .clipToBounds(),
                 ) {
-                    // 分组结构照搬 Rust 的返回：组名一行不可点的分隔标题，组内是标签行
-                    tagGroups.forEach { group ->
+                    // 分组结构照搬 Rust 的返回：组名一行不可点的分隔标题，组内是标签行。
+                    // 远端行（M6a 阶段 5，D31 并入口径）在同组内排本地行之后，行首带网络
+                    // 来源标识、selected 恒 false（不参与本地 activeTags 筛选）。
+                    mergedTagGroups.forEach { group ->
                         TagGroupHeader(group.key)
-                        group.tags.forEach { entry ->
+                        group.entries.forEach { merged ->
+                            val entry = merged.entry
                             TagRow(
                                 tag = entry.tag,
                                 count = entry.count,
-                                selected = entry.tag in activeTags,
-                                onClick = { onTagClick(entry.tag) },
+                                selected = !merged.isRemote && entry.tag in activeTags,
+                                onClick = { if (merged.isRemote) onLanTagClick(entry.tag) else onTagClick(entry.tag) },
+                                remote = merged.isRemote,
                             )
                         }
                     }
@@ -464,6 +504,50 @@ fun TreeSidebar(
             expandable = false,
         )
     }
+}
+
+/** 归并后的组内条目：[isRemote] 标记来源（远端行带网络标识、点击走远端 tag 虚拟目录）。 */
+private data class MergedTagEntry(val entry: TagEntry, val isRemote: Boolean)
+
+/** 归并后的分组（组键 + 已按「本地在前、远端在后」拼好的条目序列）。 */
+private data class MergedTagGroup(val key: String, val entries: List<MergedTagEntry>)
+
+/**
+ * 本地与远端词表按组键归并（M6a 阶段 5，D31 拍板的合并不是独立分区）。两侧的组键都已
+ * 各自按 locale 排好序（Rust 同一套 collation），双指针线性归并只做**配对穿插**，不产生
+ * 新的排序语义：同键组 → 本地行在前、远端行在后（组头只出现一次）；异键按既有序穿插。
+ * 远端为空时逐条原样回落，保证断线渲染与现状逐像素一致。
+ */
+private fun mergeTagGroups(local: List<TagGroup>, remote: List<TagGroup>): List<MergedTagGroup> {
+    if (remote.isEmpty()) return local.map { g -> MergedTagGroup(g.key, g.tags.map { MergedTagEntry(it, false) }) }
+    val result = ArrayList<MergedTagGroup>(local.size + remote.size)
+    var i = 0
+    var j = 0
+    while (i < local.size && j < remote.size) {
+        val l = local[i]
+        val r = remote[j]
+        when {
+            l.key == r.key -> {
+                result += MergedTagGroup(
+                    l.key,
+                    l.tags.map { MergedTagEntry(it, false) } + r.tags.map { MergedTagEntry(it, true) },
+                )
+                i++
+                j++
+            }
+            l.key < r.key -> {
+                result += MergedTagGroup(l.key, l.tags.map { MergedTagEntry(it, false) })
+                i++
+            }
+            else -> {
+                result += MergedTagGroup(r.key, r.tags.map { MergedTagEntry(it, true) })
+                j++
+            }
+        }
+    }
+    local.subList(i, local.size).forEach { g -> result += MergedTagGroup(g.key, g.tags.map { MergedTagEntry(it, false) }) }
+    remote.subList(j, remote.size).forEach { g -> result += MergedTagGroup(g.key, g.tags.map { MergedTagEntry(it, true) }) }
+    return result
 }
 
 /**
@@ -769,9 +853,12 @@ private fun TagGroupHeader(key: String) {
  * `TreeSidebar.tsx:778-786`）。选中态与文件夹行同一套（蓝底白字），计数徽标在选中时
  * 换半透明白底保持可读；计数为 0 = 只在词表里、还没贴到任何文件上，照样出行（同 React，
  * 它就是要给「先建词后贴图」留位置）。整行 48dp 触控目标。
+ *
+ * [remote] = 远端词表行（M6a 阶段 5）：行首图标换成网络来源标识（翡翠 Wifi，D31 的
+ * 「网络来源标识」统一形制），selected 由调用方恒传 false——远端行不参与本地筛选态。
  */
 @Composable
-private fun TagRow(tag: String, count: Long, selected: Boolean, onClick: () -> Unit) {
+private fun TagRow(tag: String, count: Long, selected: Boolean, onClick: () -> Unit, remote: Boolean = false) {
     val colors = AuroraTheme.colors
     Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
         Row(
@@ -785,9 +872,14 @@ private fun TagRow(tag: String, count: Long, selected: Boolean, onClick: () -> U
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = IconTagSmall,
+                imageVector = if (remote) IconWifi else IconTagSmall,
                 contentDescription = null,
-                tint = if (selected) Color.White else SIDEBAR_GRAY_600,
+                // 远端行 = 网络 Section 的翡翠标识；本地行照旧灰
+                tint = when {
+                    remote -> SECTION_EMERALD
+                    selected -> Color.White
+                    else -> SIDEBAR_GRAY_600
+                },
                 modifier = Modifier.size(12.dp),
             )
             Spacer(Modifier.size(8.dp))
@@ -828,6 +920,80 @@ private fun EmptyHint(text: String) {
 }
 
 /**
+ * 远端人物行（人物 Section 展开列表，M6a 阶段 5，D31 并入口径）：首字符圆底头像占位
+ *（契约 §3.1：远端无人脸头像可用，coverFileId 是桌面 file_id 仅作身份）+ 头像右侧的
+ * 网络来源标识（翡翠 Wifi）+ 名称 + 计数徽标。行形态对齐 [FolderRow]（48dp 触屏目标、
+ * 图标缩进同层级）。点击 = 宿主 Toast 占位（契约无成员枚举端点，不做假筛选）。
+ */
+@Composable
+private fun LanPersonRow(person: com.aurora.gallery.kotlin.LanPerson, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(start = 40.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PersonAvatarPlaceholder(person.name)
+            Spacer(Modifier.size(6.dp))
+            Icon(
+                imageVector = IconWifi,
+                contentDescription = null,
+                tint = SECTION_EMERALD,
+                modifier = Modifier.size(12.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                person.name,
+                fontSize = 14.sp,
+                color = SIDEBAR_GRAY_600,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (person.count > 0) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    person.count.toString(),
+                    fontSize = 10.sp,
+                    color = SIDEBAR_GRAY_500,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.surface)
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 人物头像占位（M6a 阶段 5）：名字首字符 + 人物紫圆底（Section 用色同源）。本地人物
+ * 数据源未落地，侧栏与人物总览的远端人物统一用这个占位。
+ */
+@Composable
+private fun PersonAvatarPlaceholder(name: String) {
+    Box(
+        Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(50))
+            .background(SECTION_PURPLE.copy(alpha = 0.18f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            name.firstOrNull()?.uppercase() ?: "?",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = SECTION_PURPLE,
+        )
+    }
+}
+
+/**
  * 排序循环按钮（React FolderSection 头部的排序图标；图标随方向翻转示意降序）。
  * 命中区 48dp（行高 52dp 内的触屏最小目标）；[selected] 时图标随头部变白
  * （React `isSelected ? 'text-white/80' : 'text-gray-400'`）。
@@ -862,11 +1028,13 @@ private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit, selected: Boo
 // ---- 自绘图标：lucide 线性风格（与 TopBar.kt 同款绘制参数；图标就近各自文件持有）----
 
 // Section 图标配色（对齐 React TreeSidebar 的 tailwind 色：专题 pink-500、相册/标签
-// blue-500、人物 purple-500、画布 emerald-500、网络断连 gray-400）
+// blue-500、人物 purple-500、画布 emerald-500、网络断连 gray-400）。SECTION_EMERALD
+// 是「网络来源标识」的统一翡翠（M6a 阶段 5：侧栏远端行/专题与人物总览的远端卡片共用），
+// 故开 internal 供同包总览组件引用。
 private val SECTION_PINK = Color(0xFFEC4899)
 private val SECTION_BLUE = Color(0xFF3B82F6)
 private val SECTION_PURPLE = Color(0xFFA855F7)
-private val SECTION_EMERALD = Color(0xFF10B981)
+internal val SECTION_EMERALD = Color(0xFF10B981)
 private val SECTION_GRAY = Color(0xFF9CA3AF)
 
 /** 专题 Section 选中底色（桌面 TopicSection isSelected 的 #ee5ea5，比 pink-500 浅一档）。 */

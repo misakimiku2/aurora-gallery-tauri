@@ -769,6 +769,33 @@ pub fn get_grouped_tags(locale: String) -> Result<Vec<TagGroup>, AuroraError> {
         .collect())
 }
 
+/// [group_remote_tag_counts] 的入参行：远端标签 + 远端库内贴着它的图片数。
+#[derive(uniffi::Record)]
+pub struct RemoteTagCount {
+    pub tag: String,
+    pub count: i64,
+}
+
+/// 远端词表分组（M6a 阶段 5）：LAN 批量元数据聚合出的 (tag, count) 列表 → 侧栏分组。
+///
+/// 纯函数不碰本地库——与 [get_grouped_tags] 共用 `collate::group_tags` 这一套分组与
+/// 排序规则（「排序规则只许有一套」纪律）；入参里的词**不得**写进本地词表（D31 数据层
+/// 铁律：LAN 词表只进桌面端），本函数对此零风险。
+#[uniffi::export]
+pub fn group_remote_tag_counts(counts: Vec<RemoteTagCount>, locale: String) -> Vec<TagGroup> {
+    let pairs: Vec<(String, i64)> = counts.into_iter().map(|c| (c.tag, c.count)).collect();
+    collate::group_tags(&pairs, &locale)
+        .into_iter()
+        .map(|(key, items)| TagGroup {
+            key,
+            tags: items
+                .into_iter()
+                .map(|(tag, count)| TagEntry { tag, count })
+                .collect(),
+        })
+        .collect()
+}
+
 /// 往词表里加一个词（不贴到任何文件上，计数 0）。
 #[uniffi::export]
 pub fn add_tag_to_vocabulary(tag: String) -> Result<(), AuroraError> {
@@ -844,5 +871,28 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),
             original.ai_data.unwrap()
         );
+    }
+
+    /// 远端词表分组（M6a 阶段 5）：与 `get_grouped_tags` 同一套 collate 规则——组键、
+    /// 组序、组内序一致；计数为 0 的词照常出现；纯函数不触库。
+    #[test]
+    fn group_remote_tag_counts_matches_local_rules() {
+        let groups = group_remote_tag_counts(
+            vec![
+                RemoteTagCount { tag: "写真".into(), count: 3 },
+                RemoteTagCount { tag: "alpha".into(), count: 1 },
+                RemoteTagCount { tag: "重庆".into(), count: 0 },
+            ],
+            "zh".into(),
+        );
+        let flat: Vec<(String, i64)> = groups
+            .iter()
+            .flat_map(|g| g.tags.iter().map(|t| (t.tag.clone(), t.count)))
+            .collect();
+        // 组键规则与本地一致（ASCII→字母、汉字→拼音边界表）
+        assert_eq!(flat, vec![("alpha".into(), 1), ("写真".into(), 3), ("重庆".into(), 0)]);
+        // 组头与本地分组同形（A / X / Z 组），组内按 locale 升序
+        let keys: Vec<String> = groups.iter().map(|g| g.key.clone()).collect();
+        assert_eq!(keys, vec!["A".to_string(), "X".to_string(), "Z".to_string()]);
     }
 }

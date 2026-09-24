@@ -13,7 +13,9 @@ import java.net.URI
 import java.net.URLEncoder
 
 /**
- * M6a 阶段 3：LAN 客户端数据层（纯 HTTP，无 UI）。
+ * M6a 阶段 3/5：LAN 客户端数据层（纯 HTTP，无 UI）。阶段 5 补在线元数据/人物/专题
+ * 端点（契约 §2/§3/§4；写请求的 body 字段名 snake_case 与 camelCase 混用是契约现状，
+ * 逐字对齐不「纠正」）。
  *
  * 协议逐字对齐 `docs/Android/Kotlin版/M6a互联契约定稿.md`（= 桌面服务端现状）：
  *  - token 走 `Authorization: Bearer <token>` header；缩略图/大图例外（`?token=` query）；
@@ -85,6 +87,64 @@ data class LanAllFoldersResult(
 data class LanOperationResult(
     val success: Boolean,
     val error: String?,
+)
+
+// —— M6a 阶段 5：在线元数据 / 人物 / 专题（契约 §2/§3/§4）——
+
+/**
+ * 远端元数据行（`POST /api/metadata/batch` 的 item 与 `PUT /api/metadata` 的响应同形，
+ * 契约 §2）。[path] 不透明原样保留（契约 §0 铁律）；tags 是**远端桌面**词表口径的词
+ * ——只进会话缓存，绝不并入安卓本地词表（D31 数据层铁律）。
+ */
+data class LanMetadataItem(
+    val path: String,
+    val tags: List<String>,
+    val description: String,
+    val sourceUrl: String,
+)
+
+/**
+ * `PUT /api/metadata` 的 patch（契约 §2.2）：字段 `null` = 不改（JSON 里**省略该字段**，
+ * 绝不写 null——服务端把 null 与缺省同看待，但省略是契约明文形态）；[tags] 传空列表 =
+ * 显式清空（写 `[]`），与「不改」是两回事。
+ */
+data class LanMetadataPatch(
+    val tags: List<String>? = null,
+    val description: String? = null,
+    val sourceUrl: String? = null,
+)
+
+/**
+ * 远端人物（`GET /api/people` 的 item，Person 模型 camelCase 原样序列化，契约 §3）。
+ * 只留客户端要用的字段：`coverFileId` 是桌面 file_id（**不解析不使用**，头像走
+ * `/api/thumbnail?path=`）；`faceBox`/`updatedAt`/`characterTagIndex` 暂无消费方，同样不解析。
+ */
+data class LanPerson(
+    val id: String,
+    val name: String,
+    /** 远端库内贴着该人物标签的图片数（Long 对齐 FFI/TagEntry 的计数口径）。 */
+    val count: Long,
+    val description: String?,
+    /** 人物背后的角色标签名（远端词表口径，可 null）。 */
+    val characterTagName: String?,
+)
+
+/**
+ * 远端专题（`GET /api/topics` 的 item，Topic 模型 camelCase 原样序列化，契约 §4）。
+ * `fileIds` 恒为 `[]` 不解析（成员走关联表懒加载），数量看 [fileCount]。
+ */
+data class LanTopic(
+    val id: String,
+    val parentId: String?,
+    val name: String,
+    val description: String?,
+    val fileCount: Long,
+)
+
+/** 成员调整响应（`POST /api/topic/members` 与 DELETE 单成员；[fileCount] = 调整后该专题的缓存成员数）。 */
+data class LanTopicMembersResult(
+    val success: Boolean,
+    val fileCount: Long,
 )
 
 /**
@@ -195,6 +255,119 @@ class LanClient(private val http: OkHttpClient) {
         }
     }
 
+    // —— M6a 阶段 5：在线元数据 / 人物 / 专题（契约 §2/§3/§4；写端点吃 allow_edit 门禁）——
+
+    /**
+     * 批量读元数据（契约 §2.1）：响应 `items` 与 [paths] **同序同数量**（查无元数据的
+     * path 给空默认项，绝不因个别 path 失败整批报错——服务端口径）。
+     */
+    suspend fun metadataBatch(base: String, token: String, paths: List<String>): List<LanMetadataItem> {
+        val body = JSONObject().put("paths", org.json.JSONArray(paths))
+        val json = sendJson(base, token, "POST", "/api/metadata/batch", body)
+        return parseMetadataItems(json.optJSONArray("items"))
+    }
+
+    /**
+     * 单文件整行读改写（契约 §2.2）：[patch] 里非 null 的字段才进 JSON（省略 = 不改）。
+     * 响应 200 = 更新后的完整条目（裸对象无包装）；400 = JSON 非法 / path 越出共享根，
+     * 403 = allow_edit 门禁关闭，均抛 [LanHttpException]。
+     */
+    suspend fun putMetadata(base: String, token: String, path: String, patch: LanMetadataPatch): LanMetadataItem {
+        val patchJson = JSONObject()
+            .putOpt("tags", patch.tags?.let { org.json.JSONArray(it) })
+            .putOpt("description", patch.description)
+            .putOpt("source_url", patch.sourceUrl)
+        val body = JSONObject().put("path", path).put("patch", patchJson)
+        return parseMetadataItem(sendJson(base, token, "PUT", "/api/metadata", body))
+    }
+
+    /** 全部远端人物（契约 §3.1；`coverFileId` 桌面 file_id 不解析，见 [LanPerson]）。 */
+    suspend fun people(base: String, token: String): List<LanPerson> {
+        val json = getJson(base, token, "/api/people")
+        return parsePeople(json.optJSONArray("people"))
+    }
+
+    /**
+     * 重命名 / 换头像 / 改描述远端人物（契约 §3.2，整行读改写）。除 [id] 外只写非 null
+     * 字段；[avatarPath] 是共享根相对 path（**不是** file_id，字段名契约现状就是 snake_case
+     * 的 `avatar_path`）。响应 = 更新后的裸 Person；404 = 人物 id 不存在（自然抛 [LanHttpException]）。
+     */
+    suspend fun putPerson(
+        base: String,
+        token: String,
+        id: String,
+        name: String?,
+        avatarPath: String?,
+        description: String?,
+    ): LanPerson {
+        val body = JSONObject()
+            .put("id", id)
+            .putOpt("name", name)
+            .putOpt("avatar_path", avatarPath)
+            .putOpt("description", description)
+        return parsePerson(sendJson(base, token, "PUT", "/api/person", body))
+    }
+
+    /** 全部远端专题（契约 §4.1；`fileIds` 恒为 `[]` 不解析，数量看 [LanTopic.fileCount]）。 */
+    suspend fun topics(base: String, token: String): List<LanTopic> {
+        val json = getJson(base, token, "/api/topics")
+        return parseTopics(json.optJSONArray("topics"))
+    }
+
+    /** 建专题（契约 §4.2）：响应 = 新建后的完整 Topic 裸对象（id 服务端生成）。 */
+    suspend fun createTopic(base: String, token: String, name: String, description: String?): LanTopic {
+        val body = JSONObject()
+            .put("name", name)
+            .putOpt("description", description)
+            .put("parent_id", JSONObject.NULL)
+        return parseTopic(sendJson(base, token, "POST", "/api/topic", body))
+    }
+
+    /** 删专题（契约 §4.3）：query 传 id（与 `DELETE /api/file?path=` 的 query 风格一致）。 */
+    suspend fun deleteTopic(base: String, token: String, id: String): LanOperationResult {
+        val json = deleteJson(base, token, "/api/topic?id=${lanQueryEncode(id)}")
+        return LanOperationResult(
+            success = json.optBoolean("success"),
+            error = json.optString("error").takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /**
+     * 归属调整·增（契约 §4.4）：两个数组**至少一个非空是调用方责任**（都空是服务端 400；
+     * 这里两数组恒带，空数组就是空数组，不省略字段）。
+     */
+    suspend fun addTopicMembers(
+        base: String,
+        token: String,
+        topicId: String,
+        paths: List<String>,
+        peopleIds: List<String>,
+    ): LanTopicMembersResult {
+        val body = JSONObject()
+            .put("topic_id", topicId)
+            .put("paths", org.json.JSONArray(paths))
+            .put("people_ids", org.json.JSONArray(peopleIds))
+        return parseTopicMembersResult(sendJson(base, token, "POST", "/api/topic/members", body))
+    }
+
+    /** 归属调整·删单文件成员（契约 §4.5 的 `path` 形态，query 二选一）。 */
+    suspend fun removeTopicMemberFile(base: String, token: String, topicId: String, path: String): LanTopicMembersResult =
+        parseTopicMembersResult(
+            deleteJson(
+                base, token,
+                "/api/topic/members?topic_id=${lanQueryEncode(topicId)}&path=${lanQueryEncode(path)}",
+            ),
+        )
+
+    /** 归属调整·删单人物成员（契约 §4.5 的 `people_id` 形态）。 */
+    suspend fun removeTopicMemberPerson(base: String, token: String, topicId: String, peopleId: String): LanTopicMembersResult =
+        parseTopicMembersResult(
+            deleteJson(
+                base, token,
+                "/api/topic/members?topic_id=${lanQueryEncode(topicId)}&people_id=${lanQueryEncode(peopleId)}",
+            ),
+        )
+
     // —— URL 拼接（token 进 query，缩略图/大图专用；Coil 的 URL 模型需要）——
 
     fun thumbnailUrl(base: String, token: String, remotePath: String, size: Int = 256): String =
@@ -233,6 +406,83 @@ class LanClient(private val http: OkHttpClient) {
                 JSONObject(text)
             }
         }
+
+    /** POST/PUT 一个 JSON body 并解析 JSON 响应（401/非 2xx 统一抛 [LanHttpException]，[getJson] 同款）。 */
+    private suspend fun sendJson(base: String, token: String, method: String, urlPath: String, body: JSONObject): JSONObject =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url("$base$urlPath")
+                .header("Authorization", "Bearer $token")
+                .method(method, body.toString().toRequestBody(JSON_MEDIA))
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) throw LanHttpException(resp.code, text)
+                JSONObject(text)
+            }
+        }
+
+    /** DELETE（无请求体，参数走 query）并解析 JSON 响应；错误口径同 [getJson]。 */
+    private suspend fun deleteJson(base: String, token: String, urlPath: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            val req = Request.Builder()
+                .url("$base$urlPath")
+                .header("Authorization", "Bearer $token")
+                .method("DELETE", null)
+                .build()
+            http.newCall(req).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) throw LanHttpException(resp.code, text)
+                JSONObject(text)
+            }
+        }
+
+    private fun parseMetadataItems(arr: org.json.JSONArray?): List<LanMetadataItem> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let(::parseMetadataItem) }
+    }
+
+    private fun parseMetadataItem(o: JSONObject): LanMetadataItem = LanMetadataItem(
+        path = o.optString("path"),
+        tags = o.optJSONArray("tags")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList(),
+        description = o.optString("description"),
+        sourceUrl = o.optString("source_url"),
+    )
+
+    private fun parsePeople(arr: org.json.JSONArray?): List<LanPerson> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.takeIf { it.optString("id").isNotEmpty() }?.let(::parsePerson)
+        }
+    }
+
+    private fun parsePerson(o: JSONObject): LanPerson = LanPerson(
+        id = o.optString("id"),
+        name = o.optString("name"),
+        count = o.optLong("count", 0L),
+        description = o.optString("description").takeIf { it.isNotEmpty() },
+        characterTagName = o.optString("characterTagName").takeIf { it.isNotEmpty() },
+    )
+
+    private fun parseTopics(arr: org.json.JSONArray?): List<LanTopic> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.takeIf { it.optString("id").isNotEmpty() }?.let(::parseTopic)
+        }
+    }
+
+    private fun parseTopic(o: JSONObject): LanTopic = LanTopic(
+        id = o.optString("id"),
+        parentId = o.optString("parentId").takeIf { it.isNotEmpty() },
+        name = o.optString("name"),
+        description = o.optString("description").takeIf { it.isNotEmpty() },
+        fileCount = o.optLong("fileCount", 0L),
+    )
+
+    private fun parseTopicMembersResult(json: JSONObject): LanTopicMembersResult = LanTopicMembersResult(
+        success = json.optBoolean("success"),
+        fileCount = json.optLong("file_count", 0L),
+    )
 
     private fun parseBrowse(json: JSONObject): LanBrowseResult = LanBrowseResult(
         currentPath = json.optString("current_path"),

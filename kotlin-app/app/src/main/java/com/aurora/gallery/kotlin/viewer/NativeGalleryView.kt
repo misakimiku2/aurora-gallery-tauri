@@ -90,10 +90,15 @@ class NativeGalleryView @JvmOverloads constructor(
          *  - `name`: `string`，查看器重命名弹窗。宿主**不写元数据行**（重命名改的是
          *    MediaStore 的 `DISPLAY_NAME`，归 M4b），只给可见占位。
          *
-         * 合并与整行读改写都在宿主侧（`GalleryViewModel.saveFileUpdates`），本类不做
-         * 任何落库判断，只负责把编辑结果原样报出去。
+         * [isLan]（M6a 阶段 5）：被编辑项是否远端项（查看器自己知道 item.isLan）。
+         * true 时宿主必须走 LAN 写路径（saveLanFileUpdates → PUT /api/metadata），
+         * **绝不落本地 FFI**（D31 数据层铁律的守门员分支）；`name` 键只可能来自
+         * 本地重命名弹窗（LAN 项菜单不含重命名），恒伴随 isLan=false。
+         *
+         * 合并与整行读改写都在宿主侧（`GalleryViewModel.saveFileUpdates` /
+         * `saveLanFileUpdates`），本类不做任何落库判断，只负责把编辑结果原样报出去。
          */
-        fun onUpdateFile(fileId: String, updatesJson: String)
+        fun onUpdateFile(fileId: String, updatesJson: String, isLan: Boolean)
         /** 用户点击了抽屉里的调色板色块，请求按该颜色搜索。colorHex 形如 "#RRGGBB"。 */
         fun onColorSearch(colorHex: String)
         /** 用户点击了"提取主色调"按钮，请求对该图片提取主色调。 */
@@ -1641,7 +1646,7 @@ class NativeGalleryView @JvmOverloads constructor(
                     images[idx] = images[idx].copy(tags = newTags)
                 }
                 val json = JSONObject().apply { put("tags", JSONArray(newTags)) }
-                listener?.onUpdateFile(item.fileId, json.toString())
+                listener?.onUpdateFile(item.fileId, json.toString(), item.isLan)
                 images.getOrNull(idx)?.let { updateDrawer(it) }
             }
         ).show()
@@ -1659,7 +1664,7 @@ class NativeGalleryView @JvmOverloads constructor(
                     images[idx] = images[idx].copy(description = newDesc)
                 }
                 val json = JSONObject().apply { put("description", newDesc) }
-                listener?.onUpdateFile(item.fileId, json.toString())
+                listener?.onUpdateFile(item.fileId, json.toString(), item.isLan)
                 images.getOrNull(idx)?.let { updateDrawer(it) }
             }
         ).show()
@@ -1677,7 +1682,7 @@ class NativeGalleryView @JvmOverloads constructor(
                     images[idx] = images[idx].copy(sourceUrl = newUrl)
                 }
                 val json = JSONObject().apply { put("sourceUrl", newUrl) }
-                listener?.onUpdateFile(item.fileId, json.toString())
+                listener?.onUpdateFile(item.fileId, json.toString(), item.isLan)
                 images.getOrNull(idx)?.let { updateDrawer(it) }
             }
         ).show()
@@ -1838,6 +1843,10 @@ class NativeGalleryView @JvmOverloads constructor(
 
     private fun showRenameDialog() {
         val item = images.getOrNull(currentIndex) ?: return
+        // 防御（M6a 阶段 5）：重命名是本地 MediaStore 操作，LAN 项的「更多」菜单本就不含
+        // 这一项（见 showMoreMenu 的 isLan 分支）；这里再拦一道，保证远端 path 永远到不了
+        // 本地重命名链路。
+        if (item.isLan) return
         RenameDialog(
             context = context,
             currentName = item.name,
@@ -1848,7 +1857,8 @@ class NativeGalleryView @JvmOverloads constructor(
                     updateTitle()
                 }
                 val json = JSONObject().apply { put("name", newName) }
-                listener?.onUpdateFile(item.fileId, json.toString())
+                // 本地入口恒 false（见 Listener.onUpdateFile 注释：LAN 项不可达重命名）
+                listener?.onUpdateFile(item.fileId, json.toString(), false)
             }
         ).show()
     }

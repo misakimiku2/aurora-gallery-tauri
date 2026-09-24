@@ -1,5 +1,6 @@
 package com.aurora.gallery.kotlin.viewer
 
+import com.aurora.gallery.kotlin.LanMetadataItem
 import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.Image
 import java.text.SimpleDateFormat
@@ -21,6 +22,12 @@ internal fun Image.toViewerItem(
     parentName: String = "",
     tags: List<String> = emptyList(),
     metadata: FfiFileMetadata? = null,
+    /**
+     * 远端元数据行（M6a 阶段 5）：fileId（=远端 path）→ [LanMetadataItem]。**仅 isLan 项
+     * 消费**（抽屉的标签/描述/来源三行改取这里）；本地项传 null。调用方（ViewerLayerHost）
+     * 已按 isLan 显式分流，isLan 项不会把本地快照传进来。
+     */
+    lanMetadata: LanMetadataItem? = null,
     /**
      * LAN 大图 URL 构造器（M6a 阶段 4）：远端 path → imageUrl；未连接为 null（此时 LAN
      * 大图只能失败兜底——断线联动会自动退回本地视图，正常到不了这里）。
@@ -47,9 +54,11 @@ internal fun Image.toViewerItem(
         createdAt = formatIso(createdAt),
         updatedAt = formatIso(modifiedAt),
         parentName = parentName,
-        tags = tags,
-        description = metadata?.description.orEmpty(),
-        sourceUrl = metadata?.sourceUrl.orEmpty(),
+        // 显式 isLan 分支（D31 铁律的 UI 半边）：远端项的标签/描述/来源**只**来自
+        // [lanMetadata]，参数位上的本地快照结构上就不会被读；本地项照旧读本地行。
+        tags = if (isLan) lanMetadata?.tags.orEmpty() else tags,
+        description = if (isLan) lanMetadata?.description.orEmpty() else metadata?.description.orEmpty(),
+        sourceUrl = if (isLan) lanMetadata?.sourceUrl.orEmpty() else metadata?.sourceUrl.orEmpty(),
     )
 }
 

@@ -68,6 +68,8 @@ import com.aurora.gallery.kotlin.ui.components.TopicSectionHeader
 import com.aurora.gallery.kotlin.ui.components.TopicSortOption
 import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
+import com.aurora.gallery.kotlin.ui.components.LanTopicPickerDialog
+import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
@@ -97,6 +99,7 @@ import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
+import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -649,8 +652,12 @@ class MainActivity : ComponentActivity() {
          *
          * 本方法是「查看器协议 → 数据层」的唯一适配点：解析在这里做，落库与快照重算在
          * [GalleryViewModel.saveFileUpdates]，元数据面板（4.2）直接调后者、不经过这里。
+         *
+         * M6a 阶段 5：[isLan] 分支是 D31 数据层铁律的守门员——远端项的编辑永远走
+         * [GalleryViewModel.saveLanFileUpdates]（LanClient 回写桌面），绝不落本地 FFI；
+         * 键存在才传、缺省=null=不改（对齐契约 §2.2 的 patch 语义）。
          */
-        override fun onUpdateFile(fileId: String, updatesJson: String) {
+        override fun onUpdateFile(fileId: String, updatesJson: String, isLan: Boolean) {
             val updates = try {
                 JSONObject(updatesJson)
             } catch (e: JSONException) {
@@ -670,6 +677,12 @@ class MainActivity : ComponentActivity() {
                 // MediaStore 的 DISPLAY_NAME（M4b 1.5 接通写原语，先过批量写授权），
                 // 元数据行挂在同一 file_id 上不动（规划五要点②）。查看器已就地更新了
                 // 自己列表里的名字，失败时靠重扫对账纠正。
+                if (isLan) {
+                    // 防御：LAN 项的重命名入口已双重不可达（菜单不含 + showRenameDialog
+                    // 护栏），真到了这里也不能把远端 path 写进本地 MediaStore。
+                    Log.w("AuroraKotlin", "[Edit] LAN 项的重命名请求被拦截（理论不可达）: $fileId")
+                    return
+                }
                 val newName = updates.optString("name")
                 if (newName.isNotEmpty()) {
                     fileOpWithWriteAccessUris(listOf(fileId)) { uris ->
@@ -679,6 +692,18 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
+                return
+            }
+            if (isLan) {
+                // D31 守门员分支：LAN 项的标签/描述/来源回写远端桌面库（allow_edit 关闭
+                // 时数据层回 false →「保存失败」），不碰本地词表/本地过滤。
+                viewModel.saveLanFileUpdates(fileId, tags, description, sourceUrl) { ok ->
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (ok) "已保存" else "保存失败",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
                 return
             }
@@ -1125,6 +1150,57 @@ class MainActivity : ComponentActivity() {
                         onLanUploadClick = { remotePath -> launchLanUpload(remotePath) },
                         onLanFolderRefresh = { onComplete -> viewModel.refreshLanFolder(onComplete) },
                         onLanRootsRefresh = { onComplete -> viewModel.refreshLanRoots(onComplete) },
+                        // —— M6a 阶段 5：在线元数据/人物/专题（写回调统一落 LanClient，D31）——
+                        lanRemoteTagGroups = viewModel.lanRemoteTagGroups.value,
+                        lanPeople = viewModel.lanPeople.value,
+                        lanTopics = viewModel.lanTopics.value,
+                        lanAllowEdit = viewModel.lanAllowEdit.value,
+                        onCreateLanTopic = { name ->
+                            viewModel.createLanTopic(name) { topic ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (topic != null) "网络专题已创建" else "创建失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDeleteLanTopic = { topic ->
+                            viewModel.deleteLanTopic(topic.id) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "专题已删除" else "删除失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onAddSelectionToLanTopic = { topicId, paths ->
+                            viewModel.addSelectionToLanTopic(topicId, paths) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已加入专题" else "加入专题失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                if (ok) viewModel.appState.exitSelectionMode()
+                            }
+                        },
+                        onRenameLanPerson = { person, name ->
+                            viewModel.renameLanPerson(person.id, name = name, description = null) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已重命名" else "重命名失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onDescribeLanPerson = { person, description ->
+                            viewModel.renameLanPerson(person.id, name = null, description = description) { ok ->
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (ok) "已保存描述" else "保存失败",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 ViewerLayerHost(
@@ -1134,6 +1210,8 @@ class MainActivity : ComponentActivity() {
                     parentName = currentFolderName,
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
+                    // M6a 阶段 5：远端元数据缓存——isLan 项抽屉的标签/描述/来源只取这里
+                    lanMetaById = viewModel.lanMetaByPath.value,
                     // M6a 阶段 4：LAN 大图 URL 构造器（查看器 isLan 项的取图源）
                     lanImageUrlOf = viewModel.lanImageUrlOf(),
                 )
@@ -1463,6 +1541,25 @@ fun App(
     onLanFolderRefresh: ((onComplete: () -> Unit) -> Unit) = {},
     /** LAN 总览的下拉刷新（重拉 all_image_folders）。 */
     onLanRootsRefresh: ((onComplete: () -> Unit) -> Unit) = {},
+    // —— M6a 阶段 5：在线元数据/人物/专题（D31 并入口径；数据层会话缓存 + LanClient 写）——
+    /** 远端词表分组（侧栏标签 Section 的归并数据源；Rust 定序，UI 不重排）。 */
+    lanRemoteTagGroups: List<TagGroup> = emptyList(),
+    /** 远端人物（侧栏人物 Section + 人物总览卡网格）。 */
+    lanPeople: List<com.aurora.gallery.kotlin.LanPerson> = emptyList(),
+    /** 远端专题（专题总览远端块 + LAN 网格「加入专题…」选择弹窗）。 */
+    lanTopics: List<com.aurora.gallery.kotlin.LanTopic> = emptyList(),
+    /** 编辑门禁位（allow_edit；D32 默认 true 直通，false 时 LAN 网格的写入口不出现）。 */
+    lanAllowEdit: Boolean = false,
+    /** 新建网络专题（宿主调 createLanTopic，反馈也在宿主）。 */
+    onCreateLanTopic: (String) -> Unit = {},
+    /** 删除网络专题（宿主弹确认后调 deleteLanTopic，反馈也在宿主）。 */
+    onDeleteLanTopic: (com.aurora.gallery.kotlin.LanTopic) -> Unit = {},
+    /** LAN 网格选中集归入远端专题（paths = 选中项的远端 path；宿主落写 + Toast）。 */
+    onAddSelectionToLanTopic: (topicId: String, paths: List<String>) -> Unit = { _, _ -> },
+    /** 远端人物重命名（宿主调 renameLanPerson(id, name, null)）。 */
+    onRenameLanPerson: (com.aurora.gallery.kotlin.LanPerson, String) -> Unit = { _, _ -> },
+    /** 远端人物改描述（宿主调 renameLanPerson(id, null, description)）。 */
+    onDescribeLanPerson: (com.aurora.gallery.kotlin.LanPerson, String) -> Unit = { _, _ -> },
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1488,8 +1585,12 @@ fun App(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // M4a 3.2 新建专题弹窗（TopicsOverview 的「新建专题」按钮触发）
     var showCreateTopic by remember { mutableStateOf(false) }
+    // M6a 阶段 5 新建**网络**专题弹窗（TopicsOverview 的远端新建入口触发）
+    var showCreateLanTopic by remember { mutableStateOf(false) }
     // M4a 3.2 专题选择弹窗（选择模式「更多」→「加入专题…」触发）
     var showTopicPicker by remember { mutableStateOf(false) }
+    // M6a 阶段 5 远端专题选择弹窗（LAN 目录网格「加入专题…」触发）
+    var showLanTopicPicker by remember { mutableStateOf(false) }
     // M4a 4.3 「更多」菜单开合（受控）：长按已选中项时从网格侧打开
     var moreExpanded by remember { mutableStateOf(false) }
     // M4a 4.3 编辑标签弹窗的目标文件（单选菜单项触发）
@@ -1497,6 +1598,10 @@ fun App(
     // M4a 4.3 专题卡片长按菜单 → 重命名 / 删除确认弹窗的目标
     var renameTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
     var deleteTopicState by remember { mutableStateOf<uniffi.aurora_core.FfiTopic?>(null) }
+    // M6a 阶段 5 远端条目的弹窗目标（确认/输入弹窗的宿主态）
+    var deleteLanTopicState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanTopic?>(null) }
+    var renameLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
+    var describeLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
     // M4b 1.4 目标选择器（copy|move + 已展开成图片 id 的操作集）
     var pickerType by remember { mutableStateOf<String?>(null) }
     var pickerFileIds by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1542,6 +1647,8 @@ fun App(
         lanOverviewFolders.firstOrNull { it.id == tab.folderId }?.name
             ?: remotePath.substringAfterLast('/').ifEmpty { remotePath }
     }
+    // M6a 阶段 5：tag 筛选虚拟目录（lan:__lan_tag__:<tag>）的标题 = 该 tag（非空即命中）
+    val lanTagTitle = tab.folderId?.lanTagFilterOrNull()
     val inTopicsList = inTopicsOverview && tab.activeTopicId == null
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
@@ -1591,10 +1698,15 @@ fun App(
     // LAN 总览不算本地文件夹总览（选择/目标选择器等本地批量操作对远端目录无意义）
     val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inLanOverview)
     val moreActions = when {
-        // M6a 阶段 4：LAN 目录网格的「更多」一概为空——加入画布/加入专题/标签操作/
-        // 复制到/移动到/重命名全是本地库操作，对远端 path 不适用（M4a「不适用的项
+        // M6a 阶段 5：LAN 目录网格的「更多」只加「加入专题…」（lanAllowEdit 直通时，
+        // D32：默认 true，手动收紧才隐藏）；其余——加入画布/标签操作/复制到/移动到/
+        // 重命名——全是本地库操作，对远端 path 不适用，仍不出现（M4a「不适用的项
         // 不出现」先例）；互联态文件操作归阶段 6
-        inBrowser && inLanBrowser -> emptyList()
+        inBrowser && inLanBrowser -> buildList {
+            if (lanAllowEdit) {
+                add(SelectionMoreAction("加入专题…") { showLanTopicPicker = true })
+            }
+        }
         inBrowser -> buildList {
             // M5 3.1：画布组置顶（仅平板，D28）。单实例（D21）语义 =「加入画布」，
             // 不做「新建画布」入口；计数显示全画布 N/24，超 24 拦截 Toast
@@ -1788,6 +1900,18 @@ fun App(
                 onLanFolderClick = { folder ->
                     state.openFolder(com.aurora.gallery.kotlin.state.lanFolderId(folder.path))
                 },
+                // M6a 阶段 5（D31 并入口径）：远端词表并入标签 Section、远端人物进人物
+                // Section。远端标签行点击 = 进 tag 筛选虚拟目录（与 onLanFolderClick 同款
+                // 前缀 folderId，序列源分流在 reloadImages）；远端人物行点击 = Toast 占位
+                //（契约无成员枚举端点，登记差异，不做假筛选）
+                lanRemoteTagGroups = lanRemoteTagGroups,
+                onLanTagClick = { tag ->
+                    state.openFolder(com.aurora.gallery.kotlin.state.lanTagFolderId(tag))
+                },
+                lanPeople = lanPeople,
+                onLanPersonClick = { _ ->
+                    Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                },
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )
@@ -1833,8 +1957,10 @@ fun App(
             } else if (!inCanvas) {
                 TopBar(
                     title = when {
-                        // M6a 阶段 4：LAN 态标题——总览=服务端名（无则「局域网」），目录=远端目录名
+                        // M6a 阶段 4：LAN 态标题——总览=服务端名（无则「局域网」），目录=远端目录名；
+                        // M6a 阶段 5：tag 筛选虚拟目录 =「标签 · <tag>」（照抄本地标签筛选形制）
                         inLanOverview -> lanServerName?.takeIf { it.isNotBlank() } ?: "局域网"
+                        lanTagTitle != null -> "标签 · $lanTagTitle"
                         inLanBrowser -> lanBrowserTitle ?: "局域网"
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
                         inTagsOverview -> "标签"
@@ -1930,8 +2056,17 @@ fun App(
                     emptyText = if (tab.searchQuery.isNotBlank()) "无匹配标签" else "暂无标签",
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
-                // 人物总览：D11=③ 的空壳（数据源在 M6），只有正确空态
-                inPeopleOverview -> PeopleOverview(Modifier.fillMaxWidth().weight(1f))
+                // 人物总览：远端人物卡网格（M6a 阶段 5，D31）；断线/无远端人物维持空态
+                inPeopleOverview -> PeopleOverview(
+                    lanPeople = lanPeople,
+                    lanConnected = lanSnapshot.state == LanState.CONNECTED,
+                    onPersonClick = { _ ->
+                        Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                    },
+                    onRename = { renameLanPersonState = it },
+                    onDescribe = { describeLanPersonState = it },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
                 // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面；3.3fix 列数预测防跳档）
                 inTopicsList -> TopicsOverview(
                     topics = sortedRootTopics,
@@ -1954,6 +2089,15 @@ fun App(
                     sidebarVisible = state.layout.isSidebarVisible,
                     initialScrollAnchor = state.topicsOverviewScrollAnchor,
                     onScrollChanged = { state.topicsOverviewScrollAnchor = it },
+                    // M6a 阶段 5：远端专题块（同页追加，D31 并入口径；点击/新建/删除的
+                    // 反馈都在宿主）
+                    lanTopics = lanTopics,
+                    lanConnected = lanSnapshot.state == LanState.CONNECTED,
+                    onLanTopicClick = { _ ->
+                        Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                    },
+                    onCreateLanTopic = { showCreateLanTopic = true },
+                    onDeleteLanTopic = { deleteLanTopicState = it },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 // 专题详情（3.2④ 两层落地；3.3 对齐桌面详情：Hero 头图 + 区块化；
@@ -2202,6 +2346,19 @@ fun App(
         )
     }
 
+    // M6a 阶段 5 新建网络专题（复用 CreateTopicDialog 形制，标题/按钮标明「网络」）
+    if (showCreateLanTopic) {
+        CreateTopicDialog(
+            title = "新建网络专题",
+            confirmLabel = "创建",
+            onDismiss = { showCreateLanTopic = false },
+            onConfirm = { name ->
+                showCreateLanTopic = false
+                onCreateLanTopic(name)
+            },
+        )
+    }
+
     // M4a 4.3 专题重命名（卡片长按菜单触发；同一弹窗组件复用为重命名形制）
     renameTopicState?.let { topic ->
         CreateTopicDialog(
@@ -2255,6 +2412,82 @@ fun App(
             onPick = { topic ->
                 showTopicPicker = false
                 onAddToTopic(topic.id, tab.selectedFileIds)
+            },
+        )
+    }
+
+    // M6a 阶段 5 远端专题选择弹窗（LAN 目录网格「加入专题…」最后一跳）；
+    // 选中项身份 = Image.id = 远端 path（阶段 4 铁律），直接作为 paths 传数据层
+    if (showLanTopicPicker) {
+        LanTopicPickerDialog(
+            topics = lanTopics,
+            onDismiss = { showLanTopicPicker = false },
+            onPick = { topic ->
+                showLanTopicPicker = false
+                onAddSelectionToLanTopic(topic.id, tab.selectedFileIds.toList())
+            },
+            onCreateTopic = {
+                showLanTopicPicker = false
+                showCreateLanTopic = true
+            },
+        )
+    }
+
+    // M6a 阶段 5 网络专题删除确认（复用本地删除确认形制；契约无专题重命名端点，
+    // 远端卡片的长按菜单本就只有「删除」一项）
+    deleteLanTopicState?.let { topic ->
+        AlertDialog(
+            onDismissRequest = { deleteLanTopicState = null },
+            title = { Text("删除网络专题") },
+            text = {
+                Text(
+                    "确定删除网络专题「${topic.name}」吗？其 ${topic.fileCount} 个成员关联将一并解除，图片本身不受影响。",
+                    color = AuroraTheme.colors.textPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteLanTopicState = null
+                    onDeleteLanTopic(topic)
+                }) {
+                    Text("删除", color = Color(0xFFEF4444))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteLanTopicState = null }) {
+                    Text("取消", color = AuroraTheme.colors.textPrimary)
+                }
+            },
+        )
+    }
+
+    // M6a 阶段 5 远端人物 重命名 / 改描述（复用既有输入弹窗形制；换头像需要远端目录
+    // 选择器，阶段 6 LanFolderPicker 落地后再补，入口不出现）
+    renameLanPersonState?.let { person ->
+        LanPersonEditDialog(
+            title = "重命名人物",
+            initialText = person.name,
+            placeholder = "人物名称",
+            confirmLabel = "重命名",
+            onDismiss = { renameLanPersonState = null },
+            onConfirm = { name ->
+                renameLanPersonState = null
+                onRenameLanPerson(person, name)
+            },
+        )
+    }
+    describeLanPersonState?.let { person ->
+        LanPersonEditDialog(
+            title = "编辑人物描述",
+            initialText = person.description.orEmpty(),
+            placeholder = "人物描述（留空 = 清空）",
+            confirmLabel = "保存",
+            // 空串 = 显式清空描述（契约 §3.2 整行写语义），允许空确认
+            allowEmpty = true,
+            onDismiss = { describeLanPersonState = null },
+            onConfirm = { description ->
+                describeLanPersonState = null
+                onDescribeLanPerson(person, description)
             },
         )
     }

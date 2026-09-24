@@ -716,6 +716,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_get_topic_people(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_group_remote_tag_counts(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_init_db(
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_folders(
@@ -804,6 +806,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_get_topic_files_paginated(`topicId`: RustBuffer.ByValue,`offset`: Long,`limit`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_get_topic_people(`topicId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_group_remote_tag_counts(`counts`: RustBuffer.ByValue,`locale`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_init_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1020,6 +1024,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_get_topic_people() != 29311) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_group_remote_tag_counts() != 12703) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
@@ -2071,6 +2078,47 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
 
 
 /**
+ * [group_remote_tag_counts] 的入参行：远端标签 + 远端库内贴着它的图片数。
+ */
+data class RemoteTagCount (
+    var `tag`: kotlin.String
+    , 
+    var `count`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteTagCount: FfiConverterRustBuffer<RemoteTagCount> {
+    override fun read(buf: ByteBuffer): RemoteTagCount {
+        return RemoteTagCount(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteTagCount) = (
+            FfiConverterString.allocationSize(value.`tag`) +
+            FfiConverterLong.allocationSize(value.`count`)
+    )
+
+    override fun write(value: RemoteTagCount, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tag`, buf)
+            FfiConverterLong.write(value.`count`, buf)
+    }
+}
+
+
+
+/**
  * 一个标签 + 它贴在多少张图上。计数为 0 = 只在词表里、还没贴到任何文件上。
  */
 data class TagEntry (
@@ -2693,6 +2741,34 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeRemoteTagCount: FfiConverterRustBuffer<List<RemoteTagCount>> {
+    override fun read(buf: ByteBuffer): List<RemoteTagCount> {
+        val len = buf.getInt()
+        return List<RemoteTagCount>(len) {
+            FfiConverterTypeRemoteTagCount.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RemoteTagCount>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRemoteTagCount.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RemoteTagCount>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRemoteTagCount.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeTagEntry: FfiConverterRustBuffer<List<TagEntry>> {
     override fun read(buf: ByteBuffer): List<TagEntry> {
         val len = buf.getInt()
@@ -3070,6 +3146,25 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`topicId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 远端词表分组（M6a 阶段 5）：LAN 批量元数据聚合出的 (tag, count) 列表 → 侧栏分组。
+         *
+         * 纯函数不碰本地库——与 [get_grouped_tags] 共用 `collate::group_tags` 这一套分组与
+         * 排序规则（「排序规则只许有一套」纪律）；入参里的词**不得**写进本地词表（D31 数据层
+         * 铁律：LAN 词表只进桌面端），本函数对此零风险。
+         */ fun `groupRemoteTagCounts`(`counts`: List<RemoteTagCount>, `locale`: kotlin.String): List<TagGroup> {
+            return FfiConverterSequenceTypeTagGroup.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_group_remote_tag_counts(
+    
+        
+        FfiConverterSequenceTypeRemoteTagCount.lower(`counts`),
+        FfiConverterString.lower(`locale`),_status)
 }
     )
     }
