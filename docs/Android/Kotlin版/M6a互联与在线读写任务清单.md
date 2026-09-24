@@ -61,12 +61,17 @@
 - **人物数据源**：无真实人脸检测（useAIAnalysis 的 faces 恒空数组，useAIAnalysis.ts:516）。真正产生 Person 的是 **WD14 角色标签管线**：`clip_create_work_topics`（clip_commands.rs:1899）→ `upsert_person`（id=person_{tag}）→ `link_files_to_persons` 写 `aiData.faces`（box 恒 0，是标签匹配不是视觉人脸框）。Kotlin 侧 people 的 ViewMode/侧栏/空态/FFI 五函数全就位（FfiSmoke 已验证），只差数据源。
 - **任务通知按钮**：Kotlin ScanNotifier（M4b）已预留「同一 Channel 加 action」的扩展位（ScanNotifier.kt:14-15）；React 侧按钮回传事件范式 = `color-extraction-notification-action`。
 
-### 0.7 spike（待做，阶段 1/3 开工的前置）
+### 0.7 spike（已完成，2026-09-24——阶段 1/3 开工的前置结论全落本节）
 
-**进度（2026-09-24，服务端侧已预验证）**：本机（192.168.31.174）对主电脑服务端（192.168.31.87:8080）curl 全链冒烟通过——auth 换 token 成功（`expires_in:3600`）；`/api/browse` 与 `/api/all_image_folders` 返回真实数据且尾部实证 **`allow_edit:true, allow_upload:false`**（编辑已开、上传不可达=D32 前只能测 403 路径；0.1 摸底结论获实证）；`/api/devices` 与 logout 正常；browse 的 `path` 形态随共享根配置而变（切根前 `E:/图包/…` 绝对路径、切根后裸相对名）——客户端按**不透明字符串**回传，勿解析勿拼接；旧根目录混有 `type:"video"` 项（视频过滤登记项实证）。**剩余三项**：① Kotlin 侧 HTTP/cleartext/Coil http；② 模拟器→192.168.31.87 连通实测；③ 扫码库冒烟。
+**进度（2026-09-24 全部完成）**：本机（192.168.31.174）curl 预验（auth 换 token `expires_in:3600`；browse/all_image_folders 真实数据＋尾部 `allow_edit:true, allow_upload:false` 实证；path 形态随共享根而变按**不透明字符串**回传）之后，剩余三项在 **emulator-5554（API 35）app 内全部实证 PASS**——okhttp auth → all_image_folders/browse → Coil 缩略图 → QR 编码解码一条龙（logcat `[LanSmoke m0]` 逐条 PASS 佐证；取证文件在 `C:\Users\misakimiku\AppData\Local\Temp\aurora-m6a-spike\`）。结论分条：
 
-- **任务**：① Kotlin 最小 HTTP 验证——manifest 加 INTERNET + cleartext 配置，okhttp 显式依赖，对宿主桌面端的 `/api/auth/verify` + `/api/browse` 走通一次；Coil 加载一张 `http://<宿主>/api/thumbnail?...` 出图（验 0.4 的「Coil 自带 http fetcher」结论）。② 连通性口径——模拟器访问宿主 LAN IP 直达是否可行（vs 只能 10.0.2.2 回环）、真机同网段一次；防火墙/端口结论落本节。③ 扫码库冒烟——zxing-android-embedded 起相机扫一张桌面二维码。
-- **产出**：连通口径 + 依赖引入清单 + 配置结论（networkSecurityConfig 的形状）；spike 代码可丢弃，结论必须落本清单。
+- **① 连通口径**：模拟器 → `http://192.168.31.87:8080` **直达可用**（AVD 出站经宿主网络栈 NAT 到宿主 LAN，10.0.2.2 回环不需要，备选路径未触发）；服务端 8080 对 192.168.31.0/24 现状放行，无需额外开洞。真机口径 = 同网段 Wi-Fi 直达（本 spike 未复验，Tab S8 阶段随验收安排）。
+- **② 依赖引入清单（已落 app/build.gradle.kts，保留）**：`com.squareup.okhttp3:okhttp:4.12.0`（对齐 Coil 2.7 传递版本）、`com.journeyapps:zxing-android-embedded:4.3.0`（自带 zxing core 编解码；CaptureActivity 需 appcompat 主题，app 已有 1.6.1；minSdk 24 对齐）。manifest 新增 `INTERNET`＋`ACCESS_NETWORK_STATE`。
+- **③ 明文 HTTP 配置形状**：networkSecurityConfig 的 `<domain>` 不支持裸 IP 段/CIDR，LAN IP 直连场景收敛不了到网段——实际可用且已实测生效的形状 = `res/xml/network_security_config.xml` 的 `<base-config cleartextTrafficPermitted="true" />`（manifest 引 `android:networkSecurityConfig`，不另用 usesCleartextTraffic 属性），API 35 上明文 http 全通。阶段 3 照此落地；后续要收紧只改这一个文件。
+- **④ Coil 结论**：「Coil 2.7.0 自带 http fetcher」成立——`ImageRequest.data(httpUrl)` 直接出图（`/api/thumbnail?path=&size=256&token=` 实测出图 256x107），**无需额外 fetcher 依赖或 ImageLoader 配置**。两个实现注意：`imageLoader.execute` 是 suspend（非协程上下文要 runBlocking 包一层）；token 进 query 的 URL 要用 %20 形态编码（URLEncoder 的空格 `+` 得 replace 掉，对齐 React 的 encodeURIComponent）。
+- **⑤ 扫码结论（D33 落地确认）**：zxing-android-embedded 集成通，**相机实扫未验**——Tab S8 息屏且无线 adb 唤不醒（物理对准本就无法自动化），已实证两条：ⓐ ScanContract 起 CaptureActivity＋运行时 CAMERA 权限请求＋取景预览＋取消回调全链（模拟器截图佐证）；ⓑ zxing 编码→解码 roundtrip＋桌面契约 JSON（`{"type":"aurora-lan","url":…,"code":…}`）解析取 url/code PASS。**阶段 3 注意**：从广播接收器起 CaptureActivity 被三星 BAL（后台起 Activity 限制）拦截——真实入口（设置 LAN 面板点击）是前台路径不受影响，调试广播钩子只在 app 前台时可用。
+- **⑥ spike 代码处置**：验证代码**保留**（`LanSmoke.kt`＋MainActivity 的 `aurora.debug.LAN_SMOKE` / `aurora.debug.QR_SCAN` 调试广播，FfiSmoke 同款风格、零主链路侵入）——阶段 3 联调要复用，LAN 面板落地后删；配置（manifest / networkSecurityConfig / gradle 依赖）按 ②③ 保留为阶段 3 地基。
+- **⑦ 遗留项**：① Tab S8 相机实扫（真机已装好 app 并预授权 CAMERA；二维码 PNG 已备 `aurora-lan-qr.png`，全屏显示后 `adb shell am broadcast -a aurora.debug.QR_SCAN` 即可扫，注意先亮屏且 app 在前台）；② 真机同网段连通复验（预期直达）；③ allow_upload 位在 D32/1.5 改默认值后复测直通/403 路径。
 
 ## 1. 拆分原则（延续 M4b/M5 §1，M6a 特有四条）
 

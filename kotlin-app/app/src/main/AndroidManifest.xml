@@ -9,10 +9,16 @@
     <!-- M4b 阶段 5：扫描进度/完成通知（API 33+ 运行时请求，拒绝则仅无通知） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- M6a 0.7 spike：LAN 直连桌面服务端（HTTP 客户端 / Coil http fetcher 都需要）；
+         ACCESS_NETWORK_STATE 留给阶段 3 LanClient 的心跳/断线判断 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.AuroraKotlin">
         <activity

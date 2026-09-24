@@ -62,6 +62,12 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     // M3 查看器：GifDecoder / ImageDecoderDecoder（动画 GIF 与动画 WebP）
     implementation("io.coil-kt:coil-gif:2.7.0")
+    // M6a 0.7 spike（D33）：LAN 客户端 HTTP 栈。显式声明、版本对齐 Coil 2.7 的传递依赖
+    // （coil 用的就是 okhttp 4.12，不另引新版本），阶段 3 LanClient 以此为底
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // M6a 0.7 spike（D33）：扫码。自带 zxing core（编码/解码都齐）；其 CaptureActivity
+    // 需要 appcompat 主题（上面已依赖 appcompat 1.6.1）。minSdk 24 与本 app 对齐
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // M5 1.1：装箱/视口/几何纯函数的 JVM 单测（对拍 React 同输入同输出）
     testImplementation("junit:junit:4.13.2")

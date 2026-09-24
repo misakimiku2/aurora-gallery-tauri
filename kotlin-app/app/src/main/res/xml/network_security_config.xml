@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  M6a 0.7 spike 实测结论（2026-09-24，emulator-5554 / API 35）：
+  networkSecurityConfig 的 <domain> 只认「域名/单个 IP」，不认 IP 段或 CIDR
+  （192.168.31.0/24 写进去不生效），而桌面端是任意 LAN IP 可迁移的部署形态，
+  收敛到单个 IP 等于每换一台服务器都要发版。所以 LAN 明文 HTTP 的可用形状就是
+  base-config 全局放行（服务端无 TLS 是 lan_share 的现状设计，信任内网，0.1 摸底）；
+  manifest 层的 android:usesCleartextTraffic="true" 效果等价但粒度更粗、且与
+  networkSecurityConfig 同用时后者优先，这里统一走本文件。
+  后续若上 TLS / 要再收紧，改这一个文件即可。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
