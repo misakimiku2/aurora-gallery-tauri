@@ -48,6 +48,12 @@ data class LanRemoteFolder(
     /** 不透明 path，原样保留（browse/缩略图都吃它）。 */
     val path: String,
     val imageCount: Long,
+    /**
+     * 服务端 `preview_images[0]`（契约 §1 既有字段；阶段 4 顺手解析）：LAN 总览卡片
+     * 封面用（对齐 React folderItemToFileNode 的 coverImagePath = previewRemotes[0]）。
+     * 服务端不带时为 null，卡片退化为占位底。
+     */
+    val previewPath: String? = null,
 )
 
 /** 远端图片/视频项（BrowseItem 的 file 形态；`type`=="video" 的项阶段 4 网格过滤）。 */
@@ -197,6 +203,21 @@ class LanClient(private val http: OkHttpClient) {
     fun imageUrl(base: String, token: String, remotePath: String): String =
         "$base/api/image?path=${lanQueryEncode(remotePath)}&token=${lanQueryEncode(token)}"
 
+    /**
+     * 便捷方法（阶段 4「保存到设备」/缩略图磁盘分支共用）：GET 一个**完整 URL** 并返回
+     * 原始字节。缩略图/大图 URL 自带 token in query（见上），不需要 header；URL 由
+     * [thumbnailUrl]/[imageUrl] 拼出，调用方不自己拼。
+     */
+    suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url(url).get().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw LanHttpException(resp.code, resp.body?.string().orEmpty())
+            }
+            resp.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
     // —— 内部 ——
 
     private suspend fun getJson(base: String, token: String, urlPath: String): JSONObject =
@@ -228,7 +249,12 @@ class LanClient(private val http: OkHttpClient) {
             val name = o.optString("name")
             val path = o.optString("path")
             if (name.isEmpty() || path.isEmpty()) return@mapNotNull null
-            LanRemoteFolder(name = name, path = path, imageCount = o.optLong("size", 0L))
+            LanRemoteFolder(
+                name = name,
+                path = path,
+                imageCount = o.optLong("size", 0L),
+                previewPath = o.optJSONArray("preview_images")?.optString(0)?.takeIf { it.isNotEmpty() },
+            )
         }
     }
 

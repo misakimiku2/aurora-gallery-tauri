@@ -26,10 +26,38 @@ import java.util.concurrent.atomic.AtomicInteger
  * [CANVAS]（M4b 阶段 4 引入）：侧栏「画布」入口对应的视图模式。React 的「画布」=
  * 新建 isCompareMode 标签页进 ImageComparer 全屏，没有独立 ViewMode；Kotlin 侧独立
  * 成模式，视图本体已随 M5 落地（CanvasScreen/CanvasView）。
+ *
+ * [LAN_FOLDERS_OVERVIEW]（M6a 阶段 4 引入）：LAN 文件夹总览（React 版
+ * `lan-folders-overview`，App.tsx:2482 同款判定）。远端目录的**内部网格不设独立
+ * ViewMode**——复用 [BROWSER]，folderId 带 [LAN_FOLDER_ID_PREFIX] 前缀即远端目录
+ * （对齐任务清单阶段 4「BROWSER 的 folderId 带 lan 前缀时走 LanClient.browse」，
+ * 序列源分流在 GalleryViewModel.reloadImages）。
  */
 enum class ViewMode {
     FOLDERS_OVERVIEW, BROWSER, TAGS_OVERVIEW, PEOPLE_OVERVIEW, TOPICS_OVERVIEW, CANVAS,
+    LAN_FOLDERS_OVERVIEW,
 }
+
+/**
+ * LAN 远端目录的 folderId 前缀（M6a 阶段 4）。远端 path 是不透明字符串（契约 §0 铁律，
+ * 不解析不拼接），这个前缀是**我们自己**加在 folderId 命名空间上的命名标记：判定远端
+ * 序列源时剥掉它，剩下的原样回传服务端。前缀本身永远不进网络请求。
+ */
+const val LAN_FOLDER_ID_PREFIX = "lan:"
+
+/**
+ * 根级散图虚拟目录 id（对齐 React `LAN_ROOT_IMAGES_ID` = `__lan_root_images__`）。
+ * 有根级散图才在 LAN 总览置顶显示（FoldersOverview.tsx:649-650 同款），其内容来自
+ * all_image_folders 的 root_images，不单独 browse（useLanClientSync 同款语义）。
+ */
+const val LAN_ROOT_IMAGES_ID = "__lan_root_images__"
+
+/** 远端 path → folderId（加 [LAN_FOLDER_ID_PREFIX] 前缀）。 */
+fun lanFolderId(remotePath: String): String = LAN_FOLDER_ID_PREFIX + remotePath
+
+/** folderId → 远端 path（带前缀才剥，返回 null 表示不是 LAN 目录）。 */
+fun String.lanRemotePathOrNull(): String? =
+    takeIf { startsWith(LAN_FOLDER_ID_PREFIX) }?.removePrefix(LAN_FOLDER_ID_PREFIX)
 
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }
@@ -358,6 +386,67 @@ class AppState(
                 history = tab.history.push(
                     HistoryItem(folderId = tab.folderId, viewMode = ViewMode.CANVAS),
                 ),
+            )
+        }
+    }
+
+    /**
+     * 打开 LAN 文件夹总览（M6a 阶段 4；照 [openCanvas] 样板：ViewMode + HistoryItem
+     * 入栈）。folderId 保留当前值（对齐 openOverview 先例——总览不绑定文件夹）。
+     * 远端目录内部的网格走 [openFolder]（folderId 带 lan 前缀），返回链复用既有
+     * HistoryItem.viewMode（goBack 退回本视图）。
+     */
+    fun openLanOverview() {
+        selectionMode = false
+        updateActiveTab { tab ->
+            tab.copy(
+                viewMode = ViewMode.LAN_FOLDERS_OVERVIEW,
+                searchQuery = "",
+                searchScope = SearchScope.ALL,
+                activeTags = emptyList(),
+                activeTopicId = null,
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = tab.history.push(
+                    HistoryItem(folderId = tab.folderId, viewMode = ViewMode.LAN_FOLDERS_OVERVIEW),
+                ),
+            )
+        }
+    }
+
+    /**
+     * 当前是否在 LAN 视图（总览或远端目录网格）。断线联动（GalleryViewModel）用它判定
+     * 是否需要自动退回本地视图。
+     */
+    val isInLanView: Boolean
+        get() {
+            val tab = activeTab
+            return tab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW ||
+                (tab.viewMode == ViewMode.BROWSER && tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true)
+        }
+
+    /**
+     * 断线联动：退出全部 LAN 视图回本地主界面（总览 = 栈底），**历史栈整条重置为栈底**
+     * ——普通 goBack 只挪 currentIndex，LAN 位置还留在栈里，之后「前进」会回到加载不出
+     * 内容的死视图；重置后无残留（阶段 4 验收口径：断线后 LAN 视图退出且无残留）。
+     * 查看器若开着（可能在看 LAN 大图）一并关掉。
+     */
+    fun exitLanToHome() {
+        selectionMode = false
+        updateActiveTab { tab ->
+            val root = tab.history.stack.firstOrNull()
+                ?: HistoryItem(folderId = null, viewMode = ViewMode.FOLDERS_OVERVIEW)
+            tab.copy(
+                folderId = root.folderId,
+                viewMode = ViewMode.FOLDERS_OVERVIEW,
+                searchQuery = root.searchQuery,
+                searchScope = root.searchScope,
+                activeTags = root.activeTags,
+                activeTopicId = null,
+                viewingFileId = null,
+                selectedFileIds = emptySet(),
+                lastSelectedId = null,
+                history = HistoryStack(stack = listOf(root), currentIndex = 0),
             )
         }
     }

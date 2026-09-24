@@ -95,6 +95,8 @@ import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
+import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
+import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -150,6 +152,65 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode == RESULT_OK) {
             viewModel.appState.exitSelectionMode()
         }
+    }
+
+    // —— M6a 阶段 4：LAN 上传（系统照片选择器多选 → 逐个 multipart）——
+
+    /**
+     * 系统照片选择器（PickMultipleVisualMedia：API 33+ 的照片选择器，无需存储权限）。
+     * 选择结果带着 [pendingUploadTargetDir]（发起时记录的远端目标目录）交给
+     * [startLanUpload]。
+     */
+    private val uploadLauncher = registerForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(LAN_UPLOAD_MAX_ITEMS),
+    ) { uris ->
+        val target = pendingUploadTargetDir
+        pendingUploadTargetDir = null
+        if (target != null && uris.isNotEmpty()) startLanUpload(uris, target)
+    }
+
+    /** 上传发起时记录的目标远端目录（共享根为空串）。 */
+    private var pendingUploadTargetDir: String? = null
+
+    /**
+     * 上传入口（LAN 目录网格 TopBar）。allow_upload=false（门禁位来自 browse/
+     * all_image_folders 尾部，D32 拍板后默认 true——置灰态=桌面端手动收紧的真实状态）：
+     * 入口已置灰，点击再提示需桌面端开启。
+     */
+    private fun launchLanUpload(targetDir: String) {
+        if (!viewModel.lanAllowUpload.value) {
+            Toast.makeText(
+                this,
+                "桌面端未开启「允许上传」，请先在桌面端共享设置中开启",
+                Toast.LENGTH_LONG,
+            ).show()
+            return
+        }
+        pendingUploadTargetDir = targetDir
+        uploadLauncher.launch(
+            androidx.activity.result.PickVisualMediaRequest(
+                ActivityResultContracts.PickVisualMedia.ImageOnly,
+            ),
+        )
+    }
+
+    /** 逐个上传：进度与完成都是 Toast（清单阶段 4 口径），完成后 VM 刷新当前目录列表。 */
+    private fun startLanUpload(uris: List<Uri>, targetDir: String) {
+        Toast.makeText(this, "开始上传 ${uris.size} 张…", Toast.LENGTH_SHORT).show()
+        viewModel.uploadUrisToLan(
+            uris,
+            targetDir,
+            onProgress = { idx, total, name, ok, err ->
+                val msg = if (ok) "上传成功（$idx/$total）$name"
+                else "上传失败（$idx/$total）$name${err?.let { "：$it" } ?: ""}"
+                Log.i("AuroraKotlin", "[Lan] $msg")
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            },
+            onDone = { ok, fail ->
+                val msg = if (fail == 0) "上传完成（$ok 张）" else "上传完成：成功 $ok 张，失败 $fail 张"
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            },
+        )
     }
 
     // —— M4b 1.1 文件操作的批量授权（重命名/移动走 createWriteRequest，复制不弹）——
@@ -668,6 +729,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        /**
+         * M6a 阶段 4（D34）：查看器「保存到设备」（仅 LAN 项的菜单项）。
+         * VM 下载原文件 → MediaStore Downloads insert；重名自动序号，成功 Toast 带落定名。
+         */
+        override fun onSaveToDevice(remotePath: String, imageUrl: String) {
+            Toast.makeText(this@MainActivity, "正在保存到设备…", Toast.LENGTH_SHORT).show()
+            viewModel.saveLanImageToDownloads(remotePath, imageUrl) { ok, savedName ->
+                Toast.makeText(
+                    this@MainActivity,
+                    if (ok) "已保存到下载${savedName?.let { "：$it" } ?: ""}" else "保存失败",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     /** FolderPickerDialog 的 folderTreeJson：Kotlin 侧是扁平 bucket 列表（D18），全为根节点。 */
@@ -1042,6 +1118,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        // —— M6a 阶段 4：LAN 浏览视图（总览数据/标题/上传入口/下拉刷新）——
+                        lanOverviewFolders = viewModel.lanOverviewFolders.value,
+                        lanServerName = lanSnapshot.serverName,
+                        lanAllowUpload = viewModel.lanAllowUpload.value,
+                        onLanUploadClick = { remotePath -> launchLanUpload(remotePath) },
+                        onLanFolderRefresh = { onComplete -> viewModel.refreshLanFolder(onComplete) },
+                        onLanRootsRefresh = { onComplete -> viewModel.refreshLanRoots(onComplete) },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 ViewerLayerHost(
@@ -1051,6 +1134,8 @@ class MainActivity : ComponentActivity() {
                     parentName = currentFolderName,
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
+                    // M6a 阶段 4：LAN 大图 URL 构造器（查看器 isLan 项的取图源）
+                    lanImageUrlOf = viewModel.lanImageUrlOf(),
                 )
                 // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
                 if (showSettings) {
@@ -1060,6 +1145,11 @@ class MainActivity : ComponentActivity() {
                         appVersion = appVersion,
                         // M6a 阶段 3：LAN 状态机（面板消费同一快照 + 连接/断开操作）
                         lan = viewModel.lan,
+                        // M6a 阶段 4：连接成功后的「浏览共享文件」入口
+                        onLanBrowseClick = {
+                            showSettings = false
+                            viewModel.appState.openLanOverview()
+                        },
                         onLanguageChange = { viewModel.setLanguage(it) },
                         onThemeChange = { viewModel.setTheme(it) },
                         onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
@@ -1360,6 +1450,19 @@ fun App(
     onLoadPickerImages: (String, String, (List<Image>) -> Unit) -> Unit = { _, _, _ -> },
     /** M5 4：画布沉浸开关（宿主转 setImmersiveMode）。 */
     onSetImmersive: (Boolean) -> Unit = {},
+    // —— M6a 阶段 4：LAN 浏览视图 ——
+    /** LAN 总览的文件夹卡片序列（GalleryViewModel.lanOverviewFolders，数据层算好的结构）。 */
+    lanOverviewFolders: List<uniffi.aurora_core.Folder> = emptyList(),
+    /** 服务端上报名（TopBar 标题用；null/空退回「局域网」）。 */
+    lanServerName: String? = null,
+    /** 上传门禁位（allow_upload；false 时入口置灰，点击宿主 Toast 提示）。 */
+    lanAllowUpload: Boolean = false,
+    /** 上传入口点击（宿主起系统照片选择器；参数=目标远端 path，共享根传空串）。 */
+    onLanUploadClick: (String) -> Unit = {},
+    /** LAN 目录网格的下拉刷新（重拉当前远端目录）。 */
+    onLanFolderRefresh: ((onComplete: () -> Unit) -> Unit) = {},
+    /** LAN 总览的下拉刷新（重拉 all_image_folders）。 */
+    onLanRootsRefresh: ((onComplete: () -> Unit) -> Unit) = {},
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1422,14 +1525,23 @@ fun App(
     // 标签视图（M4a 4.1）走的也是 BROWSER + 网格，只是序列源换成「标签命中的全库图片」，
     // 所以这里不能只看 currentFolder 是否存在——在总览直接点标签时 folderId 为 null。
     val tagFilterTitle = tab.activeTags.joinToString("、") { it }
+    // M6a 阶段 4：LAN 目录网格 = BROWSER + folderId 带 lan 前缀（序列源分流在 reloadImages）
+    val inLanBrowser = tab.viewMode == ViewMode.BROWSER && tab.folderId?.lanRemotePathOrNull() != null
     val inBrowser =
-        tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty())
+        tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty() || inLanBrowser)
     // M4a 3.2 总览：侧栏人物/标签/专题 Section 头部进入；专题详情 = TOPICS_OVERVIEW + activeTopicId
     val inTagsOverview = tab.viewMode == ViewMode.TAGS_OVERVIEW
     val inPeopleOverview = tab.viewMode == ViewMode.PEOPLE_OVERVIEW
     val inTopicsOverview = tab.viewMode == ViewMode.TOPICS_OVERVIEW
     // M4b 阶段 4：画布占位视图（入口已达成，视图本体归 M5）
     val inCanvas = tab.viewMode == ViewMode.CANVAS
+    // M6a 阶段 4：LAN 文件夹总览（侧栏网络 Section / 设置 LAN 面板入口）
+    val inLanOverview = tab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW
+    // 当前远端目录的标题（优先总览卡片名，找不到退远端 path 尾段；虚拟根=根目录图片）
+    val lanBrowserTitle = tab.folderId?.lanRemotePathOrNull()?.let { remotePath ->
+        lanOverviewFolders.firstOrNull { it.id == tab.folderId }?.name
+            ?: remotePath.substringAfterLast('/').ifEmpty { remotePath }
+    }
     val inTopicsList = inTopicsOverview && tab.activeTopicId == null
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
@@ -1476,8 +1588,13 @@ fun App(
     //  - 文件夹网格里多选 → 加入专题 / 粘贴标签 / 复制到 / 移动到，单选另有 编辑标签 / 复制标签 / 重命名
     //  - 专题详情里多选 → 从专题移除（对称操作）
     //  - 总览选中的是文件夹卡片 → 复制到 / 移动到 / 删除（成员展开后落写原语）
-    val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview)
+    // LAN 总览不算本地文件夹总览（选择/目标选择器等本地批量操作对远端目录无意义）
+    val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inLanOverview)
     val moreActions = when {
+        // M6a 阶段 4：LAN 目录网格的「更多」一概为空——加入画布/加入专题/标签操作/
+        // 复制到/移动到/重命名全是本地库操作，对远端 path 不适用（M4a「不适用的项
+        // 不出现」先例）；互联态文件操作归阶段 6
+        inBrowser && inLanBrowser -> emptyList()
         inBrowser -> buildList {
             // M5 3.1：画布组置顶（仅平板，D28）。单实例（D21）语义 =「加入画布」，
             // 不做「新建画布」入口；计数显示全画布 N/24，超 24 拦截 Toast
@@ -1558,6 +1675,18 @@ fun App(
             tab.dateFilter,
         )
     }
+
+    // LAN 总览数据管道（M6a 阶段 4）：与本地总览同一条过滤+排序管线（sortFolders 按
+    // 「根目录图片」置顶的规则对 __lan_root_images__ 虚拟根天然生效，对齐 React 置顶行为）。
+    // 搜索/日期筛选入口在 LAN 视图隐藏，实际是恒等管道；保留形态为的是复用同一组件。
+    val displayLanFolders =
+        remember(lanOverviewFolders, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+            filterFolders(
+                sortFolders(lanOverviewFolders, state.sortBy, state.sortDirection),
+                tab.searchQuery,
+                tab.dateFilter,
+            )
+        }
 
     // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。提前到组合根算：
     // 4.1/4.2 的选择处理与选择栏计数在两个分支外就要用（展示序列 = 范围选择/全选的
@@ -1651,12 +1780,13 @@ fun App(
                 canvasSelected = inCanvas,
                 // 设置行：打开设置面板（M4b 2.1）
                 onSettingsClick = onOpenSettings,
-                // 网络 Section（M6a 阶段 3）：连接状态流 collect 成普通值传入（不轮询）；
-                // 远端目录行点击 = 阶段 4 的 LAN 总览入口，本阶段 Toast 占位
+                // 网络 Section（M6a 阶段 4）：连接状态流 collect 成普通值传入（不轮询）；
+                // 远端目录行点击 = 直接进该远端目录网格（folderId 带 lan 前缀，序列源分流
+                // 在 reloadImages——与本地目录行的「点行进夹」同位）
                 lanConnected = lanSnapshot.state == LanState.CONNECTED,
                 lanFolders = lanSnapshot.folders,
-                onLanFolderClick = {
-                    Toast.makeText(context, "LAN 目录浏览将随阶段 4 提供", Toast.LENGTH_SHORT).show()
+                onLanFolderClick = { folder ->
+                    state.openFolder(com.aurora.gallery.kotlin.state.lanFolderId(folder.path))
                 },
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
@@ -1678,8 +1808,15 @@ fun App(
                         else state.selectAll(ids)
                     },
                     onExit = { state.exitSelectionMode() },
-                    onDelete = { showDeleteConfirm = true },
-                    onShare = { onShareSelection(tab.selectedFileIds) },
+                    // M6a 阶段 4：LAN 目录网格里删除/分享是本地操作，拦截提示（阶段 6 承接删除）
+                    onDelete = {
+                        if (inLanBrowser) Toast.makeText(context, "局域网图片的删除将随阶段 6 提供", Toast.LENGTH_SHORT).show()
+                        else showDeleteConfirm = true
+                    },
+                    onShare = {
+                        if (inLanBrowser) Toast.makeText(context, "局域网图片不支持分享", Toast.LENGTH_SHORT).show()
+                        else onShareSelection(tab.selectedFileIds)
+                    },
                     onMore = {
                         // 各选择视图的 moreActions 已全部非空（M4b 1.4 收口：总览的
                         // 复制到/移动到/删除），这里只剩空集兜底，不再有 Toast 占位
@@ -1696,6 +1833,9 @@ fun App(
             } else if (!inCanvas) {
                 TopBar(
                     title = when {
+                        // M6a 阶段 4：LAN 态标题——总览=服务端名（无则「局域网」），目录=远端目录名
+                        inLanOverview -> lanServerName?.takeIf { it.isNotBlank() } ?: "局域网"
+                        inLanBrowser -> lanBrowserTitle ?: "局域网"
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
                         inTagsOverview -> "标签"
                         inPeopleOverview -> "人物"
@@ -1707,7 +1847,8 @@ fun App(
                     canBack = tab.history.canBack,
                     onBack = { state.goBack() },
                     // 总览是从别处推入历史栈的位置，可退；文件夹总览（栈底）不显示返回键
-                    showBack = inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inCanvas,
+                    showBack = inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview ||
+                        inCanvas || inLanOverview,
                     sidebarVisible = state.layout.isSidebarVisible,
                     onToggleSidebar = { state.toggleSidebar() },
                     searchQuery = tab.searchQuery,
@@ -1724,7 +1865,7 @@ fun App(
                     // 对齐 React 在 people/tags 总览隐藏；总览按文件夹名过滤无 scope 语义
                     searchScope = tab.searchScope,
                     onSearchScopeChange = { state.setSearchScope(it) },
-                    showScope = inBrowser,
+                    showScope = inBrowser && !inLanBrowser,
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,
@@ -1742,15 +1883,32 @@ fun App(
                     tagGroups = tagGroups,
                     activeTags = tab.activeTags,
                     onTagClick = onTagClick,
-                    showSearch = true,
+                    // M6a 阶段 4：LAN 视图隐藏搜索入口（远端 search 端点已备但本阶段不接，
+                    // 登记遗留）；其余视图维持
+                    showSearch = !inLanOverview && !inLanBrowser,
                     // 专题视图下顶栏只留 搜索/返回/侧栏开关（桌面 TopBar :1256/:1521/:1563
                     // 在 topics-overview 隐藏排序/日期/标签，专题自己的排序在页头菜单里）；
                     // 视图切换（grid/adaptive/masonry）= 文件夹网格与专题详情共用
                     showSortMenu = !inTopicsOverview,
                     showViewMode = inBrowser || inTopicDetail,
-                    showDateFilter = !inTopicsOverview,
+                    // LAN 视图隐藏日期/标签筛选（远端项无时间字段；标签弹层是本地词表）
+                    showDateFilter = !inTopicsOverview && !inLanOverview && !inLanBrowser,
                     showGroupBy = inBrowser,
-                    showTags = !inTopicsOverview,
+                    showTags = !inTopicsOverview && !inLanOverview && !inLanBrowser,
+                    // M6a 阶段 4：上传入口只在 LAN 目录网格出现（目标=当前远端目录）；
+                    // allow_upload=false 置灰（点击宿主 Toast 提示需桌面端开启）
+                    actionIcon = if (inLanBrowser) com.aurora.gallery.kotlin.ui.components.IconUpload else null,
+                    actionContentDescription = "上传到此目录",
+                    actionEnabled = lanAllowUpload,
+                    onActionClick = if (inLanBrowser) {
+                        {
+                            onLanUploadClick(
+                                tab.folderId?.lanRemotePathOrNull()
+                                    ?.takeUnless { it == com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID }
+                                    ?: "",
+                            )
+                        }
+                    } else null,
                     // M4c D21：横屏手机侧栏底部「设置」行被裁切不可达，设置入口挂顶栏兜底
                     onOpenSettings = if (isLandscapePhone) {
                         { onOpenSettings() }
@@ -1938,6 +2096,8 @@ fun App(
                             val emptyText = when {
                                 hasCondition -> "无匹配图片"
                                 tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                                // M6a 阶段 4：远端目录（browse 返回的 images 过滤视频后）为空
+                                inLanBrowser -> "远端目录为空"
                                 else -> "文件夹为空"
                             }
                             Text(emptyText, color = AuroraTheme.colors.textSecondary)
@@ -1956,7 +2116,8 @@ fun App(
                                 onLevelChange = { state.gridLevel = it },
                                 sidebarVisible = state.layout.isSidebarVisible,
                                 pullToRefreshState = ptrState,
-                                onPullToRefresh = onPullRefresh,
+                                // M6a 阶段 4：LAN 目录刷新走远端重拉（本地分支走 MediaStore 重扫）
+                                onPullToRefresh = if (inLanBrowser) onLanFolderRefresh else onPullRefresh,
                                 modifier = Modifier.fillMaxSize(),
                             )
                             // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
@@ -1966,6 +2127,33 @@ fun App(
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
+                    }
+                }
+                // M6a 阶段 4：LAN 文件夹总览——复用 FoldersOverview 组件（同一套卡片网格/
+                // 三档捏合/主题），数据 = lanOverviewFolders（__lan_root_images__ 虚拟根置顶，
+                // 服务端原序）。目录行点击 = 进远端目录网格（folderId 带 lan 前缀）；长按
+                // 禁用（选择/目标选择器等本地批量操作对远端目录无意义）
+                inLanOverview -> {
+                    Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
+                        FoldersOverview(
+                            folders = displayLanFolders,
+                            thumbnailLoader = thumbnailLoader,
+                            onFolderClick = { folder -> state.openFolder(folder.id) },
+                            onFolderLongClick = {},
+                            level = state.gridLevel,
+                            onLevelChange = { state.gridLevel = it },
+                            sidebarVisible = state.layout.isSidebarVisible,
+                            emptyText = if (lanSnapshot.state == LanState.CONNECTED) "桌面端暂无共享目录"
+                            else "未连接桌面端（设置 → 局域网共享）",
+                            pullToRefreshState = ptrState,
+                            onPullToRefresh = onLanRootsRefresh,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        PullToRefreshIndicator(
+                            state = ptrState,
+                            thresholdPx = ptrThresholdPx,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                 }
                 // 文件夹总览（栈底 / 主界面）
@@ -2175,3 +2363,6 @@ fun App(
         )
     }
 }
+
+/** LAN 上传单次最多张数（系统照片选择器的上限；对齐常见批量体量，超出走多次上传）。 */
+private const val LAN_UPLOAD_MAX_ITEMS = 20

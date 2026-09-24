@@ -47,39 +47,120 @@ class ThumbnailLoader(context: Context) {
     private val appContext = context.applicationContext
     private val thumbDir = File(appContext.cacheDir, "thumbnails").apply { mkdirs() }
 
+    /** URL 缩略图的磁盘缓存（M6a 阶段 4；文件名 = URL 哈希，见 [lanDiskFile]）。 */
+    private val lanThumbDir = File(appContext.cacheDir, "lan_thumbs").apply { mkdirs() }
+
     // 限制高清生成并发，避免滚动时同时解码多张大图抢 IO/CPU 造成掉帧。
     private val hdSemaphore = Semaphore(HD_MAX_CONCURRENCY)
 
     // 限制快速缩略图并发，避免滚动时大量 MediaStore 查询同时涌入挤爆 IO 线程池。
+    // URL 分支（LAN）与本地分支共用同一信号量：滚动时远端 HTTP 请求同样不许挤爆。
     private val fastSemaphore = Semaphore(FAST_MAX_CONCURRENCY)
 
-    // 内存缓存：imageId -> Bitmap（maxSize 单位为 KB）。
-    private val memoryCache = object : LruCache<Long, Bitmap>(MEMORY_CACHE_SIZE_KB) {
-        override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
+    // 内存缓存：key -> Bitmap（maxSize 单位为 KB）。**同一个池**装两类 key：
+    // 本地图 = "id:<MediaStore id>"，LAN 缩略图 = "u:<完整 URL>"（前缀杜绝两类 key
+    // 互撞；此前是 LruCache<Long, Bitmap>，阶段 4 起 LAN 以 URL 为 key 才并成 String）。
+    private val memoryCache = object : LruCache<String, Bitmap>(MEMORY_CACHE_SIZE_KB) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    /** 从 `content://media/external/images/media/{id}` 提取 MediaStore image id。 */    fun extractImageId(contentUri: String): Long = runCatching {
+    /** LAN 缩略图拉取（HTTP 15s 超时对齐 LanTiming.FETCH_TIMEOUT_SECS 口径）。 */
+    private val lanHttp = okhttp3.OkHttpClient.Builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    /** 从 `content://media/external/images/media/{id}` 提取 MediaStore image id。 */
+    fun extractImageId(contentUri: String): Long = runCatching {
         ContentUris.parseId(Uri.parse(contentUri))
     }.getOrElse {
         contentUri.substringAfterLast('/').toLong()
     }
 
     /** 同步读内存缓存（仅内存，不查磁盘/MediaStore），供组合阶段取初始值，避免 item 回收重进时占位符闪烁。 */
-    fun peekMemory(imageId: Long): Bitmap? = memoryCache.get(imageId)
+    fun peekMemory(imageId: Long): Bitmap? = memoryCache.get(localKey(imageId))
+
+    // —— URL 分支（M6a 阶段 4：LAN HTTP 缩略图；复用本地分支的内存池/并发信号量）——
+
+    /** URL 缩略图的内存缓存键（同池防撞前缀）。 */
+    private fun urlKey(url: String) = "u:$url"
+
+    private fun localKey(imageId: Long) = "id:$imageId"
+
+    /** 同步读 URL 缩略图的内存缓存（FileGrid/FoldersOverview 的 LAN 分支同步上屏用）。 */
+    fun peekMemoryUrl(url: String): Bitmap? = memoryCache.get(urlKey(url))
+
+    /** URL 缩略图磁盘文件：`lan_thumbs/<URL 的 MD5>`（URL 含 token/path，不进文件名）。 */
+    private fun lanDiskFile(url: String): File {
+        val digest = java.security.MessageDigest.getInstance("MD5").digest(url.toByteArray())
+        return File(lanThumbDir, digest.joinToString("") { "%02x".format(it) })
+    }
+
+    /**
+     * LAN 缩略图快速取图（阻塞版，调用方自行切线程/限并发）：
+     * 内存 → 磁盘（`lan_thumbs/<urlHash>`，存服务端原始字节不重编码）→ okhttp 拉取。
+     * 无本地 HD 升级语义——服务端给的 size=256 就是网格要的尺寸。
+     */
+    private fun loadFastUrl(url: String): Bitmap? {
+        memoryCache.get(urlKey(url))?.let { return it }
+
+        val disk = lanDiskFile(url)
+        if (disk.exists()) {
+            BitmapFactory.decodeFile(disk.absolutePath)?.let {
+                Log.d(TAG, "[Thumb:Lan] disk hit bytes=${disk.length()} ${it.width}x${it.height} url#${url.hashCode()}")
+                memoryCache.put(urlKey(url), it)
+                return it
+            }
+            // 解码失败 = 半截/损坏缓存，删掉重新拉
+            Log.w(TAG, "[Thumb:Lan] 磁盘缓存解码失败，删除重拉 url#${url.hashCode()}")
+            disk.delete()
+        }
+
+        val bytes = runCatching {
+            lanHttp.newCall(okhttp3.Request.Builder().url(url).get().build()).execute().use { resp ->
+                if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
+                resp.body?.bytes() ?: ByteArray(0)
+            }
+        }.getOrNull().takeIf { it != null && it.isNotEmpty() } ?: run {
+            Log.w(TAG, "[Thumb:Lan] 拉取失败（空/异常）url#${url.hashCode()}")
+            return null
+        }
+
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: run {
+            Log.w(TAG, "[Thumb:Lan] 解码失败 bytes=${bytes.size} url#${url.hashCode()}")
+            return null
+        }
+        Log.d(TAG, "[Thumb:Lan] fetch ok bytes=${bytes.size} ${bmp.width}x${bmp.height} url#${url.hashCode()}")
+        memoryCache.put(urlKey(url), bmp)
+        // 落盘失败不影响本次上屏（临时目录，系统可随时回收），但要留诊断线索。
+        // tmp 文件名带 nanoTime：同一 URL 的并发加载（网格双绑会连发两次）不再互写
+        // 同一 tmp 路径——那会产生「半截交错」的损坏缓存，且解码器对坏 JPEG 宽容地
+        // 吐出灰块位图（2026-09-24 实测踩过：坏文件落盘后每次进夹都渲染成纯灰格）。
+        runCatching {
+            val tmp = File(lanThumbDir, "${disk.name}.${System.nanoTime()}.tmp")
+            tmp.outputStream().use { it.write(bytes) }
+            if (!tmp.renameTo(disk)) tmp.delete()
+        }.onFailure { Log.w(TAG, "[Thumb:Lan] 落盘失败 url#${url.hashCode()}", it) }
+        return bmp
+    }
+
+    /** 限并发的 URL 快速取图（挂起），滚动时与本地分支共用 [fastSemaphore]。 */
+    suspend fun loadFastUrlLimited(url: String): Bitmap? =
+        fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFastUrl(url) } }
 
     /**
      * 快速取图，用于立即上屏（可能在 IO 线程阻塞，调用方自行切线程）。
      * 命中内存/高清磁盘缓存则直接返回；否则**降采样解码**原图；再退到系统缩略图。
      */
     fun loadFast(imageId: Long): Bitmap? {
-        memoryCache.get(imageId)?.let {
+        memoryCache.get(localKey(imageId))?.let {
             return it
         }
 
         val diskFile = hdFile(imageId)
         if (diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
-                memoryCache.put(imageId, it)
+                memoryCache.put(localKey(imageId), it)
                 return it
             }
         }
@@ -96,7 +177,7 @@ class ThumbnailLoader(context: Context) {
             if (subCost >= SLOW_LOG_MS) {
                 Log.w(TAG, "[Thumb] 降采样 id=$imageId ${sub.width}x${sub.height} cost=${subCost}ms")
             }
-            memoryCache.put(imageId, sub)
+            memoryCache.put(localKey(imageId), sub)
             persistToDisk(diskFile, sub)
             return sub
         }
@@ -111,7 +192,7 @@ class ThumbnailLoader(context: Context) {
                 if (cost >= SLOW_LOG_MS) {
                     Log.w(TAG, "[Thumb] loadThumbnail id=$imageId ${bmp.width}x${bmp.height} cost=${cost}ms")
                 }
-                memoryCache.put(imageId, bmp)
+                memoryCache.put(localKey(imageId), bmp)
                 return bmp
             }
         }
@@ -123,7 +204,7 @@ class ThumbnailLoader(context: Context) {
             MediaStore.Images.Thumbnails.MINI_KIND,
             null,
         )
-        if (legacy != null) memoryCache.put(imageId, legacy)
+        if (legacy != null) memoryCache.put(localKey(imageId), legacy)
         return legacy
     }
 
@@ -191,7 +272,7 @@ class ThumbnailLoader(context: Context) {
         // 可能已有其它协程生成完成
         if (diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
-                memoryCache.put(imageId, it)
+                memoryCache.put(localKey(imageId), it)
                 return it
             }
         }
@@ -205,7 +286,7 @@ class ThumbnailLoader(context: Context) {
             if (jpeg != null && jpeg.isNotEmpty()) {
                 runCatching { diskFile.outputStream().use { it.write(jpeg) } }
                 BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)?.let {
-                    memoryCache.put(imageId, it)
+                    memoryCache.put(localKey(imageId), it)
                     return it
                 }
             }
@@ -221,7 +302,7 @@ class ThumbnailLoader(context: Context) {
                 )
             }.getOrNull()
             if (bmp != null) {
-                memoryCache.put(imageId, bmp)
+                memoryCache.put(localKey(imageId), bmp)
                 return bmp
             }
         }

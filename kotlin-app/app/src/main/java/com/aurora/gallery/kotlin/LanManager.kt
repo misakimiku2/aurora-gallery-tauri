@@ -58,6 +58,20 @@ class LanManager(context: Context, private val store: SettingsStore) {
     private val _snapshot = MutableStateFlow(LanSnapshot())
     val snapshot: StateFlow<LanSnapshot> = _snapshot.asStateFlow()
 
+    /**
+     * 已连接会话三件套（base/token/client；M6a 阶段 4 供 GalleryViewModel 做 browse/
+     * upload/URL 拼接）。**UI 不许消费**——token 只进网络层与拼好的 URL，不进任何
+     * Compose 状态/日志（阶段 3 纪律延续：日志里只出现尾 4 位）。未连接返回 null。
+     */
+    data class LanSession(val base: String, val token: String, val client: LanClient)
+
+    fun currentSession(): LanSession? {
+        val i = intent ?: return null
+        val t = token ?: return null
+        if (_snapshot.value.state != LanState.CONNECTED) return null
+        return LanSession(baseOf(i), t, client)
+    }
+
     /** 连接意向（host/port/访问码）。非 null 且未连接 → 重试循环按 15s 周期推进。 */
     private var intent: LanIntent? = null
 

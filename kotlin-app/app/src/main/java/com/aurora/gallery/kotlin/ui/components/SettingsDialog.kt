@@ -100,6 +100,8 @@ fun SettingsHost(
     appVersion: String,
     /** M6a 阶段 3：LAN 连接状态机（面板与侧栏共用同一 StateFlow 快照）。 */
     lan: LanManager,
+    /** M6a 阶段 4：连接成功后「浏览共享文件」入口（宿主关面板并进 LAN 总览）。 */
+    onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -121,6 +123,7 @@ fun SettingsHost(
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
             lan = lan,
+            onLanBrowseClick = onLanBrowseClick,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
@@ -138,6 +141,7 @@ fun SettingsHost(
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
             lan = lan,
+            onLanBrowseClick = onLanBrowseClick,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
@@ -180,6 +184,8 @@ private fun CategoryContent(
     /** false = 不渲染与分类同名的首个节标题（手机二级页：顶栏已是分类名，重复）。 */
     includeSectionHeaders: Boolean = true,
     lan: LanManager,
+    /** M6a 阶段 4：连接成功后「浏览共享文件」入口（宿主关面板并进 LAN 总览）。 */
+    onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -223,8 +229,12 @@ private fun CategoryContent(
     if (SettingsCategory.LAN in categories) {
         // M6a 阶段 3：替换 M4c 的「将随 M6 提供」占位（D16）。连接状态/手输/扫码/
         // 最近服务器/设备名都在这；「允许桌面浏览本机」开关是对等服务端（阶段 7）的，
-        // 先不渲染。
-        LanContent(lan = lan, includeSectionHeaders = includeSectionHeaders)
+        // 先不渲染。阶段 4 起连接成功后提供「浏览共享文件」入口。
+        LanContent(
+            lan = lan,
+            includeSectionHeaders = includeSectionHeaders,
+            onBrowseClick = onLanBrowseClick,
+        )
     }
     if (SettingsCategory.ABOUT in categories) {
         AboutContent(
@@ -243,7 +253,7 @@ private fun CategoryContent(
  * 三星 BAL 拦截）、最近服务器一键连 + 设备名。
  */
 @Composable
-private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true) {
+private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true, onBrowseClick: () -> Unit = {}) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
     val snap by lan.snapshot.collectAsState()
@@ -318,6 +328,12 @@ private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true) {
                 color = Color(colors.palette.danger),
                 modifier = Modifier.padding(bottom = 6.dp),
             )
+        }
+        // M6a 阶段 4：连接成功后的真导航入口（关设置面板 → LAN 文件夹总览）
+        if (snap.state == LanState.CONNECTED) {
+            SettingsRow(label = "浏览共享文件", value = "远端目录与图片") {
+                SettingsAction("进入", enabled = true) { onBrowseClick() }
+            }
         }
     }
 
@@ -801,6 +817,7 @@ private fun SettingsTabletDialog(
     cacheSizeText: String,
     appVersion: String,
     lan: LanManager,
+    onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -909,6 +926,7 @@ private fun SettingsTabletDialog(
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
                         lan = lan,
+                        onLanBrowseClick = onLanBrowseClick,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
@@ -934,6 +952,7 @@ private fun SettingsPhonePage(
     cacheSizeText: String,
     appVersion: String,
     lan: LanManager,
+    onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -1050,6 +1069,7 @@ private fun SettingsPhonePage(
                         appVersion = appVersion,
                         includeSectionHeaders = false,
                         lan = lan,
+                        onLanBrowseClick = onLanBrowseClick,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,

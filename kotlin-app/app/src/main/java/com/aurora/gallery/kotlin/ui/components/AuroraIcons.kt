@@ -632,3 +632,21 @@ internal val IconMaximize2: ImageVector by lazy {
         lineTo(10f, 14f)
     }
 }
+
+/** lucide upload（M6a 阶段 4：LAN 视图上传入口）。 */
+internal val IconUpload: ImageVector by lazy {
+    auroraIcon("Upload") {
+        moveTo(21f, 15f)
+        lineTo(21f, 19f)
+        // 圆角矩形底：a 2 2 0 0 1 -2 2 → 用二次曲线近似
+        curveTo(21f, 20.1f, 20.1f, 21f, 19f, 21f)
+        lineTo(5f, 21f)
+        curveTo(3.9f, 21f, 3f, 20.1f, 3f, 19f)
+        lineTo(3f, 15f)
+        moveTo(17f, 8f)
+        lineTo(12f, 3f)
+        lineTo(7f, 8f)
+        moveTo(12f, 3f)
+        lineTo(12f, 15f)
+    }
+}

@@ -32,12 +32,18 @@ fun ViewerLayerHost(
     /** 抽屉要显示的标签与元数据，来自 `GalleryViewModel` 的标签快照（M4a 2.2）。 */
     tagsByFile: Map<String, List<String>> = emptyMap(),
     metadataById: Map<String, FfiFileMetadata> = emptyMap(),
+    /**
+     * LAN 大图 URL 构造器（M6a 阶段 4）：远端 path → imageUrl；未连接为 null。
+     * 宿主从 LanManager.currentSession 现取——查看器序列在打开时拷走 URL，断线后
+     * 退出 LAN 视图由宿主的联动兜住。
+     */
+    lanImageUrlOf: ((String) -> String)? = null,
 ) {
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
-    val items = remember(displayImages, parentName, tagsByFile, metadataById) {
+    val items = remember(displayImages, parentName, tagsByFile, metadataById, lanImageUrlOf) {
         displayImages.map {
-            it.toViewerItem(parentName, tagsByFile[it.id].orEmpty(), metadataById[it.id])
+            it.toViewerItem(parentName, tagsByFile[it.id].orEmpty(), metadataById[it.id], lanImageUrlOf)
         }
     }
     val startIndex = displayImages.indexOfFirst { it.id == fileId }.coerceAtLeast(0)

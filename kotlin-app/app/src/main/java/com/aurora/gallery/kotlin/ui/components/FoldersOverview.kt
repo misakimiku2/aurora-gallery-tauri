@@ -712,17 +712,35 @@ private class FolderAdapter(
 
         val uri = folder.coverUri
         if (uri != null) {
-            val imageId = loader.extractImageId(uri)
-            val cached = loader.peekMemory(imageId)
-            if (cached != null) {
-                holder.cover.setImageBitmap(cached)
+            // M6a 阶段 4：LAN 总览卡片的 coverUri 装的是缩略图 URL（数据层映射时填入），
+            // 走 ThumbnailLoader 的 URL 分支；与本地分支同一内存池、同一并发信号量。
+            if (uri.startsWith("http")) {
+                val cached = loader.peekMemoryUrl(uri)
+                if (cached != null) {
+                    holder.cover.setImageBitmap(cached)
+                } else {
+                    holder.cover.setImageBitmap(null)
+                    holder.job?.cancel()
+                    holder.job = scope.launch {
+                        val bmp = loader.loadFastUrlLimited(uri)
+                        if (holder.bindingAdapterPosition == position) {
+                            holder.cover.setImageBitmap(bmp)
+                        }
+                    }
+                }
             } else {
-                holder.cover.setImageBitmap(null)
-                holder.job?.cancel()
-                holder.job = scope.launch {
-                    val bmp = loader.loadFastLimited(imageId)
-                    if (holder.bindingAdapterPosition == position) {
-                        holder.cover.setImageBitmap(bmp)
+                val imageId = loader.extractImageId(uri)
+                val cached = loader.peekMemory(imageId)
+                if (cached != null) {
+                    holder.cover.setImageBitmap(cached)
+                } else {
+                    holder.cover.setImageBitmap(null)
+                    holder.job?.cancel()
+                    holder.job = scope.launch {
+                        val bmp = loader.loadFastLimited(imageId)
+                        if (holder.bindingAdapterPosition == position) {
+                            holder.cover.setImageBitmap(bmp)
+                        }
                     }
                 }
             }

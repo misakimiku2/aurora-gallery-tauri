@@ -1913,6 +1913,15 @@ private class FileGridAdapter(
     }
 
 
+    /**
+     * 这个 cover 上真的显示着一张位图。**不能拿 `drawable != null` 判**：
+     * `setImageBitmap(null)`（异步重载前的清屏）在现代 AOSP 上留下的是包着 null bitmap
+     * 的 BitmapDrawable——drawable 恒非 null，同屏守卫会永久跳过重载，单元格停在占位底
+     * （M6a 阶段 4 实机抓到：LAN 双绑序列 bind→recycle→rebind 后该格再也不加载）。
+     */
+    private fun ImageView.showsBitmap(): Boolean =
+        (drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap != null
+
     /** 异步加载缩略图；[stillValid] 在回调时判定这次加载是否还对应同一张图（防复用错位）。 */
     private fun loadInto(
         cover: ImageView,
@@ -1920,6 +1929,35 @@ private class FileGridAdapter(
         pos: Int,
         stillValid: () -> Boolean,
     ): Job {
+        // M6a 阶段 4：LAN 项的 contentUri 装的是**缩略图 URL**（数据层映射时填入），
+        // 走 ThumbnailLoader 的 URL 分支（内存同池 → lan_thumbs 磁盘 → okhttp）；
+        // 没有 HD 升级语义（服务端 size=256 即网格尺寸，且 HD 分支吃的是 content://）。
+        if (image.contentUri.startsWith("http")) {
+            val url = image.contentUri
+            val cached = loader.peekMemoryUrl(url)
+            if (cached != null) {
+                Log.d(TAG, "[ImgLoad] pos=$pos url#${url.hashCode()} memCache 同步上屏")
+                cover.setImageBitmap(cached)
+                cover.tag = url
+                return Job().apply { complete() }
+            }
+            if (cover.tag == url && cover.showsBitmap()) {
+                Log.d(TAG, "[ImgLoad] pos=$pos url#${url.hashCode()} sameOnScreen 跳过")
+                return Job().apply { complete() }
+            }
+            Log.i(TAG, "[ImgLoad] pos=$pos url#${url.hashCode()} ASYNC-RELOAD（闪现候选）")
+            cover.setImageBitmap(null)
+            cover.tag = url
+            return scope.launch {
+                val bmp = loader.loadFastUrlLimited(url)
+                if (stillValid()) {
+                    Log.d(TAG, "[ImgLoad] pos=$pos url#${url.hashCode()} async done bmp=${bmp?.let { "${it.width}x${it.height}" } ?: "null"}")
+                    cover.setImageBitmap(bmp)
+                } else {
+                    Log.d(TAG, "[ImgLoad] pos=$pos url#${url.hashCode()} async done 但位置失效 bmp=${bmp?.let { "${it.width}x${it.height}" } ?: "null"}")
+                }
+            }
+        }
         val imageId = loader.extractImageId(image.contentUri)
         val cached = loader.peekMemory(imageId)
         if (cached != null) {
@@ -1932,7 +1970,7 @@ private class FileGridAdapter(
         // 内存缓存对大文件夹必然逐出（131 张 × 2MB > 128MB），清空 → 异步重载（media
         // ~12ms/张、并发 4）就是「松手后一片图片刷新」的直接来源。tag 记录该视图当前
         // 应显示的 imageId，drawable 非空即已上屏，直接沿用。
-        if (cover.tag == imageId && cover.drawable != null) {
+        if (cover.tag == imageId && cover.showsBitmap()) {
             Log.d(TAG, "[ImgLoad] pos=$pos id=$imageId sameOnScreen 跳过")
             return Job().apply { complete() }
         }

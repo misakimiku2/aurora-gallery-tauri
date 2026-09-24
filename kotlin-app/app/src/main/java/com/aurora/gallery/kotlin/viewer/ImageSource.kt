@@ -37,6 +37,9 @@ internal class CoilSource(
 
 private const val KEY_PREFIX = "aurora-viewer:"
 
+/** LAN 大图的缓存键前缀（M6a 阶段 4；disk 键形制对齐 aurora-viewer 同款风格）。 */
+private const val LAN_KEY_PREFIX = "aurora-lan:"
+
 /**
  * 动画格式仍把 URI 交给 Coil。实测（2026-09-21 模拟器 A/B）：喂 InputStream 时
  * `ImageDecoderDecoder` 只给出静态首帧，GIF 不动；喂 URI 才拿到会播的
@@ -51,7 +54,18 @@ internal fun imageSourceFor(
     resolver: ContentResolver,
     variant: String = "full",
 ): CoilSource {
-    if (item.isLan) return CoilSource(item.path, null, null)
+    if (item.isLan) {
+        // M6a 阶段 4：LAN 大图（item.path = imageUrl，token 进 query）。
+        // 之前分支缓存键全 null——Coil 对 HttpUri 数据默认按 URL 字符串求 key，能缓存但
+        // 与本地大图的键形制割裂；这里补上显式键：disk=`aurora-lan:<remotePath>`（磁盘
+        // 存原始字节，与请求尺寸无关）、memory 额外带 variant（解码后的 Bitmap 按尺寸分）。
+        // fileId 对 LAN 项即远端 path（数据层映射时 id=远端 path，身份铁律）。
+        return CoilSource(
+            item.path,
+            LAN_KEY_PREFIX + item.fileId,
+            "$LAN_KEY_PREFIX${item.fileId}:$variant",
+        )
+    }
     if (item.contentUri.isNotEmpty()) {
         val uri = Uri.parse(item.contentUri)
         val bytes = runCatching { resolver.openInputStream(uri)?.use { it.readBytes() } }

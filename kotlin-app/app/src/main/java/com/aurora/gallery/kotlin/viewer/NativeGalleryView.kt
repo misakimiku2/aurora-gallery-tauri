@@ -106,6 +106,12 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String)
         // M5 3.2：用户点击了「加入画布」（仅平板显示此菜单项，D28）
         fun onAddToCanvas(fileId: String)
+        /**
+         * M6a 阶段 4（D34）：用户点击了「保存到设备」（仅 isLan 项显示此菜单项）。
+         * [remotePath] 为远端不透明 path（宿主只取尾段当文件名，不回传服务端）；
+         * [imageUrl] 为大图 URL（token 进 query，宿主直接下载）。
+         */
+        fun onSaveToDevice(remotePath: String, imageUrl: String)
     }
 
     data class ImageItem(
@@ -1573,6 +1579,10 @@ class NativeGalleryView @JvmOverloads constructor(
             return
         }
         titleView.text = item.name
+        // M6a 阶段 4：LAN 项隐藏顶栏「删除」——删除是本地 MediaStore 操作，对远端 path
+        // 无意义（网格选择栏同场景是 Toast 拦截；互联态文件操作与删除归阶段 6，
+        // M4a「不适用的项不出现」先例）。分享保留入口（shareCurrentImage 内 !isLan 拦截）。
+        deleteBtn.visibility = if (item.isLan) GONE else VISIBLE
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
         bottomInfoText.text = "${item.name}\n$sizeStr"
@@ -1803,13 +1813,25 @@ class NativeGalleryView @JvmOverloads constructor(
             context = context,
             theme = this,
             anchor = anchor,
-            menuItems = buildList {
-                if (isTablet && !item.isLan) add(canvasItem)
-                add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
-                add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })
-                add(MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) })
-                add(MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) })
-                add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
+            menuItems = if (item.isLan) {
+                // M6a 阶段 4：LAN 项的菜单（M4a「不适用的项不出现」先例）——删除/重命名/
+                // 复制到/移动到是本地 MediaStore 操作、加入画布走本地取流管线，全部不出现；
+                // 互联态文件操作归阶段 6。「保存到设备」（D34）是 LAN 专属项。
+                buildList {
+                    add(MoreMenuItem("保存到设备", colorTextPrimary()) {
+                        listener?.onSaveToDevice(item.fileId, item.path)
+                    })
+                    add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
+                }
+            } else {
+                buildList {
+                    if (isTablet) add(canvasItem)
+                    add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
+                    add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })
+                    add(MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) })
+                    add(MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) })
+                    add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
+                }
             }
         ).show()
     }

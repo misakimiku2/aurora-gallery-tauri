@@ -199,6 +199,15 @@ fun TopBar(
      * 设置入口临时挂到顶栏。平板/竖屏手机走侧栏入口，传 null 不渲染。
      */
     onOpenSettings: (() -> Unit)? = null,
+    /**
+     * 视图专属动作按钮（M6a 阶段 4：LAN 视图的上传入口；null = 不渲染）。
+     * [actionEnabled] = false 时按钮呈置灰态、点击仍回调（宿主 Toast 说明置灰原因，
+     * 对齐「入口置灰 + 提示需桌面端开启」的验收口径）。
+     */
+    actionIcon: ImageVector? = null,
+    actionContentDescription: String = "",
+    actionEnabled: Boolean = true,
+    onActionClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
@@ -384,6 +393,17 @@ fun TopBar(
                     imageVector = IconTag,
                     contentDescription = "标签筛选",
                     tint = if (tagsSheetOpen) colors.primary else colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        // 视图专属动作（M6a 阶段 4：LAN 上传入口）。置灰态降低不透明度、仍可点击（宿主提示）。
+        if (actionIcon != null && onActionClick != null) {
+            TopBarButton(onClick = onActionClick) {
+                Icon(
+                    imageVector = actionIcon,
+                    contentDescription = actionContentDescription,
+                    tint = if (actionEnabled) colors.textSecondary else colors.textSecondary.copy(alpha = 0.35f),
                     modifier = Modifier.size(18.dp),
                 )
             }

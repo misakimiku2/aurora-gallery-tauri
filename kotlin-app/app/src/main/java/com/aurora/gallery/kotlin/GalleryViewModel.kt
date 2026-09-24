@@ -14,9 +14,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
+import com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID
 import com.aurora.gallery.kotlin.state.SettingsStore
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
+import com.aurora.gallery.kotlin.state.lanFolderId
+import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,6 +56,7 @@ import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
 import uniffi.aurora_core.upsertTopic
 import java.io.File
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -124,6 +129,32 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      */
     val lan = LanManager(appContext, settingsStore)
 
+    // —— M6a 阶段 4：LAN 浏览会话态 ——
+    //
+    // 纯内存会话数据（断线清空）：**只服务 LAN 视图的显示**，绝不写入本地库/本地词表
+    // （零 FFI 调用，清单 §1 命名空间铁律）。唯一写者是 [onLanSnapshot] 触发的
+    // [refreshLanRootsInternal] 与 [reloadLanImages] 的尾部门禁位同步。
+
+    /** 连接已就绪（snapshot CONNECTED 且 all_image_folders 拉取成功过一次）。 */
+    val lanConnected = mutableStateOf(false)
+
+    /** 门禁位（browse/all_image_folders 尾部下发，D32；上传入口置灰消费 lanAllowUpload）。 */
+    val lanAllowEdit = mutableStateOf(true)
+    val lanAllowUpload = mutableStateOf(false)
+
+    /**
+     * LAN 总览的文件夹卡片序列（**数据层算好的结构**，UI 原样渲染）：
+     * `__lan_root_images__` 虚拟根置顶（有根级散图才放；对齐 React
+     * FoldersOverview.tsx:649-650），其余按服务端 all_image_folders 的原序。
+     */
+    val lanOverviewFolders = mutableStateOf<List<Folder>>(emptyList())
+
+    /** 根级散图（虚拟根的网格内容；浏览不单独 browse，React useLanClientSync 同款）。 */
+    private val lanRootImages = mutableStateOf<List<LanRemoteImage>>(emptyList())
+
+    /** 连接成功后的会话拉取协程（刷新时可 join；断线时 cancel）。 */
+    private var lanFetchJob: Job? = null
+
     /** 扫描通知（阶段 5，D17 基础版：初始扫描与手动刷新上进度/完成通知）。 */
     private val scanNotifier = ScanNotifier(appContext)
 
@@ -178,6 +209,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.groupBy = settings.value.defaultGroupBy
         // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
         lan.start()
+        // M6a 阶段 4：连接态变化联动会话态——CONNECTED 拉远端目录+根散图；
+        // 回到 DISCONNECTED 清会话态，且当前在 LAN 视图时自动退回本地视图（无残留）。
+        viewModelScope.launch {
+            var wasConnected = false
+            lan.snapshot.collect { snap ->
+                val connected = snap.state == LanState.CONNECTED
+                when {
+                    connected && !wasConnected -> refreshLanRootsInternal()
+                    !connected && wasConnected -> {
+                        lanFetchJob?.cancel()
+                        clearLanSession()
+                        val wasInLanView = appState.isInLanView
+                        if (wasInLanView) appState.exitLanToHome()
+                        Log.i(TAG, "[Lan] 断线联动：会话态已清${if (wasInLanView) "，LAN 视图在前台→已退回本地总览" else "，当前不在 LAN 视图"}")
+                    }
+                }
+                wasConnected = connected
+            }
+        }
     }
 
     /** 语言切换（M4a 顺延项 1）：换 locale → 重算标签快照 → 侧栏分组顺序变。 */
@@ -1037,6 +1087,273 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
+    // ===== M6a 阶段 4：LAN 浏览（数据层；UI 只消费这里算好的结构）=====
+
+    /** 清空 LAN 会话态（断线/手动断开联动；不动本地库/词表）。 */
+    private fun clearLanSession() {
+        lanConnected.value = false
+        lanAllowEdit.value = true
+        lanAllowUpload.value = false
+        lanRootImages.value = emptyList()
+        lanOverviewFolders.value = emptyList()
+    }
+
+    /** 连接成功（或手动刷新）后的远端根拉取：all_imageFolders 一次带回目录+根散图+门禁位。 */
+    private fun refreshLanRootsInternal() {
+        val session = lan.currentSession() ?: return
+        lanFetchJob?.cancel()
+        lanFetchJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.allImageFolders(session.base, session.token) }
+            }.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] all_image_folders 拉取失败（状态机重试链会跟进）")
+                return@launch
+            }
+            lanConnected.value = true
+            lanAllowEdit.value = result.allowEdit
+            lanAllowUpload.value = result.allowUpload
+            lanRootImages.value = result.rootImages
+            rebuildLanOverview(session, result.folders)
+            Log.i(
+                TAG,
+                "[Lan] 会话态就绪 folders=${result.folders.size} rootImages=${result.rootImages.size} " +
+                    "allowEdit=${result.allowEdit} allowUpload=${result.allowUpload}",
+            )
+        }
+    }
+
+    /** LAN 总览下拉刷新（完成回调对齐本地 refreshManual 的形态）。 */
+    fun refreshLanRoots(onDone: () -> Unit = {}) {
+        if (lan.currentSession() == null) {
+            onDone()
+            return
+        }
+        refreshLanRootsInternal()
+        viewModelScope.launch {
+            lanFetchJob?.join()
+            onDone()
+        }
+    }
+
+    /**
+     * LAN 总览卡片序列：`__lan_root_images__` 虚拟根置顶（**有根级散图才放**，空则不出现
+     * ——React FoldersOverview 行为），其余目录按服务端原序。id 带 lan 前缀供导航分流；
+     * coverUri = preview_images[0]（或根散图首张）的缩略图 URL（网格 URL 分支的识别符）。
+     */
+    private fun rebuildLanOverview(session: LanManager.LanSession, folders: List<LanRemoteFolder>) {
+        val out = ArrayList<Folder>(folders.size + 1)
+        val roots = lanRootImages.value
+        if (roots.isNotEmpty()) {
+            out += Folder(
+                id = lanFolderId(LAN_ROOT_IMAGES_ID),
+                // 与本地根目录散图同一个显示名（sortFolders 的置顶规则按它识别，天然复用）
+                name = ROOT_FOLDER_DISPLAY_NAME,
+                imageCount = roots.size.toLong(),
+                coverUri = roots.firstOrNull()
+                    ?.let { session.client.thumbnailUrl(session.base, session.token, it.path) },
+                createdAt = 0,
+                modifiedAt = 0,
+            )
+        }
+        folders.forEach { f ->
+            out += Folder(
+                id = lanFolderId(f.path),
+                name = f.name,
+                imageCount = f.imageCount,
+                coverUri = f.previewPath
+                    ?.let { session.client.thumbnailUrl(session.base, session.token, it) },
+                createdAt = 0,
+                modifiedAt = 0,
+            )
+        }
+        lanOverviewFolders.value = out
+    }
+
+    /** 远端图片项 → FFI [Image]（网格/查看器共用的展示模型；path 身份铁律：id=远端 path）。 */
+    private fun lanImageOf(session: LanManager.LanSession, item: LanRemoteImage): Image = Image(
+        id = item.path,
+        name = item.name.ifEmpty { item.path.substringAfterLast('/') },
+        // contentUri 装**缩略图 URL**：网格/总览的 URL 分支按 http 前缀识别（FileGrid.loadInto）
+        contentUri = session.client.thumbnailUrl(session.base, session.token, item.path),
+        width = null,
+        height = null,
+        size = item.size,
+        // browse 响应不含时间字段：置 0（查看器抽屉显示「—」，日期分组落 Unknown，React 同口径）
+        createdAt = 0,
+        modifiedAt = 0,
+        format = item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() }?.lowercase(Locale.US),
+    )
+
+    /**
+     * LAN 大图 URL 构造器（查看器 ImageItem 的 path 用；未连接返回 null，查看器按本地图
+     * 的空 path 兜底展示）。MainActivity 经 ViewerLayerHost 传入 toViewerItem。
+     */
+    fun lanImageUrlOf(): ((String) -> String)? {
+        val s = lan.currentSession() ?: return null
+        return { remotePath -> s.client.imageUrl(s.base, s.token, remotePath) }
+    }
+
+    /**
+     * LAN 目录的序列取数（reloadImages 的并列入口，M4a 序列源先例）：
+     *  - 虚拟根（`__lan_root_images__`）= 会话态里的根散图，**不单独 browse**；
+     *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**过滤不进列表**
+     *    （登记差异：React LAN 浏览含视频项；Kotlin 全 App 视频支持待定 M8+）。
+     */
+    private suspend fun reloadLanImages(folderId: String) {
+        val key = "lan|$folderId"
+        if (key != loadedImagesKey) images.value = emptyList()
+        loadedImagesKey = key
+        val session = lan.currentSession() ?: return
+        val imgs: List<Image> = if (folderId == lanFolderId(LAN_ROOT_IMAGES_ID)) {
+            lanRootImages.value.map { lanImageOf(session, it) }
+        } else {
+            val remotePath = folderId.lanRemotePathOrNull() ?: return
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.browse(session.base, session.token, remotePath) }
+            }.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] browse 失败 path 尾=${remotePath.takeLast(12)}")
+                return
+            }
+            // 尾部门禁位同步：验收人中途放开 allow_upload 后，上传入口无需重连即可用
+            lanAllowEdit.value = result.allowEdit
+            lanAllowUpload.value = result.allowUpload
+            result.images.filter { it.type != "video" }.map { lanImageOf(session, it) }
+        }
+        // 取数期间用户可能已经导航走，过期结果直接丢弃（与本地分支同一守卫）
+        val now = appState.activeTab
+        if (now.viewMode == ViewMode.BROWSER && now.folderId == folderId) {
+            images.value = imgs
+            Log.i(TAG, "[Lan] 目录就绪 ${imgs.size} 张（视频项已过滤）")
+        }
+    }
+
+    /** 当前 LAN 目录刷新（上传完成后重拉当前目录；完成回调对齐本地 refreshManual）。 */
+    fun refreshLanFolder(onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            val folderId = appState.activeTab.folderId
+            if (folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true) reloadLanImages(folderId)
+            onDone()
+        }
+    }
+
+    /**
+     * 上传（LAN 视图入口 → 系统照片选择器多选后调这里）：逐个 multipart（读取本机字节 →
+     * LanClient.upload），[onProgress] 逐个回报（宿主转 Toast），全部完成 [onDone] 汇总
+     * 并刷新当前目录列表。逐个而非并发：进度可读、服务端 multipart 压力小（React 同款）。
+     */
+    fun uploadUrisToLan(
+        uris: List<android.net.Uri>,
+        targetDir: String,
+        onProgress: (index: Int, total: Int, name: String, ok: Boolean, message: String?) -> Unit,
+        onDone: (ok: Int, fail: Int) -> Unit,
+    ) {
+        val session = lan.currentSession()
+        if (session == null || uris.isEmpty()) {
+            onDone(0, uris.size)
+            return
+        }
+        viewModelScope.launch {
+            var okCount = 0
+            var failCount = 0
+            uris.forEachIndexed { idx, uri ->
+                val name = withContext(Dispatchers.IO) { queryDisplayName(uri) }
+                    ?: uri.lastPathSegment ?: "upload.img"
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: throw java.io.IOException("无法读取所选图片")
+                        val mime = queryMimeType(uri) ?: "image/jpeg"
+                        session.client.upload(session.base, session.token, name, mime, bytes, targetDir)
+                    }
+                }
+                val ok = result.getOrNull()?.success == true
+                if (ok) okCount++ else failCount++
+                val message = result.exceptionOrNull()?.message ?: result.getOrNull()?.error
+                onProgress(idx + 1, uris.size, name, ok, message)
+            }
+            Log.i(TAG, "[Lan] 上传完成 ok=$okCount fail=$failCount target=…${targetDir.takeLast(12)}")
+            if (okCount > 0) refreshLanFolder()
+            onDone(okCount, failCount)
+        }
+    }
+
+    /** 源行的 MIME 类型（upload multipart 用；查不到退回 image/jpeg 由调用方兜底）。 */
+    private fun queryMimeType(uri: android.net.Uri): String? =
+        appContext.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.Images.Media.MIME_TYPE),
+            null, null, null,
+        )?.use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /**
+     * 「保存到设备」（查看器菜单，仅 LAN 项；D34）：imageUrl 下载原文件 → MediaStore
+     * Downloads insert（RELATIVE_PATH=Download/，文件名取远端 path 尾段，重名由
+     * MediaProvider 自动序号）。与 React 的 app 内 lan-cache 临时下载语义差异已在矩阵
+     * 登记（移动端「保存」的自然语义=落系统下载）。API < 29 无 Downloads 集合，明确不支持。
+     *
+     * @param remotePath 远端 path（**只取尾段当文件名**，不解析不回传服务端）
+     * @param imageUrl 大图 URL（token in query；LanClient.imageUrl 的产物）
+     */
+    fun saveLanImageToDownloads(remotePath: String, imageUrl: String, onDone: (ok: Boolean, savedName: String?) -> Unit) {
+        val session = lan.currentSession()
+        if (session == null || Build.VERSION.SDK_INT < 29) {
+            onDone(false, null)
+            return
+        }
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = session.client.fetchBytes(imageUrl)
+                    if (bytes.isEmpty()) throw java.io.IOException("下载内容为空")
+                    insertToDownloads(remotePath, bytes)
+                }
+            }
+            saved.fold(onSuccess = { name ->
+                Log.i(TAG, "[Lan] 已保存到下载：$name")
+                onDone(true, name)
+            }, onFailure = { e ->
+                Log.w(TAG, "[Lan] 保存到设备失败", e)
+                onDone(false, null)
+            })
+        }
+    }
+
+    /** MediaStore Downloads insert + 写字节；返回 MediaProvider 最终落定的文件名（重名自动序号）。 */
+    private fun insertToDownloads(remotePath: String, bytes: ByteArray): String {
+        val fileName = remotePath.substringAfterLast('/').ifEmpty {
+            "aurora-lan-${System.currentTimeMillis()}.jpg"
+        }
+        val resolver = appContext.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeForFileName(fileName))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = resolver.insert(collection, values) ?: throw java.io.IOException("MediaStore insert 失败")
+        try {
+            resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                ?: throw java.io.IOException("openOutputStream 失败")
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(uri, done, null, null)
+        } catch (e: Exception) {
+            runCatching { resolver.delete(uri, null, null) } // 半截文件不留在下载里
+            throw e
+        }
+        return queryDisplayName(uri) ?: fileName
+    }
+
+    private fun mimeForFileName(name: String): String = when (name.substringAfterLast('.', "").lowercase(Locale.US)) {
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        "bmp" -> "image/bmp"
+        "heic", "heif" -> "image/heic"
+        else -> "application/octet-stream"
+    }
+
     /**
      * 当前视图该显示哪些图，**唯一的取数口**（M4a 4.1 / 3.2）。
      *
@@ -1054,6 +1371,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      */
     suspend fun reloadImages() {
         val tab = appState.activeTab
+        // —— M6a 阶段 4：LAN 序列源分流（并列入口，M4a 序列源先例）——
+        // folderId 带 lan 前缀 = 远端目录（或虚拟根），走 LanClient.browse/会话态。
+        if (tab.viewMode == ViewMode.BROWSER && tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true) {
+            reloadLanImages(tab.folderId!!)
+            return
+        }
         val topicId = if (tab.viewMode == ViewMode.TOPICS_OVERVIEW) tab.activeTopicId else null
         val byTag = tab.activeTags.isNotEmpty()
         if (topicId == null) {

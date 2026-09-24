@@ -341,7 +341,7 @@ fun TreeSidebar(
 
         Spacer(Modifier.height(8.dp))
         // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表
-        //（行点击=阶段 4 的 LAN 总览，本阶段 Toast 占位）；未连接维持 M1 骨架
+        //（行点击=直达该远端目录网格，M6a 阶段 4 落地）；未连接维持 M1 骨架
         //（WifiOff 灰、无展开按钮，2026-09-20 用户要求）。
         val lanExpandable = lanConnected
         SectionHeader(
@@ -613,7 +613,8 @@ private fun FolderRow(folder: Folder, selected: Boolean, onClick: () -> Unit) {
 /**
  * 远端目录行（网络 Section 展开列表，M6a 阶段 3）：形态对齐 [FolderRow]（48dp 触屏
  * 目标、图标缩进同层级），图标/文字用网络翡翠与更浅灰区分本地来源（D31：网络栏只
- * 区分本地/网络文件夹）。点击行为是阶段 4 的 LAN 总览，本阶段由宿主 Toast 占位。
+ * 区分本地/网络文件夹）。点击 = 直达该远端目录网格（M6a 阶段 4；宿主把远端 path 加
+ * lan 前缀成 folderId 走 openFolder，序列源分流在 reloadImages）。
  */
 @Composable
 private fun LanFolderRow(
