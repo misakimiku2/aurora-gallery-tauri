@@ -1378,6 +1378,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      *    按 tag 过滤（配合 [lanMetaByPath]），**不 browse、不动门禁位**（tag 视图沿用当前值）；
      *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**过滤不进列表**
      *    （登记差异：React LAN 浏览含视频项；Kotlin 全 App 视频支持待定 M8+）。
+     *
+     * 阶段 8 起 browse/根散图分支尾随目录级元数据增量刷新（[refreshLanMetaFor]）：
+     * 桌面反向写后目录内下拉刷新即可见，不必回总览刷新或重连。
      */
     private suspend fun reloadLanImages(folderId: String) {
         val key = "lan|$folderId"
@@ -1389,6 +1392,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 会因「lan: 已不在」恒落空、误进 browse 分支（E2E 实测翻过的车）。
         val tagFilter = folderId.lanTagFilterOrNull()
         val imgs: List<Image> = if (folderId == lanFolderId(LAN_ROOT_IMAGES_ID)) {
+            // 阶段 8：根散图同样做目录级元数据增量刷新（桌面反向写后进目录即可见）
+            refreshLanMetaFor(lanRootImages.value)
             lanRootImages.value.map { lanImageOf(session, it) }
         } else if (tagFilter != null) {
             lanLibraryImages.value.values
@@ -1405,13 +1410,41 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             // 尾部门禁位同步：验收人中途放开 allow_upload 后，上传入口无需重连即可用
             lanAllowEdit.value = result.allowEdit
             lanAllowUpload.value = result.allowUpload
-            result.images.filter { it.type != "video" }.map { lanImageOf(session, it) }
+            val fresh = result.images.filter { it.type != "video" }
+            // 阶段 8：目录级元数据增量刷新——桌面反向写描述/标签后，目录内下拉刷新即可见，
+            // 不必回总览全量刷新或重连（黑盒用例⑤发现的缺口）
+            refreshLanMetaFor(fresh)
+            fresh.map { lanImageOf(session, it) }
         }
         // 取数期间用户可能已经导航走，过期结果直接丢弃（与本地分支同一守卫）
         val now = appState.activeTab
         if (now.viewMode == ViewMode.BROWSER && now.folderId == folderId) {
             images.value = imgs
             Log.i(TAG, "[Lan] 目录就绪 ${imgs.size} 张（视频项已过滤）")
+        }
+    }
+
+    /**
+     * 目录级元数据增量刷新（阶段 8 黑盒用例⑤）：把 [items] 的批读结果**并进**
+     * [lanMetaByPath]（不替换整表——其他目录的缓存与词表计数不动）并重算远端词表。
+     * 桌面反向写描述/标签后，目录内下拉刷新即可见；批读失败仅 Log.w 保留旧缓存
+     * （失败降级口径同 [refreshLanLibraryInternal]）。
+     */
+    private suspend fun refreshLanMetaFor(items: List<LanRemoteImage>) {
+        if (items.isEmpty()) return
+        val session = lan.currentSession() ?: return
+        val fresh = HashMap<String, LanMetadataItem>()
+        items.map { it.path }.chunked(LAN_METADATA_BATCH_CHUNK).forEach { chunk ->
+            val fetched = withContext(Dispatchers.IO) {
+                runCatching { session.client.metadataBatch(session.base, session.token, chunk) }
+            }
+            fetched.getOrNull()?.forEach { fresh[it.path] = it }
+                ?: Log.w(TAG, "[Lan] 目录级 metadata/batch 失败（${chunk.size} 项），保留旧缓存")
+        }
+        if (fresh.isNotEmpty()) {
+            lanMetaByPath.value = lanMetaByPath.value + fresh
+            rebuildLanRemoteTagGroups()
+            Log.i(TAG, "[Lan] 目录级元数据刷新 ${fresh.size} 项")
         }
     }
 

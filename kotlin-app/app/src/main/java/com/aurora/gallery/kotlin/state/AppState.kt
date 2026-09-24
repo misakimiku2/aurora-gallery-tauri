@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * 视图模式（Kotlin 化 React `TabState['viewMode']`，`src/types.ts:498`）。
  *
  * React 版有六个取值（browser / folders-overview / tags-overview / people-overview /
- * topics-overview / lan-folders-overview）。M4a 3.2 起补齐四个（网络总览随 M6）：
+ * topics-overview / lan-folders-overview）。M4a 3.2 起补齐三个、网络总览随 M6a 阶段 4 落地：
  *  - [FOLDERS_OVERVIEW]：文件夹总览（React 版 `folders-overview`；React 的根节点伪 id
  *    `__android_folders_root__` 在 Kotlin 端用 `folderId == null` 表示）；
  *  - [BROWSER]：文件夹内部网格（React 版 `browser`）；

@@ -93,10 +93,6 @@ import com.aurora.gallery.kotlin.viewer.NativeGalleryView
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
 import com.aurora.gallery.kotlin.viewer.applyViewerTheme
 import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
-// M6a 0.7 spike：扫码库（D33 zxing-android-embedded）相机入口
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanIntentResult
-import com.journeyapps.barcodescanner.ScanOptions
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
@@ -296,25 +292,6 @@ class MainActivity : ComponentActivity() {
 
     private fun fileOpWithWriteAccess(fileIds: Collection<String>, op: () -> Unit) {
         fileOpWithWriteAccessUris(fileIds) { op() }
-    }
-
-    // —— M6a 0.7 spike：相机扫码入口（可丢弃的验证代码；ScanContract 起库自带 CaptureActivity，
-    // CAMERA 运行时权限由它自己请求）。内容按桌面契约解析（{"type":"aurora-lan",url,code}）——
-
-    private val qrScanLauncher = registerForActivityResult(ScanContract()) { result: ScanIntentResult ->
-        val text = result.contents
-        Log.i("AuroraKotlin", "[QrScan] contents=$text format=${result.formatName}")
-        val report = if (text == null) {
-            "没扫到内容（取消或未识别）"
-        } else {
-            runCatching {
-                val json = JSONObject(text)
-                check(json.optString("type") == "aurora-lan") { "type=${json.optString("type")} 不是 aurora-lan" }
-                "url=${json.optString("url")} code=${json.optString("code")}"
-            }.getOrElse { "QR 解析失败: ${it.message}｜原文=$text" }
-        }
-        Log.i("AuroraKotlin", "[QrScan] $report")
-        Toast.makeText(this, report, Toast.LENGTH_LONG).show()
     }
 
     // —— M4b 2.3 设置面板：缓存清理 + 备份导出/导入 ——
@@ -1360,19 +1337,6 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.FILEOP"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
-            // M6a 0.7 spike：LAN 冒烟 + 相机扫码入口
-            ContextCompat.registerReceiver(
-                this,
-                lanSmokeDebugReceiver,
-                IntentFilter("aurora.debug.LAN_SMOKE"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
-            ContextCompat.registerReceiver(
-                this,
-                qrScanDebugReceiver,
-                IntentFilter("aurora.debug.QR_SCAN"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
         }
     }
 
@@ -1492,32 +1456,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * M6a 0.7 spike：LAN 直连冒烟钩子。`adb shell am broadcast -a aurora.debug.LAN_SMOKE
-     * --es nonce <n>` 跑一遍 okhttp auth → browse/all_image_folders → Coil 缩略图 →
-     * QR 解码（结果只进日志，见 LanSmoke.kt）。
-     */
-    private val lanSmokeDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            runLanSmoke(applicationContext, intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString())
-        }
-    }
-
-    /**
-     * M6a 0.7 spike：相机扫码钩子。`adb shell am broadcast -a aurora.debug.QR_SCAN`
-     * 起扫码 Activity，扫到的内容在 [qrScanLauncher] 回调里解析 + Toast。
-     */
-    private val qrScanDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            Log.i("AuroraKotlin", "[QrScan] launch camera scan")
-            qrScanLauncher.launch(ScanOptions().apply {
-                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                setPrompt("对准桌面端显示的二维码")
-                setBeepEnabled(false)
-            })
-        }
-    }
-
+    /** 模拟器判定（调试广播钩子的注册门控；真机不注册）。 */
     private fun isEmulator(): Boolean =
         Build.FINGERPRINT.startsWith("generic") ||
             Build.FINGERPRINT.startsWith("unknown") ||

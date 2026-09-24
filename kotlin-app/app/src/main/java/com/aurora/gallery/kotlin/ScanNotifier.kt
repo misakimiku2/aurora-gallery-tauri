@@ -12,7 +12,7 @@ import androidx.core.app.NotificationCompat
  * 扫描任务通知（M4b 阶段 5，D17 拍板的基础版）：自建 Channel + 进度/完成通知，
  * 只服务 MediaStore 扫描+对账这一条长任务。M4a §8 预警过 `android_*_task_notification`
  * 是 JNI→Tauri 桥、独立应用拿不到，必须自建。无按钮回传（扫描没有暂停语义），
- * 按钮回传 + 主色调/AI 任务的完整版随 M6（M6 只需在同一个 Channel 上加 action）。
+ * 按钮回传 + 主色调/AI 任务的完整版随 M6b（M6b 只需在同一个 Channel 上加 action）。
  *
  * 仅初始扫描与手动下拉刷新会上通知（[GalleryViewModel.scanAndReconcile] 的 notify
  * 参数门控）；热刷新的防抖重扫频繁且通常很快，发通知是骚扰。

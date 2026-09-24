@@ -628,8 +628,8 @@ class LanClient(private val http: OkHttpClient) {
 }
 
 /**
- * query 编码（0.7 spike 的 queryEncode 逻辑原样上移；改名 lanQueryEncode 避开
- * LanSmoke.kt 同包文件内同名私有函数）：URLEncoder 是表单口径（空格→`+`），React
+ * query 编码（0.7 spike 的 queryEncode 逻辑原样上移；lanQueryEncode 命名自
+ * spike 冒烟件 LanSmoke.kt——该文件已随阶段 8 销账删除，函数名保留）：URLEncoder 是表单口径（空格→`+`），React
  * 基准用 encodeURIComponent（空格→`%20`）；服务端对 `+` 形态 404（spike 实测），
  * 故统一 replace 成 `%20`。
  */

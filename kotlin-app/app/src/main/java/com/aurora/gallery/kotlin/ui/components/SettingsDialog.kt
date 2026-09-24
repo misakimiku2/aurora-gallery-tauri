@@ -90,9 +90,9 @@ import kotlinx.coroutines.launch
  *  - 手机：独立全屏设置页——顶栏（返回 + 「设置」）+ 单列滚动，系统返回键关闭。
  *
  * 分类对齐桌面导航（React 安卓端同款五类；AI视觉/性能是桌面专属，两端都不显示）：
- * 常规 / 存储 / AI 智能 / 局域网共享 / 关于。AI 与局域网共享随 M6（D16）落地，
- * 本次按「未落地能力的可见占位」先例渲染图标导航 + 占位说明页；存储类的主色调
- * 数据库管理同样占位（M6 颜色链路）。
+ * 常规 / 存储 / AI 智能 / 局域网共享 / 关于。局域网共享已随 M6a（D16）落地
+ * （连接 + 扫码 + 最近服务器 + 设备名 + M6a 阶段 7 的对等服务端开关）；
+ * AI 智能与存储类的主色调数据库管理仍为占位（随 M6b）。
  *
  * 控件图形化（2.6）：主题三档预览卡（Sun/Moon/Monitor + 选中角标）、视图模式与
  * 分组方式图标卡、排序方式/方向带图标按钮组（+勾），全部对齐桌面 GeneralPanel 的
@@ -238,7 +238,7 @@ private fun CategoryContent(
             includeSectionHeaders = includeSectionHeaders,
             icon = IconBot,
             title = "AI 任务",
-            description = "将随 M6 提供：自动打标签 / 描述生成 / 语义搜索与模型配置",
+            description = "将随 M6b 提供：自动打标签 / 描述生成 / 语义搜索与模型配置",
         )
     }
     if (SettingsCategory.LAN in categories) {
@@ -759,7 +759,7 @@ private fun StorageContent(
     SettingsPlaceholderCard(
         icon = IconPalette,
         title = "主色调提取与数据库管理",
-        description = "将随 M6 提供：提取任务控制 / 统计与状态分布 / 错误文件管理",
+        description = "将随 M6b 提供：提取任务控制 / 统计与状态分布 / 错误文件管理",
     )
 
     SettingsSection("数据备份")
