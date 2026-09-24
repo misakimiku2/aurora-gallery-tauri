@@ -123,6 +123,21 @@ export const useAppInit = ({
                 };
               }
 
+              // D32 一次性迁移（2026-09-24）：allow_upload 从未有 UI 开关，存量配置里的
+              // false 全部来自旧版默认值硬写而非用户选择——升到新默认 true（互联即授权）。
+              // allowEdit 有真实 toggle（用户可能主动收紧）不动；标记位持久化后，
+              // 用户此后手改 allowUpload=false 会被尊重，不再反复强制。
+              if (migratedSettings.lanShare && migratedSettings.lanShare.d32UploadMigrated !== true) {
+                if (migratedSettings.lanShare.allowUpload === false) {
+                  console.log('[Migration] lanShare.allowUpload legacy false -> true（D32 互联即授权，一次性）');
+                  migratedSettings.lanShare = {
+                    ...migratedSettings.lanShare,
+                    allowUpload: true,
+                  };
+                }
+                migratedSettings.lanShare.d32UploadMigrated = true;
+              }
+
               finalSettings = {
                 ...finalSettings,
                 ...migratedSettings,

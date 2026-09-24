@@ -337,6 +337,7 @@ export interface LanShareSettings {
   accessCode: string;        // 访问验证码
   allowEdit: boolean;        // 允许编辑和删除
   allowUpload: boolean;      // 允许上传
+  d32UploadMigrated?: boolean; // D32 一次性迁移标记：存量 allowUpload=false 已升新默认 true（此后手改 false 会被尊重）
   serverName?: string;       // 服务器名称（显示给客户端）
   // 客户端配置（安卓端使用，桌面端忽略）
   clientMode?: boolean;
