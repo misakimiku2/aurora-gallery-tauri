@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -851,6 +852,8 @@ class MainActivity : ComponentActivity() {
                 }
                 val appState = viewModel.appState
                 val tab = appState.activeTab
+                // M6a 阶段 3：LAN 连接快照（侧栏网络 Section 的状态来源；collect 成普通值传入）
+                val lanSnapshot by viewModel.lan.snapshot.collectAsState()
                 // 当前该显示哪批图（文件夹 / 标签命中 / 专题成员）：导航与标签筛选都收敛到
                 // 这一个触发点。协程随 key 变化自动取消，所以「点进 B 还没查完」不会把 A
                 // 的结果盖上去——旧 openFolder 里手写的竞态守卫由结构化并发兜住了。
@@ -885,6 +888,8 @@ class MainActivity : ComponentActivity() {
                         coverImagesById = viewModel.coverImagesById.value,
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
+                        // M6a 阶段 3：LAN 连接快照（网络 Section）
+                        lanSnapshot = lanSnapshot,
                         onFolderClick = { viewModel.openFolder(it) },
                         onTopicClick = { viewModel.appState.openTopic(it.id) },
                         onCreateTopic = { name, parentId -> viewModel.createTopic(name, parentId) },
@@ -1053,6 +1058,8 @@ class MainActivity : ComponentActivity() {
                         settings = viewModel.settings.value,
                         cacheSizeText = computeCacheSizeText(),
                         appVersion = appVersion,
+                        // M6a 阶段 3：LAN 状态机（面板消费同一快照 + 连接/断开操作）
+                        lan = viewModel.lan,
                         onLanguageChange = { viewModel.setLanguage(it) },
                         onThemeChange = { viewModel.setTheme(it) },
                         onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
@@ -1305,6 +1312,8 @@ fun App(
     coverImagesById: Map<String, Image>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
+    /** M6a 阶段 3：LAN 连接快照（网络 Section 消费；宿主 setContent 里 collect）。 */
+    lanSnapshot: LanSnapshot,
     onFolderClick: (Folder) -> Unit,
     /** 点专题卡片 = 进专题详情（3.2）。 */
     onTopicClick: (uniffi.aurora_core.FfiTopic) -> Unit,
@@ -1642,6 +1651,13 @@ fun App(
                 canvasSelected = inCanvas,
                 // 设置行：打开设置面板（M4b 2.1）
                 onSettingsClick = onOpenSettings,
+                // 网络 Section（M6a 阶段 3）：连接状态流 collect 成普通值传入（不轮询）；
+                // 远端目录行点击 = 阶段 4 的 LAN 总览入口，本阶段 Toast 占位
+                lanConnected = lanSnapshot.state == LanState.CONNECTED,
+                lanFolders = lanSnapshot.folders,
+                onLanFolderClick = {
+                    Toast.makeText(context, "LAN 目录浏览将随阶段 4 提供", Toast.LENGTH_SHORT).show()
+                },
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )

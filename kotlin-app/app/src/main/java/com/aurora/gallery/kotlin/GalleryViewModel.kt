@@ -117,6 +117,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 设置的唯一读写口（2.1，D15=SharedPreferences；专题排序已并入）。 */
     val settingsStore = SettingsStore(appContext)
 
+    /**
+     * M6a 阶段 3：LAN 客户端连接状态机（auth/心跳/周期重试/重启恢复）。
+     * 状态与远端目录经 [LanManager.snapshot] StateFlow 暴露，设置 LAN 面板与侧栏
+     * 网络 Section 消费；LAN 会话是纯 HTTP（LanClient），本地库/词表零接触。
+     */
+    val lan = LanManager(appContext, settingsStore)
+
     /** 扫描通知（阶段 5，D17 基础版：初始扫描与手动刷新上进度/完成通知）。 */
     private val scanNotifier = ScanNotifier(appContext)
 
@@ -169,6 +176,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.updateActiveTab { it.copy(layoutMode = settings.value.defaultLayout) }
         // M4c：默认分组同理（GroupBy 渲染能力 M1 已有，这里只补持久化默认值）
         appState.groupBy = settings.value.defaultGroupBy
+        // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
+        lan.start()
     }
 
     /** 语言切换（M4a 顺延项 1）：换 locale → 重算标签快照 → 侧栏分组顺序变。 */

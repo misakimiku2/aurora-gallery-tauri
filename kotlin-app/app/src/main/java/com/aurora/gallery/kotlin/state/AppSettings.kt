@@ -3,6 +3,7 @@ package com.aurora.gallery.kotlin.state
 import android.content.Context
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.ui.components.LayoutMode
+import java.util.UUID
 
 /**
  * 应用设置（M4b 2.1，D15 拍板：落 SharedPreferences，不导出 blob——设置项低频写、
@@ -87,6 +88,117 @@ class SettingsStore(context: Context) {
     private fun groupFromName(name: String): GroupBy =
         GroupBy.entries.firstOrNull { it.name == name } ?: GroupBy.NONE
 
+    // —— M6a 阶段 3：LAN 连接持久化（lanHost/lanPort/lanToken/savedServers/
+    //    lanServerEnabled（阶段 7 用，先落键）/ 设备名 / device_id）——
+    // 不并入 [AppSettings]：token/最近服务器是连接态而非用户偏好，读写走专用入口，
+    // 由 LanManager 独占调用，避免混进设置面板的整行 save。
+
+    /**
+     * 本机设备标识（对齐 React `lanClientApi.getDeviceId` 的语义）：首次生成 UUID 持久化，
+     * 之后复用——服务端按 device_id 覆盖旧会话；双模拟器并发时各设备必须唯一（会互踢）。
+     */
+    fun loadLanDeviceId(): String {
+        prefs.getString(KEY_LAN_DEVICE_ID, null)?.let { return it }
+        val id = UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_LAN_DEVICE_ID, id).apply()
+        return id
+    }
+
+    /** 设备名（认证时上报桌面端显示）。默认取系统型号（React 从 UA 解析的同语义）。 */
+    fun loadLanDeviceName(): String =
+        prefs.getString(KEY_LAN_DEVICE_NAME, null)?.takeIf { it.isNotBlank() }
+            ?: android.os.Build.MODEL.ifBlank { "Android 设备" }
+
+    fun saveLanDeviceName(name: String) {
+        prefs.edit().putString(KEY_LAN_DEVICE_NAME, name.trim()).apply()
+    }
+
+    /** 最近一次成功连接的三元组（杀进程重启自动恢复用）。 */
+    fun loadLanConnection(): LanConnectionRecord? {
+        val host = prefs.getString(KEY_LAN_HOST, null) ?: return null
+        if (host.isEmpty()) return null
+        return LanConnectionRecord(
+            host = host,
+            port = prefs.getInt(KEY_LAN_PORT, 0).takeIf { it > 0 } ?: return null,
+            token = prefs.getString(KEY_LAN_TOKEN, null)?.takeIf { it.isNotEmpty() },
+            serverName = prefs.getString(KEY_LAN_SERVER_NAME, null)?.takeIf { it.isNotEmpty() },
+        )
+    }
+
+    /** 连接成功后保存 lanHost/lanPort/token（serverName 一并留作状态行展示）。 */
+    fun saveLanConnection(host: String, port: Int, token: String, serverName: String?) {
+        prefs.edit()
+            .putString(KEY_LAN_HOST, host)
+            .putInt(KEY_LAN_PORT, port)
+            .putString(KEY_LAN_TOKEN, token)
+            .putString(KEY_LAN_SERVER_NAME, serverName)
+            .apply()
+    }
+
+    /** 只清 token（host/port/serverName 保留：401 清理后重试循环还要按 host/port 重连）。 */
+    fun clearLanToken() {
+        prefs.edit().putString(KEY_LAN_TOKEN, null).apply()
+    }
+
+    /** 最近服务器列表（上限 [SAVED_SERVERS_LIMIT] 条，含访问码供一键重连；新者在前）。 */
+    fun loadSavedServers(): List<LanSavedServer> = runCatching {
+        val raw = prefs.getString(KEY_LAN_SAVED_SERVERS, null) ?: return emptyList()
+        val arr = org.json.JSONArray(raw)
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val host = o.optString("host")
+            val port = o.optInt("port")
+            if (host.isEmpty() || port <= 0) return@mapNotNull null
+            LanSavedServer(
+                host = host,
+                port = port,
+                // org.json 的 optString 对 JSON null 返回字面量 "null"——必须先 isNull 判空
+                name = o.optString("name").takeIf { !o.isNull("name") && it.isNotEmpty() },
+                accessCode = o.optString("accessCode").takeIf { !o.isNull("accessCode") && it.isNotEmpty() },
+                lastConnected = o.optLong("lastConnected", 0L),
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    /**
+     * 连接成功就记录：同 host:port 去重置顶（刷新访问码/时间），超上限丢最旧
+     * （对齐 React `saveRecentServer` 的 cap-10 语义）。
+     */
+    fun recordSavedServer(host: String, port: Int, name: String?, accessCode: String?) {
+        val existing = loadSavedServers().toMutableList()
+        existing.removeAll { it.host == host && it.port == port }
+        existing.add(
+            0,
+            LanSavedServer(
+                host = host,
+                port = port,
+                name = name?.takeIf { it.isNotBlank() },
+                accessCode = accessCode?.takeIf { it.isNotBlank() },
+                lastConnected = System.currentTimeMillis(),
+            ),
+        )
+        val capped = existing.take(SAVED_SERVERS_LIMIT)
+        val arr = org.json.JSONArray()
+        capped.forEach { s ->
+            arr.put(
+                org.json.JSONObject()
+                    .put("host", s.host)
+                    .put("port", s.port)
+                    .put("name", s.name ?: org.json.JSONObject.NULL)
+                    .put("accessCode", s.accessCode ?: org.json.JSONObject.NULL)
+                    .put("lastConnected", s.lastConnected),
+            )
+        }
+        prefs.edit().putString(KEY_LAN_SAVED_SERVERS, arr.toString()).apply()
+    }
+
+    /** 对等服务端开关（阶段 7 落地，先落键记忆）。 */
+    fun loadLanServerEnabled(): Boolean = prefs.getBoolean(KEY_LAN_SERVER_ENABLED, false)
+
+    fun saveLanServerEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LAN_SERVER_ENABLED, enabled).apply()
+    }
+
     private companion object {
         const val KEY_LANGUAGE = "language"
         const val KEY_THEME = "theme"
@@ -96,6 +208,35 @@ class SettingsStore(context: Context) {
         const val KEY_GROUP_BY = "defaultGroupBy"
         const val KEY_TOPIC_SORT_BY_NAME = "topicSortByName"
         const val KEY_TOPIC_SORT_ASC = "topicSortAscending"
+        const val KEY_LAN_DEVICE_ID = "lanDeviceId"
+        const val KEY_LAN_DEVICE_NAME = "lanDeviceName"
+        const val KEY_LAN_HOST = "lanHost"
+        const val KEY_LAN_PORT = "lanPort"
+        const val KEY_LAN_TOKEN = "lanToken"
+        const val KEY_LAN_SERVER_NAME = "lanServerName"
+        const val KEY_LAN_SAVED_SERVERS = "lanSavedServers"
+        const val KEY_LAN_SERVER_ENABLED = "lanServerEnabled"
+        /** 最近服务器上限（React savedServers 同值）。 */
+        const val SAVED_SERVERS_LIMIT = 10
         val VALID_THEMES = setOf(AppSettings.THEME_LIGHT, AppSettings.THEME_DARK, AppSettings.THEME_SYSTEM)
     }
 }
+
+/** 最近一次成功连接的持久化快照（[SettingsStore.loadLanConnection]）。 */
+data class LanConnectionRecord(
+    val host: String,
+    val port: Int,
+    /** 持久化 token；被清理（401/心跳断链）后为 null。 */
+    val token: String?,
+    val serverName: String?,
+)
+
+/** 「最近服务器」一条（React `SavedServer` 同构：host/port/name/accessCode/lastConnected）。 */
+data class LanSavedServer(
+    val host: String,
+    val port: Int,
+    val name: String?,
+    /** 上次成功连接使用的访问码（一键重连用；桌面端重新生成后重连失败回退手输）。 */
+    val accessCode: String?,
+    val lastConnected: Long,
+)

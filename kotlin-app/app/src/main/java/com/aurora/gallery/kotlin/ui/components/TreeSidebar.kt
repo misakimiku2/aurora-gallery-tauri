@@ -182,10 +182,11 @@ fun SidebarPane(
 }
 
 /**
- * 可互斥展开的 Section（2026-09-20 起：专题/网络/画布无列表内容、不参与展开，
- * 对齐桌面——网络 M6 接入连接态后恢复，专题/画布随对应视图落地恢复）。
+ * 可互斥展开的 Section（M6a 阶段 3 起：网络在 connected 时恢复展开语义——承载远端
+ * 目录树入口（D31：网络栏只管本地/网络文件夹区分，标签/人物/专题的远端条目在各自
+ * Section）；未连接/专题/画布不参与展开）。
  */
-private enum class SidebarSection { FOLDERS, PEOPLE, TAGS }
+private enum class SidebarSection { FOLDERS, NETWORK, PEOPLE, TAGS }
 
 /** 文件夹排序（侧栏头部循环切换，4 态对齐 React handleToggleFolderSort 的循环序）。 */
 private enum class FolderSort(val label: String) {
@@ -240,6 +241,14 @@ fun TreeSidebar(
     showCanvas: Boolean = true,
     /** 设置行点击（M4b 2.1；面板由宿主承载）。 */
     onSettingsClick: (() -> Unit)? = null,
+    // —— M6a 阶段 3：网络 Section 的连接态（宿主把 LanManager.snapshot 的 StateFlow
+    //    collect 成普通值传入，不轮询）——
+    /** LAN 会话已连接（CONNECTED）。决定 Wifi 图标/可展开与远端目录列表显隐。 */
+    lanConnected: Boolean = false,
+    /** 远端含图目录（allImageFolders 结果，原样渲染；排序在数据层/Rust 同口径不重排）。 */
+    lanFolders: List<com.aurora.gallery.kotlin.LanRemoteFolder> = emptyList(),
+    /** 远端目录行点击（阶段 4 的 LAN 总览入口；本阶段宿主给 Toast 占位）。 */
+    onLanFolderClick: (com.aurora.gallery.kotlin.LanRemoteFolder) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -331,15 +340,42 @@ fun TreeSidebar(
         }
 
         Spacer(Modifier.height(8.dp))
-        // 网络：M1 恒未连接——无展开按钮（用户要求；M6 接入后按 connected 恢复，对齐桌面）
+        // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表
+        //（行点击=阶段 4 的 LAN 总览，本阶段 Toast 占位）；未连接维持 M1 骨架
+        //（WifiOff 灰、无展开按钮，2026-09-20 用户要求）。
+        val lanExpandable = lanConnected
         SectionHeader(
             title = "网络",
-            icon = IconWifiOff,
-            iconTint = SECTION_GRAY,
-            expanded = false,
+            icon = if (lanConnected) IconWifi else IconWifiOff,
+            iconTint = if (lanConnected) SECTION_EMERALD else SECTION_GRAY,
+            expanded = lanExpandable && activeSection == SidebarSection.NETWORK,
             onClick = null,
-            expandable = false,
+            expandable = lanExpandable,
+            onChevronClick = if (lanExpandable) {
+                {
+                    activeSection =
+                        if (activeSection == SidebarSection.NETWORK) null else SidebarSection.NETWORK
+                }
+            } else {
+                null
+            },
         )
+        if (lanConnected && activeSection == SidebarSection.NETWORK) {
+            if (lanFolders.isEmpty()) {
+                EmptyHint("暂无共享目录")
+            } else {
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .clipToBounds(),
+                ) {
+                    lanFolders.forEach { folder ->
+                        LanFolderRow(folder = folder, onClick = { onLanFolderClick(folder) })
+                    }
+                }
+            }
+        }
 
         Spacer(Modifier.height(8.dp))
         SectionHeader(
@@ -570,6 +606,58 @@ private fun FolderRow(folder: Folder, selected: Boolean, onClick: () -> Unit) {
                 fontSize = 14.sp,
                 modifier = Modifier.weight(1f),
             )
+        }
+    }
+}
+
+/**
+ * 远端目录行（网络 Section 展开列表，M6a 阶段 3）：形态对齐 [FolderRow]（48dp 触屏
+ * 目标、图标缩进同层级），图标/文字用网络翡翠与更浅灰区分本地来源（D31：网络栏只
+ * 区分本地/网络文件夹）。点击行为是阶段 4 的 LAN 总览，本阶段由宿主 Toast 占位。
+ */
+@Composable
+private fun LanFolderRow(
+    folder: com.aurora.gallery.kotlin.LanRemoteFolder,
+    onClick: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(start = 40.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IconFolder,
+                contentDescription = null,
+                tint = SECTION_EMERALD,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                folder.name,
+                fontSize = 14.sp,
+                color = SIDEBAR_GRAY_600,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (folder.imageCount > 0) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    folder.imageCount.toString(),
+                    fontSize = 10.sp,
+                    color = SIDEBAR_GRAY_500,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.surface)
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -23,14 +25,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,19 +45,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.Manifest
+import android.content.pm.PackageManager
+import android.widget.Toast
+import androidx.core.content.ContextCompat
+import com.aurora.gallery.kotlin.LanManager
+import com.aurora.gallery.kotlin.LanQr
+import com.aurora.gallery.kotlin.LanState
 import com.aurora.gallery.kotlin.state.AppSettings
+import com.aurora.gallery.kotlin.state.LanSavedServer
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 /**
  * 设置界面（M4c 重构：形制与控件双对齐桌面 SettingsModal/GeneralPanel/AboutPanel，
@@ -77,6 +98,8 @@ fun SettingsHost(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    /** M6a 阶段 3：LAN 连接状态机（面板与侧栏共用同一 StateFlow 快照）。 */
+    lan: LanManager,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -97,6 +120,7 @@ fun SettingsHost(
             settings = settings,
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
+            lan = lan,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
@@ -113,6 +137,7 @@ fun SettingsHost(
             settings = settings,
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
+            lan = lan,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
@@ -138,7 +163,8 @@ private enum class SettingsCategory(
     GENERAL("常规", IconSliders),
     STORAGE("存储", IconDatabase),
     AI("AI 智能", IconBot, placeholder = true),
-    LAN("局域网共享", IconWifi, placeholder = true),
+    // M6a 阶段 3 起 LAN 面板落地（连接/扫码/最近服务器），不再是占位类
+    LAN("局域网共享", IconWifi),
     ABOUT("关于", IconInfo),
 }
 
@@ -153,6 +179,7 @@ private fun CategoryContent(
     appVersion: String,
     /** false = 不渲染与分类同名的首个节标题（手机二级页：顶栏已是分类名，重复）。 */
     includeSectionHeaders: Boolean = true,
+    lan: LanManager,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -194,14 +221,10 @@ private fun CategoryContent(
         )
     }
     if (SettingsCategory.LAN in categories) {
-        PlaceholderContent(
-            sectionTitle = "局域网共享",
-            sectionIcon = IconWifi,
-            includeSectionHeaders = includeSectionHeaders,
-            icon = IconWifiOff,
-            title = "桌面互联",
-            description = "将随 M6 提供：局域网共享 / 扫码连接 / 文件互传",
-        )
+        // M6a 阶段 3：替换 M4c 的「将随 M6 提供」占位（D16）。连接状态/手输/扫码/
+        // 最近服务器/设备名都在这；「允许桌面浏览本机」开关是对等服务端（阶段 7）的，
+        // 先不渲染。
+        LanContent(lan = lan, includeSectionHeaders = includeSectionHeaders)
     }
     if (SettingsCategory.ABOUT in categories) {
         AboutContent(
@@ -210,6 +233,191 @@ private fun CategoryContent(
             onOpenUrl = onOpenUrl,
         )
     }
+}
+
+/**
+ * 局域网共享面板（M6a 阶段 3，替换 M4c 的 LAN placeholder）。形制对齐 M4c 既有面板
+ * （SettingsSection/SettingsCard/SettingsLabel + 48dp 触屏目标），内容四块：
+ * 连接状态行（未连接/连接中/已连 server_name/重连中 + 错误行）、服务器地址 + 访问码
+ * 手输 fallback、扫码连接（前台 UI 入口起 CaptureActivity——spike 实测广播入口会被
+ * 三星 BAL 拦截）、最近服务器一键连 + 设备名。
+ */
+@Composable
+private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true) {
+    val colors = AuroraTheme.colors
+    val context = LocalContext.current
+    val snap by lan.snapshot.collectAsState()
+
+    // 表单预填：最近服务器第一条（一键重连的落点）；没有就空着
+    var address by remember { mutableStateOf(lan.savedServers().firstOrNull()?.let { "${it.host}:${it.port}" } ?: "") }
+    var accessCode by remember { mutableStateOf(lan.savedServers().firstOrNull()?.accessCode ?: "") }
+    var deviceName by remember { mutableStateOf(lan.deviceName()) }
+    var savedServers by remember { mutableStateOf(lan.savedServers()) }
+    // 连接成功（可能来自扫码/一键连）后刷新最近服务器列表
+    LaunchedEffect(snap.state) {
+        if (snap.state == LanState.CONNECTED) savedServers = lan.savedServers()
+    }
+
+    // —— 扫码（zxing ScanContract；CAMERA 运行时权限先过一遍，CaptureActivity 自身也会请求）——
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val raw = result.contents
+        if (raw == null) {
+            Toast.makeText(context, "已取消扫码", Toast.LENGTH_SHORT).show()
+            return@rememberLauncherForActivityResult
+        }
+        val qr = LanQr.parse(raw)
+        if (qr == null) {
+            Toast.makeText(context, "二维码不是 Aurora 互联格式｜原文：$raw", Toast.LENGTH_LONG).show()
+        } else {
+            // 解析结果填入连接表单并自动连（桌面契约 code 可能为空 → 保留手输框里的）
+            address = if (qr.port == LanQr.DEFAULT_LAN_PORT) qr.host else "${qr.host}:${qr.port}"
+            if (qr.code != null) accessCode = qr.code
+            Toast.makeText(context, "已识别 ${qr.host}:${qr.port}，正在连接…", Toast.LENGTH_SHORT).show()
+            lan.connect(address, accessCode)
+        }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) scanLauncher.launch(scanOptions()) else Toast.makeText(
+            context, "未获相机权限，无法扫码", Toast.LENGTH_SHORT,
+        ).show()
+    }
+    fun startScan() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            scanLauncher.launch(scanOptions())
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    if (includeSectionHeaders) {
+        SettingsSection("连接", icon = IconWifi)
+    } else {
+        Spacer(Modifier.size(4.dp))
+    }
+    SettingsCard {
+        // 连接状态行
+        SettingsRow(label = "连接状态", value = lanStatusText(snap)) {
+            if (snap.state == LanState.DISCONNECTED) {
+                SettingsAction("连接", enabled = address.isNotBlank() && accessCode.isNotBlank()) {
+                    lan.connect(address, accessCode)
+                }
+            } else {
+                SettingsAction("断开", enabled = snap.state != LanState.CONNECTING) {
+                    lan.disconnect()
+                }
+            }
+        }
+        snap.error?.let { err ->
+            Text(
+                err,
+                fontSize = 12.sp,
+                color = Color(colors.palette.danger),
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
+    }
+
+    SettingsLabel("服务器地址", topPadding = 16)
+    LanTextField(
+        value = address,
+        onValueChange = { address = it },
+        hint = "ip 或 ip:port（如 192.168.31.87:8080）",
+    )
+    SettingsLabel("访问码")
+    LanTextField(
+        value = accessCode,
+        onValueChange = { accessCode = it },
+        hint = "桌面端共享页的 4 位访问码",
+    )
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        LanSecondaryButton(label = "扫码连接", modifier = Modifier.weight(1f), onClick = ::startScan)
+        LanPrimaryButton(
+            label = "连接",
+            enabled = address.isNotBlank() && accessCode.isNotBlank() &&
+                snap.state != LanState.CONNECTING && snap.state != LanState.CONNECTED,
+            modifier = Modifier.weight(1f),
+            onClick = { lan.connect(address, accessCode) },
+        )
+        LanSecondaryButton(
+            label = "断开",
+            enabled = snap.state == LanState.CONNECTED || snap.state == LanState.RECONNECTING,
+            modifier = Modifier.weight(1f),
+            onClick = { lan.disconnect() },
+        )
+    }
+
+    if (savedServers.isNotEmpty()) {
+        SettingsSection("最近服务器", icon = IconRefreshCcw)
+        SettingsCard {
+            savedServers.forEachIndexed { index, server ->
+                if (index > 0) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(colors.border),
+                    )
+                }
+                LanSavedServerRow(
+                    server = server,
+                    onClick = {
+                        address = "${server.host}:${server.port}"
+                        server.accessCode?.let { accessCode = it }
+                        lan.connect(address, accessCode)
+                    },
+                )
+            }
+        }
+    }
+
+    SettingsSection("设备", icon = IconGlobe)
+    SettingsCard {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .defaultMinSize(minHeight = 52.dp)
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "设备名",
+                fontSize = 15.sp,
+                color = colors.textPrimary,
+                modifier = Modifier.padding(end = 12.dp),
+            )
+            LanTextField(
+                value = deviceName,
+                onValueChange = { deviceName = it },
+                hint = "桌面端设备列表里显示的名字",
+                modifier = Modifier.weight(1f),
+                // 失焦且确实改了才落库（认证时随 verify 上报）
+                onEditCommitted = { lan.setDeviceName(it) },
+            )
+        }
+    }
+}
+
+private fun scanOptions(): ScanOptions = ScanOptions().apply {
+    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+    setPrompt("对准桌面端显示的二维码")
+    setBeepEnabled(false)
+}
+
+/** 连接状态行文案（0.2 基准四态 + 已连接附 server_name）。 */
+private fun lanStatusText(snap: com.aurora.gallery.kotlin.LanSnapshot): String = when (snap.state) {
+    LanState.DISCONNECTED -> "未连接"
+    LanState.CONNECTING -> "连接中…"
+    LanState.CONNECTED -> "已连接 · ${snap.serverName ?: "${snap.host}:${snap.port}"}"
+    LanState.RECONNECTING -> "重连中…（每 ${com.aurora.gallery.kotlin.LanTiming.RETRY_INTERVAL_SECS}s 重试）"
 }
 
 /** 常规类：常规（语言）+ 外观（主题）+ 默认布局设置三节，结构与文案对齐桌面 GeneralPanel。 */
@@ -414,7 +622,7 @@ private fun StorageContent(
     }
     SettingsCard {
         SettingsRow(label = "缓存（缩略图 + 查看器）", value = cacheSizeText) {
-            SettingsAction("清理缓存", onClearCache)
+            SettingsAction("清理缓存", onClick = onClearCache)
         }
     }
 
@@ -428,9 +636,9 @@ private fun StorageContent(
     SettingsSection("数据备份")
     SettingsCard {
         SettingsRow(label = "标签 / 人物 / 专题元数据") {
-            SettingsAction("导出", onExportBackup)
+            SettingsAction("导出", onClick = onExportBackup)
             Spacer(Modifier.size(4.dp))
-            SettingsAction("导入", onImportBackup)
+            SettingsAction("导入", onClick = onImportBackup)
         }
     }
 }
@@ -592,6 +800,7 @@ private fun SettingsTabletDialog(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    lan: LanManager,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -699,6 +908,7 @@ private fun SettingsTabletDialog(
                         settings = settings,
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
+                        lan = lan,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
@@ -723,6 +933,7 @@ private fun SettingsPhonePage(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    lan: LanManager,
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
@@ -838,6 +1049,7 @@ private fun SettingsPhonePage(
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
                         includeSectionHeaders = false,
+                        lan = lan,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
@@ -1314,9 +1526,154 @@ private fun SettingsPlaceholderCard(
 }
 
 @Composable
-private fun SettingsAction(label: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Text(label, fontSize = 13.sp, color = AuroraTheme.colors.primary)
+private fun SettingsAction(label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    TextButton(enabled = enabled, onClick = onClick) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            color = if (enabled) AuroraTheme.colors.primary else AuroraTheme.colors.textSecondary,
+        )
+    }
+}
+
+// —— LAN 面板专用构件（M6a 阶段 3；M4c 面板此前没有文本输入，这里按同一 token 体系补）——
+
+/**
+ * 单行文本框（Surface 48dp 触屏目标 + BasicTextField；token 取 AuroraTheme 同表）。
+ * [onEditCommitted] 非空 = 失焦且内容有变时回调（设备名的落库时点）。
+ */
+@Composable
+private fun LanTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    hint: String,
+    modifier: Modifier = Modifier,
+    onEditCommitted: ((String) -> Unit)? = null,
+) {
+    val colors = AuroraTheme.colors
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp)
+            .height(48.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.border),
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(fontSize = 14.sp, color = colors.textPrimary),
+            cursorBrush = SolidColor(colors.primary),
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { state ->
+                    // 失焦且内容有变才提交（设备名落库时点；FocusState 无 isActive 这类
+                    // 组合态可判，isFocused 足够——失焦即视为编辑结束）
+                    if (!state.isFocused) onEditCommitted?.invoke(value)
+                }
+                .padding(horizontal = 12.dp)
+                .wrapContentHeight(align = Alignment.CenterVertically),
+            decorationBox = { inner ->
+                Box(Modifier.wrapContentHeight(align = Alignment.CenterVertically)) {
+                    if (value.isEmpty()) {
+                        Text(hint, fontSize = 14.sp, color = colors.textSecondary, maxLines = 1)
+                    }
+                    inner()
+                }
+            },
+        )
+    }
+}
+
+/** 主按钮（连接）：primary 底白字，48dp 触屏目标。 */
+@Composable
+private fun LanPrimaryButton(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = AuroraTheme.colors
+    Surface(
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = if (enabled) colors.primary else colors.surface,
+        enabled = enabled,
+        onClick = onClick,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Text(
+                label,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) Color.White else colors.textSecondary,
+            )
+        }
+    }
+}
+
+/** 次按钮（扫码连接/断开）：surface 底 + border 描边，48dp 触屏目标。 */
+@Composable
+private fun LanSecondaryButton(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = AuroraTheme.colors
+    Surface(
+        modifier = modifier.height(48.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, if (enabled) colors.border else colors.border.copy(alpha = 0.5f)),
+        enabled = enabled,
+        onClick = onClick,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            Text(
+                label,
+                fontSize = 14.sp,
+                color = if (enabled) colors.textPrimary else colors.textSecondary,
+            )
+        }
+    }
+}
+
+/** 最近服务器行（host:port + 名称/访问码副行；整行 52dp 触屏目标，点击一键连）。 */
+@Composable
+private fun LanSavedServerRow(server: LanSavedServer, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IconWifi,
+            contentDescription = null,
+            tint = colors.primary,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.size(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${server.host}:${server.port}",
+                fontSize = 14.sp,
+                color = colors.textPrimary,
+                maxLines = 1,
+            )
+            Text(
+                listOfNotNull(server.name, server.accessCode?.let { "码 $it" }).joinToString(" · "),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+                maxLines = 1,
+            )
+        }
+        Text("连接", fontSize = 13.sp, color = colors.primary)
     }
 }
 
