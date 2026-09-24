@@ -38,8 +38,11 @@ export interface ImageApi {
 }
 
 export interface FileApi {
-  deleteFile(path: string): Promise<void>;
-  renameFile(oldPath: string, newPath: string): Promise<void>;
+  // 可选：写操作各适配器按需实现（M6a 阶段 2 删除了 HttpAdapter 中与服务端
+  // 协议不符的死实现——服务端 DELETE /api/file 读 query、rename 要 old_path/new_name；
+  // Web 页写操作统一走 src/lan-share/api.ts）。当前无 SharedApi 消费方调用这两个方法。
+  deleteFile?(path: string): Promise<void>;
+  renameFile?(oldPath: string, newPath: string): Promise<void>;
   moveFile?(src: string, dest: string): Promise<void>;
   copyFile?(src: string, dest: string): Promise<string>;
 }

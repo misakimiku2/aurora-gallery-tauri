@@ -193,8 +193,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 enabled: false,
                 port: 8080,
                 accessCode: '',
-                allowEdit: false,
-                allowUpload: false,
+                // D32 拍板：互联即授权——缺省时与 App.tsx 初始默认一致（true）
+                allowEdit: true,
+                allowUpload: true,
               }}
               onUpdateSettings={(lanShareSettings) => {
                 onUpdateSettingsData({ lanShare: lanShareSettings });

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AppState, FileNode, FileType, Person, Topic, TabState } from '../types';
+import { AppState, FileNode, FileType, TabState } from '../types';
 import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages, loadFolderCache, loadScanCache, saveScanCache } from '../utils/androidPlatform';
@@ -15,11 +15,10 @@ import {
   loadUserData as tauriLoadUserData,
   getDefaultPaths as tauriGetDefaultPaths,
   scanDirectory,
-  dbGetAllPeople,
-  dbGetAllTopics,
   lanShareStart,
   batchGetColors,
 } from '../api/tauri-bridge';
+import { fetchPeopleMap, fetchTopicsMap } from '../utils/peopleTopics';
 
 let isAppInitialized = false;
 
@@ -157,11 +156,9 @@ export const useAppInit = ({
               let peopleData = savedData.people || {};
               try {
                 logStep('加载人物数据...');
-                const dbPeople = await dbGetAllPeople();
-                logStep(`人物数据加载完成 (${Array.isArray(dbPeople) ? dbPeople.length : 0} 人)`);
-                if (Array.isArray(dbPeople) && dbPeople.length > 0) {
-                  const dbPeopleMap: Record<string, Person> = {};
-                  dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
+                const dbPeopleMap = await fetchPeopleMap();
+                logStep(`人物数据加载完成 (${dbPeopleMap ? Object.keys(dbPeopleMap).length : 0} 人)`);
+                if (dbPeopleMap && Object.keys(dbPeopleMap).length > 0) {
                   peopleData = dbPeopleMap;
                 }
               } catch (e) { console.error("Failed to load people from DB", e); }
@@ -169,28 +166,9 @@ export const useAppInit = ({
               let topicsData = savedData.topics || {};
               try {
                 logStep('加载专题数据...');
-                const dbTopics = await dbGetAllTopics();
-                logStep(`专题数据加载完成 (${Array.isArray(dbTopics) ? dbTopics.length : 0} 个)`);
-                if (Array.isArray(dbTopics) && dbTopics.length > 0) {
-                  const dbTopicsMap: Record<string, Topic> = {};
-                  dbTopics.forEach((t: any) => {
-                    dbTopicsMap[t.id] = {
-                      id: t.id,
-                      parentId: t.parentId,
-                      name: t.name,
-                      description: t.description,
-                      type: t.topicType,
-                      coverFileId: t.coverFileId,
-                      backgroundFileId: t.backgroundFileId,
-                      coverCrop: t.coverCrop,
-                      peopleIds: t.peopleIds || [],
-                      fileIds: t.fileIds || [],
-                      fileCount: t.fileCount ?? 0,
-                      sourceUrl: t.sourceUrl,
-                      createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
-                      updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
-                    };
-                  });
+                const dbTopicsMap = await fetchTopicsMap();
+                logStep(`专题数据加载完成 (${dbTopicsMap ? Object.keys(dbTopicsMap).length : 0} 个)`);
+                if (dbTopicsMap && Object.keys(dbTopicsMap).length > 0) {
                   topicsData = dbTopicsMap;
                 }
               } catch (e) { console.error("Failed to load topics from DB", e); }

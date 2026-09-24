@@ -1,8 +1,9 @@
 import { listen } from '@tauri-apps/api/event';
-import { AppState, FileNode, FileType, Person, Topic, TabState, SearchScope } from '../types';
+import { AppState, FileNode, FileType, TabState, SearchScope } from '../types';
 import { DUMMY_TAB } from '../constants';
 import { isTauriEnvironment } from '../utils/environment';
 import { normalizePath, generateId } from '../utils/pathUtils';
+import { reloadPeople, reloadTopics } from '../utils/peopleTopics';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import {
@@ -13,8 +14,6 @@ import {
   switchRootDatabase,
   shutdownColorExtraction,
   addPendingFilesToDb,
-  dbGetAllPeople,
-  dbGetAllTopics,
   dbGetAllFileMetadata,
 } from '../api/tauri-bridge';
 
@@ -182,41 +181,15 @@ export const useDirectoryScan = ({
         });
 
         (async () => {
+          // 人物/专题表整体重读自公共函数（M6a 阶段 2 抽取，供事件回拉复用）
           try {
-            const dbPeople = await dbGetAllPeople();
-            if (Array.isArray(dbPeople)) {
-              const dbPeopleMap: Record<string, Person> = {};
-              dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
-              setState(prev => ({ ...prev, people: dbPeopleMap }));
-            }
+            await reloadPeople(setState);
           } catch (e) {
             console.error('Failed to reload people after switching root:', e);
           }
 
           try {
-            const dbTopics = await dbGetAllTopics();
-            if (Array.isArray(dbTopics)) {
-              const dbTopicsMap: Record<string, Topic> = {};
-              dbTopics.forEach((t: any) => {
-                dbTopicsMap[t.id] = {
-                  id: t.id,
-                  parentId: t.parentId,
-                  name: t.name,
-                  description: t.description,
-                  type: t.topicType,
-                  coverFileId: t.coverFileId,
-                  backgroundFileId: t.backgroundFileId,
-                  coverCrop: t.coverCrop,
-                  peopleIds: t.peopleIds || [],
-                  fileIds: t.fileIds || [],
-                  fileCount: t.fileCount ?? 0,
-                  sourceUrl: t.sourceUrl,
-                  createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
-                  updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
-                };
-              });
-              setState(prev => ({ ...prev, topics: dbTopicsMap }));
-            }
+            await reloadTopics(setState);
           } catch (e) {
             console.error('Failed to reload topics after switching root:', e);
           }
@@ -403,39 +376,14 @@ export const useDirectoryScan = ({
         if (unlistenProgress) unlistenProgress();
 
         try {
-          const dbPeople = await dbGetAllPeople();
-          if (Array.isArray(dbPeople)) {
-            const dbPeopleMap: Record<string, Person> = {};
-            dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
-            setState(prev => ({ ...prev, people: dbPeopleMap }));
-          }
+          // 人物/专题表整体重读自公共函数（M6a 阶段 2 抽取，供事件回拉复用）
+          await reloadPeople(setState);
         } catch (e) {
           console.error('Failed to reload people after switching root:', e);
         }
 
         try {
-          const dbTopics = await dbGetAllTopics();
-          if (Array.isArray(dbTopics)) {
-            const dbTopicsMap: Record<string, Topic> = {};
-            dbTopics.forEach((t: any) => {
-              dbTopicsMap[t.id] = {
-                id: t.id,
-                parentId: t.parentId,
-                name: t.name,
-                description: t.description,
-                type: t.topicType,
-                coverFileId: t.coverFileId,
-                backgroundFileId: t.backgroundFileId,
-                coverCrop: t.coverCrop,
-                peopleIds: t.peopleIds || [],
-                fileIds: t.fileIds || [],
-                sourceUrl: t.sourceUrl,
-                createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
-                updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
-              };
-            });
-            setState(prev => ({ ...prev, topics: dbTopicsMap }));
-          }
+          await reloadTopics(setState);
         } catch (e) {
           console.error('Failed to reload topics after switching root:', e);
         }

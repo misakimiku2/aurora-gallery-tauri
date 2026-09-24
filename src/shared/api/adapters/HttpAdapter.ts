@@ -53,26 +53,6 @@ export class HttpAdapter implements SharedApi {
     return this.fetch<BrowseResponse>(`/api/browse?path=${encodeURIComponent(path)}`);
   }
 
-  async deleteFile(path: string): Promise<void> {
-    await this.fetch(`${this.baseUrl}/api/file`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ path }),
-    });
-  }
-
-  async renameFile(oldPath: string, newPath: string): Promise<void> {
-    await this.fetch(`${this.baseUrl}/api/rename`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ oldPath, newPath }),
-    });
-  }
-
   async getDevices(): Promise<ConnectedDevice[]> {
     const data = await this.fetch<{ devices: ConnectedDevice[] }>('/api/devices');
     return data.devices || [];

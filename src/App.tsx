@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { lanClientApi } from './components/lan-client/lanClientApi';
 import { androidClientRegistry, androidDeviceKeyOf } from './components/android-client/androidClientApi';
 import * as remoteSourceUtil from './utils/remoteSource';
+import { reloadPeople, reloadTopics } from './utils/peopleTopics';
 import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
@@ -116,8 +117,10 @@ export const App: React.FC = () => {
         enabled: false,
         port: 8080,
         accessCode: '',
-        allowEdit: false,
-        allowUpload: false,
+        // D32 拍板（2026-09-24）：互联即授权——allow_edit/allow_upload 默认 true，
+        // 403 仅在用户通过既有 allowEdit toggle 手动收紧后出现。
+        allowEdit: true,
+        allowUpload: true,
       },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS,
     },
@@ -1450,7 +1453,7 @@ export const App: React.FC = () => {
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
-  // 刷新分发：本地文件夹走文件系统扫描，安卓设备文件夹走客户端重载
+  // 刷新分发：本地文件夹走文件系统扫描，安卓设备/LAN 远端文件夹走客户端重载
   const handleRefreshAnySource = useCallback(async (folderId?: string) => {
     const targetId = folderId || activeTab.folderId;
     const folder = state.files[targetId];
@@ -1458,8 +1461,66 @@ export const App: React.FC = () => {
       await reloadCurrentAndroidFolder();
       return;
     }
+    if (folder?.source === 'lan') {
+      await reloadCurrentLanFolder();
+      return;
+    }
     await handleRefresh(folderId);
-  }, [handleRefresh, activeTab.folderId, state.files, reloadCurrentAndroidFolder]);
+  }, [handleRefresh, activeTab.folderId, state.files, reloadCurrentAndroidFolder, reloadCurrentLanFolder]);
+
+  // M6a 阶段 2：服务端写操作后的数据失效事件（Android 客户端在线写入 → Rust 广播
+  // `lan-share-data-changed`，payload 仅 {kind}，无大数据——收到后按 kind 回拉，
+  // 用数据库/磁盘上的新行整体替换内存旧行，后续桌面整行 upsert 才会带上远端改动）。
+  // 经 ref 持有最新分发逻辑，监听器只注册一次（handleRefreshTags 等每渲染都是新引用）。
+  const lanDataChangedReloadRef = useRef<(kind: string) => Promise<void>>(async () => {});
+  lanDataChangedReloadRef.current = async (kind: string) => {
+    try {
+      switch (kind) {
+        case 'metadata':
+          // 标签/描述等元数据：全表重读 file_metadata 回写 files 并重建词表，
+          // 同时清 lan:// 缩略图缓存并广播重解析
+          await handleRefreshTags();
+          remoteSourceUtil.notifyRemoteChange();
+          break;
+        case 'people':
+          await reloadPeople(setState);
+          break;
+        case 'topics':
+          await reloadTopics(setState);
+          break;
+        case 'files':
+          // 文件增删/改名：复用现有刷新入口刷新当前 folders 视图
+          // （state.files 引用变化 → filesVersion 自动 bump → 下游 memo 失效）
+          await handleRefreshAnySource();
+          break;
+        default:
+          console.warn('[LAN Share] Unknown lan-share-data-changed kind:', kind);
+          break;
+      }
+    } catch (e) {
+      console.warn('[LAN Share] Failed to reload after lan-share-data-changed:', e);
+    }
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenFn: (() => void) | undefined;
+    listen('lan-share-data-changed', (event: any) => {
+      if (disposed) return;
+      const kind = (event?.payload as { kind?: string } | undefined)?.kind || '';
+      void lanDataChangedReloadRef.current(kind);
+    })
+      .then((un) => {
+        unlistenFn = un;
+      })
+      .catch((e) => {
+        console.warn('Failed to listen lan-share-data-changed:', e);
+      });
+    return () => {
+      disposed = true;
+      unlistenFn?.();
+    };
+  }, []);
 
   const {
     handleCopyFiles, handleMoveFiles, handleExternalCopyFiles, handleExternalMoveFiles,
