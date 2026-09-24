@@ -69,6 +69,8 @@ dependencies {
     // 需要 appcompat 主题（上面已依赖 appcompat 1.6.1）。minSdk 24 与本 app 对齐
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // M6a 阶段 7：对等服务端 HTTP 引擎（D30a Kotlin 原生 10 端点；单 jar 无传递依赖，APK 增量阶段 8 记录）
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     // M5 1.1：装箱/视口/几何纯函数的 JVM 单测（对拍 React 同输入同输出）
     testImplementation("junit:junit:4.13.2")
 }

@@ -1315,6 +1315,8 @@ class MainActivity : ComponentActivity() {
                         appVersion = appVersion,
                         // M6a 阶段 3：LAN 状态机（面板消费同一快照 + 连接/断开操作）
                         lan = viewModel.lan,
+                        // M6a 阶段 7：对等服务端单例（面板「允许桌面浏览本机」开关；未 init 为 null）
+                        lanServer = viewModel.lanServerManager,
                         // M6a 阶段 4：连接成功后的「浏览共享文件」入口
                         onLanBrowseClick = {
                             showSettings = false

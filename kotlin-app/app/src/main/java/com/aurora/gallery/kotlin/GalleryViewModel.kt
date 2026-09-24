@@ -137,6 +137,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      */
     val lan = LanManager(appContext, settingsStore)
 
+    /**
+     * M6a 阶段 7：对等服务端单例（init 幂等；认证随 peer_server 上报 / 断开联动停 /
+     * 配对反向连接的接线见 init 块）。运行态经 [LanServerManager.snapshot] StateFlow
+     * 暴露，设置面板「允许桌面浏览本机」开关消费。
+     */
+    val lanServer = LanServerManager.init(appContext, settingsStore)
+
+    /** M6a 阶段 7：宿主（MainActivity）转接给设置面板的只读口（未 init 时 null）。 */
+    val lanServerManager get() = LanServerManager.get()
+
     // —— M6a 阶段 4/5：LAN 浏览会话态 ——
     //
     // 纯内存会话数据（断线清空）：**只服务 LAN 视图的显示**，绝不写入本地库/本地词表
@@ -247,6 +257,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.groupBy = settings.value.defaultGroupBy
         // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
         lan.start()
+        // M6a 阶段 7：对等服务端启动恢复（持久化开关为开才自启，内部异步）+ 配对回调接线
+        lanServer.autoStartIfEnabled()
+        lanServer.onPeerPairing = { host, port, code, _ ->
+            // React handlePeerPairing android 分支同款：跳过回环（模拟器/本机回测场景假配对）、
+            // 已连同一台不重复连；连别的桌面 = 切换连接（对齐 React 覆盖语义）。
+            // port<=0 = 对端 peer_server 缺 port 的畸形负载（Rust serde 会拒整请求，这里降级忽略）。
+            if (port <= 0) {
+                Log.d(TAG, "[LanServer] 配对回调忽略（peer_server 无有效端口）host=$host")
+            } else if (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+                Log.d(TAG, "[LanServer] 配对回调忽略回环地址 host=$host:$port")
+            } else if (lan.snapshot.value.state == LanState.CONNECTED &&
+                lan.snapshot.value.host == host && lan.snapshot.value.port == port
+            ) {
+                Log.d(TAG, "[LanServer] 配对回调忽略（已连接同一桌面）host=$host:$port")
+            } else {
+                Log.d(TAG, "[LanServer] 配对回调：反向连接桌面 $host:$port")
+                lan.connect("$host:$port", code)
+            }
+        }
         // M6a 阶段 4：连接态变化联动会话态——CONNECTED 拉远端目录+根散图；
         // 回到 DISCONNECTED 清会话态，且当前在 LAN 视图时自动退回本地视图（无残留）。
         viewModelScope.launch {

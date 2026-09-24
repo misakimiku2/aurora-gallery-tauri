@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,6 +42,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +66,8 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.aurora.gallery.kotlin.LanManager
 import com.aurora.gallery.kotlin.LanQr
+import com.aurora.gallery.kotlin.LanServerManager
+import com.aurora.gallery.kotlin.LanServerSnapshot
 import com.aurora.gallery.kotlin.LanState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LanSavedServer
@@ -72,6 +76,8 @@ import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * 设置界面（M4c 重构：形制与控件双对齐桌面 SettingsModal/GeneralPanel/AboutPanel，
@@ -100,6 +106,11 @@ fun SettingsHost(
     appVersion: String,
     /** M6a 阶段 3：LAN 连接状态机（面板与侧栏共用同一 StateFlow 快照）。 */
     lan: LanManager,
+    /**
+     * M6a 阶段 7：对等服务端单例（「允许桌面浏览本机」开关的数据源与操作口）。
+     * 未 init（null）时该 Section 退化为不渲染。
+     */
+    lanServer: LanServerManager?,
     /** M6a 阶段 4：连接成功后「浏览共享文件」入口（宿主关面板并进 LAN 总览）。 */
     onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
@@ -123,6 +134,7 @@ fun SettingsHost(
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
             lan = lan,
+            lanServer = lanServer,
             onLanBrowseClick = onLanBrowseClick,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
@@ -141,6 +153,7 @@ fun SettingsHost(
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
             lan = lan,
+            lanServer = lanServer,
             onLanBrowseClick = onLanBrowseClick,
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
@@ -184,6 +197,8 @@ private fun CategoryContent(
     /** false = 不渲染与分类同名的首个节标题（手机二级页：顶栏已是分类名，重复）。 */
     includeSectionHeaders: Boolean = true,
     lan: LanManager,
+    /** M6a 阶段 7：对等服务端单例（未 init 时 LAN 面板的对等 Section 不渲染）。 */
+    lanServer: LanServerManager?,
     /** M6a 阶段 4：连接成功后「浏览共享文件」入口（宿主关面板并进 LAN 总览）。 */
     onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
@@ -227,11 +242,12 @@ private fun CategoryContent(
         )
     }
     if (SettingsCategory.LAN in categories) {
-        // M6a 阶段 3：替换 M4c 的「将随 M6 提供」占位（D16）。连接状态/手输/扫码/
-        // 最近服务器/设备名都在这；「允许桌面浏览本机」开关是对等服务端（阶段 7）的，
-        // 先不渲染。阶段 4 起连接成功后提供「浏览共享文件」入口。
+        // M6a 阶段 3：连接状态/手输/扫码/最近服务器/设备名；阶段 7 起再加「允许桌面
+        // 浏览本机」对等服务端开关（lanServer 未 init 时该 Section 不渲染）。
+        // 阶段 4 起连接成功后提供「浏览共享文件」入口。
         LanContent(
             lan = lan,
+            lanServer = lanServer,
             includeSectionHeaders = includeSectionHeaders,
             onBrowseClick = onLanBrowseClick,
         )
@@ -247,13 +263,19 @@ private fun CategoryContent(
 
 /**
  * 局域网共享面板（M6a 阶段 3，替换 M4c 的 LAN placeholder）。形制对齐 M4c 既有面板
- * （SettingsSection/SettingsCard/SettingsLabel + 48dp 触屏目标），内容四块：
+ * （SettingsSection/SettingsCard/SettingsLabel + 48dp 触屏目标），内容五块：
  * 连接状态行（未连接/连接中/已连 server_name/重连中 + 错误行）、服务器地址 + 访问码
  * 手输 fallback、扫码连接（前台 UI 入口起 CaptureActivity——spike 实测广播入口会被
- * 三星 BAL 拦截）、最近服务器一键连 + 设备名。
+ * 三星 BAL 拦截）、最近服务器一键连 + 设备名、对等服务端开关（M6a 阶段 7：
+ * 「允许桌面浏览本机」，[lanServer] 未 init 时该节退化为不渲染）。
  */
 @Composable
-private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true, onBrowseClick: () -> Unit = {}) {
+private fun LanContent(
+    lan: LanManager,
+    lanServer: LanServerManager?,
+    includeSectionHeaders: Boolean = true,
+    onBrowseClick: () -> Unit = {},
+) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
     val snap by lan.snapshot.collectAsState()
@@ -418,6 +440,97 @@ private fun LanContent(lan: LanManager, includeSectionHeaders: Boolean = true, o
                 // 失焦且确实改了才落库（认证时随 verify 上报）
                 onEditCommitted = { lan.setDeviceName(it) },
             )
+        }
+    }
+
+    // —— M6a 阶段 7：对等服务端开关（lanServer 未 init 时退化为不渲染该节）——
+    // 未 init 的兜底 Flow 只为让 collectAsState 有合法接收方，快照恒为默认值、不消费
+    val serverSnap by (lanServer?.snapshot ?: remember { MutableStateFlow(LanServerSnapshot()) }).collectAsState()
+    val scope = rememberCoroutineScope()
+    if (lanServer != null) {
+        // 开/关共用一条切换路径：开 = 起服务端（持久化 enabled=true），关 = 停（enabled=false）
+        val toggleServer: (Boolean) -> Unit = { checked ->
+            if (checked) {
+                scope.launch {
+                    // setEnabledOn 是 suspend（起 HTTP + 前台服务可能失败），走协程不阻塞组合
+                    val ok = lanServer.setEnabledOn(autoEnable = true)
+                    Toast.makeText(
+                        context,
+                        if (ok) "本机共享已开启" else "服务端启动失败（端口被占用？）",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            } else {
+                lanServer.stop(persistOff = true)
+                Toast.makeText(context, "已停止共享", Toast.LENGTH_SHORT).show()
+            }
+        }
+        SettingsSection("允许桌面浏览本机", icon = IconMonitor)
+        SettingsCard {
+            // 开关行：行高 ≥48dp 触屏目标，整行可点（Switch 在行尾）
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clickable { toggleServer(!serverSnap.enabled) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("允许桌面浏览本机", fontSize = 15.sp, color = colors.textPrimary)
+                    Text(
+                        "桌面端可反向浏览本机图库",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+                Switch(
+                    checked = serverSnap.enabled,
+                    onCheckedChange = toggleServer,
+                )
+            }
+            if (serverSnap.enabled) {
+                // 展开详情：地址 / 访问码 / 已连设备 / 重新生成访问码（对齐 React 同名面板）
+                Text(
+                    if (serverSnap.ip != null) {
+                        "已开启 · http://${serverSnap.ip}:${serverSnap.port}"
+                    } else {
+                        "已开启 · 获取本机 IP 失败"
+                    },
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Text(
+                    "访问码 ${serverSnap.accessCode}",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    "已连接设备：${serverSnap.deviceCount} 台",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                TextButton(
+                    onClick = {
+                        lanServer.regenerateAccessCode()
+                        Toast.makeText(context, "已重新生成访问码", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("重新生成访问码", fontSize = 13.sp, color = colors.primary)
+                }
+            } else {
+                Text(
+                    "开启后，同一局域网的桌面端可在连接时自动发现并浏览本机图库",
+                    fontSize = 12.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 6.dp),
+                )
+            }
         }
     }
 }
@@ -817,6 +930,7 @@ private fun SettingsTabletDialog(
     cacheSizeText: String,
     appVersion: String,
     lan: LanManager,
+    lanServer: LanServerManager?,
     onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
@@ -926,6 +1040,7 @@ private fun SettingsTabletDialog(
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
                         lan = lan,
+                        lanServer = lanServer,
                         onLanBrowseClick = onLanBrowseClick,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
@@ -952,6 +1067,7 @@ private fun SettingsPhonePage(
     cacheSizeText: String,
     appVersion: String,
     lan: LanManager,
+    lanServer: LanServerManager?,
     onLanBrowseClick: () -> Unit = {},
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
@@ -1069,6 +1185,7 @@ private fun SettingsPhonePage(
                         appVersion = appVersion,
                         includeSectionHeaders = false,
                         lan = lan,
+                        lanServer = lanServer,
                         onLanBrowseClick = onLanBrowseClick,
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,

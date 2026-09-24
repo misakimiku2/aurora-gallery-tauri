@@ -75,6 +75,14 @@ class LanManager(context: Context, private val store: SettingsStore) {
     /** 连接意向（host/port/访问码）。非 null 且未连接 → 重试循环按 15s 周期推进。 */
     private var intent: LanIntent? = null
 
+    /**
+     * 本次连接尝试是否由用户主动发起（手动连接/扫码/一键连都走 [connect]，启动恢复与
+     * 周期重试不算）。M6a 阶段 7：只有用户主动连接才在认证时自动拉起本机对等服务端
+     * （peerServerForConnect 的 autoEnable）——对齐 React 自动重连不再 ensure 自启。
+     * attemptConnect 读取后不重置：connect() 失败进重试循环时即回到 false 语义。
+     */
+    private var userInitiated = false
+
     /** 当前会话 token（内存态；持久化副本在 SettingsStore，401 时两处同清）。 */
     private var token: String? = null
 
@@ -94,6 +102,8 @@ class LanManager(context: Context, private val store: SettingsStore) {
         val code = store.loadSavedServers()
             .firstOrNull { it.host == saved.host && it.port == saved.port }?.accessCode
         intent = LanIntent(saved.host, saved.port, code)
+        // 启动恢复不是用户主动连接：认证不自动拉起本机服务端（对齐 React restore 不重配对）
+        userInitiated = false
         _snapshot.update { it.copy(host = saved.host, port = saved.port) }
         if (saved.token != null) {
             token = saved.token
@@ -120,6 +130,7 @@ class LanManager(context: Context, private val store: SettingsStore) {
     /**
      * 手动连接。[addressInput] 接受 `ip` / `ip:port` / `http://ip:port`（复用二维码
      * 解析器，默认端口 8080）；[accessCode] 必填。错误直接回表单（snapshot.error）。
+     * 手动/扫码/一键连都走这里：记 [userInitiated]，认证时自动拉起本机对等服务端。
      */
     fun connect(addressInput: String, accessCode: String) {
         val parsed = LanQr.parse(addressInput)
@@ -134,6 +145,7 @@ class LanManager(context: Context, private val store: SettingsStore) {
         cancelLoops()
         token = null
         heartbeatFailures = 0
+        userInitiated = true
         intent = LanIntent(parsed.host, parsed.port, accessCode.trim())
         _snapshot.update {
             it.copy(host = parsed.host, port = parsed.port, error = null, folders = emptyList())
@@ -143,7 +155,7 @@ class LanManager(context: Context, private val store: SettingsStore) {
         attemptConnect()
     }
 
-    /** 手动断开：清连接意向（不再周期重试）+ 清理链路。 */
+    /** 手动断开：清连接意向（不再周期重试）+ 清理链路 + 停本机对等服务端（开关持久化为关）。 */
     fun disconnect() {
         val i = intent
         intent = null
@@ -152,6 +164,9 @@ class LanManager(context: Context, private val store: SettingsStore) {
         token = null
         heartbeatFailures = 0
         store.clearLanToken()
+        // M6a 阶段 7：手动断开 = 整条链路断开——本机对等服务端一并停 + 开关持久化为关
+        //（对齐 React handleDisconnect 的 lanShareAndroidStop + enabled:false）
+        LanServerManager.get()?.stop(persistOff = true)
         transition(LanState.DISCONNECTED, "手动断开", clearFolders = true)
         // 尽力通知服务端销毁会话（失败忽略——本地已清，网络错误无意义）
         if (i != null && t != null) {
@@ -205,8 +220,16 @@ class LanManager(context: Context, private val store: SettingsStore) {
                         )
                         return@launch
                     }
-                    // 无 token（首次连接/401 清理后）：访问码换 token
-                    val auth = client.verify(base, code, deviceName(), deviceId())
+                    // 无 token（首次连接/401 清理后）：访问码换 token。
+                    // M6a 阶段 7 双向连接融合：本机对等服务端在运行（或开关已开可自动拉起）
+                    // 时随认证上报，桌面端收到后自动反向连接本机（React ensureOwnServer +
+                    // peer_server 同款）。带 token 的静默恢复路径不走 verify（restore 不重配对）。
+                    val peer = LanServerManager.get()?.peerServerForConnect(autoEnable = userInitiated)
+                    if (peer != null) Log.d(TAG, "[Lan] 认证携带 peer_server port=${peer.port}")
+                    val auth = client.verify(
+                        base, code, deviceName(), deviceId(),
+                        peer?.let { LanPeerServer(it.port, it.accessCode) },
+                    )
                     if (!auth.success || auth.token == null) {
                         // 访问码被拒 = 终态：清意向不重试，错误回表单（不进 15s 循环）
                         token = null
@@ -329,9 +352,11 @@ class LanManager(context: Context, private val store: SettingsStore) {
     }
 
     /**
-     * 清理链路（§0.2 clearConnection 的 Kotlin 对应，去掉阶段 7 才有的「停本机服务端」）：
-     * logout 调用（尽力）+ 清 token + 状态回 disconnected + Toast；连接意向保留 →
-     * 重试循环继续 15s 周期推进（验收口径：断链后进入周期重试）。
+     * 清理链路（§0.2 clearConnection 的 Kotlin 对应）：logout 调用（尽力）+ 清 token +
+     * 停本机对等服务端（**不动开关意图**——对齐 React clearConnection 只 stop 不改
+     * enabled；开关仍为开，重连成功后 peerServerForConnect 会把它拉回来）+ 状态回
+     * disconnected + Toast；连接意向保留 → 重试循环继续 15s 周期推进（验收口径：
+     * 断链后进入周期重试）。
      */
     private fun cleanupChain(reason: String) {
         val i = intent
@@ -341,6 +366,8 @@ class LanManager(context: Context, private val store: SettingsStore) {
         heartbeatFailures = 0
         token = null
         store.clearLanToken()
+        // M6a 阶段 7：断链联动停本机服务端，但开关意图保持原样（区别于手动断开的 persistOff=true）
+        LanServerManager.get()?.stop(persistOff = false)
         transition(LanState.DISCONNECTED, reason, clearFolders = true)
         if (i != null && t != null) {
             scope.launch { runCatching { client.logout(baseOf(i), t) } }
@@ -368,6 +395,9 @@ class LanManager(context: Context, private val store: SettingsStore) {
                     "[Lan] retry tick #$tick（${LanTiming.RETRY_INTERVAL_SECS}s 周期）" +
                         "state=${_snapshot.value.state} host=${i2.host}:${i2.port}",
                 )
+                // 重试推进不算用户主动连接：自动重连不再 ensure 自启本机服务端
+                //（仅开关已开时 peerServerForConnect 才补启，见 attemptConnect）
+                userInitiated = false
                 attemptConnect()
             }
         }

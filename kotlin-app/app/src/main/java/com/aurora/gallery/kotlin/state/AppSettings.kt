@@ -89,7 +89,7 @@ class SettingsStore(context: Context) {
         GroupBy.entries.firstOrNull { it.name == name } ?: GroupBy.NONE
 
     // —— M6a 阶段 3：LAN 连接持久化（lanHost/lanPort/lanToken/savedServers/
-    //    lanServerEnabled（阶段 7 用，先落键）/ 设备名 / device_id）——
+    //    lanServerEnabled/lanAccessCode（阶段 7 服务端）/ 设备名 / device_id）——
     // 不并入 [AppSettings]：token/最近服务器是连接态而非用户偏好，读写走专用入口，
     // 由 LanManager 独占调用，避免混进设置面板的整行 save。
 
@@ -199,6 +199,18 @@ class SettingsStore(context: Context) {
         prefs.edit().putBoolean(KEY_LAN_SERVER_ENABLED, enabled).apply()
     }
 
+    /**
+     * 4 位数字访问码（M6a 阶段 7）：首次开启服务端时生成并持久化——**重启不变**，
+     * 桌面端保存的配对记录才不会失效。空串 = 尚未生成过（由 LanServerManager 首启时写）。
+     * 日志纪律：该值绝不整串入日志。
+     */
+    fun loadLanAccessCode(): String =
+        prefs.getString(KEY_LAN_ACCESS_CODE, null)?.takeIf { it.isNotBlank() } ?: ""
+
+    fun saveLanAccessCode(code: String) {
+        prefs.edit().putString(KEY_LAN_ACCESS_CODE, code).apply()
+    }
+
     private companion object {
         const val KEY_LANGUAGE = "language"
         const val KEY_THEME = "theme"
@@ -216,6 +228,7 @@ class SettingsStore(context: Context) {
         const val KEY_LAN_SERVER_NAME = "lanServerName"
         const val KEY_LAN_SAVED_SERVERS = "lanSavedServers"
         const val KEY_LAN_SERVER_ENABLED = "lanServerEnabled"
+        const val KEY_LAN_ACCESS_CODE = "lanAccessCode"
         /** 最近服务器上限（React savedServers 同值）。 */
         const val SAVED_SERVERS_LIMIT = 10
         val VALID_THEMES = setOf(AppSettings.THEME_LIGHT, AppSettings.THEME_DARK, AppSettings.THEME_SYSTEM)

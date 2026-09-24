@@ -34,6 +34,14 @@ class LanHttpException(val code: Int, body: String) :
 
 private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
+/**
+ * 认证时上报的本机对等服务端信息（M6a 阶段 7 双向连接融合）：随 `verify` 的
+ * `peer_server` 字段带给桌面端，桌面收到后自动反向连接本机——React
+ * lanClientApi.authenticate 的 peerServer 参数同款。body 字段名是 snake_case 的
+ * `peer_server`/`access_code`（契约现状，逐字对齐不「纠正」）。
+ */
+data class LanPeerServer(val port: Int, val accessCode: String)
+
 /** `POST /api/auth/verify` 响应（200 + `success:false` = 访问码被拒，不映射非 2xx）。 */
 data class LanAuthResult(
     val success: Boolean,
@@ -159,13 +167,29 @@ data class LanTopicMembersResult(
  */
 class LanClient(private val http: OkHttpClient) {
 
-    /** 认证换 token。body 字段名 `code`（0.7 spike 实测，不是 access_code）。 */
-    suspend fun verify(base: String, code: String, deviceName: String, deviceId: String): LanAuthResult =
+    /**
+     * 认证换 token。body 字段名 `code`（0.7 spike 实测，不是 access_code）。
+     * [peerServer] 非 null 时 body 多带 `peer_server`（本机对等服务端信息，M6a 阶段 7
+     * 双向连接融合；putOpt 风格，null 即省略该字段）。
+     */
+    suspend fun verify(
+        base: String,
+        code: String,
+        deviceName: String,
+        deviceId: String,
+        peerServer: LanPeerServer? = null,
+    ): LanAuthResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
                 .put("code", code)
                 .put("device_name", deviceName)
                 .put("device_id", deviceId)
+                .putOpt(
+                    "peer_server",
+                    peerServer?.let {
+                        JSONObject().put("port", it.port).put("access_code", it.accessCode)
+                    },
+                )
             val req = Request.Builder()
                 .url("$base/api/auth/verify")
                 .post(body.toString().toRequestBody(JSON_MEDIA))
