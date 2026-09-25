@@ -2325,7 +2325,7 @@ fn all_image_folders_filesystem(
     (folders, root_images)
 }
 
-fn extract_token(headers: &HeaderMap) -> Result<String, Response> {
+pub(crate) fn extract_token(headers: &HeaderMap) -> Result<String, Response> {
     let auth_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
@@ -2357,7 +2357,7 @@ fn extract_token_with_fallback(headers: &HeaderMap, query_token: Option<&String>
     Err(error_response(StatusCode::UNAUTHORIZED, "Missing authorization"))
 }
 
-fn error_response(status: StatusCode, message: &str) -> Response {
+pub(crate) fn error_response(status: StatusCode, message: &str) -> Response {
     let body = serde_json::json!({
         "error": message
     });

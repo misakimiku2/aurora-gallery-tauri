@@ -98,6 +98,9 @@ import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
+import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
+import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
+import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.ui.components.ColorDbStatsUi as PanelColorStats
@@ -733,6 +736,19 @@ class MainActivity : ComponentActivity() {
             viewModel.startAiAnalysis(listOf(fileId))
         }
 
+        /** M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP → 命中进 LAN 搜索结果视图。 */
+        override fun onFindSimilar(fileId: String) {
+            viewModel.findSimilarOnDesktop(fileId) { ok ->
+                if (!ok) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "未找到相似图（需连接桌面端且模型/索引就绪）",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+
         /** M4b 1.5：查看器「更多」的复制/移动 → FolderPickerDialog（folderTree 从 VM 快照构造）。 */
         override fun onCopyToFolder(fileId: String) {
             view.showFolderPickerDialog("copy", fileId, folderTreeJson()) { name ->
@@ -1027,6 +1043,7 @@ class MainActivity : ComponentActivity() {
                     if (tab.searchQuery.isBlank()) {
                         viewModel.clearAiSearch()
                         viewModel.clearColorSearch()
+                        viewModel.clearLanSearch()
                     }
                 }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
@@ -1368,11 +1385,19 @@ class MainActivity : ComponentActivity() {
                                     viewModel.applyAiRenameProposals(targets, onDone)
                                 }
                             },
+                            // M6b 阶段 4/5：互联态人物与搜索（D37/D40）
+                            onWd14PersonPipeline = { ids -> viewModel.startWd14PersonPipeline(ids) },
+                            onOpenLanPersonFilter = { personId, name -> viewModel.openLanPersonFilter(personId, name) },
+                            onOpenLanTopicFilter = { topicId -> viewModel.openLanTopicFilter(topicId) },
                         ),
                         // M6b 阶段 3：颜色搜索（TopBar 取色入口与查看器色块共用一态）
                         colorSearchHex = viewModel.colorSearchHex.value,
                         onColorSearch = { hex -> viewModel.startColorSearch(hex) },
                         onClearColorSearch = { viewModel.clearColorSearch() },
+                        // M6b 阶段 4（D37）：本地人物快照（PeopleOverview/侧栏渲染）
+                        // M6b 阶段 5（D36）：LAN 态搜索提交（App 内按 inLanBrowser 分流给 TopBar）
+                        onLanSearchSubmit = { query -> viewModel.performLanSearch(query) },
+                        localPeople = viewModel.localPeople.value,
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 // M6b 阶段 3：查看器打开第一张的自动提取触发（翻页由 onNavigate 负责；
@@ -1397,6 +1422,10 @@ class MainActivity : ComponentActivity() {
                     colorPalettesById = viewModel.colorPalettesById.value,
                     autoExtractPalette = viewModel.settings.value.autoExtractPalette,
                 )
+                // M6b 阶段 5（D40）：桌面词表推进查看器（LAN 项标签编辑建议源）
+                LaunchedEffect(viewModel.lanVocab.value) {
+                    ensureViewer().lanVocab = viewModel.lanVocab.value
+                }
                 // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
                 if (showSettings) {
                     SettingsHost(
@@ -1739,6 +1768,13 @@ data class AiUiHooks(
     val onDismissRenameProposals: () -> Unit,
     /** 应用改名提案（宿主先 requestWriteAccess 再走 M4b renameFiles）。 */
     val onApplyRenameProposals: (targets: List<Pair<Uri, String>>, onDone: (Int) -> Unit) -> Unit,
+    // —— M6b 阶段 4/5：互联态人物与搜索（App 无 VM 引用，经 hooks 惯例传入）——
+    /** WD14 人物识别（D37：图字节卸载桌面 → 标签/人物写本地库；VM 内拦未连接）。 */
+    val onWd14PersonPipeline: (List<String>) -> Unit,
+    /** 远端人物点击 → 成员筛选虚拟目录（D40：GET /api/people/members）。 */
+    val onOpenLanPersonFilter: (personId: String, name: String) -> Unit,
+    /** 远端专题点击 → 成员筛选虚拟目录（D40：GET /api/topic/members）。 */
+    val onOpenLanTopicFilter: (topicId: String) -> Unit,
 )
 
 @Composable
@@ -1857,8 +1893,12 @@ fun App(
     ai: AiUiHooks,
     // —— M6b 阶段 3：颜色搜索（TopBar 取色入口；hex 非 null=颜色过滤态）——
     colorSearchHex: String? = null,
+    /** 本地人物快照（M6b 阶段 4，D37：WD14 识别产物；PeopleOverview/侧栏渲染）。 */
+    localPeople: List<uniffi.aurora_core.FfiPerson> = emptyList(),
     onColorSearch: (String) -> Unit = {},
     onClearColorSearch: () -> Unit = {},
+    /** M6b 阶段 5（D36）：LAN 态搜索提交（文件名/CLIP 按 AI 开关在 VM 内分流）。 */
+    onLanSearchSubmit: ((String) -> Unit)? = null,
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1935,7 +1975,12 @@ fun App(
     // 所以这里不能只看 currentFolder 是否存在——在总览直接点标签时 folderId 为 null。
     val tagFilterTitle = tab.activeTags.joinToString("、") { it }
     // M6a 阶段 4：LAN 目录网格 = BROWSER + folderId 带 lan 前缀（序列源分流在 reloadImages）
-    val inLanBrowser = tab.viewMode == ViewMode.BROWSER && tab.folderId?.lanRemotePathOrNull() != null
+    // M6b 阶段 5：搜索结果/人物成员/专题成员三个人工目录同属 LAN 浏览态（数据源=会话缓存过滤）
+    val inLanBrowser = tab.viewMode == ViewMode.BROWSER &&
+        (tab.folderId?.lanRemotePathOrNull() != null ||
+            tab.folderId == com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID ||
+            tab.folderId?.lanPersonIdOrNull() != null ||
+            tab.folderId?.lanTopicIdOrNull() != null)
     val inBrowser =
         tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty() || inLanBrowser)
     // M4a 3.2 总览：侧栏人物/标签/专题 Section 头部进入；专题详情 = TOPICS_OVERVIEW + activeTopicId
@@ -1953,6 +1998,14 @@ fun App(
     }
     // M6a 阶段 5：tag 筛选虚拟目录（lan:__lan_tag__:<tag>）的标题 = 该 tag（非空即命中）
     val lanTagTitle = tab.folderId?.lanTagFilterOrNull()
+    // M6b 阶段 5（D40/搜索）：人物成员/专题成员/搜索结果三个人工目录的标题
+    val lanPersonTitle = tab.folderId?.lanPersonIdOrNull()?.let { id ->
+        lanPeople.firstOrNull { it.id == id }?.name ?: "人物"
+    }
+    val lanTopicTitle = tab.folderId?.lanTopicIdOrNull()?.let { id ->
+        lanTopics.firstOrNull { it.id == id }?.name ?: "专题"
+    }
+    val inLanSearchResults = tab.folderId == com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
     val inTopicsList = inTopicsOverview && tab.activeTopicId == null
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
@@ -2048,6 +2101,11 @@ fun App(
             // 未配置 provider 时宿主入口自行友好拦截，菜单项常驻。
             add(SelectionMoreAction("AI 分析…") { ai.onAnalyze(tab.selectedFileIds.toList()) })
             add(SelectionMoreAction("AI 重命名…") { ai.onRename(tab.selectedFileIds.toList()) })
+            // M6b 阶段 4（D37）：人物识别=图字节卸载桌面 WD14→general 标签进本地词表、
+            // character 归组建本地人物（未连接桌面时 VM 内拦截提示）
+            add(SelectionMoreAction("AI 人物识别…") {
+                ai.onWd14PersonPipeline(tab.selectedFileIds.toList())
+            })
             add(SelectionMoreAction("复制到…") {
                 pickerType = "copy"
                 pickerFileIds = tab.selectedFileIds.toList()
@@ -2220,16 +2278,18 @@ fun App(
                 },
                 // M6a 阶段 5（D31 并入口径）：远端词表并入标签 Section、远端人物进人物
                 // Section。远端标签行点击 = 进 tag 筛选虚拟目录（与 onLanFolderClick 同款
-                // 前缀 folderId，序列源分流在 reloadImages）；远端人物行点击 = Toast 占位
-                //（契约无成员枚举端点，登记差异，不做假筛选）
+                // 前缀 folderId，序列源分流在 reloadImages）；远端人物行点击 = 成员筛选
+                //（M6b 阶段 5 / D40：GET /api/people/members 端点补齐后转真筛选）
                 lanRemoteTagGroups = lanRemoteTagGroups,
                 onLanTagClick = { tag ->
                     state.openFolder(com.aurora.gallery.kotlin.state.lanTagFolderId(tag))
                 },
                 lanPeople = lanPeople,
-                onLanPersonClick = { _ ->
-                    Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                onLanPersonClick = { person ->
+                    ai.onOpenLanPersonFilter(person.id, person.name)
                 },
+                // M6b 阶段 4（D37）：侧栏人物 Section 的本地人物行
+                localPeople = localPeople,
                 browserActive = inBrowser,
                 modifier = Modifier.fillMaxHeight(),
             )
@@ -2277,6 +2337,9 @@ fun App(
                         // M6a 阶段 5：tag 筛选虚拟目录 =「标签 · <tag>」（照抄本地标签筛选形制）
                         inLanOverview -> lanServerName?.takeIf { it.isNotBlank() } ?: "局域网"
                         lanTagTitle != null -> "标签 · $lanTagTitle"
+                        lanPersonTitle != null -> "人物 · $lanPersonTitle"
+                        lanTopicTitle != null -> "专题 · $lanTopicTitle"
+                        inLanSearchResults -> "搜索结果"
                         inLanBrowser -> lanBrowserTitle ?: "局域网"
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
                         inTagsOverview -> "标签"
@@ -2337,9 +2400,11 @@ fun App(
                     tagGroups = tagGroups,
                     activeTags = tab.activeTags,
                     onTagClick = onTagClick,
-                    // M6a 阶段 4：LAN 视图隐藏搜索入口（远端 search 端点已备但本阶段不接，
-                    // 登记遗留）；其余视图维持
-                    showSearch = !inLanOverview && !inLanBrowser,
+                    // M6b 阶段 5：LAN 浏览态放开搜索入口（/api/search 文件名 + AI 开=CLIP
+                    // 语义叠加，提交分流在 onLanSearchSubmit）；总览仍无搜索语义
+                    showSearch = !inLanOverview,
+                    // M6b 阶段 5：LAN 态回车提交分流到 VM（文件名/CLIP 按 AI 开关在 VM 内分流）
+                    onLanSearchSubmit = if (inLanBrowser) onLanSearchSubmit else null,
                     // 专题视图下顶栏只留 搜索/返回/侧栏开关（桌面 TopBar :1256/:1521/:1563
                     // 在 topics-overview 隐藏排序/日期/标签，专题自己的排序在页头菜单里）；
                     // 视图切换（grid/adaptive/masonry）= 文件夹网格与专题详情共用
@@ -2387,12 +2452,14 @@ fun App(
                 // 人物总览：远端人物卡网格（M6a 阶段 5，D31）；断线/无远端人物维持空态。
                 // 阶段 6：lanAllowEdit 直通时长按菜单加「换头像」——先记目标人物再开
                 // AVATAR 模式的目录选择弹窗（选图即走，无目录确认）
+                // M6b 阶段 4/5：本地人物半边（WD14 管线产出，D37）+ 远端人物点击转成员筛选（D40）
                 inPeopleOverview -> PeopleOverview(
                     lanPeople = lanPeople,
                     lanConnected = lanSnapshot.state == LanState.CONNECTED,
                     lanAllowEdit = lanAllowEdit,
-                    onPersonClick = { _ ->
-                        Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                    localPeople = localPeople,
+                    onPersonClick = { person ->
+                        ai.onOpenLanPersonFilter(person.id, person.name)
                     },
                     onRename = { renameLanPersonState = it },
                     onDescribe = { describeLanPersonState = it },
@@ -2428,8 +2495,9 @@ fun App(
                     // 反馈都在宿主）
                     lanTopics = lanTopics,
                     lanConnected = lanSnapshot.state == LanState.CONNECTED,
-                    onLanTopicClick = { _ ->
-                        Toast.makeText(context, "远端成员列表暂不支持（待桌面端契约补端点）", Toast.LENGTH_SHORT).show()
+                    // M6b 阶段 5（D40）：远端专题点击 = 成员筛选虚拟目录（GET /api/topic/members）
+                    onLanTopicClick = { topicId ->
+                        ai.onOpenLanTopicFilter(topicId.id)
                     },
                     onCreateLanTopic = { showCreateLanTopic = true },
                     onDeleteLanTopic = { deleteLanTopicState = it },

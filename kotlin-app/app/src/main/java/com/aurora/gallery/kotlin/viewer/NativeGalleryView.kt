@@ -119,6 +119,12 @@ class NativeGalleryView @JvmOverloads constructor(
         /** M6b 阶段 2：用户点击了「AI 分析」（仅本地项显示此菜单项；单张入口）。 */
         fun onAiAnalyze(fileId: String)
         /**
+         * M6b 阶段 5（D36）：用户点击了「在桌面找相似」（仅本地项显示此菜单项）——
+         * 本地图字节上传桌面 CLIP embed 后搜桌面库，宿主把命中集装进 LAN 搜索结果
+         * 虚拟目录并切视图；未连接/桌面模型未就绪由宿主 Toast 拦截。
+         */
+        fun onFindSimilar(fileId: String)
+        /**
          * M6a 阶段 4（D34）：用户点击了「保存到设备」（仅 isLan 项显示此菜单项）。
          * [remotePath] 为远端不透明 path（宿主只取尾段当文件名，不回传服务端）；
          * [imageUrl] 为大图 URL（token 进 query，宿主直接下载）。
@@ -257,6 +263,11 @@ class NativeGalleryView @JvmOverloads constructor(
      * M6b 阶段 3 起宿主可写（此前 React 壳经 updateItem 同步，原生壳用属性直写）。
      */
     var autoExtractPalette = false
+    /**
+     * 桌面词表快照（M6b 阶段 5 / D40：GET /api/vocab）：LAN 项标签编辑弹窗的建议源
+     *（本地项维持无词表现状）。实例跟 Activity 走，宿主在组合时推进（autoExtractPalette 同款）。
+     */
+    var lanVocab: List<String> = emptyList()
     /** 自动提取失败的 fileId 集合，失败后显示"提取主色调"按钮供用户手动重试 */
     private val failedPaletteFileIds = mutableSetOf<String>()
     /** 抽屉宽度动画，close() 时取消防止残留更新 */
@@ -1753,6 +1764,8 @@ class NativeGalleryView @JvmOverloads constructor(
             context = context,
             theme = this,
             initialTags = item.tags,
+            // M6b 阶段 5（D40）：LAN 项建议=桌面词表（两套词表不混，本地项维持现状）
+            vocabulary = if (item.isLan) lanVocab else emptyList(),
             onSave = { newTags ->
                 val idx = images.indexOfFirst { it.fileId == item.fileId }
                 if (idx >= 0) {
@@ -1957,6 +1970,11 @@ class NativeGalleryView @JvmOverloads constructor(
                     // 分析写本地库，对远端图无意义）
                     add(MoreMenuItem("AI 分析", colorTextPrimary()) {
                         listener?.onAiAnalyze(item.fileId)
+                    })
+                    // M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP embed → 相似图
+                    //（结果进 LAN 搜索结果虚拟目录；未连接/桌面模型未就绪宿主 Toast 拦截）
+                    add(MoreMenuItem("在桌面找相似", colorTextPrimary()) {
+                        listener?.onFindSimilar(item.fileId)
                     })
                     add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
                     add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })

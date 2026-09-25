@@ -80,6 +80,45 @@ fun String.lanTagFilterOrNull(): String? =
         ?.takeIf { it.startsWith(LAN_TAG_VIRTUAL_ROOT) }
         ?.removePrefix(LAN_TAG_VIRTUAL_ROOT)
 
+/**
+ * 远端人物筛选虚拟目录前缀（M6b 阶段 5；folderId 形如 `lan:person:<personId>`，见
+ * [lanPersonFolderId]）。**不是**可 browse 的远端目录——序列取数
+ * （GalleryViewModel.reloadLanImages）命中它时按人物成员 path 集过滤远端库会话缓存。
+ * personId 是桌面人物 id（契约 §3），不透明原样保留。
+ */
+const val LAN_PERSON_PREFIX = "lan:person:"
+
+/**
+ * 远端专题筛选虚拟目录前缀（M6b 阶段 5；folderId 形如 `lan:topic:<topicId>`，见
+ * [lanTopicFolderId]）。同 [LAN_PERSON_PREFIX]：不可 browse，成员集过滤会话缓存。
+ */
+const val LAN_TOPIC_PREFIX = "lan:topic:"
+
+/**
+ * LAN 搜索结果虚拟目录 id（M6b 阶段 5；D36 文本语义/以图搜图共用）。注意**不带**
+ * [LAN_FOLDER_ID_PREFIX]（`__lan_search__` 是纯内部 id，不与远端 path 命名空间相交）
+ * ——GalleryViewModel.reloadImages 的 LAN 分流与 MainActivity 的标题/网格门禁都要
+ * 单独判它，`lanRemotePathOrNull` 对它返回 null。
+ */
+const val LAN_SEARCH_FOLDER_ID = "__lan_search__"
+
+/** 远端人物 id → folderId（[LAN_PERSON_PREFIX] 自带 lan: 段，等于 [lanFolderId] 的 person 形态）。 */
+fun lanPersonFolderId(personId: String) = LAN_PERSON_PREFIX + personId
+
+/** 远端专题 id → folderId（[LAN_TOPIC_PREFIX] 自带 lan: 段）。 */
+fun lanTopicFolderId(topicId: String) = LAN_TOPIC_PREFIX + topicId
+
+/**
+ * folderId → 远端人物 id（去 [LAN_PERSON_PREFIX] 前缀，非本形态 null）。与
+ * [lanTagFilterOrNull] 的差别：人物/专题前缀自带 lan: 段，直接对 folderId 整串剥。
+ */
+fun String.lanPersonIdOrNull(): String? =
+    takeIf { startsWith(LAN_PERSON_PREFIX) }?.removePrefix(LAN_PERSON_PREFIX)
+
+/** folderId → 远端专题 id（去 [LAN_TOPIC_PREFIX] 前缀，非本形态 null）。 */
+fun String.lanTopicIdOrNull(): String? =
+    takeIf { startsWith(LAN_TOPIC_PREFIX) }?.removePrefix(LAN_TOPIC_PREFIX)
+
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }
 

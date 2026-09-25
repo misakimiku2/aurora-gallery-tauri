@@ -170,6 +170,8 @@ fun TopBar(
     onAiSearchToggle: () -> Unit = {},
     onAiSearchSubmit: (String) -> Unit = {},
     aiSearchBusy: Boolean = false,
+    /** M6b 阶段 5：LAN 态回车提交分流（非 null=LAN 搜索，宿主分流文件名/CLIP；null=本地语义）。 */
+    onLanSearchSubmit: ((String) -> Unit)? = null,
     /**
      * M6b 阶段 3：取色搜索（桌面 `ColorPickerPopover` 的触屏同位，D39 双入口的
      * TopBar 侧；查看器抽屉色块为另一入口）。[showColorSearch] 与 [showSearch] 同域
@@ -314,6 +316,7 @@ fun TopBar(
                     aiSearchBusy = aiSearchBusy,
                     colorSearchHex = colorSearchHex,
                     onClearColorSearch = onClearColorSearch,
+                    onLanSearchSubmit = onLanSearchSubmit,
                 )
             }
         }
@@ -830,6 +833,8 @@ private fun SearchPill(
     /** M6b 阶段 3：颜色过滤态（非 null = 胶囊内显示色点芯片，见 TopBar 同名参数注释）。 */
     colorSearchHex: String? = null,
     onClearColorSearch: () -> Unit = {},
+    /** M6b 阶段 5：LAN 态回车提交（见 TopBar 同名参数）。 */
+    onLanSearchSubmit: ((String) -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val focusRequester = remember { FocusRequester() }
@@ -909,9 +914,15 @@ private fun SearchPill(
             // M6b 阶段 2：AI 模式下回车=提交改写（一次 HTTP），不是逐字过滤——
             // 自然语言查询做 name 子串匹配只会错杀，命中集由 VM 全量替换
             keyboardActions = KeyboardActions(
-                onSearch = { if (aiSearchEnabled) onAiSearchSubmit(query) },
+                // M6b 阶段 5：LAN 态回车走 onLanSearchSubmit（文件名/CLIP 分流在 VM）；
+                // 本地态维持 AI 开=提交改写、关=逐字文本过滤
+                onSearch = {
+                    when {
+                        onLanSearchSubmit != null -> onLanSearchSubmit?.invoke(query)
+                        aiSearchEnabled -> onAiSearchSubmit(query)
+                    }
+                },
             ),
-            modifier = Modifier.weight(1f).focusRequester(focusRequester),
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (query.isEmpty()) {

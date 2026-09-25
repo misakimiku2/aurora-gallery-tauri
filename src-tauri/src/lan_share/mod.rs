@@ -7,6 +7,8 @@ pub mod types;
 #[cfg(not(target_os = "android"))]
 mod handlers;
 #[cfg(not(target_os = "android"))]
+pub mod ai_compute;
+#[cfg(not(target_os = "android"))]
 mod metadata;
 #[cfg(not(target_os = "android"))]
 mod server;

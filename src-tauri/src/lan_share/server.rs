@@ -149,6 +149,14 @@ impl LanShareServer {
             .route("/api/file/copy", post(handle_file_copy))
             .route("/api/devices", get(handle_devices))
             .route("/api/heartbeat", get(handle_heartbeat))
+            // M6b 契约 §8：AI 视觉计算（D36/D37，纯计算不入库）+ D40 读端点。
+            // 门禁=token（不受 allow_edit/allow_upload 管）；不触发 data-changed。
+            .route("/api/ai/wd14/classify", post(super::ai_compute::handle_wd14_classify).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))
+            .route("/api/ai/clip/search_text", post(super::ai_compute::handle_clip_search_text))
+            .route("/api/ai/clip/search_image", post(super::ai_compute::handle_clip_search_image).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))
+            .route("/api/topic/members", get(super::ai_compute::handle_topic_members_get))
+            .route("/api/people/members", get(super::ai_compute::handle_people_members_get))
+            .route("/api/vocab", get(super::ai_compute::handle_vocab_get))
             .layer(create_cors_layer())
             .layer(CompressionLayer::new())
             .with_state(app_state);

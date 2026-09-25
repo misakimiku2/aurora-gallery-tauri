@@ -161,6 +161,35 @@ data class LanTopicMembersResult(
     val fileCount: Long,
 )
 
+// —— M6b 阶段 4/5：AI 视觉计算端点（D36/D37）+ D40 读端点（契约 §8）——
+
+/**
+ * WD14 单个角色标签命中（契约 §8.1 `character_tags` 的 item）：[work] = 服务端
+ * `extract_work_name` 归组出的作品名（无归组 null）。
+ */
+data class Wd14CharacterTag(val tag: String, val score: Double, val work: String?)
+
+/**
+ * `POST /api/ai/wd14/classify` 响应（契约 §8.1）：阈值服务端固定 0.1，客户端不二次
+ * 过滤；两列都由服务端按概率降序排好。
+ */
+data class Wd14Classification(
+    /** category==0 的普通标签。 */
+    val generalTags: List<String>,
+    /** category==4 的角色标签。 */
+    val characterTags: List<Wd14CharacterTag>,
+)
+
+/** CLIP 检索单条命中（契约 §8.2/8.3；[path] 不透明原样保留——§0 身份铁律同款）。 */
+data class LanClipHit(val path: String, val score: Double)
+
+/**
+ * `GET /api/topic/members` 响应（契约 §8.4，D40 读端点）：[files] = 成员文件 path、
+ * [people] = 成员人物 id——topic_files / topic_people 关联表的读半边。注意与写响应
+ * [LanTopicMembersResult] 是两个形状（那边是 success + file_count）。
+ */
+data class LanTopicMembers(val files: List<String>, val people: List<String>)
+
 /**
  * LAN HTTP 客户端。方法参数显式传 base/token（不持可变连接态——状态归 [LanManager]）。
  * [base] 形如 `http://192.168.31.87:8080`（无尾斜杠，调用方归一化）。
@@ -456,6 +485,116 @@ class LanClient(private val http: OkHttpClient) {
         return parseFileOpItems(sendJson(base, token, "POST", "/api/file/copy", body))
     }
 
+    // —— M6b 阶段 4/5：AI 视觉计算端点（D36/D37）+ D40 读端点（契约 §8）——
+    //
+    // 全部为纯计算/纯查询（§8.0）：图片字节过桌面内存可以、落桌面库不行，也不触发
+    // data-changed。§8.1–8.3 不受 allow_edit/allow_upload 门禁；503（模型未下载/加载
+    // 失败/嵌入索引不存在）走统一错误形态 `{"error": ...}`，直接抛 [LanHttpException]
+    // ——调用方读 code==503 提示「桌面端模型/索引未就绪」。
+
+    /**
+     * WD14 标签推理（契约 §8.1）：multipart 单文件字段 `file`（对齐 [upload] 先例），
+     * 服务端写系统临时目录喂模型、用后即删（契约 §8 临时文件例外，不算落库）。
+     * [fileName]/[mimeType] 只进 multipart 头（服务端按字节喂模型，名字无语义）。
+     * 503 = WD14 模型未就绪（需桌面 AI 视觉面板下载并生成过模型文件）。
+     */
+    suspend fun wd14Classify(
+        base: String,
+        token: String,
+        bytes: ByteArray,
+        fileName: String = "image.jpg",
+        mimeType: String = "image/jpeg",
+    ): Wd14Classification = withContext(Dispatchers.IO) {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val req = Request.Builder()
+            .url("$base/api/ai/wd14/classify")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw LanHttpException(resp.code, text)
+            val json = JSONObject(text)
+            Wd14Classification(
+                generalTags = stringList(json.optJSONArray("general_tags")),
+                characterTags = parseWd14CharacterTags(json.optJSONArray("character_tags")),
+            )
+        }
+    }
+
+    /**
+     * CLIP 文本语义搜索（契约 §8.2）：响应 `hits` 服务端已按 score 降序、截断至
+     * [maxResults]（缺省 100，上限 500）。503 = 当前库无嵌入索引 / 模型加载失败。
+     */
+    suspend fun clipSearchText(
+        base: String,
+        token: String,
+        query: String,
+        minScore: Double = 0.2,
+        maxResults: Int = 100,
+    ): List<LanClipHit> {
+        val body = JSONObject()
+            .put("query", query)
+            .put("min_score", minScore)
+            .put("max_results", maxResults)
+        val json = sendJson(base, token, "POST", "/api/ai/clip/search_text", body)
+        return parseClipHits(json.optJSONArray("hits"))
+    }
+
+    /**
+     * CLIP 以图搜图（契约 §8.3）：multipart 字段 `file`（对齐 [wd14Classify]）；查询
+     * 向量服务端**不入**嵌入索引（纯计算）。响应与 [clipSearchText] 同形，503 同口径。
+     */
+    suspend fun clipSearchImage(
+        base: String,
+        token: String,
+        bytes: ByteArray,
+        fileName: String = "image.jpg",
+        mimeType: String = "image/jpeg",
+    ): List<LanClipHit> = withContext(Dispatchers.IO) {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("file", fileName, bytes.toRequestBody(mimeType.toMediaType()))
+            .build()
+        val req = Request.Builder()
+            .url("$base/api/ai/clip/search_image")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) throw LanHttpException(resp.code, text)
+            parseClipHits(JSONObject(text).optJSONArray("hits"))
+        }
+    }
+
+    /** 专题成员枚举（契约 §8.4）：关联表直读，404 = 专题不存在（抛 [LanHttpException]）。 */
+    suspend fun topicMembers(base: String, token: String, topicId: String): LanTopicMembers {
+        val json = getJson(base, token, "/api/topic/members?topic_id=${lanQueryEncode(topicId)}")
+        return LanTopicMembers(
+            files = stringList(json.optJSONArray("files")),
+            people = stringList(json.optJSONArray("people")),
+        )
+    }
+
+    /**
+     * 人物图片列表（契约 §8.5）：`paths` = 关联该人物的文件 path（空关联 → 200 空数组；
+     * 404 = 人物不存在抛 [LanHttpException]）。
+     */
+    suspend fun peopleMembers(base: String, token: String, personId: String): List<String> {
+        val json = getJson(base, token, "/api/people/members?person_id=${lanQueryEncode(personId)}")
+        return stringList(json.optJSONArray("paths"))
+    }
+
+    /** 桌面词表读（契约 §8.6）：`tags` = 桌面 customTags，与安卓本地词表两套不混、只读作建议。 */
+    suspend fun vocab(base: String, token: String): List<String> {
+        val json = getJson(base, token, "/api/vocab")
+        return stringList(json.optJSONArray("tags"))
+    }
+
     // —— URL 拼接（token 进 query，缩略图/大图专用；Coil 的 URL 模型需要）——
 
     fun thumbnailUrl(base: String, token: String, remotePath: String, size: Int = 256): String =
@@ -480,6 +619,37 @@ class LanClient(private val http: OkHttpClient) {
     }
 
     // —— 内部 ——
+
+    /** JSON 字符串数组 → List<String>（缺省/非数组回空表）。 */
+    private fun stringList(arr: org.json.JSONArray?): List<String> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).map { arr.optString(it) }
+    }
+
+    /** WD14 `character_tags`（契约 §8.1：tag/score/work；work 空串归 null）。 */
+    private fun parseWd14CharacterTags(arr: org.json.JSONArray?): List<Wd14CharacterTag> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { o ->
+                Wd14CharacterTag(
+                    tag = o.optString("tag"),
+                    score = o.optDouble("score", 0.0),
+                    work = o.optString("work").takeIf { it.isNotEmpty() },
+                )
+            }
+        }
+    }
+
+    /** CLIP 检索 `hits`（契约 §8.2：服务端按 score 降序返回；path 缺失的畸形项跳过）。 */
+    private fun parseClipHits(arr: org.json.JSONArray?): List<LanClipHit> {
+        arr ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val path = o.optString("path")
+            if (path.isEmpty()) return@mapNotNull null
+            LanClipHit(path = path, score = o.optDouble("score", 0.0))
+        }
+    }
 
     private suspend fun getJson(base: String, token: String, urlPath: String): JSONObject =
         withContext(Dispatchers.IO) {

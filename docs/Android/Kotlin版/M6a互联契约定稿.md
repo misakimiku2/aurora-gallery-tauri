@@ -252,3 +252,93 @@
 | 403 | allow_edit / allow_upload 门禁关闭（D32 默认全开，仅手动收紧时出现） |
 | 404 | path / 人物 id / 专题 id 不存在 |
 | 200 + `success:false` / item 级 `error` | 文件系统级失败（占用、权限、目标已存在等），沿用服务端现状不映射 5xx；批量端点逐项给结果不整批失败 |
+
+## 8. M6b 契约补丁：AI 视觉计算端点（D36/D37）+ D40 读端点
+
+> 版本： v1（2026-09-25，M6b 阶段 4/5 定稿）。新增端点**全部为纯计算/纯查询**——手机图字节过桌面内存可以，**落桌面索引/桌面库不行**（不复用 upload 的落盘路径）；不触发 `lan-share-data-changed` 事件。
+> 临时文件例外： multipart 收到的图片字节为喂模型（`encode_image` 收路径）可写**系统临时目录**用后即删，不算落库。
+
+### 8.0 通用约定
+
+- 鉴权： Bearer token（同 §0）。
+- 门禁： 本节端点**不受 allow_edit / allow_upload 门禁**（不写桌面库；D32 门禁语义只管桌面数据面）。
+- 模型未就绪（未下载/加载失败/嵌入索引不存在）→ `503 {"error": "<中文原因>"}`——客户端据此置灰入口并提示。
+- 图片字节输入统一 multipart 单文件字段 `file`（对齐 `/api/upload` 先例；`DefaultBodyLimit` 200MB 内）。
+
+### 8.1 `POST /api/ai/wd14/classify` — WD14 标签推理（D37，纯计算）
+
+- 请求： multipart `file`（图片字节）。
+- 处理： 字节 → 临时文件 → `ClipModel::encode_image`（WD-EVA02-Large-Tagger-V3）→ probs 经 `TagMapper` 分流 → 删临时文件。general = category==0、character = category==4，按概率降序；character 附 `extract_work_name` 归组的作品名（无归组为 null）。阈值服务端固定 0.1（对齐桌面 `clip_get_detected_characters` 口径）。
+- 响应 `200`：
+
+```json
+{
+  "general_tags": ["1girl", "solo"],
+  "character_tags": [
+    { "tag": "角色名（作品名）", "score": 0.87, "work": "作品名" }
+  ]
+}
+```
+
+- 错误： 401、503（WD14 模型未就绪——需在桌面 AI 视觉面板下载并生成过模型文件）。
+
+### 8.2 `POST /api/ai/clip/search_text` — 文本语义搜索（D36，纯查询）
+
+- 请求：
+
+```json
+{ "query": "海边日落", "min_score": 0.2, "max_results": 100 }
+```
+
+- 响应 `200`： `hits` 按 score 降序，截断至 `max_results`（缺省 100，上限 500）；`path` 为共享根相对路径（§0 身份铁律同款不透明串）。
+
+```json
+{ "hits": [ { "path": "dir/a.jpg", "score": 0.83 } ] }
+```
+
+- 错误： 400（JSON 非法/query 空）、401、503（**该模型无嵌入索引**——需先在桌面 AI 视觉面板对当前库生成过嵌入；模型加载失败同 503）。
+
+### 8.3 `POST /api/ai/clip/search_image` — 以图搜图（D36，纯计算）
+
+- 请求： multipart `file`（查询图字节；查询向量**不入**嵌入索引）。
+- 响应： 同 8.2 `hits`。
+- 错误： 401、503（同 8.2）。
+
+### 8.4 `GET /api/topic/members?topic_id=` — 专题成员枚举（D40）
+
+- 门禁： token。
+- 响应 `200`： `files` 为成员文件 path 列表（共享根相对）、`people` 为成员人物 id 列表——读 `topic_files` / `topic_people` 关联表（对齐 `set_topic_files` / `set_topic_people` 的写半边）。
+
+```json
+{ "files": ["dir/a.jpg"], "people": ["person_xxx"] }
+```
+
+- 错误： 401、404（专题不存在）。
+
+### 8.5 `GET /api/people/members?person_id=` — 人物图片列表（D40）
+
+- 门禁： token。
+- 响应 `200`： `paths` 为关联该人物的文件 path 列表。桌面口径：遍历 `file_metadata.ai_data.faces[].personId == person_id` 的 file_id → `file_index` 反查 path（查不到索引的 file_id 跳过）。
+
+```json
+{ "paths": ["dir/a.jpg"] }
+```
+
+- 错误： 401、404（人物不存在）。空关联 → 200 空数组。
+
+### 8.6 `GET /api/vocab` — 桌面词表读（D40）
+
+- 门禁： token。
+- 响应 `200`： `tags` 为桌面 `user_data.json` 的 `customTags`（与安卓本地词表两套不混，客户端只读作建议）。
+
+```json
+{ "tags": ["fps", "四人"] }
+```
+
+- 错误： 401。
+
+### 8.7 错误码补录（叠加 §7 总表）
+
+| 状态码 | 场景 |
+|---|---|
+| 503 | §8.1–8.3 的模型未下载/加载失败、嵌入索引不存在 |

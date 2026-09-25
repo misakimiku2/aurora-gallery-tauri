@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -47,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.LanPerson
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import uniffi.aurora_core.FfiPerson
 import uniffi.aurora_core.TagGroup
 
 /**
@@ -256,7 +259,12 @@ fun PeopleOverview(
     lanConnected: Boolean = false,
     /** 编辑门禁位（allow_edit；false 时长按菜单不含「换头像」）。 */
     lanAllowEdit: Boolean = false,
-    /** 卡片点击（宿主 Toast 占位）。 */
+    /**
+     * 本地人物（M6b 阶段 4，D37：WD14 互联态识别写本地库的 `person_{tag}` 行）。
+     * 非空时在远端人物之前插「本地人物」节；空则不渲染该节（空态文案维持）。
+     */
+    localPeople: List<FfiPerson> = emptyList(),
+    /** 卡片点击（M6b 阶段 5 / D40：远端成员筛选视图；本地人物宿主暂 Toast）。 */
     onPersonClick: (LanPerson) -> Unit = {},
     /** 长按菜单「重命名」（宿主弹输入框 → renameLanPerson(id, name, null)）。 */
     onRename: (LanPerson) -> Unit = {},
@@ -266,8 +274,8 @@ fun PeopleOverview(
     onAvatarChange: (LanPerson) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
-    if (lanPeople.isEmpty()) {
-        // 本地人物数据源未落地（M6）：断线/无远端人物维持既有空态
+    if (lanPeople.isEmpty() && localPeople.isEmpty()) {
+        // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
@@ -283,7 +291,7 @@ fun PeopleOverview(
                     modifier = Modifier.padding(top = 12.dp),
                 )
                 Text(
-                    text = "人物识别将在后续版本提供",
+                    text = "连接桌面端后，选中图片即可识别人物（AI 视觉）",
                     fontSize = 12.sp,
                     color = colors.textSecondary.copy(alpha = 0.7f),
                     modifier = Modifier.padding(top = 4.dp),
@@ -299,18 +307,88 @@ fun PeopleOverview(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
         modifier = modifier.fillMaxSize(),
     ) {
-        items(
-            count = lanPeople.size,
-            key = { i -> lanPeople[i].id },
-        ) { i ->
-            LanPersonCard(
-                person = lanPeople[i],
-                lanAllowEdit = lanAllowEdit,
-                onClick = { onPersonClick(lanPeople[i]) },
-                onRename = { onRename(lanPeople[i]) },
-                onDescribe = { onDescribe(lanPeople[i]) },
-                onAvatarChange = { onAvatarChange(lanPeople[i]) },
-            )
+        // M6b 阶段 4（D37）：本地人物节（WD14 识别产物；点击暂 Toast——本地人物
+        // 筛选视图未列验收，只保展示）
+        if (localPeople.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Text(
+                        text = "本地人物",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textSecondary,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+            items(
+                count = localPeople.size,
+                key = { i -> "local:${localPeople[i].id}" },
+            ) { i ->
+                val person = localPeople[i]
+                Column(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { }
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // 头像：人物无远端缩略图可用，首字符圆形占位（对齐桌面 initials 形制）
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(colors.surface)
+                            .border(1.dp, colors.subtle, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = person.name.take(1),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.primary,
+                        )
+                    }
+                    Text(
+                        text = person.name,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Text(
+                        text = "${person.count} 张",
+                        fontSize = 11.sp,
+                        color = colors.textSecondary,
+                    )
+                }
+            }
+        }
+        if (lanPeople.isNotEmpty()) {
+            if (localPeople.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Text(
+                        text = "远端人物",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+            items(
+                count = lanPeople.size,
+                key = { i -> lanPeople[i].id },
+            ) { i ->
+                LanPersonCard(
+                    person = lanPeople[i],
+                    lanAllowEdit = lanAllowEdit,
+                    onClick = { onPersonClick(lanPeople[i]) },
+                    onRename = { onRename(lanPeople[i]) },
+                    onDescribe = { onDescribe(lanPeople[i]) },
+                    onAvatarChange = { onAvatarChange(lanPeople[i]) },
+                )
+            }
         }
     }
 }

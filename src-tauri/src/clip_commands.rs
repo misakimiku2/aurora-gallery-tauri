@@ -1191,6 +1191,37 @@ impl TagMapper {
     }
 }
 
+/// M6b 阶段 4（LAN `/api/ai/wd14/classify` 用）：`encode_image` 产出的 (标签名, 概率)
+/// 列表 → (general, character) 双列表。general = category==0，character = category==4，
+/// 各自按概率降序。与 `clip_generate_tags_from_embeddings` 的差异：不写库、不翻译，
+/// 纯分流供 LAN 纯计算端点回传手机端（结果只进手机本地库）。
+pub fn split_tags_by_category(
+    tags: &[(String, f32)],
+    threshold: f32,
+) -> Result<(Vec<(String, f32)>, Vec<(String, f32)>), String> {
+    let mapper = TagMapper::load_embedded()?;
+    let category_of = |name: &str| -> Option<i32> {
+        mapper.tags.iter().find(|e| e.name == name).map(|e| e.category)
+    };
+    let mut general: Vec<(String, f32)> = Vec::new();
+    let mut character: Vec<(String, f32)> = Vec::new();
+    for (name, prob) in tags {
+        if *prob >= threshold {
+            match category_of(name) {
+                Some(0) => general.push((name.clone(), *prob)),
+                Some(4) => character.push((name.clone(), *prob)),
+                _ => {}
+            }
+        }
+    }
+    let desc = |a: &(String, f32), b: &(String, f32)| {
+        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+    };
+    general.sort_by(desc);
+    character.sort_by(desc);
+    Ok((general, character))
+}
+
 #[tauri::command]
 pub async fn clip_generate_tags_from_embeddings(
     app: tauri::AppHandle,

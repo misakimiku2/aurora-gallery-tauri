@@ -29,6 +29,11 @@ class TagEditDialog(
     private val context: Context,
     private val theme: DialogTheme,
     private val initialTags: List<String>,
+    /**
+     * 词表建议（M6b 阶段 5 / D40：桌面词表 GET /api/vocab，LAN 项由查看器传入）。
+     * 空表=无建议行（本地项现状）；非空时在输入行下方渲染前 8 个未选中词的点选胶囊。
+     */
+    private val vocabulary: List<String> = emptyList(),
     private val onSave: (List<String>) -> Unit
 ) {
     private val localTags = initialTags.toMutableList()
@@ -114,6 +119,58 @@ class TagEditDialog(
         inputRow.addView(input)
         inputRow.addView(addButton)
         dialogView.addView(inputRow)
+
+        // M6b 阶段 5（D40）：词表建议行（前 8 个未选中的词，点选即加入）。输入/增删后重渲染。
+        if (vocabulary.isNotEmpty()) {
+            val suggestRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = (density * 10).toInt() }
+            }
+            fun refreshSuggestions() {
+                suggestRow.removeAllViews()
+                val candidates = vocabulary.filter { it !in localTags }.take(8)
+                if (candidates.isEmpty()) return
+                candidates.forEach { word ->
+                    val chip = TextView(context).apply {
+                        text = word
+                        setTextColor(theme.colorTagText())
+                        textSize = 12f
+                        maxEms = 10
+                        ellipsize = TextUtils.TruncateAt.END
+                        setSingleLine(true)
+                        val drawable = GradientDrawable().apply {
+                            cornerRadius = density * 14
+                            setColor(theme.colorTagBg())
+                            setStroke((density * 1).toInt(), theme.colorTagBorder())
+                        }
+                        background = drawable
+                        setPadding((density * 10).toInt(), (density * 6).toInt(), (density * 10).toInt(), (density * 6).toInt())
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                        ).apply { marginEnd = (density * 6).toInt() }
+                        setOnClickListener {
+                            if (word !in localTags) {
+                                localTags.add(word)
+                                refreshTagChips(chipsBox, localTags) { removedTag ->
+                                    localTags.remove(removedTag)
+                                    refreshTagChips(chipsBox, localTags) {}
+                                    relayoutTagDialog()
+                                }
+                                refreshSuggestions()
+                                relayoutTagDialog()
+                            }
+                        }
+                    }
+                    suggestRow.addView(chip)
+                }
+            }
+            refreshSuggestions()
+            dialogView.addView(suggestRow)
+        }
 
         refreshTagChips(chipsBox, localTags) { removedTag ->
             localTags.remove(removedTag)

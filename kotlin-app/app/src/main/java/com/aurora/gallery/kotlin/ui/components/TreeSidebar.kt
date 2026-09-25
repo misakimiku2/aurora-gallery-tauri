@@ -259,10 +259,12 @@ fun TreeSidebar(
     lanRemoteTagGroups: List<TagGroup> = emptyList(),
     /** 远端标签行点击（宿主 openFolder(lanTagFolderId(tag)) 进 tag 筛选虚拟目录）。 */
     onLanTagClick: (String) -> Unit = {},
-    /** 远端人物（GET /api/people 会话缓存，原样渲染；契约无成员枚举端点，行点击给占位）。 */
+    /** 远端人物（GET /api/people 会话缓存，原样渲染；M6b 阶段 5 起行点击=成员筛选）。 */
     lanPeople: List<com.aurora.gallery.kotlin.LanPerson> = emptyList(),
-    /** 远端人物行点击（宿主 Toast 占位：无成员枚举端点，不做假筛选）。 */
+    /** 远端人物行点击（M6b 阶段 5 / D40：宿主 openLanPersonFilter 进成员筛选虚拟目录）。 */
     onLanPersonClick: (com.aurora.gallery.kotlin.LanPerson) -> Unit = {},
+    /** 本地人物（M6b 阶段 4，D37：WD14 识别写本地库；行渲染在远端人物之前）。 */
+    localPeople: List<uniffi.aurora_core.FfiPerson> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -412,19 +414,26 @@ fun TreeSidebar(
             selectedColor = SECTION_PURPLE,
         )
         if (activeSection == SidebarSection.PEOPLE) {
-            if (lanPeople.isEmpty()) {
-                // 本地人物数据源未落地（M6），断线/无远端人物维持既有空态
+            if (localPeople.isEmpty() && lanPeople.isEmpty()) {
+                // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
                 EmptyHint("暂无人物")
             } else {
-                // 远端人物行（M6a 阶段 5，D31 并入口径）：契约无人脸头像可用（§3.1
-                // coverFileId 仅作身份），用首字符圆底占位。点击 = 宿主 Toast 占位
-                //（契约无成员枚举端点，不做假筛选）；人物编辑入口在 PeopleOverview 不在侧栏。
+                // M6b 阶段 4（D37）：本地人物行（WD14 识别写本地库的 person_{tag}；点击
+                // 暂无动作——本地人物筛选未列验收）+ 远端人物行（M6a 阶段 5；M6b 阶段 5
+                // 起点击 = 成员筛选虚拟目录）。
                 Column(
                     Modifier
                         .weight(1f, fill = false)
                         .verticalScroll(rememberScrollState())
                         .clipToBounds(),
                 ) {
+                    localPeople.forEach { person ->
+                        LanPersonRow(
+                            name = person.name,
+                            count = person.count,
+                            onClick = {},
+                        )
+                    }
                     lanPeople.forEach { person ->
                         LanPersonRow(person = person, onClick = { onLanPersonClick(person) })
                     }
@@ -959,6 +968,50 @@ private fun LanPersonRow(person: com.aurora.gallery.kotlin.LanPerson, onClick: (
                 Spacer(Modifier.size(8.dp))
                 Text(
                     person.count.toString(),
+                    fontSize = 10.sp,
+                    color = SIDEBAR_GRAY_500,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.surface)
+                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+/** M6b 阶段 4（D37）：本地人物行（无 wifi 角标、无远端操作；形制对齐远端行）。 */
+@Composable
+private fun LanPersonRow(
+    name: String,
+    count: Int,
+    onClick: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(start = 40.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PersonAvatarPlaceholder(name)
+            Spacer(Modifier.size(6.dp))
+            Text(
+                name,
+                fontSize = 14.sp,
+                color = SIDEBAR_GRAY_600,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (count > 0) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    count.toString(),
                     fontSize = 10.sp,
                     color = SIDEBAR_GRAY_500,
                     modifier = Modifier

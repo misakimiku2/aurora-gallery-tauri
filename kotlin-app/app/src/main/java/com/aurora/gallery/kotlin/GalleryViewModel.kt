@@ -16,14 +16,20 @@ import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID
+import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.SettingsStore
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
 import com.aurora.gallery.kotlin.state.lanFolderId
+import com.aurora.gallery.kotlin.state.lanPersonFolderId
+import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
+import com.aurora.gallery.kotlin.state.lanTopicFolderId
+import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
 import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -43,6 +49,7 @@ import uniffi.aurora_core.AiTaskCallback
 import uniffi.aurora_core.ColorBatchCallback
 import uniffi.aurora_core.ColorPixels
 import uniffi.aurora_core.FfiFileMetadata
+import uniffi.aurora_core.FfiPerson
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
@@ -66,6 +73,7 @@ import uniffi.aurora_core.deleteTopic as deleteTopicFfi
 import uniffi.aurora_core.extractAndSaveColors
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
+import uniffi.aurora_core.getAllPeople
 import uniffi.aurora_core.getAllTopics
 import uniffi.aurora_core.getColorsByFilePaths
 import uniffi.aurora_core.getGroupedTags
@@ -88,6 +96,7 @@ import uniffi.aurora_core.searchByColor
 import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
+import uniffi.aurora_core.upsertPerson
 import uniffi.aurora_core.upsertTopic
 import java.io.File
 import java.util.Locale
@@ -225,6 +234,40 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** 远端专题（GET /api/topics 会话缓存；写成功后重拉刷新，失败保留旧列表）。 */
     val lanTopics = mutableStateOf<List<LanTopic>>(emptyList())
+
+    // —— M6b 阶段 4/5：LAN AI 视觉与成员筛选（契约 §8；会话态同「断线清空」纪律）——
+
+    /**
+     * 桌面词表（`GET /api/vocab`，D40）：与本地词表**两套不混**（契约 §8.6），只读作
+     * 输入建议。连接成功后随 [refreshLanLibraryInternal] 尾随拉取，失败静默保旧；断线清空。
+     */
+    val lanVocab = mutableStateOf<List<String>>(emptyList())
+
+    /**
+     * 本地人物快照（FFI `getAllPeople`）：WD14 人物管线（[startWd14PersonPipeline]）
+     * 落库后经 [reloadLocalPeople] 刷新。与 [lanPeople]（远端人物）是两套数据，互不相干。
+     */
+    val localPeople = mutableStateOf<List<FfiPerson>>(emptyList())
+
+    /** LAN 搜索请求进行中（入口置灰消费；复位在 performLanSearch 的 finally）。 */
+    val lanSearchBusy = mutableStateOf(false)
+
+    /**
+     * LAN 搜索命中（path→score；null = 非 LAN 搜索结果态）。语义与 [aiSearchIds] 同构：
+     * 非 null 即「LAN 搜索结果视图」，网格内容由 [reloadLanImages] 的
+     * [com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID] 分支渲染（按 score 降序，
+     * 会话缓存里没有的 path 跳过）。performLanSearch / findSimilarOnDesktop 写、clearLanSearch 清。
+     */
+    val lanSearchHits = mutableStateOf<List<Pair<String, Double>>?>(null)
+
+    /**
+     * 成员筛选（人物/专题虚拟目录）的会话内存集：[openLanPersonFilter] / [openLanTopicFilter]
+     * 进入时拉好，[reloadLanImages] 成员分支消费。归属记在 [pendingMemberPathsFolderId]——
+     * 「人物 A → 人物 B → 返回 A」回导航时集合已换人，folderId 对不上就重拉端点；
+     * 进程重建后为 null 同样重拉。
+     */
+    private var pendingMemberPaths: Set<String>? = null
+    private var pendingMemberPathsFolderId: String? = null
 
     /** 连接成功后的会话拉取协程（刷新时可 join；断线时 cancel）。 */
     private var lanFetchJob: Job? = null
@@ -1766,6 +1809,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         lanRemoteTagGroups.value = emptyList()
         lanPeople.value = emptyList()
         lanTopics.value = emptyList()
+        // M6b 阶段 4/5：词表/搜索结果/成员筛选集同属会话态，断线一并清空
+        //（lanSearchHits 不清会留一个渲染不出图的死视图态；本地图 localPeople 不在此列）
+        lanVocab.value = emptyList()
+        lanSearchHits.value = null
+        pendingMemberPaths = null
+        pendingMemberPathsFolderId = null
     }
 
     /** 连接成功（或手动刷新）后的远端根拉取：all_imageFolders 一次带回目录+根散图+门禁位。 */
@@ -1803,7 +1852,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      *  2. path 分块（[LAN_METADATA_BATCH_CHUNK]）调 metadataBatch → [lanMetaByPath]
      *     （单块失败只丢那块，词表分组可以只差一块待下次重连补齐）；
      *  3. tag→count 聚合 → groupRemoteTagCounts 纯函数 → [lanRemoteTagGroups]；
-     *  4. people() / topics() → [lanPeople] / [lanTopics]。
+     *  4. people() / topics() → [lanPeople] / [lanTopics]；
+     *  5. vocab() → [lanVocab]（M6b 阶段 5，D40 桌面词表；失败静默保旧）。
      *
      * 失败降级口径：任一环节 Log.w 后用已就绪的部分继续，不抛不炸（对齐 [reloadTagState]
      * 「读失败保留旧值」的纪律；断线重连会整体重跑）。
@@ -1853,6 +1903,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 4) 人物与专题（读失败保留旧列表，桌面阶段 2「读失败保留内存行」同口径）
         reloadLanPeople(session)
         reloadLanTopics(session)
+
+        // 5) 桌面词表（M6b 阶段 5，D40；建议性数据，失败静默保旧）
+        reloadLanVocab(session)
     }
 
     /**
@@ -1972,13 +2025,26 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /**
      * LAN 目录的序列取数（reloadImages 的并列入口，M4a 序列源先例）：
      *  - 虚拟根（`__lan_root_images__`）= 会话态里的根散图，**不单独 browse**；
-     *  - tag 筛选虚拟目录（`__lan_tag__:<tag>`，阶段 5）= 从 [lanLibraryImages] 会话缓存
+     *  - tag 筛选虚拟目录（`lan:__lan_tag__:<tag>`，阶段 5）= 从 [lanLibraryImages] 会话缓存
      *    按 tag 过滤（配合 [lanMetaByPath]），**不 browse、不动门禁位**（tag 视图沿用当前值）；
+     *  - LAN 搜索结果虚拟目录（`__lan_search__`，M6b 阶段 5）= [lanSearchHits] 按 score
+     *    降序对齐会话缓存（缓存没有的 path 跳过——会话没浏览过该目录，登记差异）；
+     *  - 人物/专题成员筛选虚拟目录（`lan:person:<id>` / `lan:topic:<id>`，M6b 阶段 5）=
+     *    [pendingMemberPaths] 内存过滤会话缓存（同 tag 分支形制），集缺失/过期时按
+     *    folderId 解出 id 重拉 D40 端点（[lanMemberPaths]）；
      *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**过滤不进列表**
      *    （登记差异：React LAN 浏览含视频项；Kotlin 全 App 视频支持待定 M8+）。
      *
      * 阶段 8 起 browse/根散图分支尾随目录级元数据增量刷新（[refreshLanMetaFor]）：
      * 桌面反向写后目录内下拉刷新即可见，不必回总览刷新或重连。
+     *
+     * **标题机制（UI 线接）**：本函数与 VM 都不管标题——标题全部在 MainActivity 由
+     * folderId 解析（lanBrowserTitle / lanTagTitle，约 :1938-1955）。三个新虚拟形态的
+     * 建议标题与名字来源：人物 = 「人物 · 名」（id 在 [lanPeople] 快照查 name，入口
+     * openLanPersonFilter 也带了 name 参数）；专题 = 「专题 · 名」（[lanTopics] 查 name）；
+     * 搜索 = 固定「搜索结果」。另注意 `__lan_search__` 不带 lan: 前缀，
+     * MainActivity 的 inLanBrowser 判定（folderId.lanRemotePathOrNull() != null）对它
+     * 为 false，网格可见性与标题分支要单独加它。
      */
     private suspend fun reloadLanImages(folderId: String) {
         val key = "lan|$folderId"
@@ -1996,6 +2062,23 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         } else if (tagFilter != null) {
             lanLibraryImages.value.values
                 .filter { lanMetaByPath.value[it.path]?.tags?.contains(tagFilter) == true }
+                .map { lanImageOf(session, it) }
+        } else if (folderId == LAN_SEARCH_FOLDER_ID) {
+            // M6b 阶段 5：搜索结果虚拟目录（D36）。lanSearchHits 是 Pair(path, score)，
+            // 按 score 降序对齐 [lanLibraryImages]；缓存里没有的 path 跳过（本会话没
+            // 浏览过该目录就没有缩略图数据，React 全量展示的口径差异已登记）。
+            val library = lanLibraryImages.value
+            lanSearchHits.value.orEmpty()
+                .mapNotNull { hit -> library[hit.first]?.let { hit.second to it } }
+                .sortedByDescending { it.first }
+                .map { lanImageOf(session, it.second) }
+        } else if (folderId.lanPersonIdOrNull() != null || folderId.lanTopicIdOrNull() != null) {
+            // M6b 阶段 5：人物/专题成员筛选虚拟目录（D40，lan:person:<id> / lan:topic:<id>）。
+            // openLanPersonFilter / openLanTopicFilter 进入时已把成员 path 集拉进
+            // [pendingMemberPaths]；这里纯内存过滤（同 tag 分支形制，不发元数据批读），
+            // 集缺失/过期（进程重建、回导航串台）时 [lanMemberPaths] 按 folderId 重拉端点。
+            lanMemberPaths(folderId)
+                .mapNotNull { lanLibraryImages.value[it] }
                 .map { lanImageOf(session, it) }
         } else {
             val remotePath = folderId.lanRemotePathOrNull() ?: return
@@ -2604,6 +2687,407 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
+    // ===== M6b 阶段 4/5：LAN AI 视觉与成员筛选（契约 §8；D36/D37/D40）=====
+    //
+    // 三块能力，全部吃 [lan] 会话（§8 端点是纯计算/纯查询，不受 allow_edit/allow_upload
+    // 门禁，契约 §8.0）：
+    //  - WD14 人物管线（D37，[startWd14PersonPipeline]）：本地图字节过桌面 WD14，
+    //    general_tags 进本地词表管线、character_tags 落本地人物库 + aiData.faces + 作品
+    //    专题。**写的是安卓本地库**，与「远端写绝不进本地库」的 D31 铁律不冲突——
+    //    那条管的是「远端数据的显示态」，这里是「本地文件借桌面算力产出的本地数据」。
+    //  - LAN 语义搜索（D36，[performLanSearch] / [findSimilarOnDesktop]）：
+    //    aiSearchEnabled 开 = CLIP 文本语义/以图搜图，关 = 既有文本搜索；命中进
+    //    [lanSearchHits] + `__lan_search__` 虚拟目录。
+    //  - 成员筛选虚拟目录（D40，[openLanPersonFilter] / [openLanTopicFilter]）：成员
+    //    path 集 → 内存过滤 [lanLibraryImages]。
+    //
+    // 503（模型/索引未就绪）统一由 LanClient 抛 LanHttpException，调用方读 code==503
+    // 给专属提示（[lanSearchFailureToast]）；其余失败 Log.w + toast。
+
+    /** 重拉本地人物快照（[localPeople]；失败保留旧列表——快照纪律同 [reloadTagState]）。 */
+    fun reloadLocalPeople() {
+        viewModelScope.launch {
+            val loaded = withContext(Dispatchers.IO) { runCatching { getAllPeople() } }
+            loaded.getOrNull()?.let { localPeople.value = it }
+                ?: Log.w(TAG, "[People] 本地人物快照重拉失败（保旧）：${loaded.exceptionOrNull()?.message ?: "unknown"}")
+        }
+    }
+
+    /** 重拉桌面词表（[lanVocab]；失败静默保旧——建议性数据，不值得弹窗，口径同 [reloadLanPeople]）。 */
+    private suspend fun reloadLanVocab(session: LanManager.LanSession) {
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching { session.client.vocab(session.base, session.token) }
+        }
+        loaded.getOrNull()?.let { lanVocab.value = it }
+            ?: Log.w(TAG, "[Lan] vocab 拉取失败（保旧）：${loaded.exceptionOrNull()?.message ?: "unknown"}")
+    }
+
+    /**
+     * D37 WD14 人物识别主链（多选/查看器共用入口）：逐张读本机字节 → 桌面 WD14 推理
+     * （[LanClient.wd14Classify]）→ 双路落库（**安卓本地库**）：
+     *  - general_tags → [addTagsToFiles]（词表管线：Rust add_tags_to_files 同事务 upsert
+     *    词表，侧栏可见）；
+     *  - character_tags → 人物库 upsert（id=`person_<tag>`，同人多张累计 count、首见
+     *    fileId 作封面、已有 description 保护不冲掉）+ aiData.faces 追加（整行读改写，
+     *    faces 键位 = 桌面 D40 读端点的同款口径 `{id, personId, name, confidence, box}`）
+     *    + work 非空时同名作品专题（无则建，[ensureWorkTopicAndAdd]）归入。
+     *
+     * **串行逐张**而非并发：两张并行可能同时读改写同一文件的 aiData（faces 追加是
+     * 读-改-写非原子）；与本地 AI 分析的互斥复用 [aiTaskState]。登记：通知栏「取消」
+     * action 对本任务无效（core 取消注册表里没有这个 taskId，[cancelAiTask] 空转无害）。
+     *
+     * 失败口径：单张失败 Log.w 计数不中断批次（会话中途断线则余下全部走同一口径）。
+     */
+    fun startWd14PersonPipeline(fileIds: List<String>) {
+        val session = lan.currentSession()
+        if (session == null) {
+            aiToast("需先连接桌面端")
+            return
+        }
+        if (fileIds.isEmpty()) return
+        if (aiTaskState.value != null) {
+            aiToast("AI 任务进行中，可从通知栏取消")
+            return
+        }
+        aiJob = viewModelScope.launch {
+            val taskId = "lan-wd14-${System.currentTimeMillis()}"
+            val targets = withContext(Dispatchers.IO) { listImagesByIds(fileIds) }
+            val total = targets.size
+            aiTaskState.value = AiTaskState("人物识别", taskId, 0, total)
+            scanNotifier.aiProgress("人物识别", 0, total)
+            // 人物库快照（本流水线是单写者，批内同人累计直接在这张表上做；跨任务/外部
+            // 并发写不保证精确——count 允许近似，登记）
+            val knownPeople = withContext(Dispatchers.IO) {
+                runCatching { getAllPeople() }.getOrElse { e ->
+                    Log.w(TAG, "[Lan][WD14] 人物库预读失败（按全新人处理）：${e.message}")
+                    emptyList()
+                }
+            }.associateBy { it.id }.toMutableMap()
+            var failed = 0
+            for ((index, img) in targets.withIndex()) {
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        appContext.contentResolver.openInputStream(Uri.parse(img.contentUri))?.use { it.readBytes() }
+                    }
+                    if (bytes == null || bytes.isEmpty()) throw java.io.IOException("无法读取本机图片字节")
+                    val mime = mimeForFileName(img.name).takeIf { it != "application/octet-stream" } ?: "image/jpeg"
+                    val result = withContext(Dispatchers.IO) {
+                        session.client.wd14Classify(session.base, session.token, bytes, img.name, mime)
+                    }
+                    // 1) general_tags → 本地词表管线（add_tags_to_files 同事务 upsert 词表）
+                    if (result.generalTags.isNotEmpty()) {
+                        withContext(Dispatchers.IO) { addTagsToFiles(listOf(img.id), result.generalTags) }
+                    }
+                    // 2) character_tags → 人物库 + aiData.faces + 作品专题（faces 攒齐后
+                    //    单文件一次整行写回，避免同文件多 tag 各写一遍）
+                    if (result.characterTags.isNotEmpty()) {
+                        val meta = withContext(Dispatchers.IO) {
+                            runCatching { getFileMetadata(img.id) }.getOrNull()
+                        }
+                        val aiJson = meta?.aiData?.takeIf { it.isNotEmpty() }
+                            ?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+                            ?: org.json.JSONObject()
+                        val faces = aiJson.optJSONArray("faces") ?: org.json.JSONArray()
+                        for (ct in result.characterTags) {
+                            val personId = "person_${ct.tag}"
+                            val existing = knownPeople[personId]
+                            val person = FfiPerson(
+                                id = personId,
+                                name = ct.tag,
+                                // 首见 fileId 作封面（已有非空封面保留；重复出现不换）
+                                coverFileId = existing?.coverFileId?.takeIf { it.isNotEmpty() } ?: img.id,
+                                count = (existing?.count ?: 0) + 1,
+                                // 已有描述保护：upsert 是整行写，字面 description=null 会把
+                                // 用户描述冲掉（登记偏差：null 只发生在全新人身上）
+                                description = existing?.description,
+                                faceBox = null,
+                                updatedAt = System.currentTimeMillis() / 1000, // now秒（契约口径）
+                                characterTagName = ct.tag,
+                                characterTagIndex = null,
+                            )
+                            withContext(Dispatchers.IO) {
+                                runCatching { upsertPerson(person) }.onFailure {
+                                    Log.w(TAG, "[Lan][WD14] 人物落库失败 id=$personId：${it.message}")
+                                }
+                            }
+                            knownPeople[personId] = person
+                            // aiData.faces 追加（键位对齐桌面 §8.5 读端点 faces[].personId 口径）
+                            faces.put(
+                                org.json.JSONObject()
+                                    .put("id", "face_${img.id}")
+                                    .put("personId", personId)
+                                    .put("name", ct.tag)
+                                    .put("confidence", ct.score)
+                                    .put(
+                                        "box",
+                                        org.json.JSONObject()
+                                            .put("x", 0.0)
+                                            .put("y", 0.0)
+                                            .put("w", 0.0)
+                                            .put("h", 0.0),
+                                    ),
+                            )
+                            // work 非空 → 同名作品专题（无则建）归入
+                            ct.work?.takeIf { it.isNotBlank() }?.let { work ->
+                                ensureWorkTopicAndAdd(work, img.id)
+                            }
+                        }
+                        // faces 整行读改写（saveFileUpdates 同款纪律：upsertFileMetadata 是
+                        // 整行 ON CONFLICT DO UPDATE，拿半空行写会把别列冲掉）
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                val row = meta ?: FfiFileMetadata(
+                                    fileId = img.id,
+                                    path = img.contentUri, // 新建行 path 装 contentUri（saveFileUpdates 先例）
+                                    description = null,
+                                    sourceUrl = null,
+                                    aiData = null,
+                                    category = null,
+                                    updatedAt = null,
+                                )
+                                upsertFileMetadata(row.copy(aiData = aiJson.toString()))
+                            }.onFailure {
+                                Log.w(TAG, "[Lan][WD14] aiData.faces 写回失败 id=${img.id}：${it.message}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    failed++
+                    Log.w(TAG, "[Lan][WD14] 单张失败 id=${img.id}：${e.message}")
+                }
+                // 进度每张推进（含失败张）
+                val done = index + 1
+                aiTaskState.value = AiTaskState("人物识别", taskId, done, total)
+                scanNotifier.aiProgress("人物识别", done, total)
+            }
+            aiTaskState.value = null
+            scanNotifier.aiDone(if (failed == 0) "人物识别完成 $total 张" else "人物识别完成 $total 张（$failed 张失败）")
+            // 标签/人物/词表已落库：快照重算 + 当前视图重拉（口径同 startAiAnalysis 尾部）
+            reloadTagState()
+            reloadLocalPeople()
+            reloadImages()
+        }
+    }
+
+    /**
+     * WD14 人物管线的作品专题落地：本地 topics 查同名（name==work）→ 无则走既有
+     * [createTopic]（回调式拿不到新 id，用 [CompletableDeferred] 拉直成挂起等待；
+     * onDone 前它已 reloadTopics，按 name 找回新建专题的 id）→ 既有 [addFilesToTopic]
+     * 归入（沿用其首图自动成封面逻辑）。串行流水线内建过一次后同名必命中既有分支，
+     * 不会重复建专题。创建失败 Log.w 并回 false——专题归属是锦上添花，不中断主链。
+     */
+    private suspend fun ensureWorkTopicAndAdd(work: String, fileId: String): Boolean {
+        topics.value.firstOrNull { it.name == work }?.let {
+            addFilesToTopic(it.id, setOf(fileId))
+            return true
+        }
+        val created = CompletableDeferred<String?>()
+        createTopic(work) { ok ->
+            created.complete(if (ok) topics.value.firstOrNull { it.name == work }?.id else null)
+        }
+        val topicId = created.await() ?: run {
+            Log.w(TAG, "[Lan][WD14] 作品专题创建失败 work=$work")
+            return false
+        }
+        addFilesToTopic(topicId, setOf(fileId))
+        return true
+    }
+
+    /**
+     * 成员筛选虚拟目录（人物/专题）的 path 集：优先消费 [pendingMemberPaths]（校验归属
+     * folderId——「人物 A → 人物 B → 返回 A」的回导航时集合已换人，对不上就重拉；进程
+     * 重建后为 null 同样重拉，id 从 folderId 解出）。重拉成功回写缓存（保持端点返回序，
+     * 网格次序随之）；失败回空集（网格空态，不炸）。
+     */
+    private suspend fun lanMemberPaths(folderId: String): Set<String> {
+        val cached = pendingMemberPaths
+        if (cached != null && pendingMemberPathsFolderId == folderId) {
+            return cached
+        }
+        val session = lan.currentSession() ?: return emptySet()
+        val personId = folderId.lanPersonIdOrNull()
+        val topicId = folderId.lanTopicIdOrNull()
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                when {
+                    personId != null -> session.client.peopleMembers(session.base, session.token, personId)
+                    topicId != null -> session.client.topicMembers(session.base, session.token, topicId).files
+                    else -> emptyList()
+                }
+            }
+        }
+        val paths = result.getOrElse { e ->
+            Log.w(TAG, "[Lan] 成员列表重拉失败 folder=$folderId：${e.message}")
+            return emptySet()
+        }
+        val ordered = paths.toCollection(LinkedHashSet())
+        pendingMemberPaths = ordered
+        pendingMemberPathsFolderId = folderId
+        return ordered
+    }
+
+    /** LAN 搜索类失败的统一提示（503 = 模型/索引未就绪有专属文案，契约 §8.0）。 */
+    private fun lanSearchFailureToast(e: Throwable?, fallback: String) {
+        if (e is LanHttpException && e.code == 503) {
+            aiToast("桌面端模型/索引未就绪")
+        } else {
+            Log.w(TAG, "[Lan] $fallback：${e?.message}")
+            aiToast("$fallback：${e?.message ?: "未知错误"}")
+        }
+    }
+
+    /**
+     * LAN 搜索（M6b 阶段 5，D36）：`settings.aiSearchEnabled` 开 = 桌面 CLIP 文本语义
+     * （POST /api/ai/clip/search_text，min_score 0.2 / max_results 100）；关 = 既有文本
+     * 搜索（GET /api/search，命中无分值 → score 记 1.0，与 CLIP 命中同一数据形态）。
+     * 成功置 [lanSearchHits] 并 openFolder(LAN_SEARCH_FOLDER_ID)——网格内容由
+     * [reloadLanImages] 搜索分支渲染，标题「搜索结果」由 UI 层处理（VM 不管标题）。
+     * 503 = 桌面模型/嵌入索引未就绪（契约 §8.0）：toast 专属提示、busy 复位、结果态不动。
+     */
+    fun performLanSearch(query: String) {
+        val session = lan.currentSession()
+        if (session == null) {
+            aiToast("需先连接桌面端")
+            return
+        }
+        if (query.isBlank()) {
+            clearLanSearch()
+            return
+        }
+        viewModelScope.launch {
+            lanSearchBusy.value = true
+            try {
+                val hits: List<Pair<String, Double>> = if (settings.value.aiSearchEnabled) {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { session.client.clipSearchText(session.base, session.token, query, 0.2, 100) }
+                    }
+                    val clip = result.getOrNull()
+                    if (clip == null) {
+                        lanSearchFailureToast(result.exceptionOrNull(), "LAN 搜索失败")
+                        return@launch
+                    }
+                    clip.map { it.path to it.score }
+                } else {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching { session.client.search(session.base, session.token, query) }
+                    }
+                    val browsed = result.getOrNull()
+                    if (browsed == null) {
+                        lanSearchFailureToast(result.exceptionOrNull(), "LAN 搜索失败")
+                        return@launch
+                    }
+                    // 文本命中无分值概念：score 恒 1.0（排序稳定）；视频项过滤口径同 browse
+                    browsed.images.filter { it.type != "video" }.map { it.path to 1.0 }
+                }
+                lanSearchHits.value = hits
+                appState.openFolder(LAN_SEARCH_FOLDER_ID)
+                aiToast("命中 ${hits.size} 张")
+            } finally {
+                lanSearchBusy.value = false
+            }
+        }
+    }
+
+    /** 清 LAN 搜索结果态（退出搜索视图/新搜索前置共用；视图内容由下次导航自然接管）。 */
+    fun clearLanSearch() {
+        lanSearchHits.value = null
+    }
+
+    /**
+     * 打开人物成员筛选虚拟目录（D40）：people/members 拉 path 集 → 记入
+     * [pendingMemberPaths]（归属 folderId 一起记，回导航防串台）→ openFolder
+     * （`lan:person:<id>`，AppState.lanPersonFolderId 同款）。网格内容由
+     * [reloadLanImages] 成员分支渲染（会话缓存里没有的 path 跳过）；标题「人物 · 名」
+     * 由 UI 层消费 [name] 拼（VM 不管标题）。拉取失败不导航（留在原地），Log.w 记录。
+     */
+    fun openLanPersonFilter(personId: String, name: String) {
+        val session = lan.currentSession()
+        if (session == null) {
+            aiToast("需先连接桌面端")
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.peopleMembers(session.base, session.token, personId) }
+            }
+            val paths = result.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] 人物成员拉取失败 id=$personId：${result.exceptionOrNull()?.message}")
+                return@launch
+            }
+            pendingMemberPaths = paths.toCollection(LinkedHashSet())
+            pendingMemberPathsFolderId = lanPersonFolderId(personId)
+            Log.i(TAG, "[Lan] 人物筛选就绪 「$name」 id=$personId members=${paths.size}")
+            appState.openFolder(lanPersonFolderId(personId))
+        }
+    }
+
+    /**
+     * 打开专题成员筛选虚拟目录（D40）：topic/members 的 `files`（人物成员 id 本任务
+     * 无网格消费方，不用）→ 同 [openLanPersonFilter] 的缓存与导航形制，folderId =
+     * `lan:topic:<id>`（AppState.lanTopicFolderId）。标题「专题 · 名」UI 层处理。
+     */
+    fun openLanTopicFilter(topicId: String) {
+        val session = lan.currentSession()
+        if (session == null) {
+            aiToast("需先连接桌面端")
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { session.client.topicMembers(session.base, session.token, topicId) }
+            }
+            val members = result.getOrNull() ?: run {
+                Log.w(TAG, "[Lan] 专题成员拉取失败 id=$topicId：${result.exceptionOrNull()?.message}")
+                return@launch
+            }
+            pendingMemberPaths = members.files.toCollection(LinkedHashSet())
+            pendingMemberPathsFolderId = lanTopicFolderId(topicId)
+            Log.i(TAG, "[Lan] 专题筛选就绪 id=$topicId files=${members.files.size}")
+            appState.openFolder(lanTopicFolderId(topicId))
+        }
+    }
+
+    /**
+     * 以图搜图（D36，本地图 → 桌面 CLIP 索引）：读本机图片字节 → POST
+     * /api/ai/clip/search_image → 命中置 [lanSearchHits] + openFolder(LAN_SEARCH_FOLDER_ID)。
+     * 503/断线/读图失败 → toast + onDone(false)，结果态不动。
+     */
+    fun findSimilarOnDesktop(fileId: String, onDone: (Boolean) -> Unit = {}) {
+        val session = lan.currentSession()
+        if (session == null) {
+            aiToast("需先连接桌面端")
+            onDone(false)
+            return
+        }
+        viewModelScope.launch {
+            var ok = false
+            try {
+                val bytes = withContext(Dispatchers.IO) {
+                    val img = listImagesByIds(listOf(fileId)).firstOrNull()
+                        ?: throw java.io.IOException("本地图片不存在")
+                    appContext.contentResolver.openInputStream(Uri.parse(img.contentUri))?.use { it.readBytes() }
+                        ?: throw java.io.IOException("无法读取本机图片字节")
+                }
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { session.client.clipSearchImage(session.base, session.token, bytes) }
+                }
+                val hits = result.getOrNull()
+                if (hits == null) {
+                    lanSearchFailureToast(result.exceptionOrNull(), "以图搜图失败")
+                } else {
+                    lanSearchHits.value = hits.map { it.path to it.score }
+                    appState.openFolder(LAN_SEARCH_FOLDER_ID)
+                    aiToast("命中 ${hits.size} 张")
+                    ok = true
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "[Lan] 以图搜图失败：${e.message}")
+                aiToast("以图搜图失败：${e.message ?: "未知错误"}")
+            }
+            onDone(ok)
+        }
+    }
+
     /**
      * 当前视图该显示哪些图，**唯一的取数口**（M4a 4.1 / 3.2）。
      *
@@ -2622,8 +3106,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     suspend fun reloadImages() {
         val tab = appState.activeTab
         // —— M6a 阶段 4：LAN 序列源分流（并列入口，M4a 序列源先例）——
-        // folderId 带 lan 前缀 = 远端目录（或虚拟根），走 LanClient.browse/会话态。
-        if (tab.viewMode == ViewMode.BROWSER && tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true) {
+        // folderId 带 lan 前缀 = 远端目录（或虚拟根/成员筛选虚拟目录），走 LanClient/会话态；
+        // M6b 阶段 5：LAN 搜索结果虚拟目录（__lan_search__）不带 lan: 前缀（纯内部 id），
+        // 这里显式并进分流，否则会落到本地 listImages 分支把网格清空。
+        if (tab.viewMode == ViewMode.BROWSER &&
+            (tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true || tab.folderId == LAN_SEARCH_FOLDER_ID)
+        ) {
             reloadLanImages(tab.folderId!!)
             return
         }
