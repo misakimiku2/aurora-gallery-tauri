@@ -688,12 +688,6 @@ internal interface UniffiCallbackInterfaceColorBatchCallbackMethod2 : com.sun.jn
 internal interface UniffiCallbackInterfaceColorBatchCallbackMethod3 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
-internal interface UniffiCallbackInterfaceSpikeCallbackMethod0 : com.sun.jna.Callback {
-    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
-}
-internal interface UniffiCallbackInterfaceSpikeCallbackMethod1 : com.sun.jna.Callback {
-    fun callback(`uniffiHandle`: Long,`summary`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
-}
 @Structure.FieldOrder("uniffiFree", "uniffiClone", "readBytes", "onProgress", "onFileDone", "onName", "onFinished")
 internal open class UniffiVTableCallbackInterfaceAiRenameCallback(
     @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
@@ -777,28 +771,6 @@ internal open class UniffiVTableCallbackInterfaceColorBatchCallback(
         `readPixels` = other.`readPixels`
         `onProgress` = other.`onProgress`
         `onFileDone` = other.`onFileDone`
-        `onFinished` = other.`onFinished`
-    }
-
-}
-@Structure.FieldOrder("uniffiFree", "uniffiClone", "onProgress", "onFinished")
-internal open class UniffiVTableCallbackInterfaceSpikeCallback(
-    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
-    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
-    @JvmField internal var `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0? = null,
-    @JvmField internal var `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1? = null,
-) : Structure() {
-    class UniffiByValue(
-        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
-        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
-        `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0? = null,
-        `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1? = null,
-    ): UniffiVTableCallbackInterfaceSpikeCallback(`uniffiFree`,`uniffiClone`,`onProgress`,`onFinished`,), Structure.ByValue
-
-   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceSpikeCallback) {
-        `uniffiFree` = other.`uniffiFree`
-        `uniffiClone` = other.`uniffiClone`
-        `onProgress` = other.`onProgress`
         `onFinished` = other.`onFinished`
     }
 
@@ -936,8 +908,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_set_topic_people(
     ): Int
-    external fun uniffi_aurora_core_checksum_func_spike_ai_channel(
-    ): Int
     external fun uniffi_aurora_core_checksum_func_update_person_avatar(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_file_metadata(
@@ -974,10 +944,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished(
     ): Int
-    external fun uniffi_aurora_core_checksum_method_spikecallback_on_progress(
-    ): Int
-    external fun uniffi_aurora_core_checksum_method_spikecallback_on_finished(
-    ): Int
     external fun ffi_aurora_core_uniffi_contract_version(
     ): Int
 
@@ -992,7 +958,6 @@ internal object UniffiLib {
         uniffiCallbackInterfaceAiRenameCallback.register(this)
         uniffiCallbackInterfaceAiTaskCallback.register(this)
         uniffiCallbackInterfaceColorBatchCallback.register(this)
-        uniffiCallbackInterfaceSpikeCallback.register(this)
         
     }
     external fun uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(`vtable`: UniffiVTableCallbackInterfaceAiRenameCallback,
@@ -1000,8 +965,6 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(`vtable`: UniffiVTableCallbackInterfaceAiTaskCallback,
     ): Unit
     external fun uniffi_aurora_core_fn_init_callback_vtable_colorbatchcallback(`vtable`: UniffiVTableCallbackInterfaceColorBatchCallback,
-    ): Unit
-    external fun uniffi_aurora_core_fn_init_callback_vtable_spikecallback(`vtable`: UniffiVTableCallbackInterfaceSpikeCallback,
     ): Unit
     external fun uniffi_aurora_core_fn_func_ai_analyze_files(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1112,8 +1075,6 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_set_topic_files(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_set_topic_people(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun uniffi_aurora_core_fn_func_spike_ai_channel(`url`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_update_person_avatar(`personId`: RustBuffer.ByValue,`coverFileId`: RustBuffer.ByValue,`faceBox`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1409,9 +1370,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_set_topic_people() != 48421) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_spike_ai_channel() != 57558) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if (lib.uniffi_aurora_core_checksum_func_update_person_avatar() != 15429) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1464,12 +1422,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished() != 65338) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_aurora_core_checksum_method_spikecallback_on_progress() != 53066) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_aurora_core_checksum_method_spikecallback_on_finished() != 30235) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -3593,82 +3545,6 @@ public object FfiConverterTypeColorBatchCallback: FfiConverterCallbackInterface<
 
 
 
-
-public interface SpikeCallback {
-    
-    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
-    
-    fun `onFinished`(`summary`: kotlin.String)
-    
-    companion object
-}
-
-
-
-// Put the implementation in an object so we don't pollute the top-level namespace
-internal object uniffiCallbackInterfaceSpikeCallback {
-    internal object `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0 {
-        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
-            val uniffiObj = FfiConverterTypeSpikeCallback.handleMap.get(uniffiHandle)
-            val makeCall = { ->
-                uniffiObj.`onProgress`(
-                    FfiConverterUInt.lift(`current`),
-                    FfiConverterUInt.lift(`total`),
-                )
-            }
-            val writeReturn = { _: Unit -> Unit }
-            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
-        }
-    }
-    internal object `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1 {
-        override fun callback(`uniffiHandle`: Long,`summary`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
-            val uniffiObj = FfiConverterTypeSpikeCallback.handleMap.get(uniffiHandle)
-            val makeCall = { ->
-                uniffiObj.`onFinished`(
-                    FfiConverterString.lift(`summary`),
-                )
-            }
-            val writeReturn = { _: Unit -> Unit }
-            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
-        }
-    }
-
-    internal object uniffiFree: UniffiCallbackInterfaceFree {
-        override fun callback(handle: Long) {
-            FfiConverterTypeSpikeCallback.handleMap.remove(handle)
-        }
-    }
-
-    internal object uniffiClone: UniffiCallbackInterfaceClone {
-        override fun callback(handle: Long): Long {
-            return FfiConverterTypeSpikeCallback.handleMap.clone(handle)
-        }
-    }
-
-    internal var vtable = UniffiVTableCallbackInterfaceSpikeCallback.UniffiByValue(
-        uniffiFree,
-        uniffiClone,
-        `onProgress`,
-        `onFinished`,
-    )
-
-    // Registers the foreign callback with the Rust side.
-    // This method is generated for each callback interface.
-    internal fun register(lib: UniffiLib) {
-        lib.uniffi_aurora_core_fn_init_callback_vtable_spikecallback(vtable)
-    }
-}
-
-/**
- * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
- *
- * @suppress
- */
-public object FfiConverterTypeSpikeCallback: FfiConverterCallbackInterface<SpikeCallback>()
-
-
-
-
 /**
  * @suppress
  */
@@ -5276,17 +5152,6 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         
         FfiConverterString.lower(`topicId`),
         FfiConverterSequenceString.lower(`peopleIds`),_status)
-}
-    
-    
- fun `spikeAiChannel`(`url`: kotlin.String, `callback`: SpikeCallback)
-        = 
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_aurora_core_fn_func_spike_ai_channel(
-    
-        
-        FfiConverterString.lower(`url`),
-        FfiConverterTypeSpikeCallback.lower(`callback`),_status)
 }
     
     

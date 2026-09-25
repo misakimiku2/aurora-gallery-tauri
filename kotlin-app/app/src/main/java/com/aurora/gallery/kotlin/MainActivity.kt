@@ -1495,29 +1495,8 @@ class MainActivity : ComponentActivity() {
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
-        // 模拟器/Debug 构建：注册捏合注入广播（验证 FLIP 用，走生产回调链；Release 不注册）
-        if (isEmulator() || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
-            ContextCompat.registerReceiver(
-                this,
-                pinchDebugReceiver,
-                IntentFilter("aurora.debug.PINCH"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
-            ContextCompat.registerReceiver(
-                this,
-                ffiDebugReceiver,
-                IntentFilter("aurora.debug.FFI_SMOKE"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
-            ContextCompat.registerReceiver(
-                this,
-                fileOpDebugReceiver,
-                IntentFilter("aurora.debug.FILEOP"),
-                ContextCompat.RECEIVER_EXPORTED,
-            )
-            // M6b 收口销账：AI_SPIKE/AI_SMOKE 调试钩子随里程碑移除（M6b-1 登记），
-            // FFI_SMOKE/FILEOP/PINCH 属更早里程碑登记，归 M7 清理。
-        }
+        // M7 收口销账：FFI_SMOKE/FILEOP/PINCH 调试广播钩子随里程碑移除
+        // （曾登记「归 M7 清理」，M6a-8/M6b-8 LanSmoke/AiSmoke 同款先例）。
     }
 
     /** 4.2 分享：系统分享面板（多图 ACTION_SEND_MULTIPLE，content:// URI + 读授权）。 */
@@ -1567,75 +1546,6 @@ class MainActivity : ComponentActivity() {
         viewModel.stopMediaStoreObservation()
     }
 
-    /**
-     * 模拟器验证钩子：`adb shell am broadcast -a aurora.debug.PINCH --es scale 0.75`
-     * 触发一次完整的捏合手势（走生产回调链），scale<1 收拢 / >1 张开。
-     * `--es mode touch` 走合成双指 MotionEvent 的真实事件分发路径（含中途抬指/抖动）。
-     */
-    private val pinchDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val scale = intent.getStringExtra("scale")?.toFloatOrNull() ?: 0.75f
-            val steps = intent.getStringExtra("steps")?.toIntOrNull() ?: 12
-            val mode = intent.getStringExtra("mode") ?: "callback"
-            val seed = intent.getStringExtra("seed")?.toLongOrNull() ?: 42L
-            Log.i("AuroraKotlin", "[DebugPinch] inject mode=$mode scale=$scale steps=$steps seed=$seed")
-            val listener = PinchGridSpanListener.lastInstance?.get() ?: return
-            if (mode == "touch") listener.debugInjectTouchPinch(scale, steps, seed)
-            else listener.debugInjectPinch(scale, steps)
-        }
-    }
-
-    /**
-     * M4a 0.3 冒烟钩子：`adb shell am broadcast -a aurora.debug.FFI_SMOKE`
-     * 跑一遍 0.1 新导出的人物/专题/元数据读写（含「读不存在的行返回 null」的失败路径），
-     * 结果只进日志。nonce 用来确认日志确实出自本轮。
-     */
-    private val ffiDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            runFfiSmoke(intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString())
-        }
-    }
-
-    /**
-     * M4b 1.1 冒烟钩子：UI 入口（1.4/1.5）落地前用 adb 直接驱动写原语（含真实批量授权
-     * 弹窗），结果进日志 + Toast。uri 可用 `adb shell content query --uri
-     * content://media/external/images/media --projection _id,_display_name,relative_path` 取。
-     * ```
-     * adb shell am broadcast -a aurora.debug.FILEOP --es op move \
-     *   --es uris "content://media/external/images/media/1,content://media/external/images/media/2" \
-     *   --es target "Pictures/Dst"        # rename 另加 --es name renamed.jpg；copy 无需授权
-     * ```
-     */
-    private val fileOpDebugReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val op = intent.getStringExtra("op") ?: return
-            val uris = intent.getStringExtra("uris")
-                ?.split(',')
-                ?.mapNotNull { it.trim().takeIf(String::isNotEmpty) }
-                ?.map(Uri::parse)
-                .orEmpty()
-            val target = intent.getStringExtra("target").orEmpty()
-            Log.i("AuroraKotlin", "[DebugFileOp] op=$op uris=$uris target=$target")
-            val report: (String) -> Unit = { msg ->
-                Log.i("AuroraKotlin", "[DebugFileOp] $msg")
-                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-            }
-            when (op) {
-                "rename" -> {
-                    val name = intent.getStringExtra("name") ?: return
-                    val uri = uris.firstOrNull() ?: return
-                    requestWriteAccess(listOf(uri)) {
-                        viewModel.renameFiles(listOf(uri to name)) { n -> report("重命名完成 $n") }
-                    }
-                }
-                "move" -> requestWriteAccess(uris) {
-                    viewModel.moveFiles(uris, target) { n -> report("移动完成 $n") }
-                }
-                "copy" -> viewModel.copyFiles(uris, target) { n -> report("复制完成 $n") }
-            }
-        }
-    }
-
     /** M6b 阶段 2：通知「取消」action → core 取消注册表（生产接收器，常驻注册）。 */
     private val aiCancelReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -1653,16 +1563,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    /** 模拟器判定（调试广播钩子的注册门控；真机不注册）。 */
-    private fun isEmulator(): Boolean =
-        Build.FINGERPRINT.startsWith("generic") ||
-            Build.FINGERPRINT.startsWith("unknown") ||
-            Build.MODEL.contains("Emulator") ||
-            Build.MODEL.contains("Android SDK built for") ||
-            Build.HARDWARE.contains("goldfish") ||
-            Build.HARDWARE.contains("ranchu") ||
-            Build.PRODUCT.contains("sdk")
 
     /** 阶段 5：通知权限（API 33+ 运行时请求；拒绝则扫描通知静默不发，不影响功能）。 */
     private val notificationPermission = registerForActivityResult(

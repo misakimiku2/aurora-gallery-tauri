@@ -194,20 +194,6 @@ class PinchGridSpanListener(
     private var lastEventTime = -1L
     private var lastAction = -1
 
-    /** 当前未走完的注入链条（防重叠，见 [debugInjectPinch]）。 */
-    private var pendingInjection: Runnable? = null
-
-    /** 事件到达的 RecyclerView（调试注入用）。 */
-    private var rvRef: WeakReference<RecyclerView>? = null
-
-    /** 手势无关的 RV 引用（调试注入用）：[rvRef] 只在真实触摸事件经过 [handle] 时才赋值。 */
-    private var debugRvRef: WeakReference<RecyclerView>? = null
-
-    /** Debug 注入钩子：挂载时记录宿主 RV，使 [debugInjectPinch] 不依赖先发生过真实触摸。 */
-    internal fun debugAttachRv(rv: RecyclerView) {
-        debugRvRef = WeakReference(rv)
-    }
-
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             initialSpan = detector.currentSpan
@@ -261,7 +247,6 @@ class PinchGridSpanListener(
         if (event.eventTime == lastEventTime && event.actionMasked == lastAction) return
         lastEventTime = event.eventTime
         lastAction = event.actionMasked
-        rvRef = WeakReference(rv)
 
         scaleDetector.onTouchEvent(event)
 
@@ -300,152 +285,6 @@ class PinchGridSpanListener(
 
     companion object {
         private const val STEP_THRESHOLD = 1.08f
-
-        /** 最近挂载的捏合监听器（仅模拟器调试注入用，见 MainActivity 的 PINCH 广播）。 */
-        @JvmStatic
-        internal var lastInstance: WeakReference<PinchGridSpanListener>? = null
-            private set
-    }
-
-    init {
-        lastInstance = WeakReference(this)
-    }
-
-    /**
-     * **调试注入（合成双指触摸，走真实事件分发路径）**：构造两指 MotionEvent 逐帧
-     * `dispatchTouchEvent` 给 RV——与 [debugInjectPinch] 直接调生产回调不同，这条路径
-     * 经过 OnItemTouchListener / ScaleGestureDetector / 多指接管 / stopScroll 的完整
-     * 真实逻辑，并带随机抖动与「中途抬指→再落指」（真实手指常见，直接回调注入
-     * 覆盖不到），用于复现真实手势才出现的预览闪烁。
-     *
-     * @param targetScale 末跨度 / 起始跨度，<1 收拢（列数变多）、>1 张开
-     */
-    fun debugInjectTouchPinch(targetScale: Float, frames: Int = 55, seed: Long = 42) {
-        val rv = rvRef?.get() ?: debugRvRef?.get() ?: return
-        val w = rv.width.toFloat()
-        val h = rv.height.toFloat()
-        val d0 = minOf(w, h) * 0.5f
-        val d1 = d0 * targetScale
-        val rnd = java.util.Random(seed)
-
-        /** 第 frame 帧时两指坐标（focus 缓慢漂移 + 每帧随机抖动 → scale 非单调）。 */
-        fun pts(frame: Int, twoFingers: Boolean): List<Pair<Float, Float>> {
-            val frac = frame.toFloat() / frames
-            val d = d0 + (d1 - d0) * frac
-            val cx = w / 2f + 40f * frac
-            val cy = h / 2f + 24f * (1f - frac)
-            val jx = (rnd.nextFloat() - 0.5f) * 14f
-            val jy = (rnd.nextFloat() - 0.5f) * 14f
-            val p1 = Pair(cx - d / 2 + jx, cy + jy)
-            return if (twoFingers) {
-                val p2 = Pair(cx + d / 2 - jx, cy - jy * 0.6f)
-                listOf(p1, p2)
-            } else listOf(p1)
-        }
-
-        fun mev(
-            action: Int,
-            pts: List<Pair<Float, Float>>,
-            ids: IntArray,
-            downTime: Long,
-        ): MotionEvent {
-            val props = arrayOfNulls<MotionEvent.PointerProperties>(pts.size)
-            val coords = arrayOfNulls<MotionEvent.PointerCoords>(pts.size)
-            for (i in pts.indices) {
-                props[i] = MotionEvent.PointerProperties().apply {
-                    id = ids[i]
-                    toolType = MotionEvent.TOOL_TYPE_FINGER
-                }
-                coords[i] = MotionEvent.PointerCoords().apply {
-                    x = pts[i].first
-                    y = pts[i].second
-                    pressure = 1f
-                    size = 1f
-                }
-            }
-            return MotionEvent.obtain(
-                downTime, android.os.SystemClock.uptimeMillis(), action, pts.size, props, coords,
-                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
-            )
-        }
-
-        val downTime = android.os.SystemClock.uptimeMillis()
-        val liftFrame = (frames * 0.55f).toInt() // 中途抬指再落指的帧
-        fun at(frame: Int, block: () -> Unit) {
-            rv.postDelayed({ block() }, frame * 16L)
-        }
-
-        at(0) { rv.dispatchTouchEvent(mev(MotionEvent.ACTION_DOWN, pts(0, false), intArrayOf(0), downTime)) }
-        at(1) {
-            val p = pts(1, true)
-            rv.dispatchTouchEvent(
-                mev((1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_DOWN, p, intArrayOf(0, 1), downTime),
-            )
-        }
-        for (f in 2..frames) {
-            at(f) {
-                val two = f % liftFrame != 0 // liftFrame 那帧只留单指（模拟中途抬指）
-                val alive = if (two) intArrayOf(0, 1) else intArrayOf(0)
-                var action = MotionEvent.ACTION_MOVE
-                var ids = alive
-                var list = pts(f, two)
-                if (f == liftFrame - 1 && liftFrame in 3 until frames) {
-                    // 抬起第二指：POINTER_UP（actionIndex=1）
-                    list = pts(f, true)
-                    ids = intArrayOf(0, 1)
-                    action = (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_UP
-                } else if (f == liftFrame + 1 && liftFrame in 3 until frames - 2) {
-                    // 第二指重新落下
-                    list = pts(f, true)
-                    ids = intArrayOf(0, 1)
-                    action = (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_DOWN
-                }
-                rv.dispatchTouchEvent(mev(action, list, ids, downTime))
-            }
-        }
-        at(frames + 1) {
-            val p = pts(frames + 1, true)
-            rv.dispatchTouchEvent(
-                mev((1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_UP, p, intArrayOf(0, 1), downTime),
-            )
-        }
-        at(frames + 2) {
-            rv.dispatchTouchEvent(mev(MotionEvent.ACTION_UP, pts(frames + 2, false), intArrayOf(0), downTime))
-        }
-    }
-
-    /**
-     * **调试注入**（仅模拟器验证用）：不走真实触摸，按 [stepDelayMs] 间隔驱动生产捏合回调，
-     * 从 1.0 线性缩放到 [targetScale] 后松手。scale < 1 收拢（列数变多），> 1 张开（列数变少）。
-     *
-     * 每步的实际耗时可能超过 [stepDelayMs]（预览插值要 measure/layout 全部可见 child），
-     * 用 [pendingInjection] 摘掉上一条未走完的链条，防止两次注入的 start/end 交叠——
-     * 滞后的 onPinchEnd 会把新手势中途 settle 掉（真实手指不可能产生这种重叠）。
-     */
-    fun debugInjectPinch(targetScale: Float, steps: Int = 12, stepDelayMs: Long = 16) {
-        val rv = rvRef?.get() ?: debugRvRef?.get() ?: return
-        // 真实双指手势会在第二指落下时 stopScroll；注入路径也要刹停，否则惯性滚动
-        // 会让 begin() 记录的锚点位置在预览期间失效。
-        rv.stopScroll()
-        rv.removeCallbacks(pendingInjection)
-        initialSpan = 1000f
-        onPinchStart(0f, 0f)
-        var i = 1
-        val step = object : Runnable {
-            override fun run() {
-                if (i > steps) {
-                    onPinchEnd(targetScale)
-                    initialSpan = 0f
-                    return
-                }
-                val s = 1f + (targetScale - 1f) * i / steps
-                onPinchProgress(s, 0f, 0f)
-                i++
-                rv.postDelayed(this, stepDelayMs)
-            }
-        }
-        pendingInjection = step
-        rv.postDelayed(step, stepDelayMs)
     }
 }
 

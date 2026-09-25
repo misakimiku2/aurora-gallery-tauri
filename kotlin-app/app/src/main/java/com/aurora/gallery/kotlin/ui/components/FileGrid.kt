@@ -669,7 +669,6 @@ fun FileGrid(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
-                pinch.debugAttachRv(this)
             }.also { rv ->
                 // 4.4 下拉刷新：注册在捏合监听器之后——多指事件捏合先拦，轮不到下拉；
                 // 单指顶部下拉捏合监听器放行，由这里接管（见 PullToRefreshListener）

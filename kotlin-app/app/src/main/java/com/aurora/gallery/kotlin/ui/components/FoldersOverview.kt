@@ -371,9 +371,6 @@ fun FoldersOverview(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
-                // 模拟器/Debug 注入钩子（2026-09-17 补）：此前只有 FileGrid 挂了它，
-                // 总览页 PINCH 广播是空操作，捏合问题只能真机验证
-                pinch.debugAttachRv(this)
                 // 首次布局完成补写量宽 state，强制 update 重跑（update 可能在布局前跑、
                 // width=0 提前返回；教训见 FileGrid factory 的同款注释）
                 doOnLayout { view ->
