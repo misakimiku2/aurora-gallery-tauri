@@ -838,7 +838,7 @@ private fun SearchPill(
 ) {
     val colors = AuroraTheme.colors
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } } // 挂载竞态：BasicTextField 未及挂 modifier 时 requestFocus 会炸（实测崩溃 TopBar.kt:841），吞掉即可——用户点输入框仍能手动聚焦
     Row(
         modifier = Modifier
             // 平板横屏不撑满中栏，对齐 React 桌面搜索框的 `min(100%, 500px)` 封顶

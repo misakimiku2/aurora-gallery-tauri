@@ -2065,11 +2065,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 .map { lanImageOf(session, it) }
         } else if (folderId == LAN_SEARCH_FOLDER_ID) {
             // M6b 阶段 5：搜索结果虚拟目录（D36）。lanSearchHits 是 Pair(path, score)，
-            // 按 score 降序对齐 [lanLibraryImages]；缓存里没有的 path 跳过（本会话没
-            // 浏览过该目录就没有缩略图数据，React 全量展示的口径差异已登记）。
+            // 按 score 降序；缓存没有的命中 path 构造最小条目补进会话缓存（搜索是全库
+            // 语义，不能被「先浏览过来源目录」绑架；缩略图 URL 只依赖 path+token）。
             val library = lanLibraryImages.value
+            val missing = lanSearchHits.value.orEmpty().map { it.first }.filter { it !in library }
+            if (missing.isNotEmpty()) {
+                val patched = library.toMutableMap()
+                missing.forEach { p ->
+                    patched[p] = LanRemoteImage(
+                        name = p.substringAfterLast('/'),
+                        path = p,
+                        type = "image",
+                        size = 0,
+                    )
+                }
+                lanLibraryImages.value = patched
+            }
+            val patchedLibrary = lanLibraryImages.value
             lanSearchHits.value.orEmpty()
-                .mapNotNull { hit -> library[hit.first]?.let { hit.second to it } }
+                .mapNotNull { hit -> patchedLibrary[hit.first]?.let { hit.second to it } }
                 .sortedByDescending { it.first }
                 .map { lanImageOf(session, it.second) }
         } else if (folderId.lanPersonIdOrNull() != null || folderId.lanTopicIdOrNull() != null) {
@@ -2077,8 +2091,26 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             // openLanPersonFilter / openLanTopicFilter 进入时已把成员 path 集拉进
             // [pendingMemberPaths]；这里纯内存过滤（同 tag 分支形制，不发元数据批读），
             // 集缺失/过期（进程重建、回导航串台）时 [lanMemberPaths] 按 folderId 重拉端点。
-            lanMemberPaths(folderId)
-                .mapNotNull { lanLibraryImages.value[it] }
+            // 缓存没有的成员 path（本会话没浏览过该目录）构造最小条目补进会话缓存——
+            // 成员筛选是全库语义，不能被「先浏览过来源目录」绑架；缩略图/大图 URL 机制
+            // 只依赖 path+token，最小条目照常出图；元数据（标签）由抽屉打开时的既有
+            // 批读兜底。
+            val memberPaths = lanMemberPaths(folderId)
+            val library = lanLibraryImages.value
+            val missing = memberPaths.filter { it !in library }
+            if (missing.isNotEmpty()) {
+                val patched = library.toMutableMap()
+                missing.forEach { p ->
+                    patched[p] = LanRemoteImage(
+                        name = p.substringAfterLast('/'),
+                        path = p,
+                        type = "image",
+                        size = 0,
+                    )
+                }
+                lanLibraryImages.value = patched
+            }
+            memberPaths.mapNotNull { lanLibraryImages.value[it] }
                 .map { lanImageOf(session, it) }
         } else {
             val remotePath = folderId.lanRemotePathOrNull() ?: return
