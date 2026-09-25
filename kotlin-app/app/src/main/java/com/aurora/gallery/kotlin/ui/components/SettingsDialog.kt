@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -33,6 +34,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -104,7 +106,7 @@ import kotlinx.coroutines.launch
  * （渐变底 + logo + 版本/稳定版徽标）、技术栈版本三卡、相关链接两卡、致谢页脚。
  */
 @Composable
-fun SettingsHost(
+internal fun SettingsHost(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
@@ -128,6 +130,20 @@ fun SettingsHost(
     onOpenUrl: (String) -> Unit,
     /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
     onAiSettingsChange: (AiSettings) -> Unit,
+    // —— M6b 阶段 3：主色调数据库面板（全部带默认值，MainActivity 稍后接线）——
+    colorStats: ColorDbStatsUi? = null,
+    colorTask: ColorTaskState? = null,
+    colorErrorCount: Int = 0,
+    autoExtractPalette: Boolean = false,
+    onStartColorExtract: () -> Unit = {},
+    onPauseColorExtract: () -> Unit = {},
+    onResumeColorExtract: () -> Unit = {},
+    onCancelColorExtract: () -> Unit = {},
+    onRetryColorErrors: () -> Unit = {},
+    onDeleteColorErrors: () -> Unit = {},
+    onCleanupColorRecords: () -> Unit = {},
+    onAutoExtractChange: (Boolean) -> Unit = {},
+    onRefreshColorPanel: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     // 平板形态需宽高都够：横屏手机（宽 ≥600 但高仅 ~411dp）放不下双栏对话框
@@ -152,6 +168,19 @@ fun SettingsHost(
             onImportBackup = onImportBackup,
             onOpenUrl = onOpenUrl,
             onAiSettingsChange = onAiSettingsChange,
+            colorStats = colorStats,
+            colorTask = colorTask,
+            colorErrorCount = colorErrorCount,
+            autoExtractPalette = autoExtractPalette,
+            onStartColorExtract = onStartColorExtract,
+            onPauseColorExtract = onPauseColorExtract,
+            onResumeColorExtract = onResumeColorExtract,
+            onCancelColorExtract = onCancelColorExtract,
+            onRetryColorErrors = onRetryColorErrors,
+            onDeleteColorErrors = onDeleteColorErrors,
+            onCleanupColorRecords = onCleanupColorRecords,
+            onAutoExtractChange = onAutoExtractChange,
+            onRefreshColorPanel = onRefreshColorPanel,
             onDismiss = onDismiss,
         )
     } else {
@@ -172,6 +201,19 @@ fun SettingsHost(
             onImportBackup = onImportBackup,
             onOpenUrl = onOpenUrl,
             onAiSettingsChange = onAiSettingsChange,
+            colorStats = colorStats,
+            colorTask = colorTask,
+            colorErrorCount = colorErrorCount,
+            autoExtractPalette = autoExtractPalette,
+            onStartColorExtract = onStartColorExtract,
+            onPauseColorExtract = onPauseColorExtract,
+            onResumeColorExtract = onResumeColorExtract,
+            onCancelColorExtract = onCancelColorExtract,
+            onRetryColorErrors = onRetryColorErrors,
+            onDeleteColorErrors = onDeleteColorErrors,
+            onCleanupColorRecords = onCleanupColorRecords,
+            onAutoExtractChange = onAutoExtractChange,
+            onRefreshColorPanel = onRefreshColorPanel,
             onDismiss = onDismiss,
         )
     }
@@ -221,6 +263,20 @@ private fun CategoryContent(
     onOpenUrl: (String) -> Unit,
     /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
     onAiSettingsChange: (AiSettings) -> Unit,
+    // —— M6b 阶段 3：主色调数据库面板（全部带默认值）——
+    colorStats: ColorDbStatsUi? = null,
+    colorTask: ColorTaskState? = null,
+    colorErrorCount: Int = 0,
+    autoExtractPalette: Boolean = false,
+    onStartColorExtract: () -> Unit = {},
+    onPauseColorExtract: () -> Unit = {},
+    onResumeColorExtract: () -> Unit = {},
+    onCancelColorExtract: () -> Unit = {},
+    onRetryColorErrors: () -> Unit = {},
+    onDeleteColorErrors: () -> Unit = {},
+    onCleanupColorRecords: () -> Unit = {},
+    onAutoExtractChange: (Boolean) -> Unit = {},
+    onRefreshColorPanel: () -> Unit = {},
 ) {
     if (SettingsCategory.GENERAL in categories) {
         GeneralContent(
@@ -240,6 +296,19 @@ private fun CategoryContent(
             onClearCache = onClearCache,
             onExportBackup = onExportBackup,
             onImportBackup = onImportBackup,
+            colorStats = colorStats,
+            colorTask = colorTask,
+            colorErrorCount = colorErrorCount,
+            autoExtractPalette = autoExtractPalette,
+            onStartColorExtract = onStartColorExtract,
+            onPauseColorExtract = onPauseColorExtract,
+            onResumeColorExtract = onResumeColorExtract,
+            onCancelColorExtract = onCancelColorExtract,
+            onRetryColorErrors = onRetryColorErrors,
+            onDeleteColorErrors = onDeleteColorErrors,
+            onCleanupColorRecords = onCleanupColorRecords,
+            onAutoExtractChange = onAutoExtractChange,
+            onRefreshColorPanel = onRefreshColorPanel,
         )
     }
     if (SettingsCategory.AI in categories) {
@@ -1094,7 +1163,16 @@ private fun GeneralContent(
     }
 }
 
-/** 存储类：缓存清理（M4b 能力换新形制）+ 主色调数据库占位（M6 颜色链路）+ 数据备份。 */
+/**
+ * M6b 阶段 3：主色调数据库统计快照（UI 只读）。字段与 GalleryViewModel 的同名嵌套类一致；
+ * internal 以便 MainActivity 挂载 SettingsHost 时构造实例传入（VM 侧类型由主线程适配）。
+ */
+internal data class ColorDbStatsUi(val total: Int, val pending: Int, val extracted: Int, val error: Int)
+
+/** M6b 阶段 3：主色调提取任务快照（null = 当前无任务在跑）。字段约定同 [ColorDbStatsUi]。 */
+internal data class ColorTaskState(val current: Int, val total: Int, val paused: Boolean)
+
+/** 存储类：缓存清理（M4b 能力换新形制）+ 主色调数据库（M6b 阶段 3，对齐桌面 StoragePanel）+ 数据备份。 */
 @Composable
 private fun StorageContent(
     cacheSizeText: String,
@@ -1102,7 +1180,24 @@ private fun StorageContent(
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
+    colorStats: ColorDbStatsUi? = null,
+    colorTask: ColorTaskState? = null,
+    colorErrorCount: Int = 0,
+    autoExtractPalette: Boolean = false,
+    onStartColorExtract: () -> Unit = {},
+    onPauseColorExtract: () -> Unit = {},
+    onResumeColorExtract: () -> Unit = {},
+    onCancelColorExtract: () -> Unit = {},
+    onRetryColorErrors: () -> Unit = {},
+    onDeleteColorErrors: () -> Unit = {},
+    onCleanupColorRecords: () -> Unit = {},
+    onAutoExtractChange: (Boolean) -> Unit = {},
+    onRefreshColorPanel: () -> Unit = {},
 ) {
+    val colors = AuroraTheme.colors
+    // 面板打开即拉统计 + 错误列表（VM 侧含清理残留记录语义）
+    LaunchedEffect(Unit) { onRefreshColorPanel() }
+
     if (includeSectionHeaders) {
         SettingsSection("存储")
     } else {
@@ -1115,10 +1210,94 @@ private fun StorageContent(
     }
 
     SettingsSection("主色调数据库", icon = IconDatabase)
-    SettingsPlaceholderCard(
-        icon = IconPalette,
-        title = "主色调提取与数据库管理",
-        description = "将随 M6b 提供：提取任务控制 / 统计与状态分布 / 错误文件管理",
+
+    // 统计卡：已提取 / 待处理 / 错误三格（数字 16sp SemiBold + 11sp 灰字标签，权重均分；
+    // 对齐桌面 StoragePanel 的统计卡片）
+    SettingsCard {
+        val stats = colorStats
+        if (stats == null) {
+            Text(
+                "加载中…",
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 14.dp),
+            )
+        } else {
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                ColorStatCell(label = "已提取", count = stats.extracted)
+                ColorStatCell(label = "待处理", count = stats.pending)
+                ColorStatCell(label = "错误", count = stats.error, danger = stats.error > 0)
+            }
+        }
+    }
+
+    // 自动提取开关卡（形制照抄 AiContent 任务开关卡）
+    SettingsCard {
+        SettingsRow("浏览时自动提取主色调", "打开查看器时自动为新图片提取") {
+            Switch(checked = autoExtractPalette, onCheckedChange = onAutoExtractChange)
+        }
+    }
+
+    // 提取任务卡：无任务=开始提取（空库禁用）；任务中=暂停/恢复 + 取消，底部进度条
+    SettingsCard {
+        val task = colorTask
+        val stats = colorStats
+        SettingsRow(
+            label = "主色调提取",
+            value = if (task != null) {
+                "${task.current}/${task.total}"
+            } else {
+                "共 ${stats?.total ?: 0} 条记录"
+            },
+        ) {
+            if (task == null) {
+                SettingsAction("开始提取", enabled = stats?.total != 0, onClick = onStartColorExtract)
+                if (stats != null && stats.pending > 0) {
+                    Text(
+                        "有待处理图片",
+                        fontSize = 11.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            } else if (task.paused) {
+                SettingsAction("恢复", onClick = onResumeColorExtract)
+                Spacer(Modifier.size(4.dp))
+                SettingsAction("取消", onClick = onCancelColorExtract)
+            } else {
+                SettingsAction("暂停", onClick = onPauseColorExtract)
+                Spacer(Modifier.size(4.dp))
+                SettingsAction("取消", onClick = onCancelColorExtract)
+            }
+        }
+        if (task != null && task.total > 0) {
+            LinearProgressIndicator(
+                progress = { (task.current.toFloat() / task.total.toFloat()).coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+            )
+        }
+    }
+
+    // 错误文件管理卡：重试=重新入队 / 删除=移除记录 / 清理=清掉磁盘上已不存在的路径记录
+    //（沿用桌面语义）
+    SettingsCard {
+        SettingsRow(label = "错误文件", value = "$colorErrorCount 个") {
+            SettingsAction("重试", enabled = colorErrorCount > 0, onClick = onRetryColorErrors)
+            Spacer(Modifier.size(4.dp))
+            SettingsAction("删除", enabled = colorErrorCount > 0, onClick = onDeleteColorErrors)
+            Spacer(Modifier.size(4.dp))
+            SettingsAction("清理", onClick = onCleanupColorRecords)
+        }
+    }
+    Text(
+        "错误文件无法提取主色调（损坏或不支持的格式），可重试或删除记录",
+        fontSize = 11.sp,
+        color = colors.textSecondary,
+        modifier = Modifier.padding(top = 6.dp, start = 4.dp),
     )
 
     SettingsSection("数据备份")
@@ -1128,6 +1307,32 @@ private fun StorageContent(
             Spacer(Modifier.size(4.dp))
             SettingsAction("导入", onClick = onImportBackup)
         }
+    }
+}
+
+/**
+ * 主色调统计三格中的一格（数字 16sp SemiBold + 下方 11sp 灰字标签，权重均分；
+ * [danger] 时数字用危险色——沿用 LanContent 的 `colors.palette.danger` 字面色用法）。
+ */
+@Composable
+private fun RowScope.ColorStatCell(label: String, count: Int, danger: Boolean = false) {
+    val colors = AuroraTheme.colors
+    Column(
+        Modifier.weight(1f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            "$count",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (danger) Color(colors.palette.danger) else colors.textPrimary,
+        )
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = colors.textSecondary,
+            modifier = Modifier.padding(top = 2.dp),
+        )
     }
 }
 
@@ -1304,6 +1509,20 @@ private fun SettingsTabletDialog(
     onOpenUrl: (String) -> Unit,
     /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
     onAiSettingsChange: (AiSettings) -> Unit,
+    // —— M6b 阶段 3：主色调数据库面板（全部带默认值）——
+    colorStats: ColorDbStatsUi? = null,
+    colorTask: ColorTaskState? = null,
+    colorErrorCount: Int = 0,
+    autoExtractPalette: Boolean = false,
+    onStartColorExtract: () -> Unit = {},
+    onPauseColorExtract: () -> Unit = {},
+    onResumeColorExtract: () -> Unit = {},
+    onCancelColorExtract: () -> Unit = {},
+    onRetryColorErrors: () -> Unit = {},
+    onDeleteColorErrors: () -> Unit = {},
+    onCleanupColorRecords: () -> Unit = {},
+    onAutoExtractChange: (Boolean) -> Unit = {},
+    onRefreshColorPanel: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     var current by remember { mutableStateOf(SettingsCategory.GENERAL) }
@@ -1415,6 +1634,19 @@ private fun SettingsTabletDialog(
                         onImportBackup = onImportBackup,
                         onOpenUrl = onOpenUrl,
                         onAiSettingsChange = onAiSettingsChange,
+                        colorStats = colorStats,
+                        colorTask = colorTask,
+                        colorErrorCount = colorErrorCount,
+                        autoExtractPalette = autoExtractPalette,
+                        onStartColorExtract = onStartColorExtract,
+                        onPauseColorExtract = onPauseColorExtract,
+                        onResumeColorExtract = onResumeColorExtract,
+                        onCancelColorExtract = onCancelColorExtract,
+                        onRetryColorErrors = onRetryColorErrors,
+                        onDeleteColorErrors = onDeleteColorErrors,
+                        onCleanupColorRecords = onCleanupColorRecords,
+                        onAutoExtractChange = onAutoExtractChange,
+                        onRefreshColorPanel = onRefreshColorPanel,
                     )
                 }
             }
@@ -1444,6 +1676,20 @@ private fun SettingsPhonePage(
     onOpenUrl: (String) -> Unit,
     /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
     onAiSettingsChange: (AiSettings) -> Unit,
+    // —— M6b 阶段 3：主色调数据库面板（全部带默认值）——
+    colorStats: ColorDbStatsUi? = null,
+    colorTask: ColorTaskState? = null,
+    colorErrorCount: Int = 0,
+    autoExtractPalette: Boolean = false,
+    onStartColorExtract: () -> Unit = {},
+    onPauseColorExtract: () -> Unit = {},
+    onResumeColorExtract: () -> Unit = {},
+    onCancelColorExtract: () -> Unit = {},
+    onRetryColorErrors: () -> Unit = {},
+    onDeleteColorErrors: () -> Unit = {},
+    onCleanupColorRecords: () -> Unit = {},
+    onAutoExtractChange: (Boolean) -> Unit = {},
+    onRefreshColorPanel: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
@@ -1563,6 +1809,19 @@ private fun SettingsPhonePage(
                         onImportBackup = onImportBackup,
                         onOpenUrl = onOpenUrl,
                         onAiSettingsChange = onAiSettingsChange,
+                        colorStats = colorStats,
+                        colorTask = colorTask,
+                        colorErrorCount = colorErrorCount,
+                        autoExtractPalette = autoExtractPalette,
+                        onStartColorExtract = onStartColorExtract,
+                        onPauseColorExtract = onPauseColorExtract,
+                        onResumeColorExtract = onResumeColorExtract,
+                        onCancelColorExtract = onCancelColorExtract,
+                        onRetryColorErrors = onRetryColorErrors,
+                        onDeleteColorErrors = onDeleteColorErrors,
+                        onCleanupColorRecords = onCleanupColorRecords,
+                        onAutoExtractChange = onAutoExtractChange,
+                        onRefreshColorPanel = onRefreshColorPanel,
                     )
                 }
             }

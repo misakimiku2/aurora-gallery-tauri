@@ -51,17 +51,36 @@ fun ViewerLayerHost(
      * 目录 browse 尾随同步，宿主读 mutableState 的最新值传入。
      */
     lanAllowEdit: Boolean = false,
+    /**
+     * file_id → 主色调 hex 列表（M6b 阶段 3）：[GalleryViewModel.colorPalettesById] 快照，
+     * 本地项抽屉 Section 4 的预填源（LAN 项恒空，[toViewerItem] 内分支）。remember key
+     * 之一——提取成功增量写入后重组，但 `open()` 不重跑，打开中的查看器靠宿主
+     * `updateItem` 单项回填。
+     */
+    colorPalettesById: Map<String, List<String>> = emptyMap(),
+    /**
+     * 浏览时自动提取主色调开关（M6b 阶段 3）：随组合推进查看器实例（lanAllowEdit 同款
+     * 先例），抽屉的 loading/按钮显示态由查看器现读。
+     */
+    autoExtractPalette: Boolean = false,
 ) {
     val fileId = state.activeTab.viewingFileId ?: return
     val viewer = remember { viewerProvider() }
-    val items = remember(displayImages, parentName, tagsByFile, metadataById, lanMetaById, lanImageUrlOf) {
+    val items = remember(displayImages, parentName, tagsByFile, metadataById, lanMetaById, lanImageUrlOf, colorPalettesById) {
         displayImages.map { img ->
             // 显式 isLan 分支：远端项的元数据只喂 lanMetaById（fileId=远端 path），本地
             // 快照两参一律不传——不是靠「key 不撞」的运气，是结构上就不读（D31 铁律）。
             if (img.contentUri.startsWith("http")) {
                 img.toViewerItem(parentName, emptyList(), null, lanMetaById[img.id], lanImageUrlOf)
             } else {
-                img.toViewerItem(parentName, tagsByFile[img.id].orEmpty(), metadataById[img.id], null, lanImageUrlOf)
+                img.toViewerItem(
+                    parentName,
+                    tagsByFile[img.id].orEmpty(),
+                    metadataById[img.id],
+                    null,
+                    lanImageUrlOf,
+                    colorPalettesById[img.id].orEmpty(),
+                )
             }
         }
     }
@@ -71,6 +90,7 @@ fun ViewerLayerHost(
         items = items,
         startIndex = startIndex,
         lanAllowEdit = lanAllowEdit,
+        autoExtractPalette = autoExtractPalette,
         onRequestClose = { state.closeViewer() },
     )
 }
@@ -92,6 +112,8 @@ fun NativeViewerLayer(
     startIndex: Int,
     /** LAN 编辑门禁位（M6a 阶段 6）：同步到查看器实例，删除入口的显隐在现读时生效。 */
     lanAllowEdit: Boolean = false,
+    /** 浏览时自动提取主色调开关（M6b 阶段 3）：抽屉 loading/按钮态由查看器现读。 */
+    autoExtractPalette: Boolean = false,
     onRequestClose: () -> Unit,
 ) {
     AndroidView(
@@ -103,6 +125,7 @@ fun NativeViewerLayer(
     val latestClose by rememberUpdatedState(onRequestClose)
     // 门禁位推进查看器实例（key = 值本身：浏览中门禁变化也即时生效，菜单构建时现读）
     LaunchedEffect(lanAllowEdit) { viewer.lanAllowEdit = lanAllowEdit }
+    LaunchedEffect(autoExtractPalette) { viewer.autoExtractPalette = autoExtractPalette }
     LaunchedEffect(Unit) { viewer.open(latestItems, latestStart, viewerOptions) }
     // 查看器自己实现了 dispatchKeyEvent（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层消化；
     // 这条 BackHandler 是拿不到焦点时的兜底，兜底也要走同一把梯子，否则会一次 back 关掉整个查看器。

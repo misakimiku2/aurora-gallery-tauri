@@ -100,6 +100,8 @@ import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
 import com.aurora.gallery.kotlin.ui.components.GroupBy
+import com.aurora.gallery.kotlin.ui.components.ColorDbStatsUi as PanelColorStats
+import com.aurora.gallery.kotlin.ui.components.ColorTaskState as PanelColorTask
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
@@ -591,9 +593,13 @@ class MainActivity : ComponentActivity() {
         /**
          * 3.3：翻页跟到当前这张。不回写的话转屏重建 Activity 后会回到「进入时那张」，
          * 而不是用户正在看的那张。
+         * M6b 阶段 3：自动提取触发点——开关开且当前图未提取（缓存无记录）时后台提取，
+         * 成败都经 [applyPaletteResult] 回填（成功塞色块、失败置手动重试按钮），无 Toast。
          */
         override fun onNavigate(index: Int) {
-            view.fileIdAt(index)?.let { viewModel.appState.viewerNavigated(it) }
+            val fileId = view.fileIdAt(index) ?: return
+            viewModel.appState.viewerNavigated(fileId)
+            maybeAutoExtractPalette(fileId)
         }
 
         /** 3.3：沉浸是纯系统 UI 控制，M3 就做。 */
@@ -712,8 +718,15 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M6")
-        override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
+        override fun onColorSearch(colorHex: String) {
+            viewModel.startColorSearch(colorHex)
+        }
+
+        override fun onExtractPalette(fileId: String, filePath: String) {
+            viewModel.extractPalette(fileId, filePath) { hexes ->
+                applyPaletteResult(fileId, hexes, silent = false)
+            }
+        }
 
         /** M6b 阶段 2：查看器「更多 → AI 分析」（本地项；LAN 项菜单不出现该条）。 */
         override fun onAiAnalyze(fileId: String) {
@@ -821,6 +834,45 @@ class MainActivity : ComponentActivity() {
     /** 未落地能力的可见占位（M3 3.3：静默无响应在真机上会被当成 bug 报回来）。 */
     private fun toastSoon(feature: String, milestone: String) {
         Toast.makeText(this, "$feature 将随 $milestone 提供", Toast.LENGTH_SHORT).show()
+    }
+
+    // —— M6b 阶段 3：主色调提取回填与自动提取 ——
+
+    /**
+     * 自动提取的守门：开关开 + 颜色缓存无记录 + 本地 content URI（LAN 项的颜色键
+     * 不存在，Section 4 已在查看器侧隐藏，这里只是兜底）。静默模式：失败只置
+     * paletteLoadFailed 让抽屉退回手动按钮，不弹 Toast。
+     */
+    private fun maybeAutoExtractPalette(fileId: String) {
+        if (!viewModel.settings.value.autoExtractPalette) return
+        if (viewModel.colorPalettesById.value.containsKey(fileId)) return
+        val uri = contentUriOf(fileId) ?: return
+        if (!uri.startsWith("content:")) return
+        viewModel.extractPalette(fileId, uri) { hexes ->
+            applyPaletteResult(fileId, hexes, silent = true)
+        }
+    }
+
+    /** 查看器当前序列可能的三个数据源里找 contentUri（普通视图/颜色搜索/AI 搜索命中序列）。 */
+    private fun contentUriOf(fileId: String): String? =
+        viewModel.images.value.firstOrNull { it.id == fileId }?.contentUri
+            ?: viewModel.colorSearchResultImages.value.firstOrNull { it.id == fileId }?.contentUri
+            ?: viewModel.aiSearchResultImages.value?.firstOrNull { it.id == fileId }?.contentUri
+
+    /**
+     * 提取结果回填查看器（手动与自动共用）：成功塞 palette（抽屉清 loading 显示色块），
+     * 失败置 paletteLoadFailed（自动提取退回「提取主色调」按钮，手动加 Toast）。
+     */
+    private fun applyPaletteResult(fileId: String, hexes: List<String>?, silent: Boolean) {
+        val view = viewer ?: return
+        val json = org.json.JSONObject()
+        if (hexes != null) {
+            json.put("palette", org.json.JSONArray(hexes))
+        } else {
+            json.put("paletteLoadFailed", true)
+            if (!silent) Toast.makeText(this, "主色调提取失败", Toast.LENGTH_SHORT).show()
+        }
+        view.updateItem(fileId, json)
     }
 
     /**
@@ -966,9 +1018,16 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(tab.viewMode, tab.folderId, tab.activeTags, tab.activeTopicId) {
                     viewModel.reloadImages()
                 }
+                // M6b 阶段 3：颜色库暖缓存（启动一次批读全库已提取主色调，抽屉色块预填）
+                LaunchedEffect(Unit) {
+                    viewModel.refreshPaletteCache()
+                }
                 // M6b 阶段 2：AI 搜索态清理——清词/关搜索即弃命中集，回到普通文本过滤
                 LaunchedEffect(tab.searchQuery) {
-                    if (tab.searchQuery.isBlank()) viewModel.clearAiSearch()
+                    if (tab.searchQuery.isBlank()) {
+                        viewModel.clearAiSearch()
+                        viewModel.clearColorSearch()
+                    }
                 }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
                 // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）。M4b 阶段 3 起
@@ -976,18 +1035,24 @@ class MainActivity : ComponentActivity() {
                 val currentFolderName = appState.activeTab.folderId?.let { id ->
                     viewModel.folders.value.firstOrNull { it.id == id }?.name
                 }.orEmpty()
-                // M6b 阶段 2：AI 搜索态的数据源切换——全库命中序列顶替当前文件夹序列
+                // M6b 阶段 2/3：AI 搜索或颜色搜索的命中集数据源切换——全库命中序列顶替
+                // 当前文件夹序列（两者互斥，VM 内发起一方即清另一方）。
                 val aiSearchActive = viewModel.aiSearchIds.value != null
+                val colorSearchActive = viewModel.colorSearchIds.value != null
                 val displayImages = rememberDisplayImages(
-                    if (aiSearchActive) viewModel.aiSearchResultImages.value.orEmpty() else viewModel.images.value,
+                    when {
+                        aiSearchActive -> viewModel.aiSearchResultImages.value.orEmpty()
+                        colorSearchActive -> viewModel.colorSearchResultImages.value
+                        else -> viewModel.images.value
+                    },
                     appState.activeTab,
                     appState.sortBy,
                     appState.sortDirection,
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
                     viewFolderName = currentFolderName,
-                    // M6b 阶段 2：AI 搜索命中集（null=普通过滤；非 null=只显示命中集）
-                    aiFilterIds = viewModel.aiSearchIds.value,
+                    // M6b 阶段 2/3：AI 命中集与颜色命中集共用同一过滤分支（null=普通过滤）
+                    aiFilterIds = viewModel.aiSearchIds.value ?: viewModel.colorSearchIds.value,
                 )
                 Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
@@ -1304,8 +1369,17 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                         ),
+                        // M6b 阶段 3：颜色搜索（TopBar 取色入口与查看器色块共用一态）
+                        colorSearchHex = viewModel.colorSearchHex.value,
+                        onColorSearch = { hex -> viewModel.startColorSearch(hex) },
+                        onClearColorSearch = { viewModel.clearColorSearch() },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
+                // M6b 阶段 3：查看器打开第一张的自动提取触发（翻页由 onNavigate 负责；
+                // viewingFileId 变化即当前图变化，in-flight 防重让与 onNavigate 的重复触发幂等）
+                LaunchedEffect(appState.activeTab.viewingFileId) {
+                    appState.activeTab.viewingFileId?.let { maybeAutoExtractPalette(it) }
+                }
                 ViewerLayerHost(
                     state = appState,
                     displayImages = displayImages,
@@ -1319,6 +1393,9 @@ class MainActivity : ComponentActivity() {
                     lanImageUrlOf = viewModel.lanImageUrlOf(),
                     // M6a 阶段 6：编辑门禁位（查看器 LAN 项的删除入口显隐；同款会话现取）
                     lanAllowEdit = viewModel.lanAllowEdit.value,
+                    // M6b 阶段 3：抽屉 Section 4 主色调预填 + 自动提取开关推进
+                    colorPalettesById = viewModel.colorPalettesById.value,
+                    autoExtractPalette = viewModel.settings.value.autoExtractPalette,
                 )
                 // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
                 if (showSettings) {
@@ -1347,6 +1424,24 @@ class MainActivity : ComponentActivity() {
                         onImportBackup = { importBackupLauncher.launch(arrayOf("application/json")) },
                         onOpenUrl = { openExternalUrl(it) },
                         onDismiss = { showSettings = false },
+                        // —— M6b 阶段 3：主色调数据库面板（VM 状态 → 面板类型映射 + 操作直连）——
+                        colorStats = viewModel.colorStats.value?.let {
+                            PanelColorStats(it.total, it.pending, it.extracted, it.error)
+                        },
+                        colorTask = viewModel.colorTaskState.value?.let {
+                            PanelColorTask(it.current, it.total, it.paused)
+                        },
+                        colorErrorCount = viewModel.colorErrorCount.value,
+                        autoExtractPalette = viewModel.settings.value.autoExtractPalette,
+                        onStartColorExtract = { viewModel.startColorBatchExtract() },
+                        onPauseColorExtract = { viewModel.pauseColorBatch() },
+                        onResumeColorExtract = { viewModel.resumeColorBatch() },
+                        onCancelColorExtract = { viewModel.cancelColorBatch() },
+                        onRetryColorErrors = { viewModel.retryColorErrors() },
+                        onDeleteColorErrors = { viewModel.deleteColorErrors() },
+                        onCleanupColorRecords = { viewModel.cleanupColorRecords() },
+                        onAutoExtractChange = { viewModel.setAutoExtractPalette(it) },
+                        onRefreshColorPanel = { viewModel.refreshColorPanel() },
                     )
                 }
                 }
@@ -1362,6 +1457,14 @@ class MainActivity : ComponentActivity() {
             this,
             aiCancelReceiver,
             IntentFilter(ScanNotifier.ACTION_AI_CANCEL),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+
+        // M6b 阶段 3：主色调批量提取通知按钮（暂停/恢复/停止）的常驻接收，同 AI 取消先例。
+        ContextCompat.registerReceiver(
+            this,
+            colorTaskReceiver,
+            IntentFilter(ScanNotifier.ACTION_COLOR_TASK),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
 
@@ -1545,6 +1648,17 @@ class MainActivity : ComponentActivity() {
     private val aiCancelReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             viewModel.cancelAiTask()
+        }
+    }
+
+    /** M6b 阶段 3：主色调批量提取通知按钮回传（cmd ∈ pause|resume|stop，ScanNotifier.taskAction 发出）。 */
+    private val colorTaskReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.getStringExtra(ScanNotifier.EXTRA_CMD)) {
+                "pause" -> viewModel.pauseColorBatch()
+                "resume" -> viewModel.resumeColorBatch()
+                "stop" -> viewModel.cancelColorBatch()
+            }
         }
     }
 
@@ -1741,6 +1855,10 @@ fun App(
     onChangeLanAvatar: (personId: String, imagePath: String) -> Unit = { _, _ -> },
     /** M6b 阶段 2：AI 任务的 UI 挂钩与状态（见 [AiUiHooks]）。 */
     ai: AiUiHooks,
+    // —— M6b 阶段 3：颜色搜索（TopBar 取色入口；hex 非 null=颜色过滤态）——
+    colorSearchHex: String? = null,
+    onColorSearch: (String) -> Unit = {},
+    onClearColorSearch: () -> Unit = {},
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -2196,6 +2314,12 @@ fun App(
                     onAiSearchToggle = ai.onSearchToggle,
                     onAiSearchSubmit = ai.onSearchSubmit,
                     aiSearchBusy = ai.searchBusy,
+                    // M6b 阶段 3：取色入口（D39 双入口的 TopBar 半边）；显隐=日期/标签
+                    // 同域（纯图片流视图），颜色过滤态高亮按钮+胶囊色点芯片
+                    showColorSearch = !inTopicsOverview && !inLanOverview && !inLanBrowser,
+                    colorSearchHex = colorSearchHex,
+                    onColorSearch = onColorSearch,
+                    onClearColorSearch = onClearColorSearch,
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,

@@ -96,6 +96,49 @@ class ScanNotifier(private val context: Context) {
         nm.cancel(ID_AI_PROGRESS)
     }
 
+    // —— M6b 阶段 3：主色调批量提取任务通知（D17 尾款「主色调任务按钮回传」的兑现）。
+    //    回传走同一广播机制：[ACTION_COLOR_TASK] + cmd extra（pause|resume|stop），
+    //    MainActivity 常驻注册后转发 GalleryViewModel（core 取消/暂停注册表，迭代边界生效）。
+    //    进行中按 paused 态给不同按钮组（运行=暂停+停止，暂停=恢复+停止）。
+
+    /** 主色调批量提取进行中（确定进度 + 暂停|恢复/停止按钮）。 */
+    fun colorProgress(current: Int, total: Int, paused: Boolean) {
+        notify(ID_COLOR_PROGRESS) { builder ->
+            builder
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("提取主色调中… $current/$total")
+                .setOngoing(true)
+                .setProgress(total, current, false)
+                .addAction(0, if (paused) "恢复" else "暂停", taskAction(if (paused) "resume" else "pause", 2))
+                .addAction(0, "停止", taskAction("stop", 3))
+        }
+    }
+
+    /** 主色调任务终态（完成/取消/失败文案由调用方给）；收走进度通知。 */
+    fun colorDone(message: String) {
+        nm.cancel(ID_COLOR_PROGRESS)
+        notify(ID_COLOR_DONE) { builder ->
+            builder
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setContentTitle("主色调提取")
+                .setContentText(message)
+                .setAutoCancel(true)
+        }
+    }
+
+    fun colorClear() {
+        nm.cancel(ID_COLOR_PROGRESS)
+    }
+
+    /** 任务控制按钮的广播 PendingIntent（cmd ∈ pause|resume|stop，requestCode 区分实例）。 */
+    private fun taskAction(cmd: String, requestCode: Int): PendingIntent =
+        PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            Intent(ACTION_COLOR_TASK).setPackage(context.packageName).putExtra(EXTRA_CMD, cmd),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
     private fun notify(id: Int, configure: (NotificationCompat.Builder) -> NotificationCompat.Builder) {
         ensureChannel()
         val pending = PendingIntent.getActivity(
@@ -115,8 +158,14 @@ class ScanNotifier(private val context: Context) {
         private const val ID_DONE = 1002
         private const val ID_AI_PROGRESS = 1003
         private const val ID_AI_DONE = 1004
+        private const val ID_COLOR_PROGRESS = 1005
+        private const val ID_COLOR_DONE = 1006
 
         /** 通知「取消」action 的广播 action（常驻 receiver 注册，见 MainActivity）。 */
         const val ACTION_AI_CANCEL = "com.aurora.gallery.kotlin.ACTION_AI_CANCEL"
+
+        /** 主色调任务控制按钮的广播 action 与 cmd extra（常驻 receiver 注册，见 MainActivity）。 */
+        const val ACTION_COLOR_TASK = "com.aurora.gallery.kotlin.ACTION_COLOR_TASK"
+        const val EXTRA_CMD = "cmd"
     }
 }

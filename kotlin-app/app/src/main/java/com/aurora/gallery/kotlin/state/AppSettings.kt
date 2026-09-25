@@ -29,6 +29,8 @@ data class AppSettings(
     val ai: AiSettings = AiSettings(),
     /** M6b 阶段 2：AI 搜索开关（TopBar 搜索胶囊的 AI 芯片；关=普通文本搜索）。 */
     val aiSearchEnabled: Boolean = false,
+    /** M6b 阶段 3：浏览时自动提取主色调（查看器翻到未提取的图即后台提取，桌面同款设置）。 */
+    val autoExtractPalette: Boolean = false,
 ) {
     companion object {
         val LANGUAGE_ZH = "zh"
@@ -142,6 +144,7 @@ class SettingsStore(context: Context) {
         defaultGroupBy = prefs.getString(KEY_GROUP_BY, null)?.let { groupFromName(it) } ?: GroupBy.NONE,
         ai = aiSettingsFromJson(prefs.getString(KEY_AI, null)),
         aiSearchEnabled = prefs.getBoolean(KEY_AI_SEARCH_ENABLED, false),
+        autoExtractPalette = prefs.getBoolean(KEY_AUTO_EXTRACT_PALETTE, false),
     )
 
     fun save(settings: AppSettings) {
@@ -154,6 +157,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_GROUP_BY, settings.defaultGroupBy.name)
             .putString(KEY_AI, aiSettingsToJson(settings.ai))
             .putBoolean(KEY_AI_SEARCH_ENABLED, settings.aiSearchEnabled)
+            .putBoolean(KEY_AUTO_EXTRACT_PALETTE, settings.autoExtractPalette)
             .apply()
     }
 
@@ -316,6 +320,7 @@ class SettingsStore(context: Context) {
         const val KEY_TOPIC_SORT_ASC = "topicSortAscending"
         const val KEY_AI = "ai"
         const val KEY_AI_SEARCH_ENABLED = "aiSearchEnabled"
+        const val KEY_AUTO_EXTRACT_PALETTE = "autoExtractPalette"
         const val KEY_LAN_DEVICE_ID = "lanDeviceId"
         const val KEY_LAN_DEVICE_NAME = "lanDeviceName"
         const val KEY_LAN_HOST = "lanHost"

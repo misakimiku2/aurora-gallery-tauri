@@ -239,6 +239,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private val drawerNameView: TextView
     private val drawerFolderView: TextView
     private val drawerPaletteLayout: LinearLayout
+    /** Section 4 标题（M6b 阶段 3：LAN 项随内容一起整节隐藏）。 */
+    private lateinit var drawerPaletteTitleView: View
     private val drawerDetailsGrid: GridLayout
     private val drawerTagsLayout: LinearLayout
     private val drawerDescView: TextView
@@ -249,8 +251,12 @@ class NativeGalleryView @JvmOverloads constructor(
     private var drawerOpen = false
     /** 正在提取主色调的 fileId，非 null 时抽屉显示 loading 占位 */
     private var loadingPaletteFileId: String? = null
-    /** 用户设置：浏览时自动提取主色调。开启时 palette 为空显示 loading 而非按钮 */
-    private var autoExtractPalette = false
+    /**
+     * 用户设置：浏览时自动提取主色调。开启时 palette 为空显示 loading 而非按钮。
+     * 提取本身由宿主（ViewerLayerHost/MainActivity）驱动——查看器只表达显示态。
+     * M6b 阶段 3 起宿主可写（此前 React 壳经 updateItem 同步，原生壳用属性直写）。
+     */
+    var autoExtractPalette = false
     /** 自动提取失败的 fileId 集合，失败后显示"提取主色调"按钮供用户手动重试 */
     private val failedPaletteFileIds = mutableSetOf<String>()
     /** 抽屉宽度动画，close() 时取消防止残留更新 */
@@ -427,7 +433,12 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerContainer.addView(drawerPreviewImage)
 
         // Section 4: 主色调（标题 + 圆形色块横排，单行显示，缩到 20dp 适配 8 个）
-        drawerContainer.addView(buildSectionTitle("主色调", iconRes = R.drawable.ic_lucide_palette))
+        // LAN 项整节隐藏（M6b 阶段 3，颜色库键语义=file_id 只覆盖本地文件，与 AI 节「LAN
+        // 恒不出现」同款）；标题存引用供 updateDrawer 按 item.isLan 切换可见性。
+        buildSectionTitle("主色调", iconRes = R.drawable.ic_lucide_palette).also {
+            drawerPaletteTitleView = it
+            drawerContainer.addView(it)
+        }
         drawerPaletteLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
@@ -841,11 +852,17 @@ class NativeGalleryView @JvmOverloads constructor(
         imageLoader.enqueue(req)
 
         // Section 4: 主色调（圆形色块横排，单行，点击触发颜色搜索）
+        // LAN 项整节隐藏：颜色库键语义=file_id 只覆盖本地文件，远端项提取必然失败
+        // （M6b 阶段 3，与 AI 分析节「LAN 不出现」同款守门）。
+        val paletteVisible = !item.isLan
+        drawerPaletteTitleView.visibility = if (paletteVisible) VISIBLE else GONE
+        drawerPaletteLayout.visibility = if (paletteVisible) VISIBLE else GONE
         // 显式取消子 view 的动画（AlphaAnimation INFINITE 不会随 removeAllViews 自动停止）
         for (i in 0 until drawerPaletteLayout.childCount) {
             drawerPaletteLayout.getChildAt(i).clearAnimation()
         }
         drawerPaletteLayout.removeAllViews()
+        if (paletteVisible) {
         // 安全兜底：如果 item 有 palette 但 loadingPaletteFileId 仍指向它，清除 loading
         if (item.palette.isNotEmpty() && loadingPaletteFileId == item.fileId) {
             loadingPaletteFileId = null
@@ -939,6 +956,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 })
             }
         }
+        } // if (paletteVisible)：LAN 项 Section 4 为空，Section 5 起正常渲染
 
         // Section 5: 文件信息
         drawerDetailsGrid.removeAllViews()

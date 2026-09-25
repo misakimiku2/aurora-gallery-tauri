@@ -16,7 +16,8 @@ import java.util.Locale
  * 装缩略图 URL，`fileId` = 远端 path（数据层映射时 Image.id = 远端 path，身份铁律）。
  *
  * 标签与元数据由调用方从 `GalleryViewModel` 的标签快照传入（M4a 2.2），本文件不查库。
- * palette / aiTags / aiDescription / aiSceneCategory / aiObjects 仍是空态（M6b）。
+ * palette（M6b 阶段 3 起）同法由调用方从颜色库快照传入；aiTags / aiDescription /
+ * aiSceneCategory / aiObjects 从 metadata.aiData 解析（M6b 阶段 2）。
  */
 internal fun Image.toViewerItem(
     parentName: String = "",
@@ -33,6 +34,12 @@ internal fun Image.toViewerItem(
      * 大图只能失败兜底——断线联动会自动退回本地视图，正常到不了这里）。
      */
     lanImageUrlOf: ((String) -> String)? = null,
+    /**
+     * 主色调 hex 列表（M6b 阶段 3）：调用方从 [GalleryViewModel.colorPalettesById] 快照
+     * 取当前文件的值传入。LAN 项恒空（颜色库只覆盖本地文件，键语义=file_id，见 core
+     * color_ffi.rs 模块注释），远端项抽屉退回「提取主色调」按钮由宿主拦截。
+     */
+    palette: List<String> = emptyList(),
 ) = run {
     // 数据驱动的 LAN 判定：映射时 contentUri 装的是缩略图 URL（本地图恒为 content://）
     val isLan = contentUri.startsWith("http")
@@ -65,6 +72,7 @@ internal fun Image.toViewerItem(
         aiDescription = if (isLan) "" else aiDataString(metadata, "description"),
         aiSceneCategory = if (isLan) "" else aiDataString(metadata, "sceneCategory"),
         aiObjects = if (isLan) emptyList() else aiDataStrings(metadata, "objects"),
+        palette = if (isLan) emptyList() else palette,
     )
 }
 
