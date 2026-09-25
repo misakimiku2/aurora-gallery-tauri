@@ -50,14 +50,18 @@ async fn require_session(
 // multipart 图片字节提取（字段 `file`，对齐 /api/upload 先例）
 // ---------------------------------------------------------------------------
 
-async fn extract_image_bytes(multipart: &mut Multipart) -> Result<Vec<u8>, Response> {
+/// multipart 图片字节提取（字段 `file`，对齐 /api/upload 先例）。
+/// 返回 (字节, 原始文件名)——文件名扩展供 TempImage 嗅探图片格式。
+async fn extract_image_bytes(multipart: &mut Multipart) -> Result<(Vec<u8>, String), Response> {
     let mut file_data: Option<Vec<u8>> = None;
+    let mut file_name = String::new();
     while let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| error_response(StatusCode::BAD_REQUEST, &format!("Multipart error: {e}")))?
     {
         if field.name() == Some("file") {
+            file_name = field.file_name().unwrap_or("").to_string();
             let data = field.bytes().await.map_err(|e| {
                 error_response(StatusCode::BAD_REQUEST, &format!("Read file error: {e}"))
             })?;
@@ -65,7 +69,9 @@ async fn extract_image_bytes(multipart: &mut Multipart) -> Result<Vec<u8>, Respo
         }
         // 其余字段忽略（对齐 upload 的宽容解析）
     }
-    Ok(file_data.ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "Missing file field"))?)
+    let bytes =
+        file_data.ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "Missing file field"))?;
+    Ok((bytes, file_name))
 }
 
 /// 图片字节 → 系统临时目录文件（模型 preprocessor 收路径）→ 推理后删除。
@@ -75,16 +81,31 @@ struct TempImage {
 }
 
 impl TempImage {
-    fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+    /// ext 传原始文件名扩展（含点，如 ".jpg"）——image crate 按扩展名嗅探格式，
+    /// 无扩展名/未知扩展会 decode 失败（联调实测 `.img` 被拒）。
+    fn from_bytes(bytes: &[u8], ext: &str) -> Result<Self, String> {
         let dir = std::env::temp_dir().join("aurora_lan_compute");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let safe_ext = {
+            let e = ext.to_ascii_lowercase();
+            let e = e.trim_start_matches('.');
+            if matches!(
+                e,
+                "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" | "jxl"
+            ) {
+                format!(".{e}")
+            } else {
+                ".jpg".to_string() // 未知扩展兜底 jpg（image 按字节解码为主，扩展只做格式选择）
+            }
+        };
         let name = format!(
-            "m6b_{}_{}.img",
+            "m6b_{}_{}{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos() as u64 + d.as_secs() * 1_000_000_000)
-                .unwrap_or(0)
+                .unwrap_or(0),
+            safe_ext,
         );
         let path = dir.join(name);
         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
@@ -124,7 +145,7 @@ pub async fn handle_wd14_classify(
     mut multipart: Multipart,
 ) -> Result<Json<Wd14ClassifyResponse>, Response> {
     let _session = require_session(&state, &headers).await?;
-    let bytes = extract_image_bytes(&mut multipart).await?;
+    let (bytes, file_name) = extract_image_bytes(&mut multipart).await?;
 
     let manager = crate::clip::get_clip_manager()
         .await
@@ -140,7 +161,7 @@ pub async fn handle_wd14_classify(
                 "WD14 模型未就绪：请在桌面端「AI 视觉」中加载 WD-EVA02-Large-Tagger-V3",
             ));
         }
-        let temp = TempImage::from_bytes(&bytes)
+        let temp = TempImage::from_bytes(&bytes, &file_name)
             .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("临时文件写入失败: {e}")))?;
         let model = guard
             .model_mut()
@@ -224,10 +245,11 @@ pub async fn handle_clip_search_image(
     mut multipart: Multipart,
 ) -> Result<Json<ClipSearchResponse>, Response> {
     let _session = require_session(&state, &headers).await?;
-    let bytes = extract_image_bytes(&mut multipart).await?;
+    let (bytes, file_name) = extract_image_bytes(&mut multipart).await?;
 
     let results = clip_search_current_model(&state, |model| {
-        let temp = TempImage::from_bytes(&bytes).map_err(|e| format!("临时文件写入失败: {e}"))?;
+        let temp =
+            TempImage::from_bytes(&bytes, &file_name).map_err(|e| format!("临时文件写入失败: {e}"))?;
         model
             .encode_image(temp.path.to_string_lossy().as_ref())
             .map(|r| r.embedding)
