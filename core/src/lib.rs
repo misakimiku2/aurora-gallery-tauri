@@ -9,6 +9,8 @@ pub mod ai_task;
 pub mod color_extractor;
 pub mod collate;
 pub mod color_db;
+pub mod color_ffi;
+pub mod color_search;
 pub mod db;
 pub mod file_types;
 pub mod ffi;

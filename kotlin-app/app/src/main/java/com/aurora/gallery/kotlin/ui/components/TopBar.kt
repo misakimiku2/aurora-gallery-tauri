@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -155,6 +156,14 @@ fun TopBar(
     onSearchScopeChange: (SearchScope) -> Unit = {},
     /** 是否显示 scope 下拉（仅 BROWSER 视图；对齐 React 在 people/tags 总览隐藏）。 */
     showScope: Boolean = false,
+    /**
+     * M6b 阶段 2：AI 搜索开关（桌面 TopBar 紫色 AI 图标的触屏同位）。开=回车提交走
+     * core 改写+全库过滤（onAiSearchSubmit），文本/日期过滤被命中集顶替；关=普通文本搜索。
+     */
+    aiSearchEnabled: Boolean = false,
+    onAiSearchToggle: () -> Unit = {},
+    onAiSearchSubmit: (String) -> Unit = {},
+    aiSearchBusy: Boolean = false,
     dateFilter: DateFilter,
     onDateFilterChange: (DateFilter) -> Unit,
     sortBy: SortOption,
@@ -280,6 +289,10 @@ fun TopBar(
                         onSearchQueryChange("")
                         onSearchOpenChange(false)
                     },
+                    aiSearchEnabled = aiSearchEnabled,
+                    onAiSearchToggle = onAiSearchToggle,
+                    onAiSearchSubmit = onAiSearchSubmit,
+                    aiSearchBusy = aiSearchBusy,
                 )
             }
         }
@@ -749,6 +762,11 @@ private fun SearchPill(
     onScopeChange: (SearchScope) -> Unit = {},
     showScope: Boolean = false,
     onClose: () -> Unit,
+    /** M6b 阶段 2：AI 搜索开关/提交（见 TopBar 同名参数注释）。 */
+    aiSearchEnabled: Boolean = false,
+    onAiSearchToggle: () -> Unit = {},
+    onAiSearchSubmit: (String) -> Unit = {},
+    aiSearchBusy: Boolean = false,
 ) {
     val colors = AuroraTheme.colors
     val focusRequester = remember { FocusRequester() }
@@ -825,6 +843,11 @@ private fun SearchPill(
             textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
             cursorBrush = SolidColor(colors.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            // M6b 阶段 2：AI 模式下回车=提交改写（一次 HTTP），不是逐字过滤——
+            // 自然语言查询做 name 子串匹配只会错杀，命中集由 VM 全量替换
+            keyboardActions = KeyboardActions(
+                onSearch = { if (aiSearchEnabled) onAiSearchSubmit(query) },
+            ),
             modifier = Modifier.weight(1f).focusRequester(focusRequester),
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
@@ -835,6 +858,25 @@ private fun SearchPill(
                 }
             },
         )
+        Spacer(Modifier.size(8.dp))
+        // M6b 阶段 2：AI 开关芯片（「AI」文字款，桌面紫色图标的触屏同位——图标库无
+        // sparkle 字形，文字更可读）。开=回车提交 core 改写，关=普通文本搜索。
+        Box(
+            Modifier
+                .clip(CircleShape)
+                .background(if (aiSearchEnabled) colors.primary else Color.Transparent)
+                .border(1.dp, if (aiSearchEnabled) colors.primary else colors.subtle, CircleShape)
+                .clickable(onClick = onAiSearchToggle)
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "AI",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (aiSearchEnabled) colors.surface else colors.textSecondary,
+            )
+        }
         Spacer(Modifier.size(8.dp))
         Box(
             Modifier

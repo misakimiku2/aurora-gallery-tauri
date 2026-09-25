@@ -59,8 +59,29 @@ internal fun Image.toViewerItem(
         tags = if (isLan) lanMetadata?.tags.orEmpty() else tags,
         description = if (isLan) lanMetadata?.description.orEmpty() else metadata?.description.orEmpty(),
         sourceUrl = if (isLan) lanMetadata?.sourceUrl.orEmpty() else metadata?.sourceUrl.orEmpty(),
+        // M6b 阶段 2：AI 字段从本地 metadata.aiData 解析（TS 写入形状见 core ai.rs——
+        // tags/sceneCategory/objects/description；LAN 项无远端 aiData，恒空=抽屉整节隐藏）
+        aiTags = if (isLan) emptyList() else aiDataStrings(metadata, "tags"),
+        aiDescription = if (isLan) "" else aiDataString(metadata, "description"),
+        aiSceneCategory = if (isLan) "" else aiDataString(metadata, "sceneCategory"),
+        aiObjects = if (isLan) emptyList() else aiDataStrings(metadata, "objects"),
     )
 }
+
+/** aiData JSON 的字符串字段（缺键/非串→空串）。 */
+private fun aiDataString(metadata: FfiFileMetadata?, key: String): String =
+    aiDataObject(metadata)?.optString(key, "").orEmpty()
+
+/** aiData JSON 的字符串数组字段（缺键/非数组→空表）。 */
+private fun aiDataStrings(metadata: FfiFileMetadata?, key: String): List<String> {
+    val arr = aiDataObject(metadata)?.optJSONArray(key) ?: return emptyList()
+    return (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
+}
+
+private fun aiDataObject(metadata: FfiFileMetadata?): org.json.JSONObject? =
+    metadata?.aiData?.takeIf { it.isNotEmpty() }?.let {
+        runCatching { org.json.JSONObject(it) }.getOrNull()
+    }
 
 /**
  * epoch 秒 → ISO-8601。抽屉的 `formatDate` 是按 `'T'` 截取 `YYYY-MM-DD` 显示的，

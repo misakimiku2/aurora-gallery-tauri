@@ -676,6 +676,18 @@ internal interface UniffiCallbackInterfaceAiTaskCallbackMethod2 : com.sun.jna.Ca
 internal interface UniffiCallbackInterfaceAiTaskCallbackMethod3 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
 internal interface UniffiCallbackInterfaceSpikeCallbackMethod0 : com.sun.jna.Callback {
     fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
 }
@@ -741,6 +753,34 @@ internal open class UniffiVTableCallbackInterfaceAiTaskCallback(
     }
 
 }
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readPixels", "onProgress", "onFileDone", "onFinished")
+internal open class UniffiVTableCallbackInterfaceColorBatchCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2? = null,
+        `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3? = null,
+    ): UniffiVTableCallbackInterfaceColorBatchCallback(`uniffiFree`,`uniffiClone`,`readPixels`,`onProgress`,`onFileDone`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceColorBatchCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readPixels` = other.`readPixels`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onFinished` = other.`onFinished`
+    }
+
+}
 @Structure.FieldOrder("uniffiFree", "uniffiClone", "onProgress", "onFinished")
 internal open class UniffiVTableCallbackInterfaceSpikeCallback(
     @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
@@ -799,6 +839,34 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_aurora_core_checksum_func_ai_generate_file_names(
     ): Int
     external fun uniffi_aurora_core_checksum_func_ai_rewrite_search_query(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_batch_extract_colors(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_cancel_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_cleanup_color_nonexistent(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_color_db_stats(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_extract_and_save_colors(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_colors_by_file_paths(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_init_color_db(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_pause_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_resume_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_retry_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_search_by_color(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_search_by_palette(
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_files_to_topic(
     ): Int
@@ -898,6 +966,14 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_finished(
     ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_read_pixels(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished(
+    ): Int
     external fun uniffi_aurora_core_checksum_method_spikecallback_on_progress(
     ): Int
     external fun uniffi_aurora_core_checksum_method_spikecallback_on_finished(
@@ -915,12 +991,15 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
         uniffiCallbackInterfaceAiRenameCallback.register(this)
         uniffiCallbackInterfaceAiTaskCallback.register(this)
+        uniffiCallbackInterfaceColorBatchCallback.register(this)
         uniffiCallbackInterfaceSpikeCallback.register(this)
         
     }
     external fun uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(`vtable`: UniffiVTableCallbackInterfaceAiRenameCallback,
     ): Unit
     external fun uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(`vtable`: UniffiVTableCallbackInterfaceAiTaskCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_init_callback_vtable_colorbatchcallback(`vtable`: UniffiVTableCallbackInterfaceColorBatchCallback,
     ): Unit
     external fun uniffi_aurora_core_fn_init_callback_vtable_spikecallback(`vtable`: UniffiVTableCallbackInterfaceSpikeCallback,
     ): Unit
@@ -937,6 +1016,34 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_ai_generate_file_names(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_ai_rewrite_search_query(`cfg`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_batch_extract_colors(`fileIds`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_cancel_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_cleanup_color_nonexistent(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_color_db_stats(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_delete_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_extract_and_save_colors(`fileId`: RustBuffer.ByValue,`width`: Int,`height`: Int,`rgba`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_colors_by_file_paths(`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_init_color_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_pause_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_resume_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_retry_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_search_by_color(`hex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_search_by_palette(`palettes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_add_files_to_topic(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1155,7 +1262,49 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_ai_generate_file_names() != 51559) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_ai_rewrite_search_query() != 20476) {
+    if (lib.uniffi_aurora_core_checksum_func_ai_rewrite_search_query() != 60479) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_batch_extract_colors() != 13287) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_cancel_color_task() != 52439) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_cleanup_color_nonexistent() != 29087) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_color_db_stats() != 32764) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_delete_color_error_files() != 36173) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_extract_and_save_colors() != 37781) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_color_error_files() != 5417) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_colors_by_file_paths() != 12735) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_init_color_db() != 11329) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_pause_color_task() != 47539) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_resume_color_task() != 3436) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_retry_color_error_files() != 11997) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_search_by_color() != 40480) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_search_by_palette() != 42692) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_add_files_to_topic() != 55474) {
@@ -1303,6 +1452,18 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_finished() != 51435) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_read_pixels() != 56977) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_progress() != 59866) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_file_done() != 61294) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished() != 65338) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_method_spikecallback_on_progress() != 53066) {
@@ -1884,6 +2045,148 @@ public object FfiConverterTypeAiSearchFilter: FfiConverterRustBuffer<AiSearchFil
             FfiConverterSequenceString.write(value.`people`, buf)
             FfiConverterOptionalString.write(value.`description`, buf)
             FfiConverterString.write(value.`originalQuery`, buf)
+    }
+}
+
+
+
+/**
+ * 颜色库行数统计（StoragePanel 主色调节用）。
+ */
+data class ColorDbStats (
+    /**
+     * 全部行数（含 processing）。
+     */
+    var `total`: kotlin.UInt
+    , 
+    var `pending`: kotlin.UInt
+    , 
+    var `extracted`: kotlin.UInt
+    , 
+    var `error`: kotlin.UInt
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorDbStats: FfiConverterRustBuffer<ColorDbStats> {
+    override fun read(buf: ByteBuffer): ColorDbStats {
+        return ColorDbStats(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorDbStats) = (
+            FfiConverterUInt.allocationSize(value.`total`) +
+            FfiConverterUInt.allocationSize(value.`pending`) +
+            FfiConverterUInt.allocationSize(value.`extracted`) +
+            FfiConverterUInt.allocationSize(value.`error`)
+    )
+
+    override fun write(value: ColorDbStats, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`total`, buf)
+            FfiConverterUInt.write(value.`pending`, buf)
+            FfiConverterUInt.write(value.`extracted`, buf)
+            FfiConverterUInt.write(value.`error`, buf)
+    }
+}
+
+
+
+/**
+ * 错误文件条目。对应 color_db::get_error_files 的返回形状
+ * （file 键 + updated_at 秒级时间戳；status 恒为 error 故不重复携带）。
+ */
+data class ColorErrorFile (
+    var `fileId`: kotlin.String
+    , 
+    var `updatedAt`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorErrorFile: FfiConverterRustBuffer<ColorErrorFile> {
+    override fun read(buf: ByteBuffer): ColorErrorFile {
+        return ColorErrorFile(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorErrorFile) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterLong.allocationSize(value.`updatedAt`)
+    )
+
+    override fun write(value: ColorErrorFile, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterLong.write(value.`updatedAt`, buf)
+    }
+}
+
+
+
+/**
+ * 一次像素供给（Kotlin 下采样位图的 RGBA 字节，行优先、每像素 4 字节）。
+ */
+data class ColorPixels (
+    var `width`: kotlin.UInt
+    , 
+    var `height`: kotlin.UInt
+    , 
+    var `rgba`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorPixels: FfiConverterRustBuffer<ColorPixels> {
+    override fun read(buf: ByteBuffer): ColorPixels {
+        return ColorPixels(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorPixels) = (
+            FfiConverterUInt.allocationSize(value.`width`) +
+            FfiConverterUInt.allocationSize(value.`height`) +
+            FfiConverterByteArray.allocationSize(value.`rgba`)
+    )
+
+    override fun write(value: ColorPixels, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`width`, buf)
+            FfiConverterUInt.write(value.`height`, buf)
+            FfiConverterByteArray.write(value.`rgba`, buf)
     }
 }
 
@@ -3168,6 +3471,129 @@ public object FfiConverterTypeAiTaskCallback: FfiConverterCallbackInterface<AiTa
 
 
 
+/**
+ * 批量提取任务回调（uniffi callback interface；实现对象留在调用线程，
+ * `read_pixels` 由泵代调——见模块注释的锁步双通道）。
+ */
+public interface ColorBatchCallback {
+    
+    /**
+     * 泵在调用线程代读像素；None = 该图当前不可读（记为单文件失败，不炸任务）。
+     */
+    fun `readPixels`(`fileId`: kotlin.String): ColorPixels?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    /**
+     * note：成功为空串，失败为中文原因。
+     */
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    /**
+     * state ∈ running|paused|completed|cancelled|error（running/paused 由
+     * Kotlin 侧本地状态机表达，Rust 只会发 completed|cancelled|error）。
+     */
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceColorBatchCallback {
+    internal object `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readPixels`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: ColorPixels? -> uniffiOutReturn.setValue(FfiConverterOptionalTypeColorPixels.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeColorBatchCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeColorBatchCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceColorBatchCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readPixels`,
+        `onProgress`,
+        `onFileDone`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_colorbatchcallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeColorBatchCallback: FfiConverterCallbackInterface<ColorBatchCallback>()
+
+
+
+
+
 public interface SpikeCallback {
     
     fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
@@ -3406,6 +3832,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeColorPixels: FfiConverterRustBuffer<ColorPixels?> {
+    override fun read(buf: ByteBuffer): ColorPixels? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeColorPixels.read(buf)
+    }
+
+    override fun allocationSize(value: ColorPixels?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeColorPixels.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ColorPixels?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeColorPixels.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiCoverCrop: FfiConverterRustBuffer<FfiCoverCrop?> {
     override fun read(buf: ByteBuffer): FfiCoverCrop? {
         if (buf.get().toInt() == 0) {
@@ -3502,6 +3960,38 @@ public object FfiConverterOptionalTypeFfiFileMetadata: FfiConverterRustBuffer<Ff
 /**
  * @suppress
  */
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -3576,6 +4066,34 @@ public object FfiConverterSequenceTypeAiRenameItem: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeAiRenameItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeColorErrorFile: FfiConverterRustBuffer<List<ColorErrorFile>> {
+    override fun read(buf: ByteBuffer): List<ColorErrorFile> {
+        val len = buf.getInt()
+        return List<ColorErrorFile>(len) {
+            FfiConverterTypeColorErrorFile.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ColorErrorFile>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeColorErrorFile.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ColorErrorFile>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeColorErrorFile.write(it, buf)
         }
     }
 }
@@ -3894,6 +4412,34 @@ public object FfiConverterSequenceTypeTagGroup: FfiConverterRustBuffer<List<TagG
 /**
  * @suppress
  */
+public object FfiConverterSequenceOptionalSequenceString: FfiConverterRustBuffer<List<List<kotlin.String>?>> {
+    override fun read(buf: ByteBuffer): List<List<kotlin.String>?> {
+        val len = buf.getInt()
+        return List<List<kotlin.String>?>(len) {
+            FfiConverterOptionalSequenceString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<List<kotlin.String>?>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterOptionalSequenceString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<List<kotlin.String>?>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterOptionalSequenceString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<kotlin.String, List<kotlin.String>>> {
     override fun read(buf: ByteBuffer): Map<kotlin.String, List<kotlin.String>> {
         val len = buf.getInt()
@@ -4021,6 +4567,7 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
         /**
          * AI 搜索改写：query → 结构化过滤条件（同步一次 HTTP，Kotlin 在 IO 协程调用）。
+         * originalQuery 由本层从入参回填（对齐 TS :196-202，模型响应不带它）。
          */
     @Throws(AuroraException::class) fun `aiRewriteSearchQuery`(`cfg`: AiConfig, `query`: kotlin.String): AiSearchFilter {
             return FfiConverterTypeAiSearchFilter.lift(
@@ -4030,6 +4577,232 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         
         FfiConverterTypeAiConfig.lower(`cfg`),
         FfiConverterString.lower(`query`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量主色调提取：逐张 请求像素→提取 8 色→落库，事件实时回调。
+         * **阻塞至任务结束**（Kotlin 从 IO 协程调用）；state ∈ completed|cancelled|error。
+         * 单文件失败只经 `on_file_done(ok=false)` 上报并把行标为 error，不炸任务。
+         */ fun `batchExtractColors`(`fileIds`: List<kotlin.String>, `taskId`: kotlin.String, `callback`: ColorBatchCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_batch_extract_colors(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeColorBatchCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * 取消在册任务：下一张迭代首查生效（在途一张跑完）；若任务正处于暂停自旋，
+         * 会同时清除暂停标志让 worker 立即退出。任务不在册返回 false。
+         */ fun `cancelColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_cancel_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 清理「不存在」的错误记录，返回清理条数。
+         *
+         * **Android 语义决定**：键是 file_id 哈希而非文件系统路径，Rust 侧无法验证
+         * MediaStore 存在性——若照搬桌面的 `Path::exists()` 判定，哈希键必然判假、
+         * 会把全部 error 记录误删。因此本函数只清理「形似路径（含 / 或 \\）且磁盘上
+         * 不存在」的记录；纯 file_id 哈希键一律保留，其存活性校验（MediaStore 查询）
+         * 由 Kotlin 侧完成，确认不存在后走 delete_color_error_files 精确删除。
+         */
+    @Throws(AuroraException::class) fun `cleanupColorNonexistent`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_cleanup_color_nonexistent(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 颜色库行数统计。未 init → Err。
+         */
+    @Throws(AuroraException::class) fun `colorDbStats`(): ColorDbStats {
+            return FfiConverterTypeColorDbStats.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_color_db_stats(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 删除全部错误文件记录（含颜色索引行），返回删除条数。
+         */
+    @Throws(AuroraException::class) fun `deleteColorErrorFiles`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 单张提取主色调并落库（查看器手动/自动提取用）。
+         *
+         * `pixels` 为下采样位图的 RGBA 字节（建议最长边 ~256px，提取算法不再缩放）。
+         * 成功返回 hex 列表（≤8 个，`#rrggbb` 小写）；失败（宽高与字节数不符 / 提取为空 /
+         * 写库失败）返回 Err 并把该 file_id 的行状态标记为 error（对齐桌面 process_single_file）。
+         */
+    @Throws(AuroraException::class) fun `extractAndSaveColors`(`fileId`: kotlin.String, `width`: kotlin.UInt, `height`: kotlin.UInt, `rgba`: kotlin.ByteArray): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_extract_and_save_colors(
+    
+        
+        FfiConverterString.lower(`fileId`),
+        FfiConverterUInt.lower(`width`),
+        FfiConverterUInt.lower(`height`),
+        FfiConverterByteArray.lower(`rgba`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 错误文件列表（file_id + updated_at，按 updated_at 降序）。
+         */
+    @Throws(AuroraException::class) fun `getColorErrorFiles`(): List<ColorErrorFile> {
+            return FfiConverterSequenceTypeColorErrorFile.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 批读主色调 hex 列表（网格/查看器缓存用）。
+         *
+         * 返回与 `file_ids` 等长且按入参对齐：库里无记录 / 未提取完成（status != extracted）
+         * / colors JSON 解析失败 → 对应位为 `None`。键语义为 file_id（见模块注释）。
+         */
+    @Throws(AuroraException::class) fun `getColorsByFilePaths`(`fileIds`: List<kotlin.String>): List<List<kotlin.String>?> {
+            return FfiConverterSequenceOptionalSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_colors_by_file_paths(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 颜色库初始化（colors.db 落 Kotlin 传的 app 数据目录路径）。
+         *
+         * 幂等：首次调用建库（建表 + 把遗留 processing 行重置为 pending），再次调用
+         * 即 `ColorDbPool::switch` 换库（同样建表 + 重置 processing）。每次成功后
+         * 触发后台缓存预热（搜索暖路径依赖它，冷路径不受影响）。
+         */
+    @Throws(AuroraException::class) fun `initColorDb`(`path`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_init_color_db(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    
+    
+
+        /**
+         * 暂停在册任务（下一张迭代边界生效）。任务不在册（已结束/不存在）返回 false。
+         */ fun `pauseColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_pause_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 恢复暂停的任务。任务不在册返回 false。
+         */ fun `resumeColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_resume_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 全部错误文件重置为 pending（重新入队），返回重置条数。
+         */
+    @Throws(AuroraException::class) fun `retryColorErrorFiles`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_retry_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 单色搜索（模式=Single：阈值 75、位置权重、灰度排除）。
+         * 依赖颜色库已 init 且有数据；「先查 stats 判数据量」的 UI 逻辑留给 Kotlin。
+         */
+    @Throws(AuroraException::class) fun `searchByColor`(`hex`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_search_by_color(
+    
+        
+        FfiConverterString.lower(`hex`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 多色搜索（内部按数量分模式：1 色 Single / 2-4 色 Mid / ≥5 色 Atmosphere）。
+         * 无有效 hex 入参 → Ok(空)；未 init → Err(Database)。
+         */
+    @Throws(AuroraException::class) fun `searchByPalette`(`palettes`: List<kotlin.String>): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_search_by_palette(
+    
+        
+        FfiConverterSequenceString.lower(`palettes`),_status)
 }
     )
     }

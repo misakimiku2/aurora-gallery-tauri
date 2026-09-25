@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -58,6 +59,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.Manifest
@@ -69,10 +71,12 @@ import com.aurora.gallery.kotlin.LanQr
 import com.aurora.gallery.kotlin.LanServerManager
 import com.aurora.gallery.kotlin.LanServerSnapshot
 import com.aurora.gallery.kotlin.LanState
+import com.aurora.gallery.kotlin.state.AiSettings
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LanSavedServer
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
+import com.aurora.gallery.kotlin.state.toAiConfig
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -122,6 +126,8 @@ fun SettingsHost(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
     onOpenUrl: (String) -> Unit,
+    /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
+    onAiSettingsChange: (AiSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
     // 平板形态需宽高都够：横屏手机（宽 ≥600 但高仅 ~411dp）放不下双栏对话框
@@ -145,6 +151,7 @@ fun SettingsHost(
             onExportBackup = onExportBackup,
             onImportBackup = onImportBackup,
             onOpenUrl = onOpenUrl,
+            onAiSettingsChange = onAiSettingsChange,
             onDismiss = onDismiss,
         )
     } else {
@@ -164,6 +171,7 @@ fun SettingsHost(
             onExportBackup = onExportBackup,
             onImportBackup = onImportBackup,
             onOpenUrl = onOpenUrl,
+            onAiSettingsChange = onAiSettingsChange,
             onDismiss = onDismiss,
         )
     }
@@ -179,7 +187,8 @@ private enum class SettingsCategory(
 ) {
     GENERAL("常规", IconSliders),
     STORAGE("存储", IconDatabase),
-    AI("AI 智能", IconBot, placeholder = true),
+    // M6b 阶段 2：AI 面板落地（D16 尾款），不再是占位类
+    AI("AI 智能", IconBot),
     // M6a 阶段 3 起 LAN 面板落地（连接/扫码/最近服务器），不再是占位类
     LAN("局域网共享", IconWifi),
     ABOUT("关于", IconInfo),
@@ -210,6 +219,8 @@ private fun CategoryContent(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
     onOpenUrl: (String) -> Unit,
+    /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
+    onAiSettingsChange: (AiSettings) -> Unit,
 ) {
     if (SettingsCategory.GENERAL in categories) {
         GeneralContent(
@@ -232,13 +243,10 @@ private fun CategoryContent(
         )
     }
     if (SettingsCategory.AI in categories) {
-        PlaceholderContent(
-            sectionTitle = "AI 智能",
-            sectionIcon = IconBot,
+        AiContent(
+            settings = settings,
             includeSectionHeaders = includeSectionHeaders,
-            icon = IconBot,
-            title = "AI 任务",
-            description = "将随 M6b 提供：自动打标签 / 描述生成 / 语义搜索与模型配置",
+            onAiSettingsChange = onAiSettingsChange,
         )
     }
     if (SettingsCategory.LAN in categories) {
@@ -257,7 +265,358 @@ private fun CategoryContent(
             appVersion = appVersion,
             includeSectionHeaders = includeSectionHeaders,
             onOpenUrl = onOpenUrl,
+            onAiSettingsChange = onAiSettingsChange,
         )
+    }
+}
+
+/**
+ * AI 智能面板（M6b 阶段 2，替换 M4c 的 AI placeholder；D38=桌面 AISettingsPanel 子集）。
+ * 内容：provider 三选、按 provider 的 endpoint/model（openai 另有 apiKey 密文框）、
+ * 测试连接 + 刷新模型（core 同步 FFI 走 IO 线程）、五任务开关（人物描述增强随
+ * autoDescription 联动禁用——桌面语义）、系统提示词多行框。
+ * 桌面差异登记（D38）：prompt 预设管理/在线服务预设不带；悬空设置
+ * targetLanguage/confidenceThreshold 不复制（翻译目标语言=通用面板的语言设置）。
+ * 变更即提交（onAiSettingsChange），对齐 GeneralContent 的逐项即时保存惯例。
+ */
+@Composable
+private fun AiContent(
+    settings: AppSettings,
+    includeSectionHeaders: Boolean,
+    onAiSettingsChange: (AiSettings) -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    val ai = settings.ai
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    // 测试连接/刷新模型的忙碌态与反馈（内联错误一行，成功 Toast）
+    var testing by remember { mutableStateOf(false) }
+    var fetchingModels by remember { mutableStateOf(false) }
+    var modelChoices by remember { mutableStateOf<List<String>?>(null) }
+    var inlineError by remember { mutableStateOf<String?>(null) }
+
+    fun update(transform: (AiSettings) -> AiSettings) = onAiSettingsChange(transform(ai))
+    fun currentEndpoint(): String = when (ai.provider) {
+        "ollama" -> ai.ollamaEndpoint
+        "lmstudio" -> ai.lmstudioEndpoint
+        else -> ai.openaiEndpoint
+    }
+
+    if (includeSectionHeaders) SettingsSection("AI 智能", IconBot)
+
+    Column(Modifier.padding(top = 12.dp)) {
+        SettingsLabel("服务商", topPadding = 0)
+        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "openai" to "OpenAI 兼容",
+                "ollama" to "Ollama",
+                "lmstudio" to "LM Studio",
+            ).forEach { (id, label) ->
+                AiProviderOption(
+                    label = label,
+                    selected = ai.provider == id,
+                    onClick = {
+                        inlineError = null
+                        update { it.copy(provider = id) }
+                    },
+                )
+            }
+        }
+
+        // 按 provider 显示对应配置（桌面 AISettingsPanel 同款分支）
+        when (ai.provider) {
+            "openai" -> {
+                SettingsLabel("服务地址")
+                LanTextField(
+                    value = ai.openaiEndpoint,
+                    onValueChange = { v -> update { it.copy(openaiEndpoint = v) } },
+                    hint = "https://api.openai.com/v1",
+                )
+                SettingsLabel("API Key")
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = colors.surface,
+                    border = BorderStroke(1.dp, colors.border),
+                ) {
+                    BasicTextField(
+                        value = ai.openaiApiKey,
+                        onValueChange = { v -> update { it.copy(openaiApiKey = v) } },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = 14.sp, color = colors.textPrimary),
+                        cursorBrush = SolidColor(colors.primary),
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).wrapContentHeight(Alignment.CenterVertically),
+                        decorationBox = { inner ->
+                            Box(Modifier.wrapContentHeight(align = Alignment.CenterVertically)) {
+                                if (ai.openaiApiKey.isEmpty()) {
+                                    Text("sk-...", fontSize = 14.sp, color = colors.textSecondary, maxLines = 1)
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                }
+                SettingsLabel("模型")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        LanTextField(
+                            value = ai.openaiModel,
+                            onValueChange = { v -> update { it.copy(openaiModel = v) } },
+                            hint = "gpt-4o",
+                        )
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    LanSecondaryButton("刷新模型", enabled = !fetchingModels, onClick = {
+                        if (ai.openaiEndpoint.isBlank()) {
+                            inlineError = "请先填写服务地址"
+                        } else {
+                            fetchingModels = true
+                            inlineError = null
+                            scope.launch {
+                                val cfg = ai.toAiConfig(settings.language)
+                                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { uniffi.aurora_core.aiFetchModels(cfg) }
+                                }
+                                fetchingModels = false
+                                result.fold(
+                                    onSuccess = { models ->
+                                        if (models.isEmpty()) inlineError = "服务未返回模型列表" else modelChoices = models
+                                    },
+                                    onFailure = { e -> inlineError = e.message ?: "获取模型列表失败" },
+                                )
+                            }
+                        }
+                    })
+                }
+            }
+            "ollama" -> {
+                SettingsLabel("服务地址")
+                LanTextField(
+                    value = ai.ollamaEndpoint,
+                    onValueChange = { v -> update { it.copy(ollamaEndpoint = v) } },
+                    hint = "http://127.0.0.1:11434",
+                )
+                SettingsLabel("模型")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        LanTextField(
+                            value = ai.ollamaModel,
+                            onValueChange = { v -> update { it.copy(ollamaModel = v) } },
+                            hint = "llava",
+                        )
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    LanSecondaryButton("刷新模型", enabled = !fetchingModels, onClick = {
+                        if (ai.ollamaEndpoint.isBlank()) {
+                            inlineError = "请先填写服务地址"
+                        } else {
+                            fetchingModels = true
+                            inlineError = null
+                            scope.launch {
+                                val cfg = ai.toAiConfig(settings.language)
+                                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { uniffi.aurora_core.aiFetchModels(cfg) }
+                                }
+                                fetchingModels = false
+                                result.fold(
+                                    onSuccess = { models ->
+                                        if (models.isEmpty()) inlineError = "服务未返回模型列表" else modelChoices = models
+                                    },
+                                    onFailure = { e -> inlineError = e.message ?: "获取模型列表失败" },
+                                )
+                            }
+                        }
+                    })
+                }
+            }
+            else -> {
+                SettingsLabel("服务地址")
+                LanTextField(
+                    value = ai.lmstudioEndpoint,
+                    onValueChange = { v -> update { it.copy(lmstudioEndpoint = v) } },
+                    hint = "http://127.0.0.1:1234",
+                )
+                SettingsLabel("模型")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        LanTextField(
+                            value = ai.lmstudioModel,
+                            onValueChange = { v -> update { it.copy(lmstudioModel = v) } },
+                            hint = "先在 LM Studio 里加载模型",
+                        )
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    LanSecondaryButton("刷新模型", enabled = !fetchingModels, onClick = {
+                        if (ai.lmstudioEndpoint.isBlank()) {
+                            inlineError = "请先填写服务地址"
+                        } else {
+                            fetchingModels = true
+                            inlineError = null
+                            scope.launch {
+                                val cfg = ai.toAiConfig(settings.language)
+                                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { uniffi.aurora_core.aiFetchModels(cfg) }
+                                }
+                                fetchingModels = false
+                                result.fold(
+                                    onSuccess = { models ->
+                                        if (models.isEmpty()) inlineError = "服务未返回模型列表" else modelChoices = models
+                                    },
+                                    onFailure = { e -> inlineError = e.message ?: "获取模型列表失败" },
+                                )
+                            }
+                        }
+                    })
+                }
+            }
+        }
+
+        Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LanPrimaryButton(if (testing) "测试中…" else "测试连接", enabled = !testing, onClick = {
+                if (currentEndpoint().isBlank()) {
+                    inlineError = "请先填写服务地址"
+                } else {
+                    testing = true
+                    inlineError = null
+                    scope.launch {
+                        val cfg = ai.toAiConfig(settings.language)
+                        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            runCatching { uniffi.aurora_core.aiCheckConnection(cfg) }
+                        }
+                        testing = false
+                        result.fold(
+                            onSuccess = { Toast.makeText(context, "连接成功", Toast.LENGTH_SHORT).show() },
+                            onFailure = { e -> inlineError = e.message ?: "连接失败" },
+                        )
+                    }
+                }
+            })
+        }
+        if (inlineError != null) {
+            Text(
+                inlineError!!,
+                fontSize = 12.sp,
+                // Compose 色板未带 danger（AuroraColorScheme 无该角色）——用浅档 danger
+                // 字面色，仅此一行内联错误文案使用（登记）
+                color = Color(0xFFEF4444),
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+
+        SettingsLabel("任务开关")
+        SettingsCard {
+            SettingsRow("自动打标签", "分析时把 AI 产出的标签写入词表") {
+                Switch(checked = ai.autoTag, onCheckedChange = { v -> update { it.copy(autoTag = v) } })
+            }
+            SettingsRow("自动生成描述", "分析时写入图片描述") {
+                Switch(checked = ai.autoDescription, onCheckedChange = { v -> update { it.copy(autoDescription = v) } })
+            }
+            // 桌面语义：父开关关闭时人物描述增强不可用
+            SettingsRow("人物描述增强", "描述提示词加入人物语境") {
+                Switch(
+                    checked = ai.enhancePersonDescription && ai.autoDescription,
+                    enabled = ai.autoDescription,
+                    onCheckedChange = { v -> update { it.copy(enhancePersonDescription = v) } },
+                )
+            }
+            SettingsRow("OCR 识别", "提取图片中的文字") {
+                Switch(checked = ai.enableOcr, onCheckedChange = { v -> update { it.copy(enableOcr = v) } })
+            }
+            SettingsRow("自动翻译", "翻译识别出的文字") {
+                Switch(checked = ai.enableTranslation, onCheckedChange = { v -> update { it.copy(enableTranslation = v) } })
+            }
+        }
+
+        SettingsLabel("系统提示词")
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            shape = RoundedCornerShape(8.dp),
+            color = colors.surface,
+            border = BorderStroke(1.dp, colors.border),
+        ) {
+            BasicTextField(
+                value = ai.systemPrompt,
+                onValueChange = { v -> update { it.copy(systemPrompt = v) } },
+                textStyle = TextStyle(fontSize = 14.sp, color = colors.textPrimary),
+                cursorBrush = SolidColor(colors.primary),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(12.dp),
+                decorationBox = { inner ->
+                    Box {
+                        if (ai.systemPrompt.isEmpty()) {
+                            Text("自定义系统提示词（可选）", fontSize = 14.sp, color = colors.textSecondary)
+                        }
+                        inner()
+                    }
+                },
+            )
+        }
+
+        Text(
+            "翻译目标语言跟随「常规」面板的语言设置；任务进度可在通知栏取消。",
+            fontSize = 12.sp,
+            color = colors.textSecondary,
+            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
+        )
+    }
+
+    // 模型选择（刷新成功后弹出；点击即写回当前 provider 的 model）
+    modelChoices?.let { models ->
+        AlertDialog(
+            onDismissRequest = { modelChoices = null },
+            title = { Text("选择模型") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    models.forEach { m ->
+                        Text(
+                            m,
+                            fontSize = 14.sp,
+                            color = colors.textPrimary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    modelChoices = null
+                                    when (ai.provider) {
+                                        "ollama" -> update { it.copy(ollamaModel = m) }
+                                        "lmstudio" -> update { it.copy(lmstudioModel = m) }
+                                        else -> update { it.copy(openaiModel = m) }
+                                    }
+                                }
+                                .padding(vertical = 12.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { modelChoices = null }) { Text("取消") }
+            },
+        )
+    }
+}
+
+/** AI 服务商三选卡（选中蓝边+浅蓝底，对齐 SettingsIconOption 的选中语言）。 */
+@Composable
+private fun AiProviderOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) colors.primary.copy(alpha = 0.08f) else colors.surface,
+        border = BorderStroke(1.dp, if (selected) colors.primary else colors.border),
+    ) {
+        Box(
+            Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                label,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (selected) colors.primary else colors.textPrimary,
+            )
+        }
     }
 }
 
@@ -794,6 +1153,8 @@ private fun AboutContent(
     appVersion: String,
     includeSectionHeaders: Boolean = true,
     onOpenUrl: (String) -> Unit,
+    /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
+    onAiSettingsChange: (AiSettings) -> Unit,
 ) {
     val colors = AuroraTheme.colors
     if (includeSectionHeaders) {
@@ -941,6 +1302,8 @@ private fun SettingsTabletDialog(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
     onOpenUrl: (String) -> Unit,
+    /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
+    onAiSettingsChange: (AiSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var current by remember { mutableStateOf(SettingsCategory.GENERAL) }
@@ -1051,6 +1414,7 @@ private fun SettingsTabletDialog(
                         onExportBackup = onExportBackup,
                         onImportBackup = onImportBackup,
                         onOpenUrl = onOpenUrl,
+                        onAiSettingsChange = onAiSettingsChange,
                     )
                 }
             }
@@ -1078,6 +1442,8 @@ private fun SettingsPhonePage(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
     onOpenUrl: (String) -> Unit,
+    /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
+    onAiSettingsChange: (AiSettings) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
@@ -1196,6 +1562,7 @@ private fun SettingsPhonePage(
                         onExportBackup = onExportBackup,
                         onImportBackup = onImportBackup,
                         onOpenUrl = onOpenUrl,
+                        onAiSettingsChange = onAiSettingsChange,
                     )
                 }
             }

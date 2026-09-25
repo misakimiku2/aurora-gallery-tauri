@@ -35,15 +35,26 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import com.aurora.gallery.kotlin.state.toAiConfig
+import uniffi.aurora_core.AiInputItem
+import uniffi.aurora_core.AiRenameCallback
+import uniffi.aurora_core.AiRenameItem
+import uniffi.aurora_core.AiTaskCallback
 import uniffi.aurora_core.FfiFileMetadata
 import uniffi.aurora_core.FfiTopic
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import uniffi.aurora_core.MediaImage
 import uniffi.aurora_core.RemoteTagCount
+import uniffi.aurora_core.SearchItem
 import uniffi.aurora_core.TagGroup
 import uniffi.aurora_core.addFilesToTopic
 import uniffi.aurora_core.addTagsToFiles
+import uniffi.aurora_core.aiAnalyzeFiles
+import uniffi.aurora_core.aiApplySearchFilter
+import uniffi.aurora_core.aiCancelTask
+import uniffi.aurora_core.aiGenerateFileNames
+import uniffi.aurora_core.aiRewriteSearchQuery
 import uniffi.aurora_core.deleteTopic as deleteTopicFfi
 import uniffi.aurora_core.getAllFileMetadata
 import uniffi.aurora_core.getAllFileTags
@@ -303,6 +314,265 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         settings.value = settings.value.copy(language = language)
         settingsStore.save(settings.value)
         viewModelScope.launch { reloadTagState() }
+    }
+
+    // —— M6b 阶段 2：AI 任务层（编排/取消/搜索改写在 core ai_task，本层=状态+入口+落库后刷新）——
+
+    /** AI 任务运行态（null=空闲）；通知「取消」action 与任务同生命周期。 */
+    data class AiTaskState(val kind: String, val taskId: String, val current: Int, val total: Int)
+
+    val aiTaskState = mutableStateOf<AiTaskState?>(null)
+
+    /** AI 改名提案（任务跑完一次性弹确认；null=无待确认）。Triple=Image/旧名/新名。 */
+    val aiRenameProposals = mutableStateOf<List<Triple<Image, String, String>>?>(null)
+
+    /** AI 搜索命中 id 集（null=未启用/已清；空集=搜了但零命中）。 */
+    val aiSearchIds = mutableStateOf<Set<String>?>(null)
+
+    /** AI 搜索的全库命中序列（[aiSearchIds] 非空时的网格/查看器数据源——文本搜索是
+     * 视图级语义而 AI 搜索是全库语义，命中图可能不在当前文件夹序列里）。 */
+    val aiSearchResultImages = mutableStateOf<List<Image>?>(null)
+
+    /** AI 搜索请求进行中（TopBar 图标态）。 */
+    val aiSearchBusy = mutableStateOf(false)
+
+    private var aiJob: Job? = null
+
+    /** AI 搜索态整体清理（关开关/清搜索词共用）。 */
+    fun clearAiSearch() {
+        aiSearchIds.value = null
+        aiSearchResultImages.value = null
+    }
+
+    /** AI 搜索开关（持久化；关=清命中集回到普通文本过滤）。 */
+    fun setAiSearchEnabled(enabled: Boolean) {
+        settings.value = settings.value.copy(aiSearchEnabled = enabled)
+        settingsStore.save(settings.value)
+        if (!enabled) clearAiSearch()
+    }
+
+    /** AI 设置面板的逐项保存口（SettingsDialog 的 onAiSettingsChange 落点）。 */
+    fun updateAiSettings(ai: com.aurora.gallery.kotlin.state.AiSettings) {
+        settings.value = settings.value.copy(ai = ai)
+        settingsStore.save(settings.value)
+    }
+
+    private fun aiToast(msg: String) {
+        android.widget.Toast.makeText(appContext, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** 入口友好拦截（core 侧错误也能读，这里省一次网络往返）。 */
+    private fun aiEndpointBlank(): Boolean {
+        val ai = settings.value.ai
+        return when (ai.provider) {
+            "ollama" -> ai.ollamaEndpoint.isBlank()
+            "lmstudio" -> ai.lmstudioEndpoint.isBlank()
+            else -> ai.openaiEndpoint.isBlank()
+        }
+    }
+
+    /** 通知「取消」action 的落点：core 取消注册表置位，下一张迭代首查生效（在途一张跑完）。 */
+    fun cancelAiTask() {
+        val st = aiTaskState.value ?: return
+        runCatching { aiCancelTask(st.taskId) }
+    }
+
+    /** 批量 AI 分析（多选/文件夹/查看器单张共用入口）。完成后重算三快照+重拉当前视图。 */
+    fun startAiAnalysis(fileIds: List<String>) {
+        if (aiTaskState.value != null) {
+            aiToast("AI 任务进行中，可从通知栏取消")
+            return
+        }
+        if (fileIds.isEmpty()) return
+        if (aiEndpointBlank()) {
+            aiToast("请先在「设置 → AI 智能」配置服务地址")
+            return
+        }
+        val cfg = settings.value.ai.toAiConfig(settings.value.language)
+        aiJob = viewModelScope.launch {
+            val taskId = "ai-analyze-${System.currentTimeMillis()}"
+            val targets = withContext(Dispatchers.IO) { listImagesByIds(fileIds) }
+            aiTaskState.value = AiTaskState("AI 分析", taskId, 0, targets.size)
+            scanNotifier.aiProgress("AI 分析", 0, targets.size)
+            var failed = 0
+            withContext(Dispatchers.IO) {
+                aiAnalyzeFiles(
+                    cfg,
+                    targets.map { AiInputItem(fileId = it.id, path = it.contentUri, name = it.name) },
+                    taskId,
+                    object : AiTaskCallback {
+                        override fun readBytes(fileId: String): ByteArray? = runCatching {
+                            targets.firstOrNull { it.id == fileId }?.contentUri?.let { uri ->
+                                appContext.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+                            }
+                        }.getOrNull()
+
+                        override fun onProgress(current: UInt, total: UInt) {
+                            aiTaskState.value = AiTaskState("AI 分析", taskId, current.toInt(), total.toInt())
+                            scanNotifier.aiProgress("AI 分析", current.toInt(), total.toInt())
+                        }
+
+                        override fun onFileDone(fileId: String, ok: Boolean, note: String) {
+                            if (!ok) {
+                                failed++
+                                Log.w(TAG, "[Ai] analyze fail $fileId: $note")
+                            }
+                        }
+
+                        override fun onFinished(state: String, message: String) {
+                            aiTaskState.value = null
+                            scanNotifier.aiDone(
+                                when (state) {
+                                    "completed" -> if (failed == 0) "分析完成 $message" else "分析完成 $message（$failed 张失败）"
+                                    "cancelled" -> "已取消（$message）"
+                                    else -> "分析失败：$message"
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+            // 标签/描述/词表已落库：三快照重算（内部失败容忍）+当前视图重拉（抽屉数据源）
+            reloadTagState()
+            reloadImages()
+        }
+    }
+
+    /** 文件夹卡片「AI 分析相册」（总览选中入口；扁平 bucket 无需递归，M4b D18）。 */
+    fun startAiFolderAnalysis(folderIds: List<String>) {
+        viewModelScope.launch {
+            val ids = withContext(Dispatchers.IO) {
+                folderIds.flatMap { fid -> runCatching { listImages(fid) }.getOrDefault(emptyList()) }
+                    .map { it.id }
+                    .distinct()
+            }
+            if (ids.isEmpty()) {
+                aiToast("所选相册没有图片")
+                return@launch
+            }
+            startAiAnalysis(ids)
+        }
+    }
+
+    /**
+     * 批量 AI 重命名：AI 只产名字（core 不碰库不改文件），提案经 [aiRenameProposals]
+     * 由宿主弹确认；真正改名=批量授权一次+M4b renameFiles（见 applyAiRenameProposals）。
+     */
+    fun startAiRename(fileIds: List<String>) {
+        if (aiTaskState.value != null) {
+            aiToast("AI 任务进行中，可从通知栏取消")
+            return
+        }
+        if (fileIds.isEmpty()) return
+        if (aiEndpointBlank()) {
+            aiToast("请先在「设置 → AI 智能」配置服务地址")
+            return
+        }
+        val cfg = settings.value.ai.toAiConfig(settings.value.language)
+        aiJob = viewModelScope.launch {
+            val taskId = "ai-rename-${System.currentTimeMillis()}"
+            val targets = withContext(Dispatchers.IO) { listImagesByIds(fileIds) }
+            aiTaskState.value = AiTaskState("AI 重命名", taskId, 0, targets.size)
+            scanNotifier.aiProgress("AI 重命名", 0, targets.size)
+            val proposals = mutableListOf<Triple<Image, String, String>>()
+            var failed = 0
+            withContext(Dispatchers.IO) {
+                aiGenerateFileNames(
+                    cfg,
+                    targets.map { AiRenameItem(fileId = it.id, name = it.name) },
+                    taskId,
+                    object : AiRenameCallback {
+                        override fun readBytes(fileId: String): ByteArray? = runCatching {
+                            targets.firstOrNull { it.id == fileId }?.contentUri?.let { uri ->
+                                appContext.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() }
+                            }
+                        }.getOrNull()
+
+                        override fun onProgress(current: UInt, total: UInt) {
+                            aiTaskState.value = AiTaskState("AI 重命名", taskId, current.toInt(), total.toInt())
+                            scanNotifier.aiProgress("AI 重命名", current.toInt(), total.toInt())
+                        }
+
+                        override fun onFileDone(fileId: String, ok: Boolean, note: String) {
+                            if (!ok) {
+                                failed++
+                                Log.w(TAG, "[Ai] rename fail $fileId: $note")
+                            }
+                        }
+
+                        override fun onName(fileId: String, newName: String) {
+                            targets.firstOrNull { it.id == fileId }?.let { img ->
+                                proposals.add(Triple(img, img.name, newName))
+                            }
+                        }
+
+                        override fun onFinished(state: String, message: String) {
+                            aiTaskState.value = null
+                            scanNotifier.aiDone(
+                                when (state) {
+                                    "completed" -> "改名提案就绪 ${proposals.size} 张" + if (failed > 0) "（$failed 张失败）" else ""
+                                    "cancelled" -> "已取消（$message）"
+                                    else -> "AI 重命名失败：$message"
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+            if (proposals.isNotEmpty()) {
+                aiRenameProposals.value = proposals.toList()
+            } else {
+                aiToast("AI 未产出可用的改名提案" + if (failed > 0) "（$failed 张失败）" else "")
+            }
+        }
+    }
+
+    /** 应用改名提案（确认弹窗「应用」）：走 M4b 重命名管线（系统授权+元数据挂住由它负责）。 */
+    fun applyAiRenameProposals(targets: List<Pair<android.net.Uri, String>>, onDone: (Int) -> Unit = {}) {
+        aiRenameProposals.value = null
+        renameFiles(targets, onDone)
+    }
+
+    /** AI 搜索：query → core 改写（一次 HTTP）→ 全库过滤 → 命中集自带全库序列驱动网格。 */
+    fun performAiSearch(query: String) {
+        if (query.isBlank()) {
+            clearAiSearch()
+            return
+        }
+        if (aiEndpointBlank()) {
+            aiToast("请先在「设置 → AI 智能」配置服务地址")
+            return
+        }
+        val cfg = settings.value.ai.toAiConfig(settings.value.language)
+        viewModelScope.launch {
+            aiSearchBusy.value = true
+            try {
+                val ids = withContext(Dispatchers.IO) {
+                    val filter = aiRewriteSearchQuery(cfg, query)
+                    val tags = getAllFileTags().associate { it.fileId to it.tags }
+                    val meta = getAllFileMetadata().associateBy { it.fileId }
+                    val items = folders.value
+                        .flatMap { f -> runCatching { listImages(f.id) }.getOrDefault(emptyList()) }
+                        .map {
+                            SearchItem(
+                                fileId = it.id,
+                                name = it.name,
+                                tags = tags[it.id].orEmpty(),
+                                description = meta[it.id]?.description,
+                            )
+                        }
+                    aiApplySearchFilter(filter, items)
+                }
+                aiSearchIds.value = ids.toSet()
+                aiSearchResultImages.value = withContext(Dispatchers.IO) { listImagesByIds(ids) }
+                aiToast("AI 搜索命中 ${ids.size} 张")
+            } catch (e: Exception) {
+                Log.w(TAG, "[Ai] search failed", e)
+                aiToast("AI 搜索失败：${e.message ?: "未知错误"}")
+            } finally {
+                aiSearchBusy.value = false
+            }
+        }
     }
 
     // —— M5 画布数据助手（3.1/3.2/3.3 入口共用的取数口；id/宽高一律以 FFI 索引为准）——

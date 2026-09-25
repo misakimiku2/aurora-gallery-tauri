@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
@@ -714,6 +715,11 @@ class MainActivity : ComponentActivity() {
         override fun onColorSearch(colorHex: String) = toastSoon("按颜色搜索", "M6")
         override fun onExtractPalette(fileId: String, filePath: String) = toastSoon("主色调提取", "M6")
 
+        /** M6b 阶段 2：查看器「更多 → AI 分析」（本地项；LAN 项菜单不出现该条）。 */
+        override fun onAiAnalyze(fileId: String) {
+            viewModel.startAiAnalysis(listOf(fileId))
+        }
+
         /** M4b 1.5：查看器「更多」的复制/移动 → FolderPickerDialog（folderTree 从 VM 快照构造）。 */
         override fun onCopyToFolder(fileId: String) {
             view.showFolderPickerDialog("copy", fileId, folderTreeJson()) { name ->
@@ -960,20 +966,28 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(tab.viewMode, tab.folderId, tab.activeTags, tab.activeTopicId) {
                     viewModel.reloadImages()
                 }
+                // M6b 阶段 2：AI 搜索态清理——清词/关搜索即弃命中集，回到普通文本过滤
+                LaunchedEffect(tab.searchQuery) {
+                    if (tab.searchQuery.isBlank()) viewModel.clearAiSearch()
+                }
                 // 展示序列在这一层求值，网格与查看器共用同一个结果（2.2：进入的 startIndex
                 // 必须落在过滤后的序列上，两处各算一遍会有漂移风险）。M4b 阶段 3 起
                 // scope 文本搜索的数据源（标签/元数据快照 + 所属文件夹名）一并喂入。
                 val currentFolderName = appState.activeTab.folderId?.let { id ->
                     viewModel.folders.value.firstOrNull { it.id == id }?.name
                 }.orEmpty()
+                // M6b 阶段 2：AI 搜索态的数据源切换——全库命中序列顶替当前文件夹序列
+                val aiSearchActive = viewModel.aiSearchIds.value != null
                 val displayImages = rememberDisplayImages(
-                    viewModel.images.value,
+                    if (aiSearchActive) viewModel.aiSearchResultImages.value.orEmpty() else viewModel.images.value,
                     appState.activeTab,
                     appState.sortBy,
                     appState.sortDirection,
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
                     viewFolderName = currentFolderName,
+                    // M6b 阶段 2：AI 搜索命中集（null=普通过滤；非 null=只显示命中集）
+                    aiFilterIds = viewModel.aiSearchIds.value,
                 )
                 Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
@@ -1270,6 +1284,26 @@ class MainActivity : ComponentActivity() {
                                 ).show()
                             }
                         },
+                        // M6b 阶段 2：AI 任务挂钩与状态（打包进一个参数，见 AiUiHooks）
+                        ai = AiUiHooks(
+                            searchEnabled = viewModel.settings.value.aiSearchEnabled,
+                            searchBusy = viewModel.aiSearchBusy.value,
+                            renameProposals = viewModel.aiRenameProposals.value,
+                            onSearchToggle = {
+                                viewModel.setAiSearchEnabled(!viewModel.settings.value.aiSearchEnabled)
+                            },
+                            onSearchSubmit = { query -> viewModel.performAiSearch(query) },
+                            onClearSearch = { viewModel.clearAiSearch() },
+                            onAnalyze = { ids -> viewModel.startAiAnalysis(ids) },
+                            onRename = { ids -> viewModel.startAiRename(ids) },
+                            onFolderAnalyze = { ids -> viewModel.startAiFolderAnalysis(ids) },
+                            onDismissRenameProposals = { viewModel.aiRenameProposals.value = null },
+                            onApplyRenameProposals = { targets, onDone ->
+                                requestWriteAccess(targets.map { it.first }) {
+                                    viewModel.applyAiRenameProposals(targets, onDone)
+                                }
+                            },
+                        ),
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 ViewerLayerHost(
@@ -1302,6 +1336,8 @@ class MainActivity : ComponentActivity() {
                             viewModel.appState.openLanOverview()
                         },
                         onLanguageChange = { viewModel.setLanguage(it) },
+                        // M6b 阶段 2：AI 设置逐项即时保存（面板草稿直接落 prefs）
+                        onAiSettingsChange = { viewModel.updateAiSettings(it) },
                         onThemeChange = { viewModel.setTheme(it) },
                         onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
                         onDefaultSortChange = { by, dir -> viewModel.applyDefaultSort(by, dir) },
@@ -1318,6 +1354,16 @@ class MainActivity : ComponentActivity() {
         }
 
         requestMediaPermissionIfNeeded()
+
+        // M6b 阶段 2：AI 任务通知「取消」action 的常驻接收（非调试钩子——通知是生产
+        // 面向用户的，收不到取消按钮就成了摆设）。NOT_EXPORTED + 显式包名， PendingIntent
+        // 由 ScanNotifier 以同构 Intent 发出。
+        ContextCompat.registerReceiver(
+            this,
+            aiCancelReceiver,
+            IntentFilter(ScanNotifier.ACTION_AI_CANCEL),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
 
         // 模拟器/Debug 构建：注册捏合注入广播（验证 FLIP 用，走生产回调链；Release 不注册）
         if (isEmulator() || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
@@ -1495,6 +1541,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** M6b 阶段 2：通知「取消」action → core 取消注册表（生产接收器，常驻注册）。 */
+    private val aiCancelReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            viewModel.cancelAiTask()
+        }
+    }
+
     /**
      * M6b 1.3 冒烟钩子：`adb shell am broadcast -a aurora.debug.AI_SMOKE --es mode analyze|cancel|rename|search \
      *   [--es provider openai|ollama|lmstudio] [--es slow 1]`，对宿主 mock provider 全链验证，见 AiSmoke.kt。
@@ -1548,6 +1601,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/**
+ * M6b 阶段 2：AI 任务的 UI 挂钩与状态快照。[App] 是无 VM 依赖的顶层组合根（本仓惯例：
+ * 数据与操作全走参数），AI 的状态/操作以此打包进一个参数。
+ */
+data class AiUiHooks(
+    /** TopBar AI 搜索开关（设置持久化快照）。 */
+    val searchEnabled: Boolean,
+    /** AI 搜索请求进行中。 */
+    val searchBusy: Boolean,
+    /** AI 改名提案（非 null=弹确认框）。 */
+    val renameProposals: List<Triple<Image, String, String>>?,
+    val onSearchToggle: () -> Unit,
+    val onSearchSubmit: (String) -> Unit,
+    val onClearSearch: () -> Unit,
+    /** 批量 AI 分析（网格多选/查看器单张）。 */
+    val onAnalyze: (List<String>) -> Unit,
+    /** 批量 AI 重命名（提案经 renameProposals 回流确认）。 */
+    val onRename: (List<String>) -> Unit,
+    /** 相册卡片批量 AI 分析（成员=所选相册全部图片）。 */
+    val onFolderAnalyze: (List<String>) -> Unit,
+    val onDismissRenameProposals: () -> Unit,
+    /** 应用改名提案（宿主先 requestWriteAccess 再走 M4b renameFiles）。 */
+    val onApplyRenameProposals: (targets: List<Pair<Uri, String>>, onDone: (Int) -> Unit) -> Unit,
+)
 
 @Composable
 fun App(
@@ -1661,6 +1739,8 @@ fun App(
     onCopyMoveLanFiles: (paths: List<String>, targetDir: String, type: String) -> Unit = { _, _, _ -> },
     /** 人物换头像（personId + 弹窗选中的远端图 path；宿主转 renameLanPerson(avatarPath=)）。 */
     onChangeLanAvatar: (personId: String, imagePath: String) -> Unit = { _, _ -> },
+    /** M6b 阶段 2：AI 任务的 UI 挂钩与状态（见 [AiUiHooks]）。 */
+    ai: AiUiHooks,
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
@@ -1846,6 +1926,10 @@ fun App(
                 add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
             }
             add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
+            // M6b 阶段 2：AI 入口（桌面 ContextMenu 文件分支同位——AI 分析/AI 重命名）。
+            // 未配置 provider 时宿主入口自行友好拦截，菜单项常驻。
+            add(SelectionMoreAction("AI 分析…") { ai.onAnalyze(tab.selectedFileIds.toList()) })
+            add(SelectionMoreAction("AI 重命名…") { ai.onRename(tab.selectedFileIds.toList()) })
             add(SelectionMoreAction("复制到…") {
                 pickerType = "copy"
                 pickerFileIds = tab.selectedFileIds.toList()
@@ -1874,6 +1958,9 @@ fun App(
             })
         }
         inFoldersOverview && tab.selectedFileIds.isNotEmpty() -> buildList {
+            // M6b 阶段 2：相册卡片长按选中后的「AI 分析相册」（桌面文件夹右键同位；
+            // 扁平 bucket 无递归语义，成员=该相册全部图片）
+            add(SelectionMoreAction("AI 分析相册…") { ai.onFolderAnalyze(tab.selectedFileIds.toList()) })
             add(SelectionMoreAction("复制到…") {
                 onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
                     pickerType = "copy"
@@ -2103,6 +2190,12 @@ fun App(
                     searchScope = tab.searchScope,
                     onSearchScopeChange = { state.setSearchScope(it) },
                     showScope = inBrowser && !inLanBrowser,
+                    // M6b 阶段 2：AI 搜索开关（与 scope 同域——仅本地 BROWSER；开=回车走
+                    // core 改写+全库过滤，桌面 TopBar 紫色图标的触屏同位）
+                    aiSearchEnabled = ai.searchEnabled,
+                    onAiSearchToggle = ai.onSearchToggle,
+                    onAiSearchSubmit = ai.onSearchSubmit,
+                    aiSearchBusy = ai.searchBusy,
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,
@@ -2723,6 +2816,50 @@ fun App(
             onSave = { tags ->
                 editTagsFileId = null
                 onSaveFileTags(fid, tags)
+            },
+        )
+    }
+
+    // M6b 阶段 2：AI 改名提案确认——AI 只产名字（core 不碰库），「应用」才走 M4b
+    // 重命名管线（批量授权一次 + renameFiles 的元数据挂住语义）
+    ai.renameProposals?.let { proposals ->
+        AlertDialog(
+            onDismissRequest = ai.onDismissRenameProposals,
+            title = { Text("AI 重命名 ${proposals.size} 张") },
+            text = {
+                Column {
+                    proposals.take(30).forEach { (_, oldName, newName) ->
+                        Text(
+                            "$oldName  →  $newName",
+                            fontSize = 13.sp,
+                            color = AuroraTheme.colors.textPrimary,
+                        )
+                    }
+                    if (proposals.size > 30) {
+                        Text(
+                            "…等共 ${proposals.size} 张",
+                            fontSize = 13.sp,
+                            color = AuroraTheme.colors.textSecondary,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pairs = proposals.map { (img, _, newName) ->
+                        Uri.parse(img.contentUri) to newName
+                    }
+                    ai.onApplyRenameProposals(pairs) { n ->
+                        Toast.makeText(
+                            context,
+                            if (n > 0) "已重命名 $n 张" else "重命名未生效",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }) { Text("应用") }
+            },
+            dismissButton = {
+                TextButton(onClick = ai.onDismissRenameProposals) { Text("取消") }
             },
         )
     }

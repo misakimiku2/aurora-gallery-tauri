@@ -31,15 +31,25 @@ fun rememberDisplayImages(
     metadataById: Map<String, FfiFileMetadata> = emptyMap(),
     /** 当前视图所属文件夹名（scope=FOLDER 的序列级判定用）。 */
     viewFolderName: String = "",
+    /**
+     * M6b 阶段 2：AI 搜索命中集（null=普通管道）。非 null 时 images 应传**全库命中序列**
+     * （VM 的 aiSearchResultImages）——AI 是全库语义；文本/日期/scope 过滤整体跳过
+     * （原查询是自然语言，做 name 子串匹配只会把命中集错杀），仅排序保留。
+     */
+    aiFilterIds: Set<String>? = null,
 ): List<Image> = remember(
     images, tab.searchQuery, tab.dateFilter, tab.searchScope,
-    sortBy, sortDirection, tagsByFile, metadataById, viewFolderName,
+    sortBy, sortDirection, tagsByFile, metadataById, viewFolderName, aiFilterIds,
 ) {
-    sortImages(
-        filterImages(
-            images, tab.searchQuery, tab.dateFilter, tab.searchScope,
-            tagsByFile, metadataById, viewFolderName,
-        ),
-        sortBy, sortDirection,
-    )
+    if (aiFilterIds != null) {
+        sortImages(images.filter { it.id in aiFilterIds }, sortBy, sortDirection)
+    } else {
+        sortImages(
+            filterImages(
+                images, tab.searchQuery, tab.dateFilter, tab.searchScope,
+                tagsByFile, metadataById, viewFolderName,
+            ),
+            sortBy, sortDirection,
+        )
+    }
 }

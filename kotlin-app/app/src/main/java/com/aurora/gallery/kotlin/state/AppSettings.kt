@@ -25,6 +25,10 @@ data class AppSettings(
     val defaultSortDirection: SortDirection = SortDirection.DESC,
     /** 默认分组方式（M4c，对齐桌面 GeneralPanel 的 defaultLayoutSettings.groupBy；无 SIZE，见 GroupBy KDoc）。 */
     val defaultGroupBy: GroupBy = GroupBy.NONE,
+    /** M6b 阶段 2（D38 子集）：AI provider 与任务开关（单键 JSON 持久化）。 */
+    val ai: AiSettings = AiSettings(),
+    /** M6b 阶段 2：AI 搜索开关（TopBar 搜索胶囊的 AI 芯片；关=普通文本搜索）。 */
+    val aiSearchEnabled: Boolean = false,
 ) {
     companion object {
         val LANGUAGE_ZH = "zh"
@@ -34,6 +38,92 @@ data class AppSettings(
         val THEME_SYSTEM = "system"
     }
 }
+
+/**
+ * M6b 阶段 2（D38=桌面 AISettingsPanel 的 Kotlin 子集）：AI 设置。字段名与 uniffi
+ * [toAiConfig] 的目标一一对应；provider 取值 "openai" | "ollama" | "lmstudio"。
+ * 桌面的 promptPresets/currentPresetId/onlineServicePreset（预设管理）与悬空的
+ * targetLanguage/confidenceThreshold 不带（D38 登记差异）。
+ */
+data class AiSettings(
+    val provider: String = "openai",
+    val openaiEndpoint: String = "",
+    val openaiApiKey: String = "",
+    val openaiModel: String = "",
+    val ollamaEndpoint: String = "",
+    val ollamaModel: String = "",
+    val lmstudioEndpoint: String = "",
+    val lmstudioModel: String = "",
+    val systemPrompt: String = "",
+    val autoTag: Boolean = true,
+    val autoDescription: Boolean = true,
+    val enhancePersonDescription: Boolean = false,
+    val enableOcr: Boolean = false,
+    val enableTranslation: Boolean = false,
+)
+
+/** 单键 JSON 持久化（org.json 手工序列化；字段缺失读回默认值，前向兼容）。 */
+private fun aiSettingsToJson(ai: AiSettings): String = org.json.JSONObject()
+    .put("provider", ai.provider)
+    .put("openaiEndpoint", ai.openaiEndpoint)
+    .put("openaiApiKey", ai.openaiApiKey) // 登记：与桌面 user_data.json 同为明文
+    .put("openaiModel", ai.openaiModel)
+    .put("ollamaEndpoint", ai.ollamaEndpoint)
+    .put("ollamaModel", ai.ollamaModel)
+    .put("lmstudioEndpoint", ai.lmstudioEndpoint)
+    .put("lmstudioModel", ai.lmstudioModel)
+    .put("systemPrompt", ai.systemPrompt)
+    .put("autoTag", ai.autoTag)
+    .put("autoDescription", ai.autoDescription)
+    .put("enhancePersonDescription", ai.enhancePersonDescription)
+    .put("enableOcr", ai.enableOcr)
+    .put("enableTranslation", ai.enableTranslation)
+    .toString()
+
+private fun aiSettingsFromJson(raw: String?): AiSettings {
+    if (raw.isNullOrBlank()) return AiSettings()
+    val o = runCatching { org.json.JSONObject(raw) }.getOrNull() ?: return AiSettings()
+    val d = AiSettings()
+    return AiSettings(
+        provider = o.optString("provider", d.provider).takeIf { it in listOf("openai", "ollama", "lmstudio") } ?: d.provider,
+        openaiEndpoint = o.optString("openaiEndpoint", d.openaiEndpoint),
+        openaiApiKey = o.optString("openaiApiKey", d.openaiApiKey),
+        openaiModel = o.optString("openaiModel", d.openaiModel),
+        ollamaEndpoint = o.optString("ollamaEndpoint", d.ollamaEndpoint),
+        ollamaModel = o.optString("ollamaModel", d.ollamaModel),
+        lmstudioEndpoint = o.optString("lmstudioEndpoint", d.lmstudioEndpoint),
+        lmstudioModel = o.optString("lmstudioModel", d.lmstudioModel),
+        systemPrompt = o.optString("systemPrompt", d.systemPrompt),
+        autoTag = o.optBoolean("autoTag", d.autoTag),
+        autoDescription = o.optBoolean("autoDescription", d.autoDescription),
+        enhancePersonDescription = o.optBoolean("enhancePersonDescription", d.enhancePersonDescription),
+        enableOcr = o.optBoolean("enableOcr", d.enableOcr),
+        enableTranslation = o.optBoolean("enableTranslation", d.enableTranslation),
+    )
+}
+
+/** AI 设置 → core 编排层配置（GalleryViewModel 的任务/搜索/连接测试共用）。 */
+fun AiSettings.toAiConfig(language: String): uniffi.aurora_core.AiConfig = uniffi.aurora_core.AiConfig(
+    provider = when (provider) {
+        "ollama" -> uniffi.aurora_core.AiProvider.OLLAMA
+        "lmstudio" -> uniffi.aurora_core.AiProvider.LM_STUDIO
+        else -> uniffi.aurora_core.AiProvider.OPEN_AI
+    },
+    openaiEndpoint = openaiEndpoint,
+    openaiApiKey = openaiApiKey,
+    openaiModel = openaiModel,
+    ollamaEndpoint = ollamaEndpoint,
+    ollamaModel = ollamaModel,
+    lmstudioEndpoint = lmstudioEndpoint,
+    lmstudioModel = lmstudioModel,
+    systemPrompt = systemPrompt.takeIf { it.isNotBlank() },
+    autoTag = autoTag,
+    autoDescription = autoDescription,
+    enhancePersonDescription = enhancePersonDescription,
+    enableOcr = enableOcr,
+    enableTranslation = enableTranslation,
+    language = language,
+)
 
 /**
  * 设置的唯一读写口（SharedPreferences `aurora_settings`）。专题排序也走这里：旧键
@@ -50,6 +140,8 @@ class SettingsStore(context: Context) {
         defaultSortBy = prefs.getString(KEY_SORT_BY, null)?.let { sortFromName(it) } ?: SortOption.DATE,
         defaultSortDirection = if (prefs.getBoolean(KEY_SORT_ASC, false)) SortDirection.ASC else SortDirection.DESC,
         defaultGroupBy = prefs.getString(KEY_GROUP_BY, null)?.let { groupFromName(it) } ?: GroupBy.NONE,
+        ai = aiSettingsFromJson(prefs.getString(KEY_AI, null)),
+        aiSearchEnabled = prefs.getBoolean(KEY_AI_SEARCH_ENABLED, false),
     )
 
     fun save(settings: AppSettings) {
@@ -60,6 +152,8 @@ class SettingsStore(context: Context) {
             .putString(KEY_SORT_BY, settings.defaultSortBy.name)
             .putBoolean(KEY_SORT_ASC, settings.defaultSortDirection == SortDirection.ASC)
             .putString(KEY_GROUP_BY, settings.defaultGroupBy.name)
+            .putString(KEY_AI, aiSettingsToJson(settings.ai))
+            .putBoolean(KEY_AI_SEARCH_ENABLED, settings.aiSearchEnabled)
             .apply()
     }
 
@@ -220,6 +314,8 @@ class SettingsStore(context: Context) {
         const val KEY_GROUP_BY = "defaultGroupBy"
         const val KEY_TOPIC_SORT_BY_NAME = "topicSortByName"
         const val KEY_TOPIC_SORT_ASC = "topicSortAscending"
+        const val KEY_AI = "ai"
+        const val KEY_AI_SEARCH_ENABLED = "aiSearchEnabled"
         const val KEY_LAN_DEVICE_ID = "lanDeviceId"
         const val KEY_LAN_DEVICE_NAME = "lanDeviceName"
         const val KEY_LAN_HOST = "lanHost"

@@ -58,6 +58,44 @@ class ScanNotifier(private val context: Context) {
         nm.cancel(ID_PROGRESS)
     }
 
+    // —— M6b 阶段 2（D17 尾款）：AI 任务通知，同一 Channel 加取消 action（:15 注释的
+    //    扩展位）。取消回传走广播 [ACTION_AI_CANCEL]（MainActivity 常驻注册，转发
+    //    GalleryViewModel.cancelAiTask → core 取消注册表，下一张迭代首查生效）。
+
+    /** AI 批量任务进行中（确定进度 + 取消按钮；kind 显示名如「AI 分析」）。 */
+    fun aiProgress(kind: String, current: Int, total: Int) {
+        notify(ID_AI_PROGRESS) { builder ->
+            val cancel = PendingIntent.getBroadcast(
+                context,
+                1,
+                Intent(ACTION_AI_CANCEL).setPackage(context.packageName),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder
+                .setSmallIcon(android.R.drawable.stat_notify_sync)
+                .setContentTitle("${kind}中… $current/$total")
+                .setOngoing(true)
+                .setProgress(total, current, false)
+                .addAction(0, "取消", cancel)
+        }
+    }
+
+    /** AI 任务终态（完成/取消/失败各态文案由调用方给）；收走进度通知。 */
+    fun aiDone(message: String) {
+        nm.cancel(ID_AI_PROGRESS)
+        notify(ID_AI_DONE) { builder ->
+            builder
+                .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                .setContentTitle("AI 任务")
+                .setContentText(message)
+                .setAutoCancel(true)
+        }
+    }
+
+    fun aiClear() {
+        nm.cancel(ID_AI_PROGRESS)
+    }
+
     private fun notify(id: Int, configure: (NotificationCompat.Builder) -> NotificationCompat.Builder) {
         ensureChannel()
         val pending = PendingIntent.getActivity(
@@ -75,5 +113,10 @@ class ScanNotifier(private val context: Context) {
         private const val CHANNEL_ID = "aurora_scan"
         private const val ID_PROGRESS = 1001
         private const val ID_DONE = 1002
+        private const val ID_AI_PROGRESS = 1003
+        private const val ID_AI_DONE = 1004
+
+        /** 通知「取消」action 的广播 action（常驻 receiver 注册，见 MainActivity）。 */
+        const val ACTION_AI_CANCEL = "com.aurora.gallery.kotlin.ACTION_AI_CANCEL"
     }
 }

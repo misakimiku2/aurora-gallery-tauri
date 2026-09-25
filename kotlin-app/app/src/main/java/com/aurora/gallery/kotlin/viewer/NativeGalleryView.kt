@@ -116,6 +116,8 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String)
         // M5 3.2：用户点击了「加入画布」（仅平板显示此菜单项，D28）
         fun onAddToCanvas(fileId: String)
+        /** M6b 阶段 2：用户点击了「AI 分析」（仅本地项显示此菜单项；单张入口）。 */
+        fun onAiAnalyze(fileId: String)
         /**
          * M6a 阶段 4（D34）：用户点击了「保存到设备」（仅 isLan 项显示此菜单项）。
          * [remotePath] 为远端不透明 path（宿主只取尾段当文件名，不回传服务端）；
@@ -241,6 +243,9 @@ class NativeGalleryView @JvmOverloads constructor(
     private val drawerTagsLayout: LinearLayout
     private val drawerDescView: TextView
     private val drawerSourceUrlView: TextView
+    /** M6b 阶段 2：AI 分析节（标题+内容整体隐藏/显示；无 AI 数据时整节不占位）。 */
+    private lateinit var drawerAiSection: LinearLayout
+    private lateinit var drawerAiLayout: LinearLayout
     private var drawerOpen = false
     /** 正在提取主色调的 fileId，非 null 时抽屉显示 loading 占位 */
     private var loadingPaletteFileId: String? = null
@@ -515,6 +520,22 @@ class NativeGalleryView @JvmOverloads constructor(
             }
         }
         drawerContainer.addView(drawerSourceUrlView)
+
+        // Section 9: AI 分析（M6b 阶段 2；无 AI 数据整节 GONE）。标题+内容包一层便于整节隐藏
+        drawerAiSection = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            visibility = View.GONE
+        }
+        drawerAiSection.addView(buildSectionTitle("AI 分析", iconRes = R.drawable.ic_lucide_info))
+        drawerAiLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (resources.displayMetrics.density * 16).toInt()
+            }
+        }
+        drawerAiSection.addView(drawerAiLayout)
+        drawerContainer.addView(drawerAiSection)
 
         addView(metadataDrawer)
 
@@ -977,6 +998,66 @@ class NativeGalleryView @JvmOverloads constructor(
 
         // Section 8: 来源网址（空时显示 hint）
         drawerSourceUrlView.text = item.sourceUrl
+
+        // Section 9: AI 分析（M6b 阶段 2）：场景分类小字 + AI 描述 + AI 标签胶囊。
+        // 只读展示（无编辑按钮）——AI 字段的权威源在 aiData，编辑入口归 AI 任务重跑；
+        // LAN 项数据层不给 AI 字段（远端契约无 aiData），整节自动隐藏。
+        drawerAiLayout.removeAllViews()
+        val hasAi = item.aiTags.isNotEmpty() || item.aiDescription.isNotEmpty() || item.aiSceneCategory.isNotEmpty()
+        drawerAiSection.visibility = if (hasAi) View.VISIBLE else View.GONE
+        if (hasAi) {
+            if (item.aiSceneCategory.isNotEmpty()) {
+                drawerAiLayout.addView(TextView(context).apply {
+                    text = "场景：${item.aiSceneCategory}" +
+                        if (item.aiObjects.isNotEmpty()) " · ${item.aiObjects.joinToString("、")}" else ""
+                    setTextColor(colorTextSecondary())
+                    textSize = 12f
+                    layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = (resources.displayMetrics.density * 6).toInt()
+                    }
+                })
+            }
+            if (item.aiDescription.isNotEmpty()) {
+                drawerAiLayout.addView(TextView(context).apply {
+                    text = item.aiDescription
+                    setTextColor(colorTextPrimary())
+                    textSize = 13f
+                    setLineSpacing(0f, 1.4f)
+                    layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = (resources.displayMetrics.density * 6).toInt()
+                    }
+                })
+            }
+            if (item.aiTags.isNotEmpty()) {
+                val aiTagFlow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+                }
+                item.aiTags.forEach { tag ->
+                    aiTagFlow.addView(TextView(context).apply {
+                        text = tag
+                        setTextColor(colorTagText())
+                        textSize = 11f
+                        setPadding(
+                            (resources.displayMetrics.density * 10).toInt(),
+                            (resources.displayMetrics.density * 6).toInt(),
+                            (resources.displayMetrics.density * 10).toInt(),
+                            (resources.displayMetrics.density * 6).toInt(),
+                        )
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = resources.displayMetrics.density * 14
+                            setColor(colorTagBg())
+                            setStroke((resources.displayMetrics.density * 1).toInt(), colorTagBorder())
+                        }
+                        layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                            marginEnd = (resources.displayMetrics.density * 6).toInt()
+                            bottomMargin = (resources.displayMetrics.density * 6).toInt()
+                        }
+                    })
+                }
+                drawerAiLayout.addView(aiTagFlow)
+            }
+        }
         // 修复 M4a §8「抽屉延迟显示」：换图重建子树时查看器可能还没完成重新挂载后的首次
         // 布局（退出再进的 open() 路径，实例是复用的），addView 的 requestLayout 传不到
         // 宿主布局轮次；即便传到了，重新挂载后抽屉 specs 与上轮相同，View.measure 会整个
@@ -1854,6 +1935,11 @@ class NativeGalleryView @JvmOverloads constructor(
             } else {
                 buildList {
                     if (isTablet) add(canvasItem)
+                    // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
+                    // 分析写本地库，对远端图无意义）
+                    add(MoreMenuItem("AI 分析", colorTextPrimary()) {
+                        listener?.onAiAnalyze(item.fileId)
+                    })
                     add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
                     add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })
                     add(MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) })
