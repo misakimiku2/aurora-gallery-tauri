@@ -18,6 +18,7 @@ path = "src/uniffi_bindgen.rs"
 rusqlite = { version = "0.30", features = ["bundled", "serde_json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 md5 = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 color-thief = "0.2.2"
@@ -27,3 +28,6 @@ uniffi = { version = "0.32", features = ["cli"] }
 thiserror = "1"
 icu_collator = "2"
 icu_locale_core = "2"
+# M6b AI 编排下沉（D35a）：blocking 客户端自带 tokio 运行时线程，core 不直接依赖 tokio；
+# rustls-tls = webpki-roots 内嵌 CA（Android 不依赖系统证书库）；与 src-tauri 的 reqwest 0.12 版本对齐
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }

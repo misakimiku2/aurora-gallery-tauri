@@ -30,6 +30,8 @@ pub enum AuroraError {
     Database(String),
     #[error("缩略图生成错误: {0}")]
     Thumbnail(String),
+    #[error("AI 错误: {0}")]
+    Ai(String),
 }
 
 fn db_err(e: rusqlite::Error) -> AuroraError {
@@ -816,6 +818,64 @@ pub fn rename_tag(old_tag: String, new_tag: String) -> Result<(), AuroraError> {
 pub fn delete_tags(tags: Vec<String>) -> Result<(), AuroraError> {
     let conn = pool().get_connection();
     db::tags::delete_tags(&conn, &tags).map_err(db_err)
+}
+
+// ---- M6b 0.6 spike（①+②合并验证，收口时随调试钩子一并删除）----
+// ②：Kotlin→Rust 传回调接口实现，Rust 反向调用上报进度/结果——AI 任务
+//    进度/取消/字节供给的通道形状（D35a）。uniffi 0.32 回调代理非 Send，
+//    不能 move 进 worker 线程：worker 经 mpsc 通道把事件发回调用线程，
+//    由调用线程的泵循环驱动回调（Kotlin 侧从 IO 协程调用本函数即可）。
+// ①：真正引用 reqwest::blocking（构造 Client + 发请求），让链接器保真——
+//    仅加依赖不引用时 dead-code 剥离会让 so 体积测不出来。
+#[uniffi::export(callback_interface)]
+pub trait SpikeCallback {
+    fn on_progress(&self, current: u32, total: u32);
+    fn on_finished(&self, summary: String);
+}
+
+#[uniffi::export]
+pub fn spike_ai_channel(url: String, callback: Box<dyn SpikeCallback>) {
+    enum Ev {
+        Progress(u32, u32),
+        Finished(String),
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<Ev>();
+    std::thread::spawn(move || {
+        use std::time::Duration;
+        tx.send(Ev::Progress(0, 1)).ok();
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tx.send(Ev::Finished(format!("[spike] build_err: {e}"))).ok();
+                return;
+            }
+        };
+        let summary = match client.get(&url).send() {
+            Ok(resp) => match resp.text() {
+                Ok(body) => format!(
+                    "[spike] ok len={} head={}",
+                    body.len(),
+                    &body.chars().take(120).collect::<String>()
+                ),
+                Err(e) => format!("[spike] text_err: {e}"),
+            },
+            Err(e) => format!("[spike] send_err: {e}"),
+        };
+        tx.send(Ev::Finished(summary)).ok();
+    });
+    // 调用线程泵：worker 事件 → 回调（回调对象不跨线程）
+    while let Ok(ev) = rx.recv() {
+        match ev {
+            Ev::Progress(c, t) => callback.on_progress(c, t),
+            Ev::Finished(s) => {
+                callback.on_finished(s);
+                return;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

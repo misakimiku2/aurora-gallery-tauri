@@ -4,6 +4,8 @@
 //! - 桌面/安卓 Tauri 壳（`src-tauri`）通过 path 依赖复用；
 //! - Kotlin 端经 UniFFI 直调（M1 阶段 1 接入）。
 
+pub mod ai;
+pub mod ai_task;
 pub mod color_extractor;
 pub mod collate;
 pub mod color_db;

@@ -649,6 +649,120 @@ internal open class UniffiForeignFutureResultVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`newName`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod4 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceSpikeCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceSpikeCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`summary`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readBytes", "onProgress", "onFileDone", "onName", "onFinished")
+internal open class UniffiVTableCallbackInterfaceAiRenameCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2? = null,
+    @JvmField internal var `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2? = null,
+        `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3? = null,
+        `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4? = null,
+    ): UniffiVTableCallbackInterfaceAiRenameCallback(`uniffiFree`,`uniffiClone`,`readBytes`,`onProgress`,`onFileDone`,`onName`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceAiRenameCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readBytes` = other.`readBytes`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onName` = other.`onName`
+        `onFinished` = other.`onFinished`
+    }
+
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readBytes", "onProgress", "onFileDone", "onFinished")
+internal open class UniffiVTableCallbackInterfaceAiTaskCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2? = null,
+        `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3? = null,
+    ): UniffiVTableCallbackInterfaceAiTaskCallback(`uniffiFree`,`uniffiClone`,`readBytes`,`onProgress`,`onFileDone`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceAiTaskCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readBytes` = other.`readBytes`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onFinished` = other.`onFinished`
+    }
+
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "onProgress", "onFinished")
+internal open class UniffiVTableCallbackInterfaceSpikeCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0? = null,
+        `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1? = null,
+    ): UniffiVTableCallbackInterfaceSpikeCallback(`uniffiFree`,`uniffiClone`,`onProgress`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceSpikeCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `onProgress` = other.`onProgress`
+        `onFinished` = other.`onFinished`
+    }
+
+}
 
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
@@ -672,6 +786,20 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_aurora_core_checksum_func_ai_analyze_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_apply_search_filter(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_cancel_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_check_connection(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_fetch_models(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_generate_file_names(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_rewrite_search_query(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_add_files_to_topic(
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_people_to_topic(
@@ -740,6 +868,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_set_topic_people(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_spike_ai_channel(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_update_person_avatar(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_file_metadata(
@@ -749,6 +879,28 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_aurora_core_checksum_func_upsert_person(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_read_bytes(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_name(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_finished(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_read_bytes(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_finished(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_spikecallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_spikecallback_on_finished(
     ): Int
     external fun ffi_aurora_core_uniffi_contract_version(
     ): Int
@@ -761,8 +913,31 @@ internal object UniffiLib {
 
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
+        uniffiCallbackInterfaceAiRenameCallback.register(this)
+        uniffiCallbackInterfaceAiTaskCallback.register(this)
+        uniffiCallbackInterfaceSpikeCallback.register(this)
         
     }
+    external fun uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(`vtable`: UniffiVTableCallbackInterfaceAiRenameCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(`vtable`: UniffiVTableCallbackInterfaceAiTaskCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_init_callback_vtable_spikecallback(`vtable`: UniffiVTableCallbackInterfaceSpikeCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_analyze_files(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_apply_search_filter(`filter`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_ai_cancel_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_ai_check_connection(`cfg`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_fetch_models(`cfg`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_ai_generate_file_names(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_rewrite_search_query(`cfg`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_add_files_to_topic(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_add_people_to_topic(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -830,6 +1005,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_set_topic_files(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_set_topic_people(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_spike_ai_channel(`url`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_update_person_avatar(`personId`: RustBuffer.ByValue,`coverFileId`: RustBuffer.ByValue,`faceBox`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -960,6 +1137,27 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_aurora_core_checksum_func_ai_analyze_files() != 14489) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_apply_search_filter() != 8854) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_cancel_task() != 52897) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_check_connection() != 29146) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_fetch_models() != 63685) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_generate_file_names() != 51559) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_rewrite_search_query() != 20476) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_add_files_to_topic() != 55474) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1062,6 +1260,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_set_topic_people() != 48421) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_spike_ai_channel() != 57558) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_update_person_avatar() != 15429) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1075,6 +1276,39 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_topic() != 1190) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_read_bytes() != 7956) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_progress() != 2298) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_file_done() != 41356) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_name() != 17906) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_finished() != 28808) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_read_bytes() != 31232) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_progress() != 40945) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_file_done() != 57411) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_finished() != 51435) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_spikecallback_on_progress() != 53066) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_spikecallback_on_finished() != 30235) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1168,7 +1402,38 @@ object UniffiWithHandle
  *
  * @suppress
  * */
-object NoHandle
+object NoHandle// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
 
 /**
  * @suppress
@@ -1358,6 +1623,267 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
     override fun write(value: ByteArray, buf: ByteBuffer) {
         buf.putInt(value.size)
         buf.put(value)
+    }
+}
+
+
+
+/**
+ * AI 配置（对齐 `src/types.ts:245-272` 的 `AIConfig`，端点/模型拍平成单字段）。
+ *
+ * `language` = 全局界面语言（"zh" / 其他），同时决定：
+ * - 分析 prompt 的中英文变体（桌面 `settings.language === 'zh'` 的 isChinese 分支）；
+ * - 翻译目标语言（D38：不用 ai.targetLanguage，桌面 transTarget 同样取全局 language）。
+ */
+data class AiConfig (
+    var `provider`: AiProvider
+    , 
+    var `openaiEndpoint`: kotlin.String
+    , 
+    var `openaiApiKey`: kotlin.String
+    , 
+    var `openaiModel`: kotlin.String
+    , 
+    var `ollamaEndpoint`: kotlin.String
+    , 
+    var `ollamaModel`: kotlin.String
+    , 
+    var `lmstudioEndpoint`: kotlin.String
+    , 
+    var `lmstudioModel`: kotlin.String
+    , 
+    /**
+     * 桌面 `systemPrompt`：openai/lmstudio 走 system role 消息；ollama /api/generate 走 body.system
+     * 字段、/api/chat 走 system role 消息（详见 [`AiClient::chat`]）。
+     */
+    var `systemPrompt`: kotlin.String?
+    , 
+    var `autoTag`: kotlin.Boolean
+    , 
+    var `autoDescription`: kotlin.Boolean
+    , 
+    var `enhancePersonDescription`: kotlin.Boolean
+    , 
+    var `enableOcr`: kotlin.Boolean
+    , 
+    var `enableTranslation`: kotlin.Boolean
+    , 
+    /**
+     * 翻译目标语言 = 全局 language（D38）。
+     */
+    var `language`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiConfig: FfiConverterRustBuffer<AiConfig> {
+    override fun read(buf: ByteBuffer): AiConfig {
+        return AiConfig(
+            FfiConverterTypeAiProvider.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiConfig) = (
+            FfiConverterTypeAiProvider.allocationSize(value.`provider`) +
+            FfiConverterString.allocationSize(value.`openaiEndpoint`) +
+            FfiConverterString.allocationSize(value.`openaiApiKey`) +
+            FfiConverterString.allocationSize(value.`openaiModel`) +
+            FfiConverterString.allocationSize(value.`ollamaEndpoint`) +
+            FfiConverterString.allocationSize(value.`ollamaModel`) +
+            FfiConverterString.allocationSize(value.`lmstudioEndpoint`) +
+            FfiConverterString.allocationSize(value.`lmstudioModel`) +
+            FfiConverterOptionalString.allocationSize(value.`systemPrompt`) +
+            FfiConverterBoolean.allocationSize(value.`autoTag`) +
+            FfiConverterBoolean.allocationSize(value.`autoDescription`) +
+            FfiConverterBoolean.allocationSize(value.`enhancePersonDescription`) +
+            FfiConverterBoolean.allocationSize(value.`enableOcr`) +
+            FfiConverterBoolean.allocationSize(value.`enableTranslation`) +
+            FfiConverterString.allocationSize(value.`language`)
+    )
+
+    override fun write(value: AiConfig, buf: ByteBuffer) {
+            FfiConverterTypeAiProvider.write(value.`provider`, buf)
+            FfiConverterString.write(value.`openaiEndpoint`, buf)
+            FfiConverterString.write(value.`openaiApiKey`, buf)
+            FfiConverterString.write(value.`openaiModel`, buf)
+            FfiConverterString.write(value.`ollamaEndpoint`, buf)
+            FfiConverterString.write(value.`ollamaModel`, buf)
+            FfiConverterString.write(value.`lmstudioEndpoint`, buf)
+            FfiConverterString.write(value.`lmstudioModel`, buf)
+            FfiConverterOptionalString.write(value.`systemPrompt`, buf)
+            FfiConverterBoolean.write(value.`autoTag`, buf)
+            FfiConverterBoolean.write(value.`autoDescription`, buf)
+            FfiConverterBoolean.write(value.`enhancePersonDescription`, buf)
+            FfiConverterBoolean.write(value.`enableOcr`, buf)
+            FfiConverterBoolean.write(value.`enableTranslation`, buf)
+            FfiConverterString.write(value.`language`, buf)
+    }
+}
+
+
+
+/**
+ * 一张待分析图（path 供无旧行时落元数据用；字节由 Kotlin 经回调供给）。
+ */
+data class AiInputItem (
+    var `fileId`: kotlin.String
+    , 
+    var `path`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiInputItem: FfiConverterRustBuffer<AiInputItem> {
+    override fun read(buf: ByteBuffer): AiInputItem {
+        return AiInputItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiInputItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: AiInputItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+/**
+ * 改名条目（AI 只产名字；真正改名由 Kotlin 走 M4b 重命名管线+系统授权）。
+ */
+data class AiRenameItem (
+    var `fileId`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiRenameItem: FfiConverterRustBuffer<AiRenameItem> {
+    override fun read(buf: ByteBuffer): AiRenameItem {
+        return AiRenameItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiRenameItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: AiRenameItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+/**
+ * AI 搜索改写结果（对齐 `src/types.ts` 的 `AiSearchFilter`，不含 filePaths——
+ * CLIP/取色搜索的路径直通分支由主线程自行处理）。
+ */
+data class AiSearchFilter (
+    var `keywords`: List<kotlin.String>
+    , 
+    var `colors`: List<kotlin.String>
+    , 
+    var `people`: List<kotlin.String>
+    , 
+    var `description`: kotlin.String?
+    , 
+    var `originalQuery`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiSearchFilter: FfiConverterRustBuffer<AiSearchFilter> {
+    override fun read(buf: ByteBuffer): AiSearchFilter {
+        return AiSearchFilter(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiSearchFilter) = (
+            FfiConverterSequenceString.allocationSize(value.`keywords`) +
+            FfiConverterSequenceString.allocationSize(value.`colors`) +
+            FfiConverterSequenceString.allocationSize(value.`people`) +
+            FfiConverterOptionalString.allocationSize(value.`description`) +
+            FfiConverterString.allocationSize(value.`originalQuery`)
+    )
+
+    override fun write(value: AiSearchFilter, buf: ByteBuffer) {
+            FfiConverterSequenceString.write(value.`keywords`, buf)
+            FfiConverterSequenceString.write(value.`colors`, buf)
+            FfiConverterSequenceString.write(value.`people`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+            FfiConverterString.write(value.`originalQuery`, buf)
     }
 }
 
@@ -2119,6 +2645,61 @@ public object FfiConverterTypeRemoteTagCount: FfiConverterRustBuffer<RemoteTagCo
 
 
 /**
+ * 搜索匹配用的最小文件画像（FFI 面裁剪版）。
+ *
+ * 注意：桌面 `useFileSearch.ts` 的 aiFilter 匹配还用到 `meta.palette` /
+ * `aiData.dominantColors`（colors 条件）与 `aiData.faces[].name`（people 条件），
+ * 本 DTO 未携带这两类数据（见 `apply_search_filter` 注释与报告）。
+ */
+data class SearchItem (
+    var `fileId`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    var `description`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchItem: FfiConverterRustBuffer<SearchItem> {
+    override fun read(buf: ByteBuffer): SearchItem {
+        return SearchItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterOptionalString.allocationSize(value.`description`)
+    )
+
+    override fun write(value: SearchItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+    }
+}
+
+
+
+/**
  * 一个标签 + 它贴在多少张图上。计数为 0 = 只在词表里、还没贴到任何文件上。
  */
 data class TagEntry (
@@ -2203,6 +2784,44 @@ public object FfiConverterTypeTagGroup: FfiConverterRustBuffer<TagGroup> {
 
 
 
+/**
+ * AI 服务商（对齐 `src/types.ts` 的 `AIProvider`）。
+ */
+
+enum class AiProvider {
+    
+    OPEN_AI,
+    OLLAMA,
+    LM_STUDIO;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiProvider: FfiConverterRustBuffer<AiProvider> {
+    override fun read(buf: ByteBuffer) = try {
+        AiProvider.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: AiProvider) = 4UL
+
+    override fun write(value: AiProvider, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 
 /**
@@ -2219,6 +2838,14 @@ sealed class AuroraException: kotlin.Exception() {
     }
     
     class Thumbnail(
+        
+        val v1: kotlin.String
+        ) : AuroraException() {
+        override val message
+            get() = "v1=${ v1 }"
+    }
+    
+    class Ai(
         
         val v1: kotlin.String
         ) : AuroraException() {
@@ -2251,6 +2878,9 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
             2 -> AuroraException.Thumbnail(
                 FfiConverterString.read(buf),
                 )
+            3 -> AuroraException.Ai(
+                FfiConverterString.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -2263,6 +2893,11 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
                 + FfiConverterString.allocationSize(value.v1)
             )
             is AuroraException.Thumbnail -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
+            is AuroraException.Ai -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterString.allocationSize(value.v1)
@@ -2282,10 +2917,328 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
+            is AuroraException.Ai -> {
+                buf.putInt(3)
+                FfiConverterString.write(value.v1, buf)
+                Unit
+            }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 
 }
+
+
+
+
+
+public interface AiRenameCallback {
+    
+    fun `readBytes`(`fileId`: kotlin.String): kotlin.ByteArray?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    fun `onName`(`fileId`: kotlin.String, `newName`: kotlin.String)
+    
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceAiRenameCallback {
+    internal object `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readBytes`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray? -> uniffiOutReturn.setValue(FfiConverterOptionalByteArray.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`newName`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onName`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterString.lift(`newName`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeAiRenameCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeAiRenameCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceAiRenameCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readBytes`,
+        `onProgress`,
+        `onFileDone`,
+        `onName`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeAiRenameCallback: FfiConverterCallbackInterface<AiRenameCallback>()
+
+
+
+
+
+/**
+ * 分析任务回调：read_bytes 在调用线程（泵）被调，其余为 worker 事件转发。
+ */
+public interface AiTaskCallback {
+    
+    fun `readBytes`(`fileId`: kotlin.String): kotlin.ByteArray?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceAiTaskCallback {
+    internal object `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readBytes`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray? -> uniffiOutReturn.setValue(FfiConverterOptionalByteArray.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeAiTaskCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeAiTaskCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceAiTaskCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readBytes`,
+        `onProgress`,
+        `onFileDone`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeAiTaskCallback: FfiConverterCallbackInterface<AiTaskCallback>()
+
+
+
+
+
+public interface SpikeCallback {
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    fun `onFinished`(`summary`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceSpikeCallback {
+    internal object `onProgress`: UniffiCallbackInterfaceSpikeCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeSpikeCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceSpikeCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`summary`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeSpikeCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`summary`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeSpikeCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeSpikeCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceSpikeCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `onProgress`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_spikecallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeSpikeCallback: FfiConverterCallbackInterface<SpikeCallback>()
 
 
 
@@ -2421,6 +3374,38 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
+    override fun read(buf: ByteBuffer): kotlin.ByteArray? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterByteArray.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ByteArray?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterByteArray.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ByteArray?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterByteArray.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiCoverCrop: FfiConverterRustBuffer<FfiCoverCrop?> {
     override fun read(buf: ByteBuffer): FfiCoverCrop? {
         if (buf.get().toInt() == 0) {
@@ -2535,6 +3520,62 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAiInputItem: FfiConverterRustBuffer<List<AiInputItem>> {
+    override fun read(buf: ByteBuffer): List<AiInputItem> {
+        val len = buf.getInt()
+        return List<AiInputItem>(len) {
+            FfiConverterTypeAiInputItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AiInputItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAiInputItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AiInputItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAiInputItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAiRenameItem: FfiConverterRustBuffer<List<AiRenameItem>> {
+    override fun read(buf: ByteBuffer): List<AiRenameItem> {
+        val len = buf.getInt()
+        return List<AiRenameItem>(len) {
+            FfiConverterTypeAiRenameItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AiRenameItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAiRenameItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AiRenameItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAiRenameItem.write(it, buf)
         }
     }
 }
@@ -2769,6 +3810,34 @@ public object FfiConverterSequenceTypeRemoteTagCount: FfiConverterRustBuffer<Lis
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeSearchItem: FfiConverterRustBuffer<List<SearchItem>> {
+    override fun read(buf: ByteBuffer): List<SearchItem> {
+        val len = buf.getInt()
+        return List<SearchItem>(len) {
+            FfiConverterTypeSearchItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SearchItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSearchItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SearchItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSearchItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeTagEntry: FfiConverterRustBuffer<List<TagEntry>> {
     override fun read(buf: ByteBuffer): List<TagEntry> {
         val len = buf.getInt()
@@ -2857,6 +3926,115 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         }
     }
 }
+        /**
+         * 批量 AI 分析：逐张 读字节→base64→HTTP→解析→写库，事件实时回调。
+         * 阻塞至任务结束（Kotlin 从 IO 协程调用）；state ∈ completed|cancelled|error。
+         */ fun `aiAnalyzeFiles`(`cfg`: AiConfig, `items`: List<AiInputItem>, `taskId`: kotlin.String, `callback`: AiTaskCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_analyze_files(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterSequenceTypeAiInputItem.lower(`items`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeAiTaskCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * 过滤条件应用到候选集（纯函数；keywords/description 即期，colors/people 的
+         * 数据源挂钩阶段 3/4——桌面语义见 ai.rs 内注释）。
+         */ fun `aiApplySearchFilter`(`filter`: AiSearchFilter, `items`: List<SearchItem>): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_apply_search_filter(
+    
+        
+        FfiConverterTypeAiSearchFilter.lower(`filter`),
+        FfiConverterSequenceTypeSearchItem.lower(`items`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 取消在册任务：下一张迭代首查生效（在途 HTTP 请求本身不打断——与桌面
+         * 「严格顺序无取消」相比已是增强；请求级超时见 ai.rs）。任务不在册返回 false。
+         */ fun `aiCancelTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_cancel_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * provider 连接测试（对齐 TS checkConnection 的三探测路径）。
+         */
+    @Throws(AuroraException::class) fun `aiCheckConnection`(`cfg`: AiConfig)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_check_connection(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),_status)
+}
+    
+    
+
+        /**
+         * 拉取模型列表（AI 面板「刷新模型」用）。
+         */
+    @Throws(AuroraException::class) fun `aiFetchModels`(`cfg`: AiConfig): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_fetch_models(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量 AI 改名：逐张产干净文件名，经 on_name 回调；不碰库、不改文件。
+         */ fun `aiGenerateFileNames`(`cfg`: AiConfig, `items`: List<AiRenameItem>, `taskId`: kotlin.String, `callback`: AiRenameCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_generate_file_names(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterSequenceTypeAiRenameItem.lower(`items`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeAiRenameCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * AI 搜索改写：query → 结构化过滤条件（同步一次 HTTP，Kotlin 在 IO 协程调用）。
+         */
+    @Throws(AuroraException::class) fun `aiRewriteSearchQuery`(`cfg`: AiConfig, `query`: kotlin.String): AiSearchFilter {
+            return FfiConverterTypeAiSearchFilter.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_rewrite_search_query(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterString.lower(`query`),_status)
+}
+    )
+    }
+    
+
     @Throws(AuroraException::class) fun `addFilesToTopic`(`topicId`: kotlin.String, `fileIds`: List<kotlin.String>)
         = 
     uniffiRustCallWithError(AuroraException) { _status ->
@@ -3325,6 +4503,17 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         
         FfiConverterString.lower(`topicId`),
         FfiConverterSequenceString.lower(`peopleIds`),_status)
+}
+    
+    
+ fun `spikeAiChannel`(`url`: kotlin.String, `callback`: SpikeCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_spike_ai_channel(
+    
+        
+        FfiConverterString.lower(`url`),
+        FfiConverterTypeSpikeCallback.lower(`callback`),_status)
 }
     
     

@@ -105,7 +105,9 @@ import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
+import uniffi.aurora_core.SpikeCallback
 import uniffi.aurora_core.TagGroup
+import uniffi.aurora_core.spikeAiChannel
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -1337,6 +1339,18 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.FILEOP"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
+            ContextCompat.registerReceiver(
+                this,
+                aiSpikeDebugReceiver,
+                IntentFilter("aurora.debug.AI_SPIKE"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+            ContextCompat.registerReceiver(
+                this,
+                aiSmokeDebugReceiver,
+                IntentFilter("aurora.debug.AI_SMOKE"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
         }
     }
 
@@ -1453,6 +1467,47 @@ class MainActivity : ComponentActivity() {
                 }
                 "copy" -> viewModel.copyFiles(uris, target) { n -> report("复制完成 $n") }
             }
+        }
+    }
+
+    /**
+     * M6b 0.6 spike 冒烟钩子：`adb shell am broadcast -a aurora.debug.AI_SPIKE --es url http://10.0.2.2:18081/ping`
+     * 验证 D35a 的两条通道：core 后台线程经 mpsc 泵反向调 Kotlin 回调（进度/结果），
+     * 以及 core 内 reqwest::blocking 的 HTTP 链路（默认打宿主 mock）。spike 收口时
+     * 随 core 的 spike_ai_channel 一并删除。
+     */
+    private val aiSpikeDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val url = intent.getStringExtra("url") ?: "http://10.0.2.2:18081/ping"
+            val nonce = intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString()
+            Log.i("AuroraKotlin", "[AiSpike] start nonce=$nonce url=$url (thread=${Thread.currentThread().name})")
+            Thread {
+                spikeAiChannel(url, object : SpikeCallback {
+                    override fun onProgress(current: UInt, total: UInt) {
+                        Log.i("AuroraKotlin", "[AiSpike] progress $current/$total (thread=${Thread.currentThread().name})")
+                    }
+
+                    override fun onFinished(summary: String) {
+                        Log.i("AuroraKotlin", "[AiSpike] finished nonce=$nonce: $summary")
+                    }
+                })
+            }.start()
+        }
+    }
+
+    /**
+     * M6b 1.3 冒烟钩子：`adb shell am broadcast -a aurora.debug.AI_SMOKE --es mode analyze|cancel|rename|search \
+     *   [--es provider openai|ollama|lmstudio] [--es slow 1]`，对宿主 mock provider 全链验证，见 AiSmoke.kt。
+     */
+    private val aiSmokeDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            runAiSmoke(
+                this@MainActivity,
+                intent.getStringExtra("nonce") ?: System.currentTimeMillis().toString(),
+                intent.getStringExtra("mode") ?: "analyze",
+                intent.getStringExtra("provider") ?: "openai",
+                intent.getStringExtra("slow") == "1",
+            )
         }
     }
 
