@@ -107,7 +107,9 @@ fun FileGrid(
     var collapsedIds by remember(groupBy) { mutableStateOf<Set<String>>(emptySet()) }
     val currentCollapsed = rememberUpdatedState(collapsedIds)
 
-    val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+    // 宽度分档（M8b 1.1 收敛自内联 screenWidthDp >= 600）：宽 ≥600dp（含横屏手机）拿平板档
+    // 间距——分档值逐字不变，仅判据收敛
+    val isTablet = !com.aurora.gallery.kotlin.ui.isCompactWidth(LocalConfiguration.current)
     val gapDp = if (isTablet) 16 else 10
     val paddingDp = if (isTablet) 24 else 8
     val gapPx = context.dp(gapDp)

@@ -201,7 +201,8 @@ fun FoldersOverview(
         return
     }
 
-    val isTablet = LocalConfiguration.current.screenWidthDp >= 600
+    // 宽度分档（M8b 1.1 收敛自内联 screenWidthDp >= 600）：分档值逐字不变，仅判据收敛
+    val isTablet = !com.aurora.gallery.kotlin.ui.isCompactWidth(LocalConfiguration.current)
     val gapPx = context.dp(if (isTablet) 16 else 10)
     val paddingPx = context.dp(if (isTablet) 24 else 8)
 

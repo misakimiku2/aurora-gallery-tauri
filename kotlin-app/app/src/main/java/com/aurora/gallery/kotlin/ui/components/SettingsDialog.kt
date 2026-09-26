@@ -152,9 +152,9 @@ internal fun SettingsHost(
     onDismiss: () -> Unit,
 ) {
     // 平板形态需宽高都够：横屏手机（宽 ≥600 但高仅 ~411dp）放不下双栏对话框
-    //（M4c 实测底部溢出），落到全屏页形态。断点取 FileGrid 惯例 600dp + 高度 480dp。
-    val isTablet = LocalConfiguration.current.screenWidthDp >= 600 &&
-        LocalConfiguration.current.screenHeightDp >= 480
+    //（M4c 实测底部溢出），落到全屏页形态。断点取 FileGrid 惯例 600dp + 高度 480dp
+    //（M8b 1.1 判据收敛至 isTabletForm，语义不变）。
+    val isTablet = com.aurora.gallery.kotlin.ui.isTabletForm(LocalConfiguration.current)
     if (isTablet) {
         SettingsTabletDialog(
             settings = settings,

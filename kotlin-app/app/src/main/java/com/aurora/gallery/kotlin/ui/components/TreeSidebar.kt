@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -278,6 +279,12 @@ fun TreeSidebar(
     onLanPersonClick: (com.aurora.gallery.kotlin.LanPerson) -> Unit = {},
     /** 本地人物（M6b 阶段 4，D37：WD14 识别写本地库；行渲染在远端人物之前）。 */
     localPeople: List<uniffi.aurora_core.FfiPerson> = emptyList(),
+    /**
+     * 面板宽度（M8b 1.2）：平板/推挤路径沿用 [SIDEBAR_WIDTH_DP]（256dp，默认值零改动）；
+     * 手机抽屉（PhoneSidebarDrawerHost）传入面板宽（屏宽 82% 封顶 420dp），六 Section
+     * 行/列表自然铺满，结构布局不动。
+     */
+    width: Dp = SIDEBAR_WIDTH_DP,
     modifier: Modifier = Modifier,
 ) {
     var activeSection by remember { mutableStateOf<SidebarSection?>(SidebarSection.FOLDERS) }
@@ -302,7 +309,7 @@ fun TreeSidebar(
     Column(
         modifier
             .fillMaxHeight()
-            .width(SIDEBAR_WIDTH_DP)
+            .width(width)
             .padding(top = 10.dp, bottom = 16.dp),
     ) {
         // 分区主体（2026-09-26 验收反馈）：包一层 weight(1f) 吃掉设置行以上全部高度，

@@ -80,6 +80,8 @@ import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SettingsCategory
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
+import com.aurora.gallery.kotlin.ui.components.PhoneSidebarDrawerHost
+import com.aurora.gallery.kotlin.ui.components.SIDEBAR_WIDTH_DP
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
 import com.aurora.gallery.kotlin.ui.components.filterFolders
@@ -146,8 +148,11 @@ class MainActivity : ComponentActivity() {
         GalleryViewModel.factory(
             application,
             LayoutVisibility(
+                // 横屏开侧栏（React layoutSettings 安卓分支）；M8b 1.2 起横屏手机（高 <480dp，
+                // 抽屉形态）冷启动收起——抽屉启动即开会盖住首帧主内容；平板（高 ≥480dp）不变
                 isSidebarVisible =
-                    resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT,
+                    resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT &&
+                    resources.configuration.screenHeightDp >= 480,
             ),
         )
     }
@@ -1782,16 +1787,25 @@ fun App(
     val currentFolder = tab.folderId?.let { id -> folders.firstOrNull { it.id == id } }
     val context = LocalContext.current
     val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
     // M4c D21：横屏手机 = 宽 ≥600dp 且高 <480dp——设置双形态断点外的第三形态，
     // 侧栏「设置」行被裁切，入口挂顶栏（onOpenSettings 传 TopBar）
-    val isLandscapePhone = LocalConfiguration.current.let {
+    val isLandscapePhone = configuration.let {
         it.screenWidthDp >= 600 && it.screenHeightDp < 480
     }
-    // M5 D28：平板形态（宽 ≥600dp 且高 ≥480dp，横屏手机不算）——画布是平板专属能力，
-    // 侧栏「画布」行与网格/查看器的画布入口都按此门控
-    val isTablet = LocalConfiguration.current.let {
-        it.screenWidthDp >= 600 && it.screenHeightDp >= 480
-    }
+    // M5 D28：平板形态（宽 ≥600dp 且高 ≥480dp，横屏手机不算；M8b 1.1 判据收敛）——
+    // 画布是平板专属能力，侧栏「画布」行与网格/查看器的画布入口都按此门控
+    val isTablet = com.aurora.gallery.kotlin.ui.isTabletForm(configuration)
+    // M8b 1.2（D45）：抽屉形态 = !isTablet（竖屏手机 + 横屏手机），侧栏宿主在
+    // PhoneSidebarDrawerHost（平移抽屉）与 SidebarPane（平板推挤，零改动）间分叉
+    val isPhone = !isTablet
+    // 抽屉面板宽（屏宽 82% 封顶 420dp，v3 拍板带内取档）；TreeSidebar 宽度档与抽屉宿主共用此式
+    val drawerPanelWidthDp =
+        com.aurora.gallery.kotlin.ui.components.phoneSidebarPanelWidthDp(configuration.screenWidthDp)
+    // 网格列数语义隔离（1.2 红线：抽屉平移不重排）：手机下网格把「侧栏开合」当恒否——
+    // FileGrid/FoldersOverview 的 sidebarVisible 只驱动「推挤宽度预测」，抽屉形态主内容
+    // 宽度不变，传 true 会让列数随抽屉开合重算（FLIP）。平板传原值，推挤预测照旧。
+    val gridSidebarVisible = state.layout.isSidebarVisible && !isPhone
     // 4.4 下拉刷新的触发阈值（80dp，React threshold 同值）
     val ptrThresholdPx = with(density) { 80.dp.toPx() }
 
@@ -2096,11 +2110,22 @@ fun App(
     // —— 4.3 返回手势链（D5 后：关弹层→关搜索→退选择→返回上级→总览再退=系统默认）。
     // 排序菜单/日期弹层/标签弹层是独立窗口（Dialog/BottomSheet），系统返回先被它们
     // 自己消费，不进本链。
+    // M8b 1.2：抽屉收起（手机抽屉行点击/返回键/沉浸态收起共用；幂等——已收不翻转）。
+    val closeDrawer: () -> Unit = {
+        if (state.layout.isSidebarVisible) state.toggleSidebar()
+    }
     // M3 3.1：查看器插在「退选择模式」之前。它自带 dispatchKeyEvent 的梯子（幻灯片→抽屉→
     // 关闭）与 NativeViewerLayer 的 BackHandler，本链在查看器开着时整条让位——
     // 一次 back 只退一层，退的是查看器，不是 goBack()。
-    BackHandler(enabled = tab.viewingFileId == null && (searchOpen || state.selectionMode || tab.history.canBack)) {
+    // M8b 1.5：抽屉开着 → 返回先关抽屉（插在链最前；平板无抽屉态，isPhone 恒 false，
+    // 条件短路行为与现状逐字一致）。
+    BackHandler(
+        enabled = tab.viewingFileId == null &&
+            ((isPhone && state.layout.isSidebarVisible) || searchOpen || state.selectionMode || tab.history.canBack),
+    ) {
         when {
+            isPhone && state.layout.isSidebarVisible -> closeDrawer()
+
             searchOpen -> {
                 // 对齐 React close-android-search：清词 + 关胶囊
                 state.setSearchQuery("")
@@ -2113,84 +2138,92 @@ fun App(
         }
     }
 
-    // 3.5 面板开合：侧栏在左、内容（TopBar + 网格）在右，开关时侧栏宽度收缩把内容
-    // 推挤过去（SidebarPane 内做 300ms ease-out 动画，对齐 React SidebarPane）。
+    // 3.5 面板开合 / M8b 1.2 形态分叉（D45）：侧栏与主内容两组合同一套（清单 §1.3
+    // 组件复用不复制），宿主按形态二选一——
+    //  - 平板（isTablet）：SidebarPane 推挤式宽度动画（现状零改动，悬浮卡片壳见下）；
+    //  - 手机（isPhone）：PhoneSidebarDrawerHost 平移抽屉——主内容整体 translationX
+    //    右移不重排（无 FLIP、FileGrid 列数不变），面板从左缘滑入、边缘手势全程跟手。
     //
     // 悬浮卡片壳（2026-09-26 验收反馈）：对齐 React 桌面主内容区「m-2 + rounded-xl +
     // bg-content」形制——主界面（侧栏+内容）整体内缩 8dp 裁 12dp 圆角，卡片底刷
     // content 色，四周留边透出窗口底 main 色（applyWindowTheme）；底部再让开手势区
     // （navigationBarsPadding），卡片下缘悬在导航栏上方。侧栏 panel 底与 TopBar
     // panel 底都在卡片内被统一裁出圆角；弹窗/弹层是独立 window 不吃这个裁剪；沉浸
-    // 态（查看器/画布）insets 清零时卡片自动铺满，留边形制不变。
-    Row(
-        Modifier
-            .fillMaxSize()
-            .navigationBarsPadding()
-            .padding(8.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(AuroraTheme.colors.content),
-    ) {
-        SidebarPane(
-            visible = state.layout.isSidebarVisible,
+    // 态（查看器/画布）insets 清零时卡片自动铺满，留边形制不变。两种形态共用同一卡片。
+    // 手机端抽屉行点击后收起（直达目录/总览/设置；平板推挤语义不需要收起，isPhone=false 不触发）
+    val sidebarContent: @Composable () -> Unit = {
+        // 侧栏文件夹列表用全量 folders：TopBar 搜索词只过滤总览网格（对齐 React
+        // 侧栏树不被工具栏搜索过滤）
+        TreeSidebar(
+            folders = folders,
+            currentFolderId = tab.folderId,
+            onFolderClick = { onFolderClick(it); if (isPhone) closeDrawer() },
+            // 头部点击 = 回主界面（React onNavigateHome，2026-09-20 用户要求）
+            onNavigateHome = { state.navigateHome(); if (isPhone) closeDrawer() },
+            tagGroups = tagGroups,
+            activeTags = tab.activeTags,
+            onTagClick = { onTagClick(it); if (isPhone) closeDrawer() },
+            // 人物/标签/专题 Section 头部 = 进对应总览（M4a 3.2）
+            onPeopleOverviewClick = {
+                state.openOverview(ViewMode.PEOPLE_OVERVIEW); if (isPhone) closeDrawer()
+            },
+            onTagsOverviewClick = {
+                state.openOverview(ViewMode.TAGS_OVERVIEW); if (isPhone) closeDrawer()
+            },
+            onTopicsOverviewClick = {
+                state.openOverview(ViewMode.TOPICS_OVERVIEW); if (isPhone) closeDrawer()
+            },
+            peopleOverviewSelected = inPeopleOverview,
+            tagsOverviewSelected = inTagsOverview,
+            topicsOverviewSelected = inTopicsOverview,
+            foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
+            // 画布行：点击进画布视图；手机不显示（D28 平板专属）
+            showCanvas = isTablet,
+            onCanvasClick = { state.openCanvas() },
+            canvasSelected = inCanvas,
+            // 设置行：打开设置面板（M4b 2.1；手机全屏页打开后抽屉收起）
+            onSettingsClick = { onOpenSettings(); if (isPhone) closeDrawer() },
+            // 「网络」行未连接点击 = 打开设置直接落在局域网共享页（2026-09-26 验收反馈）
+            onLanSettingsClick = { onLanSettingsClick(); if (isPhone) closeDrawer() },
+            // 「网络」行已连接点击 = 进 LAN 文件夹总览（2026-09-26 二轮反馈，同「本地相册」）
+            onLanOverviewClick = { onLanOverviewClick(); if (isPhone) closeDrawer() },
+            lanOverviewSelected = tab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW,
+            // 网络 Section（M6a 阶段 4）：连接状态流 collect 成普通值传入（不轮询）；
+            // 远端目录行点击 = 直接进该远端目录网格（folderId 带 lan 前缀，序列源分流
+            // 在 reloadImages——与本地目录行的「点行进夹」同位）
+            lanConnected = lanSnapshot.state == LanState.CONNECTED,
+            lanFolders = lanSnapshot.folders,
+            onLanFolderClick = { folder ->
+                state.openFolder(com.aurora.gallery.kotlin.state.lanFolderId(folder.path))
+                if (isPhone) closeDrawer()
+            },
+            // M6a 阶段 5（D31 并入口径）：远端词表并入标签 Section、远端人物进人物
+            // Section。远端标签行点击 = 进 tag 筛选虚拟目录（与 onLanFolderClick 同款
+            // 前缀 folderId，序列源分流在 reloadImages）；远端人物行点击 = 成员筛选
+            //（M6b 阶段 5 / D40：GET /api/people/members 端点补齐后转真筛选）
+            lanRemoteTagGroups = lanRemoteTagGroups,
+            onLanTagClick = { tag ->
+                state.openFolder(com.aurora.gallery.kotlin.state.lanTagFolderId(tag))
+                if (isPhone) closeDrawer()
+            },
+            lanPeople = lanPeople,
+            onLanPersonClick = { person ->
+                ai.onOpenLanPersonFilter(person.id, person.name)
+                if (isPhone) closeDrawer()
+            },
+            // M6b 阶段 4（D37）：侧栏人物 Section 的本地人物行
+            localPeople = localPeople,
+            browserActive = inBrowser,
+            // 面板宽度档（M8b 1.2）：手机抽屉=屏宽 82% 封顶 420dp（与抽屉宿主同源）；
+            // 平板推挤沿用 SIDEBAR_WIDTH_DP（256dp）现状
+            width = if (isPhone) drawerPanelWidthDp else SIDEBAR_WIDTH_DP,
             modifier = Modifier.fillMaxHeight(),
-        ) {
-            // 侧栏文件夹列表用全量 folders：TopBar 搜索词只过滤总览网格（对齐 React
-            // 侧栏树不被工具栏搜索过滤）
-            TreeSidebar(
-                folders = folders,
-                currentFolderId = tab.folderId,
-                onFolderClick = onFolderClick,
-                // 头部点击 = 回主界面（React onNavigateHome，2026-09-20 用户要求）
-                onNavigateHome = { state.navigateHome() },
-                tagGroups = tagGroups,
-                activeTags = tab.activeTags,
-                onTagClick = onTagClick,
-                // 人物/标签/专题 Section 头部 = 进对应总览（M4a 3.2）
-                onPeopleOverviewClick = { state.openOverview(ViewMode.PEOPLE_OVERVIEW) },
-                onTagsOverviewClick = { state.openOverview(ViewMode.TAGS_OVERVIEW) },
-                onTopicsOverviewClick = { state.openOverview(ViewMode.TOPICS_OVERVIEW) },
-                peopleOverviewSelected = inPeopleOverview,
-                tagsOverviewSelected = inTagsOverview,
-                topicsOverviewSelected = inTopicsOverview,
-                foldersOverviewSelected = tab.viewMode == ViewMode.FOLDERS_OVERVIEW,
-                // 画布行：点击进画布视图；手机不显示（D28 平板专属）
-                showCanvas = isTablet,
-                onCanvasClick = { state.openCanvas() },
-                canvasSelected = inCanvas,
-                // 设置行：打开设置面板（M4b 2.1）
-                onSettingsClick = onOpenSettings,
-                // 「网络」行未连接点击 = 打开设置直接落在局域网共享页（2026-09-26 验收反馈）
-                onLanSettingsClick = onLanSettingsClick,
-                // 「网络」行已连接点击 = 进 LAN 文件夹总览（2026-09-26 二轮反馈，同「本地相册」）
-                onLanOverviewClick = onLanOverviewClick,
-                lanOverviewSelected = tab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW,
-                // 网络 Section（M6a 阶段 4）：连接状态流 collect 成普通值传入（不轮询）；
-                // 远端目录行点击 = 直接进该远端目录网格（folderId 带 lan 前缀，序列源分流
-                // 在 reloadImages——与本地目录行的「点行进夹」同位）
-                lanConnected = lanSnapshot.state == LanState.CONNECTED,
-                lanFolders = lanSnapshot.folders,
-                onLanFolderClick = { folder ->
-                    state.openFolder(com.aurora.gallery.kotlin.state.lanFolderId(folder.path))
-                },
-                // M6a 阶段 5（D31 并入口径）：远端词表并入标签 Section、远端人物进人物
-                // Section。远端标签行点击 = 进 tag 筛选虚拟目录（与 onLanFolderClick 同款
-                // 前缀 folderId，序列源分流在 reloadImages）；远端人物行点击 = 成员筛选
-                //（M6b 阶段 5 / D40：GET /api/people/members 端点补齐后转真筛选）
-                lanRemoteTagGroups = lanRemoteTagGroups,
-                onLanTagClick = { tag ->
-                    state.openFolder(com.aurora.gallery.kotlin.state.lanTagFolderId(tag))
-                },
-                lanPeople = lanPeople,
-                onLanPersonClick = { person ->
-                    ai.onOpenLanPersonFilter(person.id, person.name)
-                },
-                // M6b 阶段 4（D37）：侧栏人物 Section 的本地人物行
-                localPeople = localPeople,
-                browserActive = inBrowser,
-                modifier = Modifier.fillMaxHeight(),
-            )
-        }
-        Column(Modifier.weight(1f).fillMaxHeight()) {
+        )
+    }
+    // 主内容（选择栏/TopBar + 视图主体）：两种形态共用同一组合。平板经 Row 的 weight
+    // 占侧栏外剩余宽（推挤重排）；手机抽屉下 fillMaxSize 恒等卡片宽（平移不重排）。
+    val mainContent: @Composable (Modifier) -> Unit = { contentModifier ->
+        Column(contentModifier) {
             // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）；
             // 画布屏自带顶栏，此处让位（M5 3.4）
             // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）；
@@ -2505,7 +2538,8 @@ fun App(
                                         groupBy = GroupBy.NONE,
                                         level = state.gridLevel,
                                         onLevelChange = { state.gridLevel = it },
-                                        sidebarVisible = state.layout.isSidebarVisible,
+                                        // 专题详情同一条网格列数隔离（手机抽屉不重排）
+                                        sidebarVisible = gridSidebarVisible,
                                         pullToRefreshState = null,
                                         topInsetPx = topInsetPx,
                                         onScrolled = onScrolled,
@@ -2557,7 +2591,8 @@ fun App(
                                 groupBy = state.groupBy,
                                 level = state.gridLevel,
                                 onLevelChange = { state.gridLevel = it },
-                                sidebarVisible = state.layout.isSidebarVisible,
+                                // M8b 1.2：手机抽屉=恒「无侧栏」（列数不随抽屉变）；平板推挤原值
+                                sidebarVisible = gridSidebarVisible,
                                 pullToRefreshState = ptrState,
                                 // M6a 阶段 4：LAN 目录刷新走远端重拉（本地分支走 MediaStore 重扫）
                                 onPullToRefresh = if (inLanBrowser) onLanFolderRefresh else onPullRefresh,
@@ -2585,7 +2620,8 @@ fun App(
                             onFolderLongClick = {},
                             level = state.gridLevel,
                             onLevelChange = { state.gridLevel = it },
-                            sidebarVisible = state.layout.isSidebarVisible,
+                            // M8b 1.2：手机抽屉=恒「无侧栏」；平板推挤原值
+                            sidebarVisible = gridSidebarVisible,
                             emptyText = if (lanSnapshot.state == LanState.CONNECTED) "桌面端暂无共享目录"
                             else "未连接桌面端（设置 → 局域网共享）",
                             pullToRefreshState = ptrState,
@@ -2611,7 +2647,8 @@ fun App(
                             level = state.gridLevel,
                             onLevelChange = { state.gridLevel = it },
                             // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
-                            sidebarVisible = state.layout.isSidebarVisible,
+                            // （M8b 1.2：手机抽屉形态恒「无侧栏」，列数不随抽屉开合变）
+                            sidebarVisible = gridSidebarVisible,
                             // 4.1 选中态：总览的文件夹卡片同样高亮（边框 + 勾）
                             selectedIds = tab.selectedFileIds,
                             // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
@@ -2632,6 +2669,44 @@ fun App(
                     }
                 }
             }
+        }
+    }
+
+    // —— 形态分叉宿主（M8b 1.2）：同一套 sidebarContent/mainContent，两种壳 ——
+    if (!isPhone) {
+        // 平板：卡片壳 + SidebarPane 推挤式（宽度/动画/重排行为零改动）
+        Row(
+            Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .padding(com.aurora.gallery.kotlin.ui.components.APP_CARD_INSET_DP)
+                .clip(RoundedCornerShape(12.dp))
+                .background(AuroraTheme.colors.content),
+        ) {
+            SidebarPane(
+                visible = state.layout.isSidebarVisible,
+                modifier = Modifier.fillMaxHeight(),
+            ) {
+                sidebarContent()
+            }
+            mainContent(Modifier.weight(1f).fillMaxHeight())
+        }
+    } else {
+        // 手机（D45）：查看器/选择模式 = 沉浸态，进入时程序性收起抽屉（手势禁用随
+        // gesturesEnabled）；画布手机不可达（D46）。卡片壳由抽屉宿主内部承载——手势层
+        // 必须贴到屏幕物理边缘（卡片内缩之外），左缘呼出才接得到 0..8dp 段的起手
+        LaunchedEffect(state.selectionMode) { if (state.selectionMode) closeDrawer() }
+        LaunchedEffect(tab.viewingFileId) { if (tab.viewingFileId != null) closeDrawer() }
+        PhoneSidebarDrawerHost(
+            open = state.layout.isSidebarVisible,
+            onOpenChange = { target ->
+                if (target != state.layout.isSidebarVisible) state.toggleSidebar()
+            },
+            gesturesEnabled = !state.selectionMode && tab.viewingFileId == null,
+            cardInset = com.aurora.gallery.kotlin.ui.components.APP_CARD_INSET_DP,
+            sidebar = sidebarContent,
+        ) {
+            mainContent(Modifier.fillMaxSize())
         }
     }
 

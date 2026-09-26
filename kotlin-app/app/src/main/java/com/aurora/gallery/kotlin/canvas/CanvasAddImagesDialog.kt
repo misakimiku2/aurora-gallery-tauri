@@ -232,8 +232,8 @@ internal fun AddImagesToCanvasDialog(
         // （SettingsTabletDialog :609-612 同思路）
         val dialogWidth = (config.screenWidthDp - 32).coerceAtMost(1152).dp
         val dialogHeight = (config.screenHeightDp * 85 / 100).coerceAtMost(config.screenHeightDp - 48).dp
-        // 左栏：平板保持桌面 w-56 = 224dp；窄屏（Compact <600dp）收窄到 148dp 给网格留空间
-        val railWidth = if (config.screenWidthDp < 600) 148.dp else 224.dp
+        // 左栏：平板保持桌面 w-56 = 224dp；窄屏（Compact <600dp，M8b 1.1 判据收敛）收窄到 148dp 给网格留空间
+        val railWidth = if (com.aurora.gallery.kotlin.ui.isCompactWidth(config)) 148.dp else 224.dp
 
         // 点遮罩关闭（桌面 handleClickOutside :671-679）；内容层挂空 clickable 阻断冒泡
         Box(

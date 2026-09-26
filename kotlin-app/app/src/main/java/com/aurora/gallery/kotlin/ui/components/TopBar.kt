@@ -134,12 +134,17 @@ import kotlin.math.roundToInt
  *    芯片（[colorSearchHex] 非 null 时显示）展示过滤态，点击 = [onClearColorSearch] 清除。
  *
  * 与 React 版的差异（均有意为之，见各处注释）：色板搜索已落地（M6b 阶段 3：TopBar
- * 取色按钮 + 预设 14 色板 bottom sheet，HSV 自定义拾色器不做）；手机竖屏的「更多」
- * 菜单合并（isPhonePortrait）随手机适配再做。工具按钮按视图提供（2026-09-17 起）：
- * 文件夹内部 = 搜索/排序/视图/日期全量；总览 = 搜索（按文件夹名过滤，React 总览搜索
- * 是全局文件搜索、Kotlin M1 无此管道）+ 排序 + 日期筛选（Folder 带 createdAt/modifiedAt
- * 后接入）；总览的视图循环（folderLayoutMode）判定不做——文件夹卡片是等比正方形，
- * adaptive/masonry 视觉与 grid 等价，三档捏合已覆盖尺寸调整。
+ * 取色按钮 + 预设 14 色板 bottom sheet，HSV 自定义拾色器不做）。工具按钮按视图提供
+ * （2026-09-17 起）：文件夹内部 = 搜索/排序/视图/日期全量；总览 = 搜索（按文件夹名过滤，
+ * React 总览搜索是全局文件搜索、Kotlin M1 无此管道）+ 排序 + 日期筛选（Folder 带
+ * createdAt/modifiedAt 后接入）；总览的视图循环（folderLayoutMode）判定不做——文件夹
+ * 卡片是等比正方形，adaptive/masonry 视觉与 grid 等价，三档捏合已覆盖尺寸调整。
+ *
+ * **手机竖屏「更多」菜单合并（M8b 1.4，D44：无底部导航、导航由 TopBar+侧栏两件套
+ * 承载，精简顶部工具栏替代）**：isPhonePortrait（窄宽 + 竖屏）下排序/视图/日期/标签/
+ * 取色五个低频入口收进 MoreVertical「更多」菜单（React TopBar.tsx:601-602 同位参照；
+ * 排序子菜单内容扁平并入本菜单，底部弹层类项目点开即收起菜单）——高频的 侧栏开关/
+ * 返回/搜索 保持直挂。横屏手机（宽 ≥600dp）沿用全量按钮形制。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -244,6 +249,15 @@ fun TopBar(
     var dateSheetOpen by remember { mutableStateOf(false) }
     var tagsSheetOpen by remember { mutableStateOf(false) }
     var colorSheetOpen by remember { mutableStateOf(false) }
+    // M8b 1.4：手机竖屏「更多」菜单（D44 精简顶部工具栏）。窄宽 + 竖屏双条件——横屏
+    // 手机（宽 ≥600dp）屏宽够，五个按钮保持直挂
+    val isPhonePortrait = LocalConfiguration.current.let {
+        com.aurora.gallery.kotlin.ui.isCompactWidth(it) &&
+            it.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+    }
+    // 合并菜单开合（受控于 MoreVertical 按钮；与 sortMenu 互斥由 UI 流程保证）
+    var moreMenuOpen by remember { mutableStateOf(false) }
+    var moreAnchor by remember { mutableStateOf(Rect.Zero) }
 
     Row(
         modifier = modifier
@@ -320,7 +334,7 @@ fun TopBar(
                 )
             }
         }
-        if (showSortMenu && !searchOpen) { // searchOpen 收起：手机屏宽中栏要让给 SearchPill（M6b 阶段 3 实测）
+        if (showSortMenu && !searchOpen && !isPhonePortrait) { // 手机竖屏收进「更多」菜单（1.4）
             var sortAnchor by remember { mutableStateOf(Rect.Zero) }
             Box(Modifier.onGloballyPositioned { sortAnchor = it.boundsInWindow() }) {
                 TopBarButton(
@@ -386,7 +400,7 @@ fun TopBar(
                 }
             }
         }
-        if (showViewMode && !searchOpen) {
+        if (showViewMode && !searchOpen && !isPhonePortrait) {
             TopBarButton(
                 onClick = {
                     // 三档循环（2026-09-20 用户要求改回切换式按钮，不弹菜单）：
@@ -407,7 +421,7 @@ fun TopBar(
                 )
             }
         }
-        if (showDateFilter && !searchOpen) {
+        if (showDateFilter && !searchOpen && !isPhonePortrait) {
             TopBarButton(
                 highlighted = dateSheetOpen,
                 onClick = { dateSheetOpen = true },
@@ -421,7 +435,7 @@ fun TopBar(
                 )
             }
         }
-        if (showTags && !searchOpen) {
+        if (showTags && !searchOpen && !isPhonePortrait) {
             TopBarButton(
                 highlighted = tagsSheetOpen,
                 onClick = { tagsSheetOpen = true },
@@ -438,7 +452,7 @@ fun TopBar(
         // 高亮口径同日期筛选：弹层打开或已有颜色过滤生效时点亮。
         // searchOpen 时隐藏：手机屏宽下主 Row 固定图标已把中栏挤到 ~60dp，再留取色按钮
         // SearchPill 会坍缩成圆（实测）；胶囊内的颜色芯片承担过滤态展示与清除。
-        if (showColorSearch && !searchOpen) {
+        if (showColorSearch && !searchOpen && !isPhonePortrait) {
             TopBarButton(
                 highlighted = colorSheetOpen,
                 onClick = { colorSheetOpen = true },
@@ -449,6 +463,158 @@ fun TopBar(
                     tint = if (colorSheetOpen || colorSearchHex != null) colors.primary else colors.textSecondary,
                     modifier = Modifier.size(18.dp),
                 )
+            }
+        }
+        // M8b 1.4：手机竖屏「更多」菜单（D44）。低频五入口收进一处（React TopBar.tsx:601-602
+        // 同位），排序子菜单内容扁平并入；底部弹层类项目点开即收菜单（checked 型项保持
+        // 菜单不收，与排序菜单连续调参同口径）。
+        if (isPhonePortrait && !searchOpen &&
+            (showSortMenu || showViewMode || showDateFilter || showTags || showColorSearch)
+        ) {
+            Box(Modifier.onGloballyPositioned { moreAnchor = it.boundsInWindow() }) {
+                TopBarButton(
+                    highlighted = moreMenuOpen,
+                    onClick = { moreMenuOpen = !moreMenuOpen },
+                ) {
+                    Icon(
+                        imageVector = IconMoreVertical,
+                        contentDescription = "更多",
+                        tint = if (moreMenuOpen) colors.primary else colors.textSecondary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                AuroraDropdown(
+                    expanded = moreMenuOpen,
+                    anchorBoundsInWindow = moreAnchor,
+                    onDismissRequest = { moreMenuOpen = false },
+                ) {
+                    if (showSortMenu) {
+                        AuroraMenuHeader("排序方式")
+                        sortChoices.forEach { opt ->
+                            AuroraMenuItem(
+                                text = when (opt) {
+                                    SortOption.NAME -> "按名称"
+                                    SortOption.DATE -> "按时间"
+                                    SortOption.SIZE -> "按大小"
+                                },
+                                checked = sortBy == opt,
+                                onClick = { onSortChange(opt) },
+                            )
+                        }
+                        AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
+                            onClick = onSortDirectionToggle,
+                            trailing = {
+                                Icon(
+                                    imageVector = IconArrowDownUp,
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(14.dp)
+                                        .rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
+                                )
+                            },
+                        )
+                        if (showGroupBy) {
+                            AuroraMenuDivider()
+                            AuroraMenuHeader("分组方式")
+                            val groupLabels = mapOf(
+                                GroupBy.NONE to "无",
+                                GroupBy.TYPE to "类型",
+                                GroupBy.DATE to "日期",
+                            )
+                            groupLabels.forEach { (opt, label) ->
+                                AuroraMenuItem(
+                                    text = label,
+                                    checked = groupBy == opt,
+                                    onClick = { onGroupByChange(opt) },
+                                )
+                            }
+                        }
+                    }
+                    if (showViewMode) {
+                        if (showSortMenu) AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = "视图：" + when (layoutMode) {
+                                LayoutMode.GRID -> "网格"
+                                LayoutMode.ADAPTIVE -> "自适应"
+                                LayoutMode.MASONRY -> "瀑布流"
+                            },
+                            onClick = {
+                                val cycle = LayoutMode.values()
+                                onLayoutModeChange(cycle[(cycle.indexOf(layoutMode) + 1) % cycle.size])
+                            },
+                            leading = {
+                                Icon(
+                                    imageVector = when (layoutMode) {
+                                        LayoutMode.GRID -> IconGrid
+                                        LayoutMode.ADAPTIVE -> IconLayoutGrid
+                                        LayoutMode.MASONRY -> IconLayoutTemplate
+                                    },
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
+                    }
+                    if (showDateFilter) {
+                        AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = "日期筛选",
+                            checked = dateFilter.start != null,
+                            leading = {
+                                Icon(
+                                    imageVector = IconCalendar,
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                            onClick = {
+                                moreMenuOpen = false
+                                dateSheetOpen = true
+                            },
+                        )
+                    }
+                    if (showTags) {
+                        AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = "标签筛选",
+                            leading = {
+                                Icon(
+                                    imageVector = IconTag,
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                            onClick = {
+                                moreMenuOpen = false
+                                tagsSheetOpen = true
+                            },
+                        )
+                    }
+                    if (showColorSearch) {
+                        AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = "按颜色搜索",
+                            checked = colorSearchHex != null,
+                            leading = {
+                                Icon(
+                                    imageVector = IconPalette,
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                            onClick = {
+                                moreMenuOpen = false
+                                colorSheetOpen = true
+                            },
+                        )
+                    }
+                }
             }
         }
         // 视图专属动作（M6a 阶段 4：LAN 上传入口）。置灰态降低不透明度、仍可点击（宿主提示）。
@@ -543,8 +709,9 @@ private fun TopBarButton(
     // 手机窄屏收 44dp：8 个固定图标（M6b 阶段 3 加取色后）在 411dp 屏上会把中栏挤到
     // ~20dp，标题缩略成「…」、SearchPill 坍缩成圆。44dp 视觉 + Compose 的
     // minimumInteractiveComponentSize 自动把命中区扩回 48dp（相邻轻微重叠，可接受）；
-    // 平板（≥600dp）保持 48dp 桌面形制。
-    val compact = LocalConfiguration.current.screenWidthDp < 600
+    // 平板（≥600dp）保持 48dp 桌面形制。（M8b 1.4 起「更多」合并后竖屏固定图标只剩
+    // 侧栏/返回/搜索/更多 4 个；判据收敛 1.1。）
+    val compact = com.aurora.gallery.kotlin.ui.isCompactWidth(LocalConfiguration.current)
     Box(
         modifier = modifier
             .size(if (compact) 44.dp else 48.dp)
@@ -1582,6 +1749,18 @@ private val IconChevronLeft: ImageVector by lazy {
         moveTo(15f, 18f)
         lineTo(9f, 12f)
         lineTo(15f, 6f)
+    }
+}
+
+/** lucide more-vertical：竖排三点（M8b 1.4 手机竖屏「更多」菜单按钮）。 */
+private val IconMoreVertical: ImageVector by lazy {
+    iconBuilder("MoreVertical") {
+        moveTo(12f, 5f)
+        lineTo(12.01f, 5f)
+        moveTo(12f, 12f)
+        lineTo(12.01f, 12f)
+        moveTo(12f, 19f)
+        lineTo(12.01f, 19f)
     }
 }
 
