@@ -202,6 +202,9 @@ fun FileGrid(
             },
         ).also { it.pinchFlip = pinchFlip }
     }
+    // 分组标题位置查询接线（GridSpacingDecoration 的列号/顶距在分组模式下不能走
+    // position 算术，见其 KDoc）。decoration 与 adapter 都是 remember 单例，赋值幂等。
+    decoration.isFullSpanAt = { adapter.isHeaderAt(it) }
 
     // 主题换色（M4c）：AuroraTheme.colors 随主题档/系统深色变化时把四色推入 adapter
     // 并全量重绑。adapter 的 remember 无 key，构造色只对首帧有效；applyThemeColors
@@ -1295,7 +1298,8 @@ internal class AuroraStaggeredLayoutManager(
             } else {
                 val leftInset = gapPx * best / span
                 val rightInset = gapPx * (span - 1 - best) / span
-                val topInset = if (pos >= span) gapPx else 0
+                // 与 GridSpacingDecoration 同式：分组模式首位是满宽标题，首行图片上方也要顶距
+                val topInset = if (isFullSpanAt(0) || pos >= span) gapPx else 0
                 addView(v)
                 // 与 Staggered 的 measureChildWithDecorationsAndMargin 对齐：
                 // 内容宽 = sizePerSpan - 左右 inset（widthUsed 把差额从总宽里扣掉）。
@@ -1387,7 +1391,8 @@ internal class AuroraStaggeredLayoutManager(
                 for (s in span - 2 downTo 0) if (colLine[s] > colLine[best]) best = s
                 val leftInset = gapPx * best / span
                 val rightInset = gapPx * (span - 1 - best) / span
-                val topInset = if (pos >= span) gapPx else 0
+                // 与 GridSpacingDecoration 同式：分组模式首位是满宽标题，首行图片上方也要顶距
+                val topInset = if (isFullSpanAt(0) || pos >= span) gapPx else 0
                 // 同列等宽：widthUsed 把差额从总宽里扣掉（与 prefillBelow 同式）
                 measureChildWithMargins(v, inner - (sizePerSpan - leftInset - rightInset), 0)
                 // 与下方 item 的间距 = 它的顶 inset（中段列表恒为 gap；首行特例由
@@ -1833,9 +1838,23 @@ private class FileGridAdapter(
 
         // 瀑布流下分组标题必须占满整行：StaggeredGrid 没有 SpanSizeLookup，
         // 靠 ItemView 的 LayoutParams.isFullSpan 控制（网格模式走 SpanSizeLookup）。
+        // 新建 view 在 bind 时**还没有 LayoutParams**（RV 要到 addView 才赋默认值，
+        // buildHeaderView 又是程序化创建），直接 as? 会拿到 null、isFullSpan 静默丢失
+        // ——标题按 1 列宽布局、首行各列顶到标题上方（2026-09-26 用户报障「其他视图
+        // 或多或少也有错位」的瀑布流成因；仅每个标题 view 的首次 bind 中招，回收
+        // 复用后自愈，故呈偶发）。这里兜底造一个 Staggered LP 保证必定写入。
         if (layoutMode == LayoutMode.MASONRY) {
-            (holder.itemView.layoutParams as? StaggeredGridLayoutManager.LayoutParams)
-                ?.isFullSpan = items.getOrNull(position) is GridItem.Header
+            val isHeader = items.getOrNull(position) is GridItem.Header
+            val lp = holder.itemView.layoutParams as? StaggeredGridLayoutManager.LayoutParams
+            if (lp != null) {
+                lp.isFullSpan = isHeader
+            } else {
+                holder.itemView.layoutParams =
+                    StaggeredGridLayoutManager.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply { isFullSpan = isHeader }
+            }
         }
 
         // 捏合进行中新绑定的 item 要补上当前进度的手动布局，否则会以未变换的样子闪现

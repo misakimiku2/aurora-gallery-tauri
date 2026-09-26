@@ -919,7 +919,9 @@ internal class MasonryPinchController(
         val sizePerSpan = availWidth / span
 
         fun coverH(pos: Int): Int = (cellW / ratioAt(pos).coerceAtLeast(0.05f)).toInt().coerceAtLeast(1)
-        fun topInset(pos: Int): Int = if (pos >= span) gap else 0
+        // 与 GridSpacingDecoration 同式：分组模式首位是满宽标题，所有图片上方都留距——
+        // 纯 `pos >= span` 会把首行图片漏成 0，预览与落档布局差半个间距
+        fun topInset(pos: Int): Int = if (isHeaderAt(0) || pos >= span) gap else 0
 
         // 种子线：冷启动布局里所有列同线起铺、锚点是第一个 item。真实布局最终经 fixAnchor
         // 平移到「锚点 top == anchorTop」；相对几何在平移前后不变，所以种子 = anchorTop - 锚点

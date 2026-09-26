@@ -104,6 +104,16 @@ class GridSpacingDecoration(
     /** 单元格间距。手机 10dp / 平板 16dp，对齐 React 版 `layout.worker.ts` 的 GAP。 */
     val gapPx: Int,
 ) : RecyclerView.ItemDecoration() {
+
+    /**
+     * 满宽分组标题的位置查询（FileGrid 接 `adapter.isHeaderAt`）。
+     *
+     * 分组模式下「首位 item 是满宽标题」决定顶距规则：标题已占满第一行，图片的行号
+     * 不能再按 `position / span` 推（首行最后一张会凭空多出一个顶距）；无分组的宿主
+     * （FoldersOverview 等）不接线，保持缺省 `{ false }` = 原 position 算术行为。
+     */
+    var isFullSpanAt: (Int) -> Boolean = { false }
+
     override fun getItemOffsets(
         outRect: Rect,
         view: View,
@@ -125,17 +135,36 @@ class GridSpacingDecoration(
             val column = lp?.spanIndex ?: (position % span)
             outRect.left = gapPx * column / span
             outRect.right = gapPx * (span - 1 - column) / span
-            outRect.top = if (position >= span) gapPx else 0
+            // 分组模式首位是满宽标题，首行各列第一张的上方也要顶距与标题隔开——
+            // 纯 `position >= span` 会把首行最后一张漏成 0（下坠半个间距）。无分组保持原式。
+            outRect.top = if (isFullSpanAt(0) || position >= span) gapPx else 0
             return
         }
 
         // 网格：等间距（gap 均匀摊到每列左右），每列内容宽度一致。
         val span = spanCount
-        val column = position % span
-        val row = position / span
-        outRect.left = gapPx * column / span
-        outRect.right = gapPx * (span - 1 - column) / span
-        outRect.top = if (row > 0) gapPx else 0
+        // 列号必须用 LayoutParams.spanIndex：满宽标题占掉整行后 `position % span` 与视觉
+        // 列号错开（前面每多一个标题就多错一格）——每列左右间距整体漂移、末列贴上前一列，
+        // 且首行最后一张多出一个顶距（2026-09-26 用户报障「分组后右侧图片错位」）。
+        // GridLayoutManager 在测量前已赋值 spanIndex（layoutChunk：assignSpans →
+        // calculateItemDecorationsForChild → measureChild），装饰阶段读它是准的；
+        // adaptive 的 LM 不是 GridLayoutManager（span 恒 1），走缺省分支即回到原行为。
+        val lp = view.layoutParams as? GridLayoutManager.LayoutParams
+        val column = lp?.spanIndex ?: (position % span)
+        val isFullSpan = (lp?.spanSize ?: 1) >= span
+        if (!isFullSpan) {
+            outRect.left = gapPx * column / span
+            outRect.right = gapPx * (span - 1 - column) / span
+        }
+        outRect.top = when {
+            // 满宽标题：左右零间距（内容占满 inner，与两侧列外缘对齐）；
+            // 首位标题贴顶（RV paddingTop 负责与标题栏的距离），后续标题上方留行距
+            isFullSpan -> if (position == 0) 0 else gapPx
+            // 分组模式：首行被标题占满，之后每个图片行上方都留距（行内一致才不会参差）
+            isFullSpanAt(0) -> gapPx
+            position / span > 0 -> gapPx
+            else -> 0
+        }
     }
 }
 
