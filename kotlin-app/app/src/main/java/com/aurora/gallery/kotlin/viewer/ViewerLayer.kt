@@ -141,7 +141,8 @@ fun NativeViewerLayer(
 /**
  * `open()` 的 options。isDark 由 MainActivity 的 SideEffect 按 settings.theme 推导后经
  * [applyViewerTheme] 写入——查看器在每次 open 时读取，与 Compose 侧 `AuroraTheme(darkTheme=)`
- * 同一个值；已开着不重开（换主题瞬间查看器若在前台，收掉再开即换色，登记为已知边界）。
+ * 同一个值。M8b 阶段 3（遗留 #5）销账：已打开状态下由同一 SideEffect 直呼
+ * [NativeGalleryView.applyThemeNow] 即时重涂，不再有「收掉重开才换色」的边界。
  */
 private val viewerOptions = JSONObject().put("isDark", false)
 

@@ -580,7 +580,8 @@ class NativeGalleryView @JvmOverloads constructor(
             setPadding(24, statusBarHeight, 24, 0)
             gravity = android.view.Gravity.CENTER_VERTICAL
 
-            val closeBtn = makeIconButton(R.drawable.ic_lucide_arrow_left) { listener?.onClose() }
+            // M8b 阶段 3（遗留 #2）：顶栏各键补中文 contentDescription（TalkBack 可读）。
+            val closeBtn = makeIconButton(R.drawable.ic_lucide_arrow_left, contentDescription = "返回") { listener?.onClose() }
             titleView = TextView(context).apply {
                 setTextColor(colorTextPrimary())
                 textSize = 18f
@@ -592,12 +593,15 @@ class NativeGalleryView @JvmOverloads constructor(
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                 setPadding(0, 0, (resources.displayMetrics.density * 8).toInt(), 0)
             }
-            slideshowBtn = makeIconButton(R.drawable.ic_lucide_play) { toggleSlideshow() }
-            val rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw) { rotateCurrent() }
-            val infoBtn = makeIconButton(R.drawable.ic_lucide_info) { toggleDrawer() }
-            deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger()) { showDeleteConfirmDialog() }
-            val shareBtn = makeIconButton(R.drawable.ic_lucide_share) { shareCurrentImage() }
-            moreBtn = makeIconButton(R.drawable.ic_lucide_more_vertical) { showMoreMenu(moreBtn) }
+            // M8b 阶段 3（遗留 #2）：播放钮只服务幻灯片（视频支持 D47 拍板不做），语义
+            // 定为「幻灯片播放」而非「播放」；播/停两态的图标与描述由
+            // updateSlideshowButtonIcon 随播放态同步。
+            slideshowBtn = makeIconButton(R.drawable.ic_lucide_play, contentDescription = "幻灯片播放") { toggleSlideshow() }
+            val rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "旋转") { rotateCurrent() }
+            val infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
+            deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
+            val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
+            moreBtn = makeIconButton(R.drawable.ic_lucide_more_vertical, contentDescription = "更多") { showMoreMenu(moreBtn) }
 
             addView(closeBtn)
             addView(titleView)
@@ -623,7 +627,17 @@ class NativeGalleryView @JvmOverloads constructor(
         }
     }
 
-    private fun makeIconButton(drawableRes: Int, tintColor: Int = colorTextPrimary(), onClick: () -> Unit): ImageView {
+    /**
+     * 顶栏图标按钮构造器。M8b 阶段 3（遗留 #2）：补可选 [contentDescription]——纯图标
+     * ImageView 没有文本，此前 TalkBack 只能读出空白，无障碍不可用。默认 null 保持
+     * 旧调用行为不变，顶栏各键的中文描述由 buildTopBar 调用处显式给出。
+     */
+    private fun makeIconButton(
+        drawableRes: Int,
+        tintColor: Int = colorTextPrimary(),
+        contentDescription: String? = null,
+        onClick: () -> Unit,
+    ): ImageView {
         val density = resources.displayMetrics.density
         val pad = (density * 10).toInt()
         return ImageView(context).apply {
@@ -631,6 +645,8 @@ class NativeGalleryView @JvmOverloads constructor(
             setColorFilter(tintColor)
             setPadding(pad, pad, pad, pad)
             layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+            // M8b 阶段 3（遗留 #2）：无障碍语义；null 时维持旧行为（无描述）
+            this.contentDescription = contentDescription
             setOnClickListener { onClick() }
         }
     }
@@ -1479,6 +1495,23 @@ class NativeGalleryView @JvmOverloads constructor(
         if (autoStartSlideshow) setSlideshow(true)
     }
 
+    /**
+     * M8b 阶段 3（遗留 #5，D26 边界登记项销账）：主题档变化时由宿主（MainActivity 的
+     * 主题 SideEffect）即时推进——此前色值只存进 viewerOptions、等下次 [open] 才经
+     * [applyTheme] 生效，查看器开着切主题（跟随系统的深浅档在查看器前台时被切换）
+     * 就得「收掉重开才换色」。
+     *
+     * 实现：先写 [isDarkTheme]（顺带切 palette），已打开才补 [applyTheme] 全量重涂
+     * （未打开时无需重涂，open() 本就会按 options 重放主题）。同值幂等短路：宿主
+     * SideEffect 在每次重组都会跑，不短路会把 updateDrawer/Coil 请求整体重放。
+     */
+    fun applyThemeNow(dark: Boolean) {
+        if (dark == isDarkTheme) return
+        isDarkTheme = dark
+        if (!isOpen) return
+        applyTheme()
+    }
+
     /** 应用当前主题到所有 UI 元素。 */
     private fun applyTheme() {
         // 沉浸模式下保持黑色背景（切换图片时 open() 重入会调用 applyTheme，不应重置为主题色）
@@ -2089,7 +2122,10 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     private fun updateSlideshowButtonIcon() {
-        slideshowBtn.setImageResource(if (slideshowView != null) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play)
+        val playing = slideshowView != null
+        slideshowBtn.setImageResource(if (playing) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play)
+        // M8b 阶段 3（遗留 #2）：无障碍描述与图标同步——播放中=「幻灯片暂停」，未播=「幻灯片播放」。
+        slideshowBtn.contentDescription = if (playing) "幻灯片暂停" else "幻灯片播放"
     }
 
     /** 外部（MainActivity/React）切换幻灯片开关。 */

@@ -1034,13 +1034,17 @@ class MainActivity : ComponentActivity() {
             // [systemDark]。XML 主题（Theme.AuroraKotlin = Material.Light）只作进程兜底，
             // 运行期窗口底色/状态栏外观经 [applyWindowTheme] 与调色板同步；网格与查看器
             // 同读一张 AuroraPalette（FileGrid 走 Compose 注入色 + applyThemeColors 重绑，
-            // 查看器经 applyViewerTheme 下次 open 生效）。取代 M1 的「固定浅色 + XML 必须
+            // 查看器经 applyViewerTheme 下次 open 生效、已开着由 applyThemeNow 即时重涂
+            // ——M8b 阶段 3）。取代 M1 的「固定浅色 + XML 必须
             // 一致」约束——那约束防的「深调色板画在白窗底」现在由窗口底色同步根除。
             val dark = isDarkTheme()
             AuroraTheme(darkTheme = dark) {
                 SideEffect {
                     applyWindowTheme(dark)
                     applyViewerTheme(dark)
+                    // M8b 阶段 3（遗留 #5，D26 登记项销账）：查看器开着切主题即时换色——
+                    // 实例未创建或未打开时内部短路（存档即可，open 时仍走 options 重放）。
+                    viewer?.takeIf { it.isOpen() }?.applyThemeNow(dark)
                 }
                 val appState = viewModel.appState
                 val tab = appState.activeTab

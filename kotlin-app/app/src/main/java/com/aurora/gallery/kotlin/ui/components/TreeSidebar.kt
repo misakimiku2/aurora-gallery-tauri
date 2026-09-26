@@ -959,7 +959,15 @@ private fun TagRow(tag: String, count: Long, selected: Boolean, onClick: () -> U
     }
 }
 
-/** 空态提示（React 各 Section 的 `text-xs text-gray-400 italic`）。 */
+/**
+ * 空态提示（React 各 Section 的 `text-xs text-gray-400 italic`）。
+ *
+ * M8b 阶段 3（遗留 #4）：颜色由固定 SIDEBAR_GRAY_400（#9CA3AF）改为主题感知的
+ * [AuroraTheme.colors.textSecondary]——gray-400 在浅色侧栏底上对比度过低，低视力场景
+ * 几乎不可读。textSecondary 浅色档 #737373（比 gray-400 深一档）、深色档 #A3A3A3
+ * （比 gray-400 提亮一档），两档均满足可读性且仍明显弱于行文字 gray-600，空态的
+ * 「弱层级」语义保留；同文件其他 gray-400 使用处（分组标题等）不在本次范围。
+ */
 @Composable
 private fun EmptyHint(text: String) {
     Text(
@@ -967,7 +975,7 @@ private fun EmptyHint(text: String) {
         Modifier.padding(start = 40.dp, top = 4.dp, bottom = 8.dp),
         fontSize = 12.sp,
         fontStyle = FontStyle.Italic,
-        color = SIDEBAR_GRAY_400,
+        color = AuroraTheme.colors.textSecondary,
     )
 }
 

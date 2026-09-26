@@ -396,6 +396,15 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     private var aiJob: Job? = null
 
+    /**
+     * WD14 人物管线的 Kotlin 侧取消标志（M8b 阶段 3，遗留 #8）：该管线是 HTTP 直连
+     * 逐张循环，不进 core 取消注册表（ai_task.rs 只管 aiAnalyzeFiles 系任务），通知
+     * 「取消」此前对它空转。现在 [cancelAiTask] 对 `lan-wd14-` 前缀的 taskId 置此标志，
+     * [startWd14PersonPipeline] 每张迭代首查生效（在途一张跑完）。AtomicBoolean：置位
+     * 在主线程（广播 receiver），查在协程各切回点，跨线程可见性靠它保证。
+     */
+    private val wd14Cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** AI 搜索态整体清理（关开关/清搜索词共用）。 */
     fun clearAiSearch() {
         aiSearchIds.value = null
@@ -429,9 +438,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** 通知「取消」action 的落点：core 取消注册表置位，下一张迭代首查生效（在途一张跑完）。 */
+    /**
+     * 通知「取消」action 的落点：core 取消注册表置位，下一张迭代首查生效（在途一张跑完）。
+     * M8b 阶段 3（遗留 #8）：WD14 人物管线（`lan-wd14-` 前缀）是 Kotlin 侧自管循环、
+     * 不在 core 注册表里，分流到 [wd14Cancelled] 本地标志（同样下一张迭代首查生效）；
+     * 其余前缀（ai-analyze 等）仍走 core 注册表，路径不变。
+     */
     fun cancelAiTask() {
         val st = aiTaskState.value ?: return
+        if (st.taskId.startsWith("lan-wd14")) {
+            wd14Cancelled.set(true)
+            return
+        }
         runCatching { aiCancelTask(st.taskId) }
     }
 
@@ -2765,8 +2783,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      *    + work 非空时同名作品专题（无则建，[ensureWorkTopicAndAdd]）归入。
      *
      * **串行逐张**而非并发：两张并行可能同时读改写同一文件的 aiData（faces 追加是
-     * 读-改-写非原子）；与本地 AI 分析的互斥复用 [aiTaskState]。登记：通知栏「取消」
-     * action 对本任务无效（core 取消注册表里没有这个 taskId，[cancelAiTask] 空转无害）。
+     * 读-改-写非原子）；与本地 AI 分析的互斥复用 [aiTaskState]。M8b 阶段 3（遗留 #8）
+     * 销账：通知栏「取消」action 经 [cancelAiTask] 置 [wd14Cancelled]（core 注册表里
+     * 没这个 taskId，故分流），每张迭代首查生效（在途一张跑完），终止后走「已取消」
+     * 完成口径收通知。
      *
      * 失败口径：单张失败 Log.w 计数不中断批次（会话中途断线则余下全部走同一口径）。
      */
@@ -2781,6 +2801,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             aiToast("AI 任务进行中，可从通知栏取消")
             return
         }
+        // M8b 阶段 3（遗留 #8）：启动时清取消标志——上一批的取消位不得泄漏到新批次
+        // （互斥门在 [aiTaskState]，同一时刻至多一条管线，启动即清足够）。
+        wd14Cancelled.set(false)
         aiJob = viewModelScope.launch {
             val taskId = "lan-wd14-${System.currentTimeMillis()}"
             val targets = withContext(Dispatchers.IO) { listImagesByIds(fileIds) }
@@ -2796,7 +2819,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 }
             }.associateBy { it.id }.toMutableMap()
             var failed = 0
+            var processed = 0
+            var cancelled = false
             for ((index, img) in targets.withIndex()) {
+                // M8b 阶段 3（遗留 #8）：Kotlin 侧自管取消——每张迭代首查，置位即终止
+                // 剩余识别（在途一张跑完），进度停在已处理数，尾部按「已取消」口径收通知。
+                if (wd14Cancelled.get()) {
+                    cancelled = true
+                    Log.i(TAG, "[Lan][WD14] 收到取消，终止剩余识别（剩余 ${total - index} 张）")
+                    break
+                }
                 try {
                     val bytes = withContext(Dispatchers.IO) {
                         appContext.contentResolver.openInputStream(Uri.parse(img.contentUri))?.use { it.readBytes() }
@@ -2889,11 +2921,22 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 }
                 // 进度每张推进（含失败张）
                 val done = index + 1
+                processed = done
                 aiTaskState.value = AiTaskState("人物识别", taskId, done, total)
                 scanNotifier.aiProgress("人物识别", done, total)
             }
             aiTaskState.value = null
-            scanNotifier.aiDone(if (failed == 0) "人物识别完成 $total 张" else "人物识别完成 $total 张（$failed 张失败）")
+            // M8b 阶段 3（遗留 #8）：取消与完成分口径——取消时已落库的部分数据保留
+            // （与「单张失败不回滚」同款口径），尾部快照重算照跑把半程结果刷出来。
+            scanNotifier.aiDone(
+                when {
+                    cancelled ->
+                        if (failed == 0) "人物识别已取消（已处理 $processed/$total 张）"
+                        else "人物识别已取消（已处理 $processed/$total 张，$failed 张失败）"
+                    failed == 0 -> "人物识别完成 $total 张"
+                    else -> "人物识别完成 $total 张（$failed 张失败）"
+                },
+            )
             // 标签/人物/词表已落库：快照重算 + 当前视图重拉（口径同 startAiAnalysis 尾部）
             reloadTagState()
             reloadLocalPeople()
