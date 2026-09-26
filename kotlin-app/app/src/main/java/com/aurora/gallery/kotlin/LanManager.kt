@@ -252,6 +252,17 @@ class LanManager(context: Context, private val store: SettingsStore) {
                     token = t
                     Log.d(TAG, "[Lan] auth OK expires_in=${auth.expiresIn} token=…${t.takeLast(4)}")
                     _snapshot.update { it.copy(serverName = auth.serverName) }
+                } else {
+                    // M8a：restore/静默重连路径的配对再宣告（见 repairPairingOnRestore）——
+                    // token 有效路径不经过 verify，桌面端本次会话没收到过 peer_server 时
+                    // 侧栏「移动设备」永远不亮，这里补一发。
+                    // 注意不能写 `?.let { t = it }`：lambda 内赋值会让 t 变成被可变闭包
+                    // 捕获的 var，后文所有 smart cast 全灭——用普通 if 直接赋值。
+                    val repaired = repairPairingOnRestore(i)
+                    if (repaired != null) {
+                        t = repaired
+                        token = repaired
+                    }
                 }
                 // 连接成功的判据 = 能拉到远端目录（restore 场景即「静默带 token 验证一次」；
                 // 401 在这里被抛出，与手动连接同一条 401 处理）
@@ -301,6 +312,62 @@ class LanManager(context: Context, private val store: SettingsStore) {
                 }
                 scheduleRetry()
             }
+        }
+    }
+
+    /**
+     * restore/静默重连的双向配对再宣告：正常认证只在「无 token 换签」时携带 peer_server，
+     * 而 token 有效路径（启动恢复、断链重连）不经过 verify——桌面端本次会话若没收到过
+     * peer_server（生产端 CSP 拦掉过配对 fetch、桌面 webview 重载、扫码当刻反向连接失败
+     * 等），就会呈现「手机能浏览桌面、桌面侧栏移动设备一直未连接」的暗态。此处补一发带
+     * peer_server 的 verify，桌面端收到后反向连接本机并点亮节点。
+     *
+     * 前置：本机对等服务端已在运行或开关持久化为开（React restore 同样不 ensure 自启——
+     * 服务端没开 = 用户没要反向共享，跳过；开关开但 autoStart 尚未完成时这里顺手拉起）。
+     * verify 成功后桌面端 create_session 以同 device_id 覆盖旧会话签发新 token（旧 token
+     * 即废），必须换用新 token 继续本连接，否则下一个心跳就 401；被拒/网络失败一律静默
+     * 保留原 token（连接本身不受影响，下个重连周期再补）。
+     */
+    private suspend fun repairPairingOnRestore(i: LanIntent): String? {
+        val code = i.accessCode
+        if (code.isNullOrEmpty()) return null
+        val server = LanServerManager.get() ?: return null
+        if (!server.snapshot.value.running && !store.loadLanServerEnabled()) {
+            Log.d(TAG, "[Lan] restore 补配对跳过（本机服务端未开）host=${i.host}:${i.port}")
+            return null
+        }
+        val peer = run {
+            // 与 autoStartIfEnabled 并发抢端口：首次绑定可能 EADDRINUSE（前进程 socket
+            // 未释放），setEnabledOn 幂等（他人已绑定即 true），短重试必中运行中的实例。
+            var p: LanServerManager.PeerInfo? = null
+            for (attempt in 1..3) {
+                p = server.peerServerForConnect(autoEnable = false)
+                if (p != null) break
+                Log.d(TAG, "[Lan] restore 补配对：本机服务端拉起失败（第 $attempt 次），300ms 后重试")
+                delay(300)
+            }
+            p
+        } ?: return null
+        return try {
+            val auth = client.verify(
+                baseOf(i), code, deviceName(), deviceId(),
+                LanPeerServer(peer.port, peer.accessCode),
+            )
+            if (auth.success && auth.token != null) {
+                Log.i(TAG, "[Lan] restore 补配对宣告 OK，桌面端将反向连接本机 host=${i.host}:${i.port}")
+                auth.serverName?.takeIf { it.isNotEmpty() }?.let { name ->
+                    _snapshot.update { it.copy(serverName = name) }
+                }
+                auth.token
+            } else {
+                Log.d(TAG, "[Lan] restore 补配对被拒（${auth.error ?: "success=false"}），保留原 token")
+                null
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.d(TAG, "[Lan] restore 补配对失败（${e.javaClass.simpleName}），保留原 token")
+            null
         }
     }
 

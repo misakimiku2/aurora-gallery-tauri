@@ -712,6 +712,15 @@ fn emit_peer_pairing(
         }),
     ) {
         log::warn!("[LAN Share] 发送 lan-share-peer-pairing 事件失败: {}", e);
+    } else {
+        // 成功路径也要留痕：前端反向连不上（如 webview CSP 拦 fetch）时 Rust 侧无感知，
+        // 只有这条日志能证明事件已发出、断点在前端。
+        log::info!(
+            "[LAN Share] 双向配对事件已发送：对端 {}:{} 设备 {}（访问码不入日志）",
+            host,
+            peer.port,
+            peer_device_name
+        );
     }
 }
 
