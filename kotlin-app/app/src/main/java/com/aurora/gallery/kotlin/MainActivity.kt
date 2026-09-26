@@ -23,17 +23,20 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -47,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -967,9 +971,13 @@ class MainActivity : ComponentActivity() {
      */
     private fun applyWindowTheme(dark: Boolean) {
         val palette = AuroraPalettes.of(dark)
-        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(palette.content))
+        // 窗口底色 = palette.main（2026-09-26 验收反馈：主界面悬浮卡片化对齐 React
+        // 桌面 bg-main 环绕层）——App 的主界面 Row 内缩裁圆角成卡片，四周留边透出这层；
+        // 状态栏/手势区背后也是它（API 35+ edge-to-edge 下 statusBarColor 被忽略，
+        // 低版本写它对齐观感）。
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(palette.main))
         @Suppress("DEPRECATION")
-        window.statusBarColor = palette.content
+        window.statusBarColor = palette.main
         WindowCompat.getInsetsController(window, window.decorView)
             ?.isAppearanceLightStatusBars = !dark
     }
@@ -2107,7 +2115,21 @@ fun App(
 
     // 3.5 面板开合：侧栏在左、内容（TopBar + 网格）在右，开关时侧栏宽度收缩把内容
     // 推挤过去（SidebarPane 内做 300ms ease-out 动画，对齐 React SidebarPane）。
-    Row(Modifier.fillMaxSize()) {
+    //
+    // 悬浮卡片壳（2026-09-26 验收反馈）：对齐 React 桌面主内容区「m-2 + rounded-xl +
+    // bg-content」形制——主界面（侧栏+内容）整体内缩 8dp 裁 12dp 圆角，卡片底刷
+    // content 色，四周留边透出窗口底 main 色（applyWindowTheme）；底部再让开手势区
+    // （navigationBarsPadding），卡片下缘悬在导航栏上方。侧栏 panel 底与 TopBar
+    // panel 底都在卡片内被统一裁出圆角；弹窗/弹层是独立 window 不吃这个裁剪；沉浸
+    // 态（查看器/画布）insets 清零时卡片自动铺满，留边形制不变。
+    Row(
+        Modifier
+            .fillMaxSize()
+            .navigationBarsPadding()
+            .padding(8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AuroraTheme.colors.content),
+    ) {
         SidebarPane(
             visible = state.layout.isSidebarVisible,
             modifier = Modifier.fillMaxHeight(),
