@@ -74,6 +74,7 @@ import com.aurora.gallery.kotlin.ui.components.LanFolderPickerDialog
 import com.aurora.gallery.kotlin.ui.components.LanPickerMode
 import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
+import com.aurora.gallery.kotlin.ui.components.SettingsCategory
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -119,6 +120,12 @@ class MainActivity : ComponentActivity() {
 
     /** M4b 2.1 设置面板开合（侧栏「设置」行触发；对话框在 setContent 里渲染）。 */
     private var showSettings by mutableStateOf(false)
+
+    /**
+     * 设置面板打开时直接落的分类（null = 默认入口）。仅侧栏「网络」行未连接跳转时
+     * 置 LAN（2026-09-26 验收反馈）；普通设置入口（设置行/TopBar）在打开前重置为 null。
+     */
+    private var settingsInitialCategory by mutableStateOf<SettingsCategory?>(null)
 
     /**
      * 系统深色档快照（M4c）：settings.theme = "system" 时的实际档位来源。manifest 声明了
@@ -1208,7 +1215,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        onOpenSettings = { showSettings = true },
+                        // 普通设置入口：重置跳转落点（只有侧栏「网络」行会带 LAN）
+                        onOpenSettings = { settingsInitialCategory = null; showSettings = true },
+                        // 侧栏「网络」行未连接：开设置并落在局域网共享页（2026-09-26 验收反馈）
+                        onLanSettingsClick = {
+                            settingsInitialCategory = SettingsCategory.LAN
+                            showSettings = true
+                        },
+                        // 侧栏「网络」行已连接：进 LAN 文件夹总览（2026-09-26 二轮反馈）
+                        onLanOverviewClick = { viewModel.appState.openLanOverview() },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
                         onLoadPickerImages = viewModel::loadCanvasPickerImages,
                         onSetImmersive = { setImmersiveMode(it) },
@@ -1434,11 +1449,6 @@ class MainActivity : ComponentActivity() {
                         lan = viewModel.lan,
                         // M6a 阶段 7：对等服务端单例（面板「允许桌面浏览本机」开关；未 init 为 null）
                         lanServer = viewModel.lanServerManager,
-                        // M6a 阶段 4：连接成功后的「浏览共享文件」入口
-                        onLanBrowseClick = {
-                            showSettings = false
-                            viewModel.appState.openLanOverview()
-                        },
                         onLanguageChange = { viewModel.setLanguage(it) },
                         // M6b 阶段 2：AI 设置逐项即时保存（面板草稿直接落 prefs）
                         onAiSettingsChange = { viewModel.updateAiSettings(it) },
@@ -1469,6 +1479,8 @@ class MainActivity : ComponentActivity() {
                         onCleanupColorRecords = { viewModel.cleanupColorRecords() },
                         onAutoExtractChange = { viewModel.setAutoExtractPalette(it) },
                         onRefreshColorPanel = { viewModel.refreshColorPanel() },
+                        // 侧栏「网络」跳转的落点（null = 常规，见 settingsInitialCategory 注释）
+                        initialCategory = settingsInitialCategory,
                     )
                 }
                 }
@@ -1683,6 +1695,16 @@ fun App(
     onRenameFile: (fileId: String, newName: String) -> Unit = { _, _ -> },
     /** 打开设置面板（M4b 2.1；对话框由宿主层渲染）。 */
     onOpenSettings: () -> Unit = {},
+    /**
+     * 侧栏「网络」行未连接时的点击（2026-09-26 验收反馈）：打开设置并直接落在局域网
+     * 共享页（宿主置 settingsInitialCategory = LAN 再开面板）。
+     */
+    onLanSettingsClick: () -> Unit = {},
+    /**
+     * 侧栏「网络」行已连接时的点击（2026-09-26 二轮反馈）：进 LAN 文件夹总览，
+     * 同「本地相册」头部点击回总览的语义。
+     */
+    onLanOverviewClick: () -> Unit = {},
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
     /** M5 3.1：选中集加入画布（宿主解析 FFI 源 + 落 store + 反馈）；[onDone] 报告是否真有加入。 */
@@ -2115,6 +2137,11 @@ fun App(
                 canvasSelected = inCanvas,
                 // 设置行：打开设置面板（M4b 2.1）
                 onSettingsClick = onOpenSettings,
+                // 「网络」行未连接点击 = 打开设置直接落在局域网共享页（2026-09-26 验收反馈）
+                onLanSettingsClick = onLanSettingsClick,
+                // 「网络」行已连接点击 = 进 LAN 文件夹总览（2026-09-26 二轮反馈，同「本地相册」）
+                onLanOverviewClick = onLanOverviewClick,
+                lanOverviewSelected = tab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW,
                 // 网络 Section（M6a 阶段 4）：连接状态流 collect 成普通值传入（不轮询）；
                 // 远端目录行点击 = 直接进该远端目录网格（folderId 带 lan 前缀，序列源分流
                 // 在 reloadImages——与本地目录行的「点行进夹」同位）

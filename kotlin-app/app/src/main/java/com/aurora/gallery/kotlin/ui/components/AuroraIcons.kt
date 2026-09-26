@@ -650,3 +650,57 @@ internal val IconUpload: ImageVector by lazy {
         lineTo(12f, 15f)
     }
 }
+
+/** lucide qr-code（2026-09-26 验收反馈：LAN 面板「扫码连接」图形化）。三定位角方块 +
+ * 右下 L 角（内凹圆角用 cubic 近似，同 Upload 画法）+ 中间数据点。 */
+internal val IconQrCode: ImageVector by lazy {
+    auroraIcon("QrCode") {
+        roundedRect(3f, 3f, 5f, 5f, 1f)
+        roundedRect(16f, 3f, 5f, 5f, 1f)
+        roundedRect(3f, 16f, 5f, 5f, 1f)
+        moveTo(21f, 16f)
+        lineTo(18f, 16f)
+        // a 2 2 0 0 0 -2 2（内凹圆角）：cubic 控制点按 0.5523κ 取
+        curveTo(18f, 17.1f, 17.1f, 18f, 16f, 18f)
+        lineTo(16f, 21f)
+        dot(21f, 21f)
+        dot(14f, 3f)
+        dot(14f, 8f)
+        dot(16f, 21f)
+        dot(8f, 21f)
+        dot(12f, 9f)
+        dot(12f, 12f)
+        dot(12f, 15f)
+        dot(12f, 21f)
+        dot(3f, 14f)
+        dot(3f, 21f)
+        dot(21f, 14f)
+    }
+}
+
+/** lucide chevron-right（LAN 面板最近服务器行尾 + 侧栏网络行「跳设置」暗示）。 */
+internal val IconChevronRight: ImageVector by lazy {
+    auroraIcon("ChevronRight") {
+        moveTo(9f, 18f)
+        lineTo(15f, 12f)
+        lineTo(9f, 6f)
+    }
+}
+
+/** lucide log-out（2026-09-26 三轮反馈：LAN 已连接断开钮，红色。对齐 React LanClientPanel
+ *  的 LogOut 引用；圆角用 cubic 近似，同 Upload 画法）。 */
+internal val IconLogOut: ImageVector by lazy {
+    auroraIcon("LogOut") {
+        moveTo(9f, 21f)
+        lineTo(5f, 21f)
+        curveTo(3.9f, 21f, 3f, 20.1f, 3f, 19f)
+        lineTo(3f, 5f)
+        curveTo(3f, 3.9f, 3.9f, 3f, 5f, 3f)
+        lineTo(9f, 3f)
+        moveTo(16f, 17f)
+        lineTo(21f, 12f)
+        lineTo(16f, 7f)
+        moveTo(21f, 12f)
+        lineTo(9f, 12f)
+    }
+}

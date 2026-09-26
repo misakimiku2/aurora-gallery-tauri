@@ -242,6 +242,19 @@ fun TreeSidebar(
     showCanvas: Boolean = true,
     /** 设置行点击（M4b 2.1；面板由宿主承载）。 */
     onSettingsClick: (() -> Unit)? = null,
+    /**
+     * 「网络」Section 未连接时的整行点击（2026-09-26 验收反馈）：打开设置并直接落在
+     * 局域网共享页（宿主传 SettingsCategory.LAN 的入口）。已连接时不生效（行点击走
+     * [onLanOverviewClick]）。
+     */
+    onLanSettingsClick: (() -> Unit)? = null,
+    /**
+     * 「网络」Section 已连接时的整行点击（2026-09-26 二轮反馈）：进 LAN 文件夹总览，
+     * 语义同「本地相册」头部点击回总览；展开/收起仍走 chevron 独立命中区。
+     */
+    onLanOverviewClick: () -> Unit = {},
+    /** 正处于 LAN 文件夹总览（ViewMode.LAN_FOLDERS_OVERVIEW），网络头部按翡翠高亮。 */
+    lanOverviewSelected: Boolean = false,
     // —— M6a 阶段 3：网络 Section 的连接态（宿主把 LanManager.snapshot 的 StateFlow
     //    collect 成普通值传入，不轮询）——
     /** LAN 会话已连接（CONNECTED）。决定 Wifi 图标/可展开与远端目录列表显隐。 */
@@ -361,21 +374,36 @@ fun TreeSidebar(
         }
 
         Spacer(Modifier.height(8.dp))
-        // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表
-        //（行点击=直达该远端目录网格，M6a 阶段 4 落地）；未连接维持 M1 骨架
-        //（WifiOff 灰、无展开按钮，2026-09-20 用户要求）。
+        // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表。
+        // 行主体点击（2026-09-26 两轮反馈）：未连接 = 打开设置落局域网共享页（行尾右
+        // chevron 作可点暗示）；已连接 = 进 LAN 文件夹总览（同「本地相册」头部语义，
+        // 翡翠高亮），展开/收起仍走 chevron 独立命中区。
         val lanExpandable = lanConnected
         SectionHeader(
             title = "网络",
             icon = if (lanConnected) IconWifi else IconWifiOff,
             iconTint = if (lanConnected) SECTION_EMERALD else SECTION_GRAY,
             expanded = lanExpandable && activeSection == SidebarSection.NETWORK,
-            onClick = null,
+            onClick = if (lanExpandable) onLanOverviewClick else onLanSettingsClick,
             expandable = lanExpandable,
             onChevronClick = if (lanExpandable) {
                 {
                     activeSection =
                         if (activeSection == SidebarSection.NETWORK) null else SidebarSection.NETWORK
+                }
+            } else {
+                null
+            },
+            selected = lanOverviewSelected,
+            selectedColor = SECTION_EMERALD,
+            trailing = if (!lanExpandable && onLanSettingsClick != null) {
+                {
+                    Icon(
+                        imageVector = IconChevronRight,
+                        contentDescription = null,
+                        tint = SIDEBAR_GRAY_600,
+                        modifier = Modifier.size(14.dp),
+                    )
                 }
             } else {
                 null
@@ -392,7 +420,15 @@ fun TreeSidebar(
                         .clipToBounds(),
                 ) {
                     lanFolders.forEach { folder ->
-                        LanFolderRow(folder = folder, onClick = { onLanFolderClick(folder) })
+                        // 选中态对齐本地 FolderRow：真的在目录内（browserActive）且当前
+                        // folderId = 该远端目录的 lan 前缀 id（四轮反馈：同本地行高亮逻辑）
+                        LanFolderRow(
+                            folder = folder,
+                            selected = browserActive &&
+                                currentFolderId ==
+                                com.aurora.gallery.kotlin.state.lanFolderId(folder.path),
+                            onClick = { onLanFolderClick(folder) },
+                        )
                     }
                 }
             }
@@ -574,6 +610,8 @@ private fun mergeTagGroups(local: List<TagGroup>, remote: List<TagGroup>): List<
  * chevron 以 opacity-0 占位保持对齐（桌面 TopicSection/CanvasSection 同款）。
  * [onClick] = 行主体点击（null = 行不可点，无涟漪）；[onChevronClick] 非空时 chevron
  * 有 40×52dp 独立命中区（桌面 expand-icon 分区点击同款），展开/收起走它而不走行点击。
+ * 未连接的网络行 expandable=false 但 onClick 非空（跳局域网设置，2026-09-26 验收反馈），
+ * 行尾以 [trailing] 放右 chevron 作可点暗示。
  */
 @Composable
 private fun SectionHeader(
@@ -708,19 +746,23 @@ private fun FolderRow(folder: Folder, selected: Boolean, onClick: () -> Unit) {
  * 目标、图标缩进同层级），图标/文字用网络翡翠与更浅灰区分本地来源（D31：网络栏只
  * 区分本地/网络文件夹）。点击 = 直达该远端目录网格（M6a 阶段 4；宿主把远端 path 加
  * lan 前缀成 folderId 走 openFolder，序列源分流在 reloadImages）。
+ * 2026-09-26 四轮反馈：对齐本地相册 FolderRow 的行逻辑——去掉文件数徽标；选中 =
+ * 翡翠底白字（与本地行的 primary 蓝同构，取 SECTION_EMERALD）；长文件名选中时
+ * MarqueeText 来回滚动展示全名。
  */
 @Composable
 private fun LanFolderRow(
     folder: com.aurora.gallery.kotlin.LanRemoteFolder,
+    selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val colors = AuroraTheme.colors
     Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(48.dp)
                 .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) SECTION_EMERALD else Color.Transparent)
                 .clickable(onClick = onClick)
                 .padding(start = 40.dp, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -728,30 +770,18 @@ private fun LanFolderRow(
             Icon(
                 imageVector = IconFolder,
                 contentDescription = null,
-                tint = SECTION_EMERALD,
+                tint = if (selected) Color.White else SECTION_EMERALD,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.size(10.dp))
-            Text(
-                folder.name,
+            MarqueeText(
+                text = folder.name,
+                // 选中行文件名超宽时来回滚动展示全名（同 FolderRow）
+                active = selected,
+                color = if (selected) Color.White else SIDEBAR_GRAY_600,
                 fontSize = 14.sp,
-                color = SIDEBAR_GRAY_600,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (folder.imageCount > 0) {
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    folder.imageCount.toString(),
-                    fontSize = 10.sp,
-                    color = SIDEBAR_GRAY_500,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(colors.surface)
-                        .padding(horizontal = 6.dp, vertical = 1.dp),
-                )
-            }
         }
     }
 }
