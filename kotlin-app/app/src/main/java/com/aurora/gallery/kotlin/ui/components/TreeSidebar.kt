@@ -305,241 +305,247 @@ fun TreeSidebar(
             .width(SIDEBAR_WIDTH_DP)
             .padding(top = 10.dp, bottom = 16.dp),
     ) {
-        // 专题：M4a 3.2 起整行可点 = 进专题总览（对齐桌面 TopicSection 的 onNavigateTopics，
-        // 无展开语义；行尾的 + 新建入口在总览页内常驻——触屏没有 hover）
-        SectionHeader(
-            title = "专题",
-            icon = IconLayout,
-            iconTint = SECTION_PINK,
-            expanded = false,
-            onClick = onTopicsOverviewClick,
-            expandable = false,
-            selected = topicsOverviewSelected,
-            selectedColor = TOPIC_SELECT_PINK,
-        )
+        // 分区主体（2026-09-26 验收反馈）：包一层 weight(1f) 吃掉设置行以上全部高度，
+        // 设置行随之常驻面板底部（对齐 React 侧栏 flex-1 容器 + 底部设置块的形制）；
+        // 各分区展开列表的 weight(1f, fill=false) 以这层为界封顶，不再把设置行挤出屏外
+        Column(Modifier.weight(1f)) {
+            // 专题：M4a 3.2 起整行可点 = 进专题总览（对齐桌面 TopicSection 的 onNavigateTopics，
+            // 无展开语义；行尾的 + 新建入口在总览页内常驻——触屏没有 hover）
+            SectionHeader(
+                title = "专题",
+                icon = IconLayout,
+                iconTint = SECTION_PINK,
+                expanded = false,
+                onClick = onTopicsOverviewClick,
+                expandable = false,
+                selected = topicsOverviewSelected,
+                selectedColor = TOPIC_SELECT_PINK,
+            )
 
-        // React 各 Section 容器 mt-2（首个除外）：Section 间 8dp 空隙
-        Spacer(Modifier.height(8.dp))
-        SectionHeader(
-            title = "本地相册",
-            icon = IconHardDrive,
-            iconTint = SECTION_BLUE,
-            expanded = activeSection == SidebarSection.FOLDERS,
-            // 总览态 = 桌面的「根目录选中」：头部蓝底白字。必须同时要求真的在总览视图
-            //（见参数注释：标签筛选视图 folderId 同为 null）
-            selected = currentFolderId == null && foldersOverviewSelected,
-            // 头部点击 = 回主界面（2026-09-20 用户要求，对齐 React onNavigateHome）；
-            // 展开/收起只走 chevron 独立命中区
-            onClick = onNavigateHome,
-            onChevronClick = {
-                activeSection = if (activeSection == SidebarSection.FOLDERS) null else SidebarSection.FOLDERS
-            },
-            trailing = {
-                SortCycleButton(
-                    sort = folderSort,
-                    selected = currentFolderId == null && foldersOverviewSelected,
-                    onClick = {
-                        // 名称升 → 名称降 → 时间降 → 时间升 → 名称升（对齐 React 循环序）
-                        folderSort = when (folderSort) {
-                            FolderSort.NAME_ASC -> FolderSort.NAME_DESC
-                            FolderSort.NAME_DESC -> FolderSort.DATE_DESC
-                            FolderSort.DATE_DESC -> FolderSort.DATE_ASC
-                            FolderSort.DATE_ASC -> FolderSort.NAME_ASC
-                        }
-                    },
-                )
-            },
-        )
-        if (activeSection == SidebarSection.FOLDERS) {
-            if (sortedFolders.isEmpty()) {
-                EmptyHint("暂无文件夹")
-            } else {
-                // 分区内滚动（对齐 React 列表容器的 maxHeight + overflow-y-auto）：
-                // weight(fill=false) 封顶到「面板高 − 其余固定 Section」，内容不足时只占内容高
-                Column(
-                    Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState())
-                        .clipToBounds(),
-                ) {
-                    sortedFolders.forEach { folder ->
-                        FolderRow(
-                            folder = folder,
-                            selected = browserActive && folder.id == currentFolderId,
-                            onClick = { onFolderClick(folder) },
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表。
-        // 行主体点击（2026-09-26 两轮反馈）：未连接 = 打开设置落局域网共享页（行尾右
-        // chevron 作可点暗示）；已连接 = 进 LAN 文件夹总览（同「本地相册」头部语义，
-        // 翡翠高亮），展开/收起仍走 chevron 独立命中区。
-        val lanExpandable = lanConnected
-        SectionHeader(
-            title = "网络",
-            icon = if (lanConnected) IconWifi else IconWifiOff,
-            iconTint = if (lanConnected) SECTION_EMERALD else SECTION_GRAY,
-            expanded = lanExpandable && activeSection == SidebarSection.NETWORK,
-            onClick = if (lanExpandable) onLanOverviewClick else onLanSettingsClick,
-            expandable = lanExpandable,
-            onChevronClick = if (lanExpandable) {
-                {
-                    activeSection =
-                        if (activeSection == SidebarSection.NETWORK) null else SidebarSection.NETWORK
-                }
-            } else {
-                null
-            },
-            selected = lanOverviewSelected,
-            selectedColor = SECTION_EMERALD,
-            trailing = if (!lanExpandable && onLanSettingsClick != null) {
-                {
-                    Icon(
-                        imageVector = IconChevronRight,
-                        contentDescription = null,
-                        tint = SIDEBAR_GRAY_600,
-                        modifier = Modifier.size(14.dp),
+            // React 各 Section 容器 mt-2（首个除外）：Section 间 8dp 空隙
+            Spacer(Modifier.height(8.dp))
+            SectionHeader(
+                title = "本地相册",
+                icon = IconHardDrive,
+                iconTint = SECTION_BLUE,
+                expanded = activeSection == SidebarSection.FOLDERS,
+                // 总览态 = 桌面的「根目录选中」：头部蓝底白字。必须同时要求真的在总览视图
+                //（见参数注释：标签筛选视图 folderId 同为 null）
+                selected = currentFolderId == null && foldersOverviewSelected,
+                // 头部点击 = 回主界面（2026-09-20 用户要求，对齐 React onNavigateHome）；
+                // 展开/收起只走 chevron 独立命中区
+                onClick = onNavigateHome,
+                onChevronClick = {
+                    activeSection = if (activeSection == SidebarSection.FOLDERS) null else SidebarSection.FOLDERS
+                },
+                trailing = {
+                    SortCycleButton(
+                        sort = folderSort,
+                        selected = currentFolderId == null && foldersOverviewSelected,
+                        onClick = {
+                            // 名称升 → 名称降 → 时间降 → 时间升 → 名称升（对齐 React 循环序）
+                            folderSort = when (folderSort) {
+                                FolderSort.NAME_ASC -> FolderSort.NAME_DESC
+                                FolderSort.NAME_DESC -> FolderSort.DATE_DESC
+                                FolderSort.DATE_DESC -> FolderSort.DATE_ASC
+                                FolderSort.DATE_ASC -> FolderSort.NAME_ASC
+                            }
+                        },
                     )
-                }
-            } else {
-                null
-            },
-        )
-        if (lanConnected && activeSection == SidebarSection.NETWORK) {
-            if (lanFolders.isEmpty()) {
-                EmptyHint("暂无共享目录")
-            } else {
-                Column(
-                    Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState())
-                        .clipToBounds(),
-                ) {
-                    lanFolders.forEach { folder ->
-                        // 选中态对齐本地 FolderRow：真的在目录内（browserActive）且当前
-                        // folderId = 该远端目录的 lan 前缀 id（四轮反馈：同本地行高亮逻辑）
-                        LanFolderRow(
-                            folder = folder,
-                            selected = browserActive &&
-                                currentFolderId ==
-                                com.aurora.gallery.kotlin.state.lanFolderId(folder.path),
-                            onClick = { onLanFolderClick(folder) },
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        SectionHeader(
-            title = "人物",
-            icon = IconBrain,
-            iconTint = SECTION_PURPLE,
-            count = 0,
-            expanded = activeSection == SidebarSection.PEOPLE,
-            // 行主体点击 = 进人物总览（3.2，对齐桌面 onNavigateAllPeople）；展开只走 chevron
-            onClick = onPeopleOverviewClick,
-            onChevronClick = {
-                activeSection = if (activeSection == SidebarSection.PEOPLE) null else SidebarSection.PEOPLE
-            },
-            selected = peopleOverviewSelected,
-            selectedColor = SECTION_PURPLE,
-        )
-        if (activeSection == SidebarSection.PEOPLE) {
-            if (localPeople.isEmpty() && lanPeople.isEmpty()) {
-                // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
-                EmptyHint("暂无人物")
-            } else {
-                // M6b 阶段 4（D37）：本地人物行（WD14 识别写本地库的 person_{tag}；点击
-                // 暂无动作——本地人物筛选未列验收）+ 远端人物行（M6a 阶段 5；M6b 阶段 5
-                // 起点击 = 成员筛选虚拟目录）。
-                Column(
-                    Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState())
-                        .clipToBounds(),
-                ) {
-                    localPeople.forEach { person ->
-                        LanPersonRow(
-                            name = person.name,
-                            count = person.count,
-                            onClick = {},
-                        )
-                    }
-                    lanPeople.forEach { person ->
-                        LanPersonRow(person = person, onClick = { onLanPersonClick(person) })
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        SectionHeader(
-            title = "标签",
-            icon = IconTagBadge,
-            iconTint = SECTION_BLUE,
-            count = tagCount,
-            expanded = activeSection == SidebarSection.TAGS,
-            // 行主体点击 = 进标签总览（对齐桌面 onNavigateAllTags）；展开只走 chevron
-            onClick = onTagsOverviewClick,
-            onChevronClick = {
-                activeSection = if (activeSection == SidebarSection.TAGS) null else SidebarSection.TAGS
-            },
-            selected = tagsOverviewSelected,
-        )
-        if (activeSection == SidebarSection.TAGS) {
-            if (mergedTagGroups.isEmpty()) {
-                EmptyHint("暂无标签")
-            } else {
-                Column(
-                    Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState())
-                        .clipToBounds(),
-                ) {
-                    // 分组结构照搬 Rust 的返回：组名一行不可点的分隔标题，组内是标签行。
-                    // 远端行（M6a 阶段 5，D31 并入口径）在同组内排本地行之后，行首带网络
-                    // 来源标识、selected 恒 false（不参与本地 activeTags 筛选）。
-                    mergedTagGroups.forEach { group ->
-                        TagGroupHeader(group.key)
-                        group.entries.forEach { merged ->
-                            val entry = merged.entry
-                            TagRow(
-                                tag = entry.tag,
-                                count = entry.count,
-                                selected = !merged.isRemote && entry.tag in activeTags,
-                                onClick = { if (merged.isRemote) onLanTagClick(entry.tag) else onTagClick(entry.tag) },
-                                remote = merged.isRemote,
+                },
+            )
+            if (activeSection == SidebarSection.FOLDERS) {
+                if (sortedFolders.isEmpty()) {
+                    EmptyHint("暂无文件夹")
+                } else {
+                    // 分区内滚动（对齐 React 列表容器的 maxHeight + overflow-y-auto）：
+                    // weight(fill=false) 封顶到「面板高 − 其余固定 Section」，内容不足时只占内容高
+                    Column(
+                        Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                            .clipToBounds(),
+                    ) {
+                        sortedFolders.forEach { folder ->
+                            FolderRow(
+                                folder = folder,
+                                selected = browserActive && folder.id == currentFolderId,
+                                onClick = { onFolderClick(folder) },
                             )
                         }
                     }
                 }
             }
-        }
 
-        Spacer(Modifier.height(8.dp))
-        // 画布：入口可点进画布视图（无展开语义，对齐桌面 CanvasSection）；
-        // 手机不渲染（D28 平板专属，M5）
-        if (showCanvas) {
+            Spacer(Modifier.height(8.dp))
+            // 网络（M6a 阶段 3 接通）：connected → Wifi 图标 + 可展开，展开显示远端目录列表。
+            // 行主体点击（2026-09-26 两轮反馈）：未连接 = 打开设置落局域网共享页（行尾右
+            // chevron 作可点暗示）；已连接 = 进 LAN 文件夹总览（同「本地相册」头部语义，
+            // 翡翠高亮），展开/收起仍走 chevron 独立命中区。
+            val lanExpandable = lanConnected
             SectionHeader(
-                title = "画布",
-                icon = IconScanMidline,
-                iconTint = SECTION_EMERALD,
-                expanded = false,
-                onClick = onCanvasClick,
-                selected = canvasSelected,
+                title = "网络",
+                icon = if (lanConnected) IconWifi else IconWifiOff,
+                iconTint = if (lanConnected) SECTION_EMERALD else SECTION_GRAY,
+                expanded = lanExpandable && activeSection == SidebarSection.NETWORK,
+                onClick = if (lanExpandable) onLanOverviewClick else onLanSettingsClick,
+                expandable = lanExpandable,
+                onChevronClick = if (lanExpandable) {
+                    {
+                        activeSection =
+                            if (activeSection == SidebarSection.NETWORK) null else SidebarSection.NETWORK
+                    }
+                } else {
+                    null
+                },
+                selected = lanOverviewSelected,
                 selectedColor = SECTION_EMERALD,
-                expandable = false,
+                trailing = if (!lanExpandable && onLanSettingsClick != null) {
+                    {
+                        Icon(
+                            imageVector = IconChevronRight,
+                            contentDescription = null,
+                            tint = SIDEBAR_GRAY_600,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                } else {
+                    null
+                },
             )
+            if (lanConnected && activeSection == SidebarSection.NETWORK) {
+                if (lanFolders.isEmpty()) {
+                    EmptyHint("暂无共享目录")
+                } else {
+                    Column(
+                        Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                            .clipToBounds(),
+                    ) {
+                        lanFolders.forEach { folder ->
+                            // 选中态对齐本地 FolderRow：真的在目录内（browserActive）且当前
+                            // folderId = 该远端目录的 lan 前缀 id（四轮反馈：同本地行高亮逻辑）
+                            LanFolderRow(
+                                folder = folder,
+                                selected = browserActive &&
+                                    currentFolderId ==
+                                    com.aurora.gallery.kotlin.state.lanFolderId(folder.path),
+                                onClick = { onLanFolderClick(folder) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            SectionHeader(
+                title = "人物",
+                icon = IconBrain,
+                iconTint = SECTION_PURPLE,
+                count = 0,
+                expanded = activeSection == SidebarSection.PEOPLE,
+                // 行主体点击 = 进人物总览（3.2，对齐桌面 onNavigateAllPeople）；展开只走 chevron
+                onClick = onPeopleOverviewClick,
+                onChevronClick = {
+                    activeSection = if (activeSection == SidebarSection.PEOPLE) null else SidebarSection.PEOPLE
+                },
+                selected = peopleOverviewSelected,
+                selectedColor = SECTION_PURPLE,
+            )
+            if (activeSection == SidebarSection.PEOPLE) {
+                if (localPeople.isEmpty() && lanPeople.isEmpty()) {
+                    // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
+                    EmptyHint("暂无人物")
+                } else {
+                    // M6b 阶段 4（D37）：本地人物行（WD14 识别写本地库的 person_{tag}；点击
+                    // 暂无动作——本地人物筛选未列验收）+ 远端人物行（M6a 阶段 5；M6b 阶段 5
+                    // 起点击 = 成员筛选虚拟目录）。
+                    Column(
+                        Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                            .clipToBounds(),
+                    ) {
+                        localPeople.forEach { person ->
+                            LanPersonRow(
+                                name = person.name,
+                                count = person.count,
+                                onClick = {},
+                            )
+                        }
+                        lanPeople.forEach { person ->
+                            LanPersonRow(person = person, onClick = { onLanPersonClick(person) })
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            SectionHeader(
+                title = "标签",
+                icon = IconTagBadge,
+                iconTint = SECTION_BLUE,
+                count = tagCount,
+                expanded = activeSection == SidebarSection.TAGS,
+                // 行主体点击 = 进标签总览（对齐桌面 onNavigateAllTags）；展开只走 chevron
+                onClick = onTagsOverviewClick,
+                onChevronClick = {
+                    activeSection = if (activeSection == SidebarSection.TAGS) null else SidebarSection.TAGS
+                },
+                selected = tagsOverviewSelected,
+            )
+            if (activeSection == SidebarSection.TAGS) {
+                if (mergedTagGroups.isEmpty()) {
+                    EmptyHint("暂无标签")
+                } else {
+                    Column(
+                        Modifier
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                            .clipToBounds(),
+                    ) {
+                        // 分组结构照搬 Rust 的返回：组名一行不可点的分隔标题，组内是标签行。
+                        // 远端行（M6a 阶段 5，D31 并入口径）在同组内排本地行之后，行首带网络
+                        // 来源标识、selected 恒 false（不参与本地 activeTags 筛选）。
+                        mergedTagGroups.forEach { group ->
+                            TagGroupHeader(group.key)
+                            group.entries.forEach { merged ->
+                                val entry = merged.entry
+                                TagRow(
+                                    tag = entry.tag,
+                                    count = entry.count,
+                                    selected = !merged.isRemote && entry.tag in activeTags,
+                                    onClick = { if (merged.isRemote) onLanTagClick(entry.tag) else onTagClick(entry.tag) },
+                                    remote = merged.isRemote,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            // 画布：入口可点进画布视图（无展开语义，对齐桌面 CanvasSection）；
+            // 手机不渲染（D28 平板专属，M5）
+            if (showCanvas) {
+                SectionHeader(
+                    title = "画布",
+                    icon = IconScanMidline,
+                    iconTint = SECTION_EMERALD,
+                    expanded = false,
+                    onClick = onCanvasClick,
+                    selected = canvasSelected,
+                    selectedColor = SECTION_EMERALD,
+                    expandable = false,
+                )
+            }
+
         }
 
         Spacer(Modifier.height(8.dp))
-        // 设置（M4b 2.1）：入口在侧栏底部（React 在工具栏齿轮，触屏收敛到侧栏避免
-        // TopBar 过挤）；无展开语义
+        // 设置（M4b 2.1）：入口常驻侧栏底部（React 在工具栏齿轮，触屏收敛到侧栏避免
+        // TopBar 过挤；2026-09-26 验收反馈：改为面板底部常驻，对齐桌面侧栏形制）；无展开语义
         SectionHeader(
             title = "设置",
             icon = IconSettings,
