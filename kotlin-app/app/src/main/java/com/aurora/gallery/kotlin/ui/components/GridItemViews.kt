@@ -363,6 +363,14 @@ internal fun buildHeaderView(
  *  - 锚定分组 = **首个可见 item 之前（含）最近的 header**，用二分查找定位，
  *    避免从 firstPos 倒序扫描（1~2 万项时每帧上万次遍历会拖垮滚动）；
  *  - 当下一个分组标题即将顶到顶部时，把 sticky 标题同步上推，产生「被顶走」的过渡。
+ *
+ * 吸顶线在 **RV 顶缘（y=0）而非 paddingTop**：clipToPadding=false 时图片会滚进
+ * padding 区，从 paddingTop 起画的 sticky 盖不住这段，出现「图片穿过标题栏」
+ * （2026-09-26 用户报障）；从 0 起画才把滚过的内容全部压在标题栏之下。
+ *
+ * 吸顶条由 ItemDecoration 绘制、**不参与触摸分发**——点击会穿透到其下方的 item
+ * （正下方是图片=误开查看器、是间隙/padding=毫无反应，同日报障「点击折叠无效果」）。
+ * [hitHeader] 供宿主挂 OnItemTouchListener 命中查询：命中即消费并切换该组折叠。
  */
 internal class StickyHeaderDecoration(
     private val headerPositions: () -> List<Int>,
@@ -374,36 +382,59 @@ internal class StickyHeaderDecoration(
     private var headerView: View? = null
 
     override fun onDrawOver(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
-        if (parent.childCount == 0) return
-
-        val firstPos = parent.getChildAdapterPosition(parent.getChildAt(0))
-        if (firstPos == RecyclerView.NO_POSITION) return
-
-        val anchor = findHeaderBefore(firstPos)
-        if (anchor < 0) return
-
-        // 锚定组的行内标题自身还完整露在吸顶线以下时不画 sticky——否则列表顶端
-        // 会出现「行内标题 + sticky 标题」上下两条重复标题（M4c 修复）。
-        for (i in 0 until parent.childCount) {
-            val child = parent.getChildAt(i)
-            if (parent.getChildAdapterPosition(child) == anchor) {
-                if (child.top >= parent.paddingTop) return
-                break
-            }
-        }
+        val anchor = anchorHeaderPosition(parent) ?: return
+        val top = stickyTop(parent, anchor) ?: return
+        val width = parent.width - parent.paddingLeft - parent.paddingRight
+        if (width <= 0) return
 
         val view = headerView ?: createHeader().also { headerView = it }
         bindHeader(view, anchor)
-
-        val width = parent.width - parent.paddingLeft - parent.paddingRight
-        if (width <= 0) return
         view.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(headerHeightPx, View.MeasureSpec.EXACTLY),
         )
+        // 手动 view.draw 以画布原点为自身原点，x/y 都经 translate 摆位：
+        // x 对齐内容区（不越左右 padding），y 为吸顶线。
+        view.layout(0, 0, width, headerHeightPx)
+        c.save()
+        c.translate(parent.paddingLeft.toFloat(), top.toFloat())
+        view.draw(c)
+        c.restore()
+    }
 
+    /** 返回点击命中的吸顶标题的 adapter position；未吸顶/未命中返回 -1。 */
+    fun hitHeader(rv: RecyclerView, x: Float, y: Float): Int {
+        val anchor = anchorHeaderPosition(rv) ?: return -1
+        val top = stickyTop(rv, anchor) ?: return -1
+        if (y < top || y > top + headerHeightPx) return -1
+        return anchor
+    }
+
+    /** 锚定分组 = 首个可见 item 之前（含）最近的 header；行内标题完整露出时无 sticky，返回 null。 */
+    private fun anchorHeaderPosition(parent: RecyclerView): Int? {
+        if (parent.childCount == 0) return null
+        val firstPos = parent.getChildAdapterPosition(parent.getChildAt(0))
+        if (firstPos == RecyclerView.NO_POSITION) return null
+        val anchor = findHeaderBefore(firstPos)
+        if (anchor < 0) return null
+
+        // 锚定组的行内标题自身还完整露在吸顶线以下时不画 sticky——否则列表顶端
+        // 会出现「行内标题 + sticky 标题」上下两条重复标题（M4c 修复）。此时点击
+        // 也应落回真实标题 item（它有自己的 OnClickListener）。
+        for (i in 0 until parent.childCount) {
+            val child = parent.getChildAt(i)
+            if (parent.getChildAdapterPosition(child) == anchor) {
+                if (child.top >= parent.paddingTop) return null
+                break
+            }
+        }
+        return anchor
+    }
+
+    /** sticky 当前吸顶 y；被下一个分组标题完全推出视口顶时返回 null（不绘制/不命中）。 */
+    private fun stickyTop(parent: RecyclerView, anchor: Int): Int? {
+        var top = 0
         // 下一个分组标题顶上来时，sticky 标题被推走
-        var top = parent.paddingTop
         for (i in 0 until parent.childCount) {
             val child = parent.getChildAt(i)
             val pos = parent.getChildAdapterPosition(child)
@@ -414,12 +445,7 @@ internal class StickyHeaderDecoration(
                 break
             }
         }
-
-        view.layout(parent.paddingLeft, top, parent.paddingLeft + width, top + headerHeightPx)
-        c.save()
-        c.translate(0f, top.toFloat())
-        view.draw(c)
-        c.restore()
+        return if (top + headerHeightPx <= 0) null else top
     }
 
     /** 返回 ≤ [pos] 的最大 header position，没有则 -1。 */

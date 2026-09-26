@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -149,7 +150,7 @@ fun FileGrid(
     var measuredWidthDp by remember { mutableIntStateOf(0) }
     val containerWidthDp = measuredWidthDp.takeIf { it > 0 } ?: LocalConfiguration.current.screenWidthDp
     // sticky 分组标题实例；RecyclerView 无法查询已挂载的 ItemDecoration，只能自己记账
-    var stickyDecoration by remember { mutableStateOf<RecyclerView.ItemDecoration?>(null) }
+    var stickyDecoration by remember { mutableStateOf<StickyHeaderDecoration?>(null) }
 
     // 已应用到 RecyclerView 的布局模式。与 layoutMode 不一致时触发切换 + FLIP。
     var appliedMode by remember { mutableStateOf(layoutMode) }
@@ -672,6 +673,24 @@ fun FileGrid(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
+                // 吸顶分组标题的点击折叠：sticky 条是 ItemDecoration 画的、不参与触摸分发，
+                // 点击会穿透到其下方 item（图片=误开查看器、间隙/padding=毫无反应）。DOWN
+                // 命中吸顶条即切换该组折叠并整串拦截（在 pinch 之后注册：单指点击 pinch
+                // 不拦，轮到本监听器；多指捏合时 pinch 先拦，本分支无感）。行内标题未被
+                // 吸顶条覆盖时 hitHeader 返回 -1，点击照常落给标题 item 自带的 OnClickListener。
+                addOnItemTouchListener(object : RecyclerView.SimpleOnItemTouchListener() {
+                    override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+                        if (e.actionMasked != MotionEvent.ACTION_DOWN) return false
+                        val anchorPos = stickyDecoration?.hitHeader(rv, e.x, e.y) ?: return false
+                        val item = adapter.itemAt(anchorPos) as? GridItem.Header ?: return false
+                        collapsedIds = if (item.id in collapsedIds) {
+                            collapsedIds - item.id
+                        } else {
+                            collapsedIds + item.id
+                        }
+                        return true
+                    }
+                })
             }.also { rv ->
                 // 4.4 下拉刷新：注册在捏合监听器之后——多指事件捏合先拦，轮不到下拉；
                 // 单指顶部下拉捏合监听器放行，由这里接管（见 PullToRefreshListener）
