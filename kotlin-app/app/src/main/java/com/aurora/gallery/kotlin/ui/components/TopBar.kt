@@ -308,6 +308,25 @@ fun TopBar(
                 }
             }
         }
+        // 竖屏标题真居中（M8b 验收反馈三轮：总览页左侧少返回钮，标题被顶偏）——两侧
+        // 按钮数量不齐时在轻的一侧补 44dp 占位（与 TopBarButton compact 同宽），使标题
+        // weight 盒左右对称：剩余空间居中=屏幕居中。searchOpen 时搜索/更多钮隐藏，计数
+        // 随之；平板/横屏不加占位（原形制零回归）。
+        val showSearchBtn = showSearch && !searchOpen
+        val showMoreBtn = isPhonePortrait && !searchOpen &&
+            (showSortMenu || showViewMode || showDateFilter || showTags || showColorSearch)
+        val showActionBtn = actionIcon != null && onActionClick != null
+        val leftBtnCount = 1 + (if (showBack) 1 else 0)
+        val rightBtnCount = if (isPhonePortrait) {
+            (if (showSearchBtn) 1 else 0) + (if (showActionBtn) 1 else 0) + (if (showMoreBtn) 1 else 0)
+        } else {
+            0
+        }
+        if (isPhonePortrait) {
+            repeat((rightBtnCount - leftBtnCount).coerceAtLeast(0)) {
+                Spacer(Modifier.width(44.dp))
+            }
+        }
         if (!isPhonePortrait) searchButton()
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             if (!searchOpen) {
@@ -339,6 +358,11 @@ fun TopBar(
                     onClearColorSearch = onClearColorSearch,
                     onLanSearchSubmit = onLanSearchSubmit,
                 )
+            }
+        }
+        if (isPhonePortrait) {
+            repeat((leftBtnCount - rightBtnCount).coerceAtLeast(0)) {
+                Spacer(Modifier.width(44.dp))
             }
         }
         if (isPhonePortrait) searchButton()
