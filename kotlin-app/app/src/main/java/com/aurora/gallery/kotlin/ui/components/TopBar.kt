@@ -283,7 +283,10 @@ fun TopBar(
                 modifier = Modifier.size(18.dp),
             )
         }
-        if (showBack) {
+        // 手机竖屏 searchOpen 时隐藏返回（2026-09-27 用户报障：竖屏搜索输入区过窄）：
+        // 输入态下胶囊内 X 与系统返回手势（宿主返回链先关搜索）都承担退出，此钮纯冗余，
+        // 让出 44dp 给输入区；平板/横屏维持原样。
+        if (showBack && !(isPhonePortrait && searchOpen)) {
             TopBarButton(enabled = canBack, onClick = onBack) {
                 Icon(
                     imageVector = IconChevronLeft,
@@ -324,7 +327,9 @@ fun TopBar(
         } else {
             0
         }
-        if (isPhonePortrait) {
+        // 配平占位只服务标题居中（searchOpen 时标题已被胶囊替换，占位只会白吃胶囊宽度
+        // ——2026-09-27 用户报障：竖屏搜索态输入区只剩占位文字宽的一小条）
+        if (isPhonePortrait && !searchOpen) {
             repeat((rightBtnCount - leftBtnCount).coerceAtLeast(0)) {
                 Spacer(Modifier.width(44.dp))
             }
@@ -362,7 +367,7 @@ fun TopBar(
                 )
             }
         }
-        if (isPhonePortrait) {
+        if (isPhonePortrait && !searchOpen) {
             repeat((leftBtnCount - rightBtnCount).coerceAtLeast(0)) {
                 Spacer(Modifier.width(44.dp))
             }
@@ -1212,6 +1217,10 @@ private fun SearchPill(
             value = query,
             onValueChange = onQueryChange,
             singleLine = true,
+            // 撑满胶囊剩余宽（React 桌面搜索 input 的 flex-1 同旨）：无宽度约束时只包住
+            // 占位文字宽——平板上图标/AI/X 全挤在输入旁、手机竖屏输入区只剩占位一条
+            // （2026-09-27 用户报障，平板+竖屏同此根因）
+            modifier = Modifier.weight(1f),
             textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
             cursorBrush = SolidColor(colors.primary),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
