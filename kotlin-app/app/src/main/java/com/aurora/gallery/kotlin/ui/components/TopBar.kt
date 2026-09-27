@@ -835,6 +835,12 @@ internal fun AuroraDropdown(
     expanded: Boolean,
     anchorBoundsInWindow: Rect,
     onDismissRequest: () -> Unit,
+    /**
+     * 菜单水平对齐端：true（默认）=菜单右缘贴锚点右缘（工具栏按钮都在屏幕右半区）；
+     * false=菜单左缘贴锚点左缘（桌面 scope 菜单的 left-0 同款）——scope 钮在胶囊最左缘，
+     * 右对齐公式（锚点右缘−192dp）在手机上会算出负 x 把菜单推出屏外。
+     */
+    alignToAnchorEnd: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val context = LocalContext.current
@@ -902,7 +908,10 @@ internal fun AuroraDropdown(
                         if (menuHeightPx <= 0 || backdrop != null) return@LaunchedEffect
                         if (Build.VERSION.SDK_INT < 26) return@LaunchedEffect
                         val anchor = latestAnchor
-                        val left = (anchor.right - menuWidth).roundToInt().coerceAtLeast(0)
+                        // 左对齐=菜单左缘贴锚点左缘（桌面 left-0）；右对齐=菜单右缘贴锚点右缘
+                        val left = (
+                            if (alignToAnchorEnd) anchor.right - menuWidth else anchor.left
+                            ).roundToInt().coerceAtLeast(0)
                         val top = (anchor.bottom.roundToInt() + gap).coerceAtLeast(0)
                         val decor = host.decorView
                         val width = minOf(menuWidth, decor.width - left)
@@ -979,7 +988,10 @@ internal fun AuroraDropdown(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
-            w.attributes.x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
+            w.attributes.x = (
+                if (alignToAnchorEnd) anchorBoundsInWindow.right - menuWidth
+                else anchorBoundsInWindow.left
+                ).roundToInt().coerceAtLeast(0)
             w.attributes.y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
             // 圆角窗口投影（Compose shadow 会画在窗口外被裁掉，改用窗口级 elevation）
             w.decorView.outlineProvider = object : ViewOutlineProvider() {
@@ -1004,7 +1016,10 @@ internal fun AuroraDropdown(
             val menuWidth = with(density) { 192.dp.roundToPx() }
             val gap = with(density) { 8.dp.roundToPx() }
             w.attributes = w.attributes.apply {
-                x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
+                x = (
+                    if (alignToAnchorEnd) anchorBoundsInWindow.right - menuWidth
+                    else anchorBoundsInWindow.left
+                    ).roundToInt().coerceAtLeast(0)
                 y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
             }
         }
@@ -1161,40 +1176,64 @@ private fun SearchPill(
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // M4b 阶段 3：scope 下拉（对齐 React TopBar :968-999 的 icon+chevron 按钮，
-        // 触屏上用「文字 + chevron」比纯图标更可读，其余形制对齐）
+        // scope 下拉（M8b-14 用户拍板：改桌面 TopBar :968-999 同款图标钮——当前范围的
+        // lucide 图标随 scope 切换（Globe/FileText/Tag/Folder）+小 chevron+右分隔线；
+        // M4b 曾改「文字+chevron」求可读，现按用户要求回图标形制）。菜单项同桌面带各自
+        // 图标；菜单**左对齐锚点**（alignToAnchorEnd=false，桌面 left-0 同款）——scope 钮
+        // 在胶囊最左缘，默认右对齐公式（锚点右缘−192dp）在手机上算出负 x 会推出屏外。
         if (showScope) {
             var scopeAnchor by remember { mutableStateOf(Rect.Zero) }
             var scopeOpen by remember { mutableStateOf(false) }
             Box(Modifier.onGloballyPositioned { scopeAnchor = it.boundsInWindow() }) {
                 Row(
                     Modifier
+                        .height(40.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { scopeOpen = !scopeOpen }
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                        .padding(horizontal = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = scopeLabelOf(scope),
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
-                        maxLines = 1,
-                    )
                     Icon(
-                        imageVector = ScopeIconChevronDown,
+                        imageVector = when (scope) {
+                            SearchScope.ALL -> IconGlobe
+                            SearchScope.FILE -> IconFileText
+                            SearchScope.TAG -> IconTag
+                            SearchScope.FOLDER -> IconFolder
+                        },
                         contentDescription = "搜索范围",
                         tint = colors.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    Icon(
+                        imageVector = ScopeIconChevronDown,
+                        contentDescription = null,
+                        tint = colors.textSecondary.copy(alpha = 0.7f),
                         modifier = Modifier.size(12.dp),
                     )
                 }
                 AuroraDropdown(
                     expanded = scopeOpen,
                     anchorBoundsInWindow = scopeAnchor,
+                    alignToAnchorEnd = false,
                     onDismissRequest = { scopeOpen = false },
                 ) {
                     SearchScope.entries.forEach { s ->
                         AuroraMenuItem(
                             text = scopeLabelOf(s),
+                            leading = {
+                                Icon(
+                                    imageVector = when (s) {
+                                        SearchScope.ALL -> IconGlobe
+                                        SearchScope.FILE -> IconFileText
+                                        SearchScope.TAG -> IconTag
+                                        SearchScope.FOLDER -> IconFolder
+                                    },
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            },
                             onClick = {
                                 scopeOpen = false
                                 onScopeChange(s)
@@ -1204,7 +1243,9 @@ private fun SearchPill(
                     }
                 }
             }
-            Spacer(Modifier.size(6.dp))
+            // 桌面按钮的 border-r：scope 钮与搜索图标之间的竖分隔线
+            Box(Modifier.size(1.dp, 18.dp).background(colors.subtle))
+            Spacer(Modifier.size(8.dp))
         }
         Icon(
             imageVector = IconSearch,
@@ -1413,6 +1454,52 @@ private val ScopeIconChevronDown: ImageVector by lazy {
             lineTo(18f, 9f)
         }
     }.build()
+}
+
+/** lucide file-text：文件页 + 折角 + 两行文字（scope=文件名；桌面 TopBar getScopeIcon 同款）。 */
+private val IconFileText: ImageVector by lazy {
+    iconBuilder("FileText") {
+        moveTo(15f, 2f)
+        lineTo(6f, 2f)
+        arcTo(2f, 2f, 0f, false, false, 4f, 4f)
+        lineTo(4f, 20f)
+        arcTo(2f, 2f, 0f, false, false, 6f, 22f)
+        lineTo(18f, 22f)
+        arcTo(2f, 2f, 0f, false, false, 20f, 20f)
+        lineTo(20f, 7f)
+        close()
+        // 折角
+        moveTo(14f, 2f)
+        lineTo(14f, 6f)
+        arcTo(2f, 2f, 0f, false, false, 16f, 8f)
+        lineTo(20f, 8f)
+        // 文字行
+        moveTo(16f, 13f)
+        lineTo(8f, 13f)
+        moveTo(16f, 17f)
+        lineTo(8f, 17f)
+        moveTo(10f, 9f)
+        lineTo(8f, 9f)
+    }
+}
+
+/** lucide folder：档案夹（scope=文件夹；与 TreeSidebar 同 path，本文件就近自绘一份）。 */
+private val IconFolder: ImageVector by lazy {
+    iconBuilder("Folder") {
+        moveTo(20f, 20f)
+        arcTo(2f, 2f, 0f, false, false, 22f, 18f)
+        lineTo(22f, 8f)
+        arcTo(2f, 2f, 0f, false, false, 20f, 6f)
+        lineTo(12.1f, 6f)
+        arcTo(2f, 2f, 0f, false, true, 10.41f, 5.1f)
+        lineTo(9.6f, 3.9f)
+        arcTo(2f, 2f, 0f, false, false, 7.93f, 3f)
+        lineTo(4f, 3f)
+        arcTo(2f, 2f, 0f, false, false, 2f, 5f)
+        lineTo(2f, 18f)
+        arcTo(2f, 2f, 0f, false, false, 4f, 20f)
+        close()
+    }
 }
 
 /**
