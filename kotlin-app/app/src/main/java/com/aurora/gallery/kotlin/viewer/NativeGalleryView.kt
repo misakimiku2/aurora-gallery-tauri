@@ -1548,13 +1548,16 @@ class NativeGalleryView @JvmOverloads constructor(
                 val threshold = resources.displayMetrics.density * SWIPE_THRESHOLD_DP
                 val shouldNavigate = abs(dx) > threshold || (abs(velocityX) > SWIPE_VELOCITY_THRESHOLD && abs(dx) > touchSlopForSwipe)
                 val dir = if (dx > 0) -1 else 1
+                // 切换成功路径不放触觉反馈（M8b-11 用户报真机每切一张震一下）：翻页是
+                // 高频手势，系统相册类应用也不在切换处振动；模拟器无振动马达复现不了，
+                // 代码路径两端一致。长按的 LONG_PRESS 触觉保留（低频手势确认，见
+                // onLongPressConfirmed）。React 版移植时就带这声振动（M3 284d90113），
+                // 模拟器验收从未暴露。
                 if (shouldNavigate && dx != 0f) {
                     val adjacentIndex = currentIndex + dir
                     if (swipeAdjacentPrepared && swipeAdjacentDirection == dir && adjacentIndex in 0 until images.size) {
-                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         navigateFromSwipe(dir)
                     } else if (adjacentIndex in 0 until images.size) {
-                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
                         cleanupSwipeAdjacentImmediate()
                         navigate(dir)
                     } else {
