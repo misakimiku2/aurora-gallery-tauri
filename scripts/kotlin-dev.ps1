@@ -7,7 +7,8 @@
 #   npm run kotlin:dev -- -LogOnly   # 跳过编译，仅启动 + 看日志
 param(
     [switch]$So,       # 先重编 Rust so（cargo-ndk, arm64-v8a）
-    [switch]$LogOnly   # 跳过编译安装，仅启动 app + 看日志
+    [switch]$LogOnly,  # 跳过编译安装，仅启动 app + 看日志
+    [string]$Device    # 可选：目标设备 serial（默认取 adb devices 第一台；多设备时建议显式指定）
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,8 +24,25 @@ if ($deviceLines.Count -eq 0) {
     Write-Host "[!] 未检测到已连接设备。先跑 scripts/adb-connect.ps1 无线连接。" -ForegroundColor Red
     exit 1
 }
-$serial = ($deviceLines[0].ToString() -split "\s+")[0]
+$serial = if ($Device) { $Device } else { ($deviceLines[0].ToString() -split "\s+")[0] }
 Write-Host "      设备: $serial" -ForegroundColor Green
+
+# SDK 兜底：ANDROID_HOME 缺失或失效时（本仓库经 SMB 共享、local.properties 不写死 sdk.dir，
+# setx 后旧窗口/旧守护进程看不到新变量），从 LOCALAPPDATA 默认位置或 adb.exe 反推 SDK 根
+# （两台构建机 .174/.87 均为默认安装位置，探测 platform-tools\adb.exe 确认有效）。
+if (-not $env:ANDROID_HOME -or -not (Test-Path $env:ANDROID_HOME)) {
+    $adbSrc = (Get-Command adb -ErrorAction SilentlyContinue).Source
+    $sdkFromAdb = if ($adbSrc) { Split-Path (Split-Path $adbSrc -Parent) -Parent } else { $null }
+    $sdk = @("$env:LOCALAPPDATA\Android\Sdk", $sdkFromAdb) |
+        Where-Object { $_ -and (Test-Path (Join-Path $_ 'platform-tools\adb.exe')) } |
+        Select-Object -First 1
+    if (-not $sdk) {
+        Write-Host "[!] 未找到 Android SDK（ANDROID_HOME 未设置且默认位置不存在）。" -ForegroundColor Red
+        exit 1
+    }
+    $env:ANDROID_HOME = $sdk
+    Write-Host "      ANDROID_HOME: $sdk（脚本兜底）" -ForegroundColor Gray
+}
 
 if (-not $LogOnly) {
     # 2. 可选重编 Rust so
@@ -45,10 +63,11 @@ if (-not $LogOnly) {
         } finally { Pop-Location }
     }
 
-    # 3. 编译 + 安装
+    # 3. 编译 + 安装（ANDROID_SERIAL 定向到检测到的设备，防止 installDebug 装到所有连接设备）
     Write-Host "[2/4] gradlew installDebug ..." -ForegroundColor Cyan
     Push-Location $kotlinDir
     try {
+        $env:ANDROID_SERIAL = $serial
         .\gradlew.bat installDebug --console=plain
         if ($LASTEXITCODE -ne 0) { throw "installDebug 失败" }
     } finally { Pop-Location }
