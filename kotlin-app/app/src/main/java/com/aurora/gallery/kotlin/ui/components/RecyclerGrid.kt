@@ -101,8 +101,10 @@ class SquareImageView @JvmOverloads constructor(
 class GridSpacingDecoration(
     /** 当前列数（三档捏合换档时更新）。 */
     var spanCount: Int,
-    /** 单元格间距。手机 10dp / 平板 16dp，对齐 React 版 `layout.worker.ts` 的 GAP。 */
-    val gapPx: Int,
+    /** 单元格间距。手机 10dp / 平板 16dp，对齐 React 版 `layout.worker.ts` 的 GAP。
+     *  可变：总览的 decoration 跨组合复用（进文件夹再返回不重建 RV），形态切换导致
+     *  间距档位变化时就地更新，不必重建 decoration（重建要 remove/add，会触发一轮重排）。 */
+    var gapPx: Int,
 ) : RecyclerView.ItemDecoration() {
 
     /**

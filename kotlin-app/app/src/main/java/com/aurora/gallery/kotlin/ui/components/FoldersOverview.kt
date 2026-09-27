@@ -85,6 +85,78 @@ private val FolderIcon: ImageVector by lazy {
 }
 
 /**
+ * 总览 RV 的跨组合存活状态（2026-09-28：修复「从文件夹返回主界面会看到主界面刷新一下」）。
+ *
+ * 背景：主界面（[FoldersOverview]）与文件夹内网格在宿主里是互斥的 `when` 分支，进入文件夹时
+ * 总览整块**离开组合** → `AndroidView` 被 dispose、原生 RecyclerView 销毁；返回时重新走
+ * factory，得到全新的 RV + 全新的 adapter（内部数据为空）→ `notifyDataSetChanged` 全量重绑、
+ * 缩略图重新走一遍加载流程（即使命中内存缓存也要重新 setImageBitmap 并重新 measure/layout），
+ * 肉眼就是「主界面刷了一下」。首启尤其明显：此时缩略图缓存还没填满，重绑后有若干张是
+ * 先空后填的异步加载。
+ *
+ * 修法：把 RV 实例连同 adapter / FLIP 控制器 / 间距 decoration / 已量出的宽度提到本类，由
+ * **宿主**（App 层 `remember`）持有、跨组合存活；返回总览时 factory 直接把同一个 RV 摘回来
+ * 重新 attach——VH 池、滚动位置、已绑定的封面全部原样保留，零重绑零重载、也不必再恢复滚动。
+ *
+ * 生命周期：宿主组合销毁（Activity 结束 / 配置变更）时由宿主调用 [close]。
+ */
+class FoldersOverviewState {
+    internal val rvHolder = RvHolder()
+    internal val pinchFlip = PinchFlipController()
+    internal val pendingPinchAnchor = AnchorOverrideHolder()
+    private var adapter: FolderAdapter? = null
+    private var decoration: GridSpacingDecoration? = null
+
+    /**
+     * 已量出的容器宽度（dp）：跨组合保留，返回总览时首帧就按正确宽度算列数，
+     * 不再出现「先按兜底列数布局、重组后再 FLIP 收敛」的重排。
+     */
+    internal var measuredWidthDp by mutableIntStateOf(0)
+
+    /** 本次组合是否为「复用旧 RV」：true = 滚动位置/宽度/数据都还在，无需恢复与重排。 */
+    val reused: Boolean get() = rvHolder.rv != null
+
+    internal fun obtainAdapter(
+        loader: ThumbnailLoader,
+        surfaceColor: Int,
+        textPrimaryColor: Int,
+        textSecondaryColor: Int,
+        onClick: (Folder) -> Unit,
+        onLongClick: (Folder) -> Unit,
+    ): FolderAdapter {
+        adapter?.let { return it }
+        return FolderAdapter(
+            loader = loader,
+            surfaceColor = surfaceColor,
+            textPrimaryColor = textPrimaryColor,
+            textSecondaryColor = textSecondaryColor,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        ).also {
+            it.pinchFlip = pinchFlip
+            adapter = it
+        }
+    }
+
+    internal fun obtainDecoration(gapPx: Int): GridSpacingDecoration {
+        decoration?.let {
+            it.gapPx = gapPx
+            return it
+        }
+        return GridSpacingDecoration(6, gapPx).also { decoration = it }
+    }
+
+    /** 宿主组合销毁时调用：取消 adapter 的图片加载协程并丢弃 RV 引用。 */
+    internal fun close() {
+        adapter?.cancel()
+        adapter = null
+        decoration = null
+        rvHolder.rv = null
+        measuredWidthDp = 0
+    }
+}
+
+/**
  * 文件夹总览主视图（原生 RecyclerView + GridLayoutManager，对齐系统相册滚动性能）。
  */
 @Composable
@@ -104,8 +176,9 @@ fun FoldersOverview(
     onLevelChange: (Int) -> Unit = {},
     /**
      * 返回总览时恢复的滚动位置（对齐 React 版 `HistoryItem.scrollTop` 的恢复行为）。
-     * 本组件因导航离开组合再回来时 RV 是全新的，由宿主把离开前记录的位置传回；
+     * 本组件因导航离开组合再回来时会重新走 factory，由宿主把离开前记录的位置传回；
      * 只在本次组合实例消费一次，之后的重扫/重组不再重复归位。
+     * 注：[rvState] 复用旧 RV 时（滚动位置本身就还在）该值会被忽略。
      */
     initialScrollTop: Int = 0,
     /** 滚动位置上报（每滚动帧调用；宿主用普通字段记录，见 [AppState.overviewScrollTop]）。 */
@@ -120,6 +193,13 @@ fun FoldersOverview(
     pullToRefreshState: PullToRefreshState? = null,
     /** 4.4 刷新动作：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullToRefresh: ((onComplete: () -> Unit) -> Unit)? = null,
+    /**
+     * 跨组合保留的 RV 状态（2026-09-28 修复「返回主界面刷一下」）。
+     * 由宿主（App 层 `remember`）持有并在此传入，本组件在返回总览时复用同一个
+     * RecyclerView / adapter，不再重建重绑。不传则退化为「每个组合实例各自一份」
+     * （历史行为，仅作兜底；宿主应传并在自身销毁时 [FoldersOverviewState.close]）。
+     */
+    rvState: FoldersOverviewState = remember { FoldersOverviewState() },
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -127,36 +207,44 @@ fun FoldersOverview(
 
     // 进度驱动 FLIP（与 FileGrid 同一套手感：捏合 = FLIP 动画的进度条）。
     // 必须定义在 gridAdapter 之前——gridAdapter 与下面的 AndroidView 都要用。
-    val rvHolder = remember { RvHolder() }
-    val pinchFlip = remember { PinchFlipController() }
+    // 全部来自 rvState（跨组合存活）：进文件夹再返回时拿到的是同一批实例，
+    // 不再走「新 RV + 空 adapter → 全量重绑 → 缩略图重新加载」那条可见刷新路径。
+    val rvHolder = rvState.rvHolder
+    val pinchFlip = rvState.pinchFlip
     // 捏合换档的锚点透传：onPinchEnd 记录 → update 消费（一次）。落档必须保持同一锚点
     // 停在同一屏幕位置（含末端钳制位移 δ 后的 commitAnchorTop），预览与收尾 FLIP 才
     // 无缝衔接——此前没透传，animateSpanChange 退回 firstVisible 锚点，与 FileGrid 不一致。
-    val pendingPinchAnchor = remember { AnchorOverrideHolder() }
+    val pendingPinchAnchor = rvState.pendingPinchAnchor
     // 收尾动画时长：捏合换档时按剩余进度缩短，用后即复位
     var flipDurationMs by remember { mutableLongStateOf(FLIP_DURATION_MS) }
 
     // 长按回调转发最新引用（同 FileGrid：adapter 的 remember 只捕获首帧 lambda）
     val currentOnFolderLongClick = rememberUpdatedState(onFolderLongClick)
+    // 点击同理：adapter 跨组合存活后，onCreateViewHolder 里捕获的是首帧 lambda，
+    // 必须走最新引用，否则返回总览后点卡片会用到过期闭包
+    val currentOnFolderClick = rememberUpdatedState(onFolderClick)
     // 4.4 下拉刷新动作同理（factory 闭包只创建一次）
     val currentOnPullToRefresh = rememberUpdatedState(onPullToRefresh)
 
-    val gridAdapter = remember(pinchFlip) {
-        FolderAdapter(
+    val gridAdapter = remember(rvState) {
+        rvState.obtainAdapter(
             loader = thumbnailLoader,
             surfaceColor = colors.surface.toArgb(),
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
-            onClick = onFolderClick,
+            onClick = { currentOnFolderClick.value(it) },
             onLongClick = { currentOnFolderLongClick.value(it) },
-        ).also { it.pinchFlip = pinchFlip }
+        )
     }
 
     LaunchedEffect(folders) {
-        gridAdapter.submit(folders)
-        // notifyDataSetChanged 会把 RV 打回顶部（重扫/数据替换场景），记忆同步归零；
-        // 返回总览的恢复（pendingRestore>0）在其后的布局回调里执行，会覆盖这里的值
-        onScrollChanged(0)
+        // 复用旧 RV 时 adapter 里的数据还在，内容相同则 submit 是 no-op：
+        // 不 notify 就不要把宿主记录的滚动位置归零（否则离开时记的位置被抹掉）
+        if (gridAdapter.submit(folders)) {
+            // notifyDataSetChanged 会把 RV 打回顶部（重扫/数据替换场景），记忆同步归零；
+            // 返回总览的恢复（pendingRestore>0）在其后的布局回调里执行，会覆盖这里的值
+            onScrollChanged(0)
+        }
     }
 
     LaunchedEffect(selectedIds) {
@@ -166,7 +254,8 @@ fun FoldersOverview(
     // 滚动位置恢复：本次组合实例消费一次。submit 之后注册 doOnLayout——首个带数据的
     // 布局完成后 scrollBy 归位（LinearLayoutManager 按需填充，一步可滚到位），避免
     // 对着空内容滚；消费完置 0，重扫/重组不会重复归位。
-    var pendingRestore by remember { mutableIntStateOf(initialScrollTop) }
+    // 复用旧 RV 时滚动位置本身就还在（detach 不清滚动），再滚一次反而二次偏移，故置 0。
+    var pendingRestore by remember { mutableIntStateOf(if (rvState.reused) 0 else initialScrollTop) }
     LaunchedEffect(Unit) {
         if (pendingRestore > 0) {
             val target = pendingRestore
@@ -177,9 +266,8 @@ fun FoldersOverview(
         }
     }
 
-    DisposableEffect(gridAdapter) {
-        onDispose { gridAdapter.cancel() }
-    }
+    // 注：adapter 的协程取消交给宿主的 rvState.close()（见类注释）——这里若在组合
+    // dispose 时 cancel，复用场景会把 adapter 的加载协程一次性掐掉、之后再也拉不动图。
 
     if (folders.isEmpty()) {
         Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -228,21 +316,32 @@ fun FoldersOverview(
     val currentLevel = rememberUpdatedState(level)
     // factory 闭包只创建一次，gapPx 直接捕获会在旋转（平板/手机间距变化）后读到旧值。
     val currentGapPx = rememberUpdatedState(gapPx)
-    val decoration = remember { GridSpacingDecoration(6, gapPx) }
+    // decoration 同样来自 rvState：复用 RV 时不能重复 addItemDecoration（会叠加间距）
+    val decoration = remember(rvState) { rvState.obtainDecoration(gapPx) }
 
     // 容器宽度（dp）：doOnLayout 首次布局后写入，强制 update 重跑（对齐 FileGrid 的
     // 3.2fix——update 在 RV 布局完成前 width=0 提前返回后，必须有下一次重跑的触发源，
     // 否则 applyCellWidth 永远量不出单元格宽度）。
-    var measuredWidthDp by remember { mutableIntStateOf(0) }
+    // 存在 rvState 里跨组合保留：返回总览时首帧就是已量出的真实宽度，不再出现
+    // 「先按兜底列数布局、重组后 FLIP 收敛」的重排。
     // 组合期建立订阅（2026-09-20 修复）：update 是 AndroidView 的非观察 lambda，其中的
     // state 读取不订阅快照；不在这里读一次，doOnLayout 的首次量宽写入不会触发重组，
     // update 就再也没有重跑时机——冷启动列数停在 factory 的屏宽兜底值（实测 6 列/299px
     // 卡片，正确为 5 列/365px），直到任意一次无关的状态变化才「顺带」收敛。FileGrid 在
     // 组合期读 containerWidthDp 所以无此问题。
-    @Suppress("UNUSED_VARIABLE") val measuredWidthDpSubscribed = measuredWidthDp
+    @Suppress("UNUSED_VARIABLE") val measuredWidthDpSubscribed = rvState.measuredWidthDp
 
     AndroidView(
         factory = { ctx ->
+            // 复用旧 RV（2026-09-28：修「返回主界面刷一下」）：进文件夹时总览离开组合，
+            // AndroidView dispose 只是把 RV 从窗口中摘下、实例本身还在 rvState 里。这里
+            // 直接把它从上一个宿主 ViewGroup 摘下来重新 attach——VH 池、滚动位置、已绑定
+            // 的封面全部原样保留，不必重新 create/bind、不必重新加载缩略图。
+            // 必须先 removeView：旧 AndroidViewHolder 仍是它的 parent，不摘就 addView 会崩。
+            rvHolder.rv?.let { existing ->
+                (existing.parent as? ViewGroup)?.removeView(existing)
+                return@AndroidView existing
+            }
             // 初始列数按**内容宽**（扣除侧栏）算（2026-09-20 用户报障修复）：此前用整屏宽
             // 兜底，侧栏展开时首帧列数偏大（6 列），进入/返回总览后先见 6 列布局、重组才
             // 收敛到 5 列（FLIP 重排 + 滚动恢复落在错误几何上 → 位置漂移）。组合时侧栏
@@ -375,8 +474,8 @@ fun FoldersOverview(
                 // 首次布局完成补写量宽 state，强制 update 重跑（update 可能在布局前跑、
                 // width=0 提前返回；教训见 FileGrid factory 的同款注释）
                 doOnLayout { view ->
-                    if (measuredWidthDp == 0 && view.width > 0) {
-                        measuredWidthDp = view.context.pxToDp(view.width)
+                    if (rvState.measuredWidthDp == 0 && view.width > 0) {
+                        rvState.measuredWidthDp = view.context.pxToDp(view.width)
                     }
                 }
                 // 宽度变化自愈（对齐 FileGrid factory 的同款监听）：侧栏开合（3.5）逐帧改
@@ -430,7 +529,7 @@ fun FoldersOverview(
             // 预测中 = 动画进行中：宽度取目标状态的最终值（点按瞬间的 rv.width + 全部增量）
             val widthPx = rv.width + if (predicting) (if (sidebarVisible) -sidebarPx else sidebarPx) else 0
             val widthDp = rv.context.pxToDp(widthPx)
-            if (measuredWidthDp != widthDp) measuredWidthDp = widthDp
+            if (rvState.measuredWidthDp != widthDp) rvState.measuredWidthDp = widthDp
             val span = targetCols(widthDp, level)
             if (span != lm.spanCount) {
                 // 捏合落档的锚点只消费一次；非捏合换档（anchor=null）退回 firstVisible 锚点
@@ -450,7 +549,7 @@ fun FoldersOverview(
     )
 }
 
-private class FolderAdapter(
+internal class FolderAdapter(
     private val loader: ThumbnailLoader,
     // 主题三色用 var（M4c）：适配器被 remember 持有，构造色只对首帧有效，主题切换
     // 经 applyThemeColors 推入并重绑（同 FileGridAdapter）。
@@ -476,13 +575,19 @@ private class FolderAdapter(
         private const val PAYLOAD_CELL = "cell"
     }
 
-    fun submit(list: List<Folder>) {
+    /**
+     * @return 是否真的发了 notifyDataSetChanged（false = 内容未变，列表位置不受影响）。
+     * 返回值给调用方决定要不要把「宿主记忆的滚动位置」同步归零——复用 RV 的场景下
+     * 数据常常完全没变，此时归零会误伤下一次返回时的恢复。
+     */
+    fun submit(list: List<Folder>): Boolean {
         // 幂等守卫（对齐 FileGrid.submit）：热刷新/回前台兜底会带着相同数据重走一遍
         // LaunchedEffect(folders)，无变化时不必 notifyDataSetChanged 把列表打回顶部
-        if (folders == list) return
+        if (folders == list) return false
         folders.clear()
         folders.addAll(list)
         notifyDataSetChanged()
+        return true
     }
 
     /**

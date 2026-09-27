@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,8 +59,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -75,6 +78,7 @@ import com.aurora.gallery.kotlin.LanQr
 import com.aurora.gallery.kotlin.LanServerManager
 import com.aurora.gallery.kotlin.LanServerSnapshot
 import com.aurora.gallery.kotlin.LanState
+import com.aurora.gallery.kotlin.R
 import com.aurora.gallery.kotlin.state.AiSettings
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LanSavedServer
@@ -1417,24 +1421,15 @@ private fun AboutContent(
             .padding(20.dp),
     ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // logo：极光渐变圆角块 + 白色首字母（桌面 AuroraLogo 的 Kotlin 近似）
-                Box(
-                    Modifier
+                // logo：桌面端同款应用图标（drawable-nodpi/ic_app_logo.png，随启动图标同源生成）
+                Image(
+                    painter = painterResource(R.drawable.ic_app_logo),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
                         .size(56.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(
-                                    colors.topicGradientStart,
-                                    colors.topicGradientEnd,
-                                    colors.topicPink,
-                                ),
-                            ),
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("A", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
+                        .clip(RoundedCornerShape(14.dp)),
+                )
                 Spacer(Modifier.size(16.dp))
                 Column {
                     Text(

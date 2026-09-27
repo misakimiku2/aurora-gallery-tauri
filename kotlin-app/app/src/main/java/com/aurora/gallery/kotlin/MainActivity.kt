@@ -122,6 +122,7 @@ import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import uniffi.aurora_core.Folder
+import com.aurora.gallery.kotlin.ui.components.FoldersOverviewState
 import uniffi.aurora_core.Image
 import uniffi.aurora_core.TagGroup
 import org.json.JSONException
@@ -2136,6 +2137,22 @@ fun App(
         }
     }
 
+    // —— 2026-09-28：总览 RV 跨组合存活（修「从文件夹返回主界面会看到主界面刷新一下」）——
+    // 总览（FoldersOverview）与文件夹内网格（FileGrid）是互斥分支，进文件夹时总览整块
+    // 离开组合 → AndroidView dispose、原生 RecyclerView 销毁；返回时重新 factory，新 RV
+    // 配新 adapter（数据为空）→ 全量重绑 + 缩略图重新加载，肉眼就是「刷一下」。
+    // 把 RV/adapter/FLIP 状态放到 App 层 remember 里跨组合保留，返回时直接复用同一个
+    // RV 实例，卡片与滚动位置原样回来。
+    val overviewRvState = remember { FoldersOverviewState() }
+    // LAN 总览是 FoldersOverview 的另一个调用点，独立一份，避免两处互相抢同一个 RV
+    val lanOverviewRvState = remember { FoldersOverviewState() }
+    DisposableEffect(Unit) {
+        onDispose {
+            overviewRvState.close()
+            lanOverviewRvState.close()
+        }
+    }
+
     // —— M4a 3.1 / 4.1 侧栏与弹层点标签 = 单选筛选 ——
     // 序列源随之切换（见 GalleryViewModel.reloadImages：有标签 = 全库按标签取，
     // 无标签 = 当前文件夹），取数由组合根那条 LaunchedEffect 统一触发。
@@ -2698,6 +2715,7 @@ fun App(
                             thumbnailLoader = thumbnailLoader,
                             onFolderClick = { folder -> state.openFolder(folder.id) },
                             onFolderLongClick = {},
+                            rvState = lanOverviewRvState,
                             level = state.gridLevel,
                             onLevelChange = { state.gridLevel = it },
                             // M8b 1.2：手机抽屉=恒「无侧栏」；平板推挤原值
@@ -2739,6 +2757,8 @@ fun App(
                             pullToRefreshState = ptrState,
                             onPullToRefresh = onPullRefresh,
                             modifier = Modifier.fillMaxSize(),
+                            // 跨组合保留 RV：返回总览不重建、不重绑、不重新加载缩略图
+                            rvState = overviewRvState,
                         )
                         // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
                         PullToRefreshIndicator(
