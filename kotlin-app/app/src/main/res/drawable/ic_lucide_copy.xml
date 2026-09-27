@@ -1,0 +1,22 @@
+<!-- lucide "copy"（更多菜单·复制到文件夹）：几何取自 lucide-static v1.48.0 官方 SVG（unpkg），
+     rect(rx=2) 转圆角 path，仅取 stroke 线稿，着色由使用处 setColorFilter 控制 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M10,8h10a2,2 0,0 1,2 2v10a2,2 0,0 1,-2 2H10a2,2 0,0 1,-2 -2V10a2,2 0,0 1,2 -2z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M4,16c-1.1,0 -2,-0.9 -2,-2V4c0,-1.1 0.9,-2 2,-2h10c1.1,0 2,0.9 2,2" />
+</vector>

@@ -247,6 +247,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private val metadataDrawer: LinearLayout
     private val drawerScrollView: ScrollView
     private val drawerContainer: LinearLayout
+    /** 拖拽把手条：竖屏底部面板形制的滑动暗示（横屏右缘抽屉形制下 GONE） */
+    private val drawerHandleView: View
     private val drawerPreviewImage: android.widget.ImageView
     private val drawerNameView: TextView
     private val drawerFolderView: TextView
@@ -284,6 +286,19 @@ class NativeGalleryView @JvmOverloads constructor(
     private var drawerDragStartProgress = 0f
     /** 抽屉打开前的沉浸状态，抽屉关闭时恢复（确保沉浸模式下开关抽屉仍回到沉浸） */
     private var immersiveBeforeDrawer = false
+    /**
+     * 抽屉视觉进度（0=关闭, 1=打开）的权威值，applyDrawerProgress 每帧写入。
+     * 横屏与 ZoomableImageView.drawerFillProgress 保持同步（图片分栏压缩渲染消费它）；
+     * 竖屏底部面板是纯覆盖层、不碰图片（drawerFillProgress 恒 0，面板开着时双击缩放/
+     * 换图 resetToCenter 仍按 fit 走，不会被面板进度带成 fill 裁剪），面板进度只记这里。
+     * 跟手起始（onTouchDown）与 toggleDrawer 的动画起点必须读它——竖屏若读
+     * drawerFillProgress 恒得 0，松手后继续拖会被方向限制钳在 0 跟丢手指。
+     */
+    private var drawerPanelProgress = 0f
+    /** 当前已应用的抽屉形制（null=尚未应用过）；与 isCompactPortrait 不一致即重设（幂等短路用）。 */
+    private var drawerFormPortrait: Boolean? = null
+    /** 竖屏形制因根视图尚无尺寸（首次 open 时 GONE 未布局，2/3 高算不出）而挂起，onSizeChanged 补应用。 */
+    private var drawerFormFactorPending = false
     /** 翻页拖动中，邻接视图（上一张/下一张）是否已加载并可见 */
     private var swipeAdjacentPrepared = false
     /** 邻接视图方向：-1 = 上一张（左侧），1 = 下一张（右侧） */
@@ -378,18 +393,14 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         addView(thumbnailStrip)
 
-        // 右侧元数据抽屉（宽度 20rem = 320dp，对齐 MetadataPanel）
+        // 元数据抽屉，默认横屏形制：右缘 320dp（宽 20rem，对齐 MetadataPanel）。
+        // 竖屏底部面板形制（全宽×根高 2/3、钉底、圆角）由 applyDrawerFormFactor 幂等切换，
+        // 首次布局/onConfigurationChanged/open() 都会走到。
         val drawerWidthPx = (resources.displayMetrics.density * 320).toInt()
         metadataDrawer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LayoutParams(drawerWidthPx, LayoutParams.MATCH_PARENT).apply {
                 gravity = android.view.Gravity.END or android.view.Gravity.TOP
-            }
-            setBackgroundColor(colorPanel())
-            // 左边框分隔线
-            background = android.graphics.drawable.GradientDrawable().apply {
-                orientation = android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT
-                setColors(intArrayOf(colorBorder(), colorPanel()))
             }
             setPadding((resources.displayMetrics.density * 16).toInt(), (resources.displayMetrics.density * 16).toInt(), (resources.displayMetrics.density * 16).toInt(), (resources.displayMetrics.density * 16).toInt())
             translationX = drawerWidthPx.toFloat() // 初始屏幕外
@@ -397,6 +408,24 @@ class NativeGalleryView @JvmOverloads constructor(
             isClickable = true
             isFocusable = true
         }
+        // 拖拽把手条（竖屏底部面板的滑动暗示，横屏右缘抽屉无此语义）：宽 32dp 高 4dp、
+        // 圆角 2dp、colorBorder 色、水平居中、上边距 8dp。恒为 metadataDrawer 第一个 child
+        //（排在 drawerScrollView 之前），LinearLayout 里 GONE 不占位，横屏内容排布零变化。
+        drawerHandleView = View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                (resources.displayMetrics.density * 32).toInt(),
+                (resources.displayMetrics.density * 4).toInt(),
+            ).apply {
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+                topMargin = (resources.displayMetrics.density * 8).toInt()
+            }
+            visibility = GONE
+        }
+        metadataDrawer.addView(drawerHandleView)
+        // 抽屉背景唯一出处（M8b-8）：构建、applyTheme 重涂、applyDrawerFormFactor 换形制
+        // 三处共用，不再各自 setBackgroundColor/重建背景——否则深浅色切换或换形制会把
+        // 渐变边/顶部圆角互相抹掉
+        applyDrawerBackground()
         drawerScrollView = ScrollView(context).apply {
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0).apply {
                 weight = 1f
@@ -583,6 +612,20 @@ class NativeGalleryView @JvmOverloads constructor(
             resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
 
     /**
+     * 抽屉开合行程（px）：横屏=右缘抽屉宽 320dp（沿 X 轴滑入滑出），竖屏=底部面板高
+     * =根高×2/3（沿 Y 轴上滑/下滑）。实时计算不缓存：竖屏行程跟根高走，旋转后必须取
+     * 新值（用户拍板：2/3 用根 View 实际高，不写死 dp）。根视图还没量出尺寸时退化用
+     * 屏幕高的 2/3——只发生在布局前的落位，onSizeChanged 后 applyDrawerFormFactor 的
+     * params 比对会以真实根高纠正。
+     */
+    private val drawerExtentPx: Int
+        get() {
+            if (!isCompactPortrait) return (resources.displayMetrics.density * 320).toInt()
+            val h = height
+            return if (h > 0) h * 2 / 3 else resources.displayMetrics.heightPixels * 2 / 3
+        }
+
+    /**
      * 按竖屏形制收敛/展开顶栏次级钮（幻灯片/旋转/图片信息）。删除键的显隐不在这里管：
      * 它要叠加 LAN 编辑门禁（updateTitle），两处各写一半会互相覆盖，归 updateTitle 一处。
      * 收敛用 GONE 而非不 addView：slideshowBtn/deleteBtn 是 lateinit 成员，
@@ -597,6 +640,103 @@ class NativeGalleryView @JvmOverloads constructor(
         infoBtn.visibility = if (collapsed) GONE else VISIBLE
     }
 
+    /**
+     * 抽屉背景唯一出处（M8b-8）。按形制给：
+     * - 横屏/平板：左缘分隔线渐变（LEFT_RIGHT，border→panel），即原构建时写死的那个；
+     * - 竖屏：panel 实色 + 顶部两角 16dp 圆角（底部直角贴屏幕边，用户拍板：不用渐变边）。
+     * 把手条的着色也归这里（colorBorder 随主题），深浅色切换一并重涂。
+     */
+    private fun applyDrawerBackground() {
+        if (isCompactPortrait) {
+            val r = resources.displayMetrics.density * 16
+            metadataDrawer.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(colorPanel())
+                // cornerRadii 顺序=左上、右上、右下、左下（各 x,y 一对）——只圆顶部两角
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            }
+        } else {
+            metadataDrawer.background = android.graphics.drawable.GradientDrawable().apply {
+                orientation = android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT
+                setColors(intArrayOf(colorBorder(), colorPanel()))
+            }
+        }
+        drawerHandleView.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(colorBorder())
+            cornerRadius = resources.displayMetrics.density * 2
+        }
+    }
+
+    /**
+     * 按形制重设信息抽屉容器（M8b-8，用户拍板）：
+     * - 手机竖屏（isCompactPortrait）：底部上滑面板——全宽 × 根高 2/3、gravity BOTTOM、
+     *   顶部两角圆角、带拖拽把手条；抽屉是纯覆盖层，图片布局完全不动；
+     * - 横屏手机/平板：右缘 320dp × 全高抽屉，原样（零回归）。
+     *
+     * 与 applyTopBarFormFactor 同款幂等思路，但除形制标志外还要比对 params：旋转后根高
+     * 变了，竖屏 2/3 高度必须跟着重算（标志没变、尺寸变了）。根视图尚无尺寸时（首次
+     * open() 时 GONE 未布局，height=0）挂起，onSizeChanged 拿到真实尺寸后补应用。
+     * 调用点：onConfigurationChanged、open() 末尾、onSizeChanged；init 只上背景。
+     */
+    private fun applyDrawerFormFactor() {
+        val portrait = isCompactPortrait
+        val drawerWidthPx = (resources.displayMetrics.density * 320).toInt()
+        val lp = metadataDrawer.layoutParams
+        // 幂等：形制一致且 params 已是目标值才短路（params 比对是旋转后 2/3 高重算的钩子）
+        val paramsMatch = if (portrait) {
+            height > 0 && lp.width == LayoutParams.MATCH_PARENT && lp.height == height * 2 / 3
+        } else {
+            lp.width == drawerWidthPx && lp.height == LayoutParams.MATCH_PARENT
+        }
+        if (drawerFormPortrait == portrait && paramsMatch && !drawerFormFactorPending) return
+        if (portrait && height <= 0) {
+            // 2/3 高度依赖根 View 实际高（不写死 dp），还没量出来就先挂起
+            drawerFormFactorPending = true
+            return
+        }
+        drawerFormFactorPending = false
+        drawerFormPortrait = portrait
+        if (portrait) {
+            // 竖屏底部面板。图片侧复位成「无抽屉」基线：横屏形制开着时图片被压缩过
+            // （旋转跨界而来），竖屏抽屉是纯覆盖层（用户拍板：竖屏不动图片），此后
+            // applyDrawerProgress 竖屏分支也不再写这些字段——双击缩放/翻页照常。
+            // 进度先于 layoutParams 写（applyDrawerProgress 同款顺序约定：params 触发的
+            // 下一轮布局里 resetToCenter 要读到归零后的 drawerFillProgress）
+            primaryView.drawerFillProgress = 0f
+            secondaryView.drawerFillProgress = 0f
+            primaryView.drawerFullWidth = 0f
+            secondaryView.drawerFullWidth = 0f
+            primaryView.allowZoom = true
+            secondaryView.allowZoom = true
+            if (primaryView.layoutParams.width != LayoutParams.MATCH_PARENT) {
+                primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+                secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            }
+            metadataDrawer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, height * 2 / 3).apply {
+                gravity = android.view.Gravity.BOTTOM
+            }
+        } else {
+            // 横屏/平板：右缘抽屉原样。图片压缩宽度不在这里写——抽屉开着时调用方会紧跟
+            // applyDrawerProgress 按当前进度重放（含图片压缩），关着时本就该 MATCH_PARENT
+            metadataDrawer.layoutParams = LayoutParams(drawerWidthPx, LayoutParams.MATCH_PARENT).apply {
+                gravity = android.view.Gravity.END or android.view.Gravity.TOP
+            }
+        }
+        applyDrawerBackground()
+        // 把手条只属于底部面板形制
+        drawerHandleView.visibility = if (portrait) VISIBLE else GONE
+        // 位移落回「关闭」位：换了形制/尺寸，旧轴向位移值作废（横屏的 translationX=320
+        // 在竖屏全宽面板下会露出一条竖条，反之面板整条悬在屏上）；抽屉开着时调用方
+        //（onConfigurationChanged/onSizeChanged）会紧跟 applyDrawerProgress 按当前进度
+        // 重放视觉——旋转中态直接落位，不要求动画过渡（用户拍板）
+        if (portrait) {
+            metadataDrawer.translationX = 0f
+            metadataDrawer.translationY = drawerExtentPx.toFloat()
+        } else {
+            metadataDrawer.translationY = 0f
+            metadataDrawer.translationX = drawerWidthPx.toFloat()
+        }
+    }
+
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration?) {
         super.onConfigurationChanged(newConfig)
         // manifest 声明 orientation|screenSize configChanges，查看器打开中旋转时
@@ -606,6 +746,15 @@ class NativeGalleryView @JvmOverloads constructor(
         // attach）时收不到也无需收——open() 末尾的幂等重调兜底。
         applyTopBarFormFactor()
         updateTitle()
+        // 抽屉形制跟进（M8b-8）：查看器开着旋转时抽屉直接落位到新形制（右缘抽屉↔底部
+        // 面板，不要求动画过渡——用户拍板）；幂等重设，开着时按当前进度重放视觉。
+        // 进度读 drawerPanelProgress（面板进度权威值）；横屏形制靠 applyDrawerProgress
+        // 横屏分支把图片压缩宽度一起重放。
+        applyDrawerFormFactor()
+        if (drawerOpen) {
+            drawerWidthAnimator?.cancel()
+            applyDrawerProgress(drawerPanelProgress)
+        }
     }
 
     private fun buildTopBar(): LinearLayout {
@@ -737,30 +886,56 @@ class NativeGalleryView @JvmOverloads constructor(
 
     /**
      * 根据 progress（0=关闭, 1=打开）应用抽屉视觉状态。
-     * progress 驱动：抽屉位移、图片宽度、填充缩放、topBar/缩略图条/底部信息同步隐藏（全屏样式）。
+     * progress 驱动：抽屉位移（轴向/行程随形制，见 [drawerExtentPx]）、图片宽度、填充缩放、
+     * topBar/缩略图条/底部信息同步隐藏（全屏样式）。
+     *
+     * M8b-8 方向化：横屏抽屉与图片分栏（抽屉挤占图片宽度）；竖屏底部面板是纯覆盖层，
+     * 图片完全不动（用户拍板）——imageW 压缩、drawerFillProgress、drawerFullWidth、
+     * layoutParams 写回、allowZoom 锁全部只走横屏分支，竖屏只位移面板。图片渲染消费的
+     * drawerFillProgress 竖屏恒 0：面板开着时双击缩放/换图 resetToCenter 仍按 fit 走；
+     * 面板自身进度权威值记 [drawerPanelProgress]（两种形制都写）。
      */
     private fun applyDrawerProgress(progress: Float) {
-        val drawerWidthPx = (resources.displayMetrics.density * 320)
+        drawerPanelProgress = progress
+        val extent = drawerExtentPx
         val totalWidth = width.toFloat()
-        val imageW = (totalWidth - progress * drawerWidthPx).toInt().coerceAtLeast(0)
-
-        // 抽屉位移
-        metadataDrawer.translationX = (1f - progress) * drawerWidthPx
-        // 图片宽度 + 填充进度（在 layoutParams 之前设置，确保 onSizeChanged→resetToCenter 读到最新值）
-        primaryView.drawerFillProgress = progress
-        secondaryView.drawerFillProgress = progress
-        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突
-        val allowZoom = progress <= 0.01f
-        primaryView.allowZoom = allowZoom
-        secondaryView.allowZoom = allowZoom
-        // 设置全屏宽度基准，供 resetToCenter 计算 fitS（固定），避免 vw 减小时 fitS 先降后升
-        primaryView.drawerFullWidth = totalWidth
-        secondaryView.drawerFullWidth = totalWidth
-        primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
-        secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
-        // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）
+        if (!isCompactPortrait) {
+            // 横屏：抽屉从右缘滑入 + 图片宽度压缩（分栏）
+            val imageW = (totalWidth - progress * extent).toInt().coerceAtLeast(0)
+            // 抽屉位移
+            metadataDrawer.translationX = (1f - progress) * extent
+            metadataDrawer.translationY = 0f
+            // 图片宽度 + 填充进度（在 layoutParams 之前设置，确保 onSizeChanged→resetToCenter 读到最新值）
+            primaryView.drawerFillProgress = progress
+            secondaryView.drawerFillProgress = progress
+            // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突
+            val allowZoom = progress <= 0.01f
+            primaryView.allowZoom = allowZoom
+            secondaryView.allowZoom = allowZoom
+            // 设置全屏宽度基准，供 resetToCenter 计算 fitS（固定），避免 vw 减小时 fitS 先降后升
+            primaryView.drawerFullWidth = totalWidth
+            secondaryView.drawerFullWidth = totalWidth
+            primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+            secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+        } else {
+            // 竖屏：面板从屏幕底外上滑（translationY=(1-p)×行程），图片不动
+            metadataDrawer.translationY = (1f - progress) * extent
+            metadataDrawer.translationX = 0f
+        }
+        // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）。横屏滑一个身位
+        // 即可：抽屉打开时 onImmersiveToggle(true) 会隐藏系统状态栏，topBar 藏在状态栏
+        // 后不可见；竖屏底部面板不隐藏状态栏（纯覆盖层），滑一个身位会停在透明状态栏
+        // 后仍透出（M8b-8 实测残影），行程加根自身的窗口顶偏移，完全移出屏幕上方。
         if (topBar.height > 0) {
-            topBar.translationY = if (isImmersive) -topBar.height.toFloat() else -topBar.height * progress
+            topBar.translationY = if (isImmersive) {
+                -topBar.height.toFloat()
+            } else if (isCompactPortrait) {
+                val rootTopLoc = IntArray(2)
+                getLocationOnScreen(rootTopLoc)
+                -(rootTopLoc[1] + topBar.bottom) * progress
+            } else {
+                -topBar.height * progress
+            }
         }
         // 缩略图条向下滑出（沉浸模式下始终保持隐藏）
         if (thumbnailStrip.height > 0) {
@@ -774,10 +949,14 @@ class NativeGalleryView @JvmOverloads constructor(
 
     /**
      * 动画抽屉到目标状态。[open] 目标状态，[fromProgress] 起始进度（用于跟手松手后从当前位置动画）。
+     * 行程用 [drawerExtentPx]（竖屏=面板高 2/3 根高、横屏=320dp）。竖屏底部面板结束时不
+     * 联动系统状态栏、不动背景色、不消费 immersiveBeforeDrawer（用户拍板：纯覆盖层、
+     * 底部面板不需要隐藏状态栏，保持简单）；横屏保持原逻辑。
      */
     private fun animateDrawerTo(open: Boolean, fromProgress: Float) {
         val targetProgress = if (open) 1f else 0f
-        val drawerWidthPx = (resources.displayMetrics.density * 320)
+        val portrait = isCompactPortrait
+        val extent = drawerExtentPx
         val totalWidth = width.toFloat()
         val duration = 280L
 
@@ -799,7 +978,11 @@ class NativeGalleryView @JvmOverloads constructor(
                 if (cancelled) return
                 // 精确设置最终状态
                 applyDrawerProgress(targetProgress)
-                val finalW = if (open) (totalWidth - drawerWidthPx).toInt().coerceAtLeast(0) else LayoutParams.MATCH_PARENT
+                if (portrait) {
+                    // 竖屏：底部面板纯覆盖层——不隐藏系统状态栏、背景色不动
+                    return
+                }
+                val finalW = if (open) (totalWidth - extent).toInt().coerceAtLeast(0) else LayoutParams.MATCH_PARENT
                 primaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
                 secondaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
                 if (open) {
@@ -823,7 +1006,9 @@ class NativeGalleryView @JvmOverloads constructor(
             immersiveBeforeDrawer = isImmersive
         }
         drawerOpen = !drawerOpen
-        val currentProgress = primaryView.drawerFillProgress
+        // 动画起点读面板进度权威值（M8b-8）：横屏与 drawerFillProgress 同步；竖屏
+        // drawerFillProgress 恒 0，读它会让「开着再关」的动画从关闭位跳变
+        val currentProgress = drawerPanelProgress
         animateDrawerTo(drawerOpen, fromProgress = currentProgress)
     }
 
@@ -838,10 +1023,20 @@ class NativeGalleryView @JvmOverloads constructor(
         // 避免动画期间的 requestLayout 触发的 onMeasure 覆盖动画中间值。
         if (w > 0 && h > 0 && drawerOpen && width > 0 && w != width) {
             drawerWidthAnimator?.cancel()
-            val drawerWidthPx = (resources.displayMetrics.density * 320).toInt()
-            val imageW = (w - drawerWidthPx).coerceAtLeast(0)
-            primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
-            secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+            if (!isCompactPortrait) {
+                // 横屏：抽屉开着旋转要提前把压缩宽度写进子 View layoutParams（上方注释的
+                // 「落后一帧」问题对图片压缩宽度同样成立）
+                val imageW = (w - drawerExtentPx).coerceAtLeast(0)
+                primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+                secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+            } else {
+                // 竖屏：底部面板高=新根高 2/3 同样要在本测量 pass 生效（同款落后一帧问题；
+                // 用 spec 高 h 而非 height 属性——此刻属性还是旧值）。视觉重放（位移/沉浸
+                // 联动）由 onSizeChanged 的 applyDrawerFormFactor+applyDrawerProgress 完成
+                metadataDrawer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, h * 2 / 3).apply {
+                    gravity = android.view.Gravity.BOTTOM
+                }
+            }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
@@ -849,8 +1044,21 @@ class NativeGalleryView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
+        val sizeChanged = w != oldw || h != oldh
+        // 抽屉形制跟进（M8b-8）：applyDrawerFormFactor 幂等（形制+params 都匹配才短路），
+        // 竖屏 2/3 高度随根高重算；首次 open 挂起的形制（根视图此前 GONE 无尺寸）在这补应用。
+        // 关着也要跑：旋转后面板 params 若停留在旧根高的 2/3，重开时会用错高度
+        if (sizeChanged || drawerFormFactorPending) {
+            drawerWidthAnimator?.cancel()
+            applyDrawerFormFactor()
+        }
         if (!drawerOpen) return
-        drawerWidthAnimator?.cancel()
+        // 抽屉开着时尺寸变化：按当前进度直接落位（旋转中态，无动画——用户拍板）。
+        // 进度读 drawerPanelProgress（面板进度权威值，两形制通用；竖屏 drawerFillProgress
+        // 恒 0 不能作面板状态）。横屏分支顺带按新宽度重放图片压缩
+        if (sizeChanged) {
+            applyDrawerProgress(drawerPanelProgress)
+        }
         if (topBar.height > 0) {
             topBar.translationY = -topBar.height.toFloat()
         }
@@ -1191,11 +1399,18 @@ class NativeGalleryView @JvmOverloads constructor(
     private fun measureAndLayoutDrawerNow() {
         if (!isAttachedToWindow || width <= 0 || height <= 0) return
         forceLayoutRecursive(metadataDrawer)
-        val drawerWidth = metadataDrawer.layoutParams.width
-        val wSpec = MeasureSpec.makeMeasureSpec(if (drawerWidth >= 0) drawerWidth else width, MeasureSpec.EXACTLY)
-        val hSpec = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
+        val lp = metadataDrawer.layoutParams
+        // spec 取 layoutParams 的确定值（MATCH_PARENT 回退根尺寸）：两形制都从这里量出
+        // 最终宽高——横屏宽=320dp/高=全高，竖屏宽=全宽/高=根高 2/3
+        val wSpec = MeasureSpec.makeMeasureSpec(if (lp.width >= 0) lp.width else width, MeasureSpec.EXACTLY)
+        val hSpec = MeasureSpec.makeMeasureSpec(if (lp.height >= 0) lp.height else height, MeasureSpec.EXACTLY)
         metadataDrawer.measure(wSpec, hSpec)
-        metadataDrawer.layout(width - metadataDrawer.measuredWidth, 0, width, metadataDrawer.measuredHeight)
+        if (isCompactPortrait) {
+            // 竖屏：钉底——面板上缘 = 根高 − 面板高
+            metadataDrawer.layout(0, height - metadataDrawer.measuredHeight, width, height)
+        } else {
+            metadataDrawer.layout(width - metadataDrawer.measuredWidth, 0, width, metadataDrawer.measuredHeight)
+        }
     }
 
     private fun forceLayoutRecursive(view: View) {
@@ -1280,9 +1495,11 @@ class NativeGalleryView @JvmOverloads constructor(
                 actView.animate().cancel()
                 actView.translationX = 0f
                 cleanupSwipeAdjacentImmediate()
-                // 记录抽屉跟手起始状态，供 onVerticalSwipeDrag/End 使用
+                // 记录抽屉跟手起始状态，供 onVerticalSwipeDrag/End 使用。
+                // 进度读 drawerPanelProgress（面板进度权威值）：竖屏 drawerFillProgress
+                // 恒 0，读它会让松手后的继续拖动被方向限制钳在 0 跟丢手指
                 drawerDragStartOpen = drawerOpen
-                drawerDragStartProgress = primaryView.drawerFillProgress
+                drawerDragStartProgress = drawerPanelProgress
                 if (!drawerOpen) {
                     // 可能即将通过垂直手势打开抽屉——保存沉浸状态
                     immersiveBeforeDrawer = isImmersive
@@ -1298,11 +1515,10 @@ class NativeGalleryView @JvmOverloads constructor(
             }
             override fun onVerticalSwipeDrag(dy: Float) {
                 if (isAnimating.get()) return
-                val drawerWidthPx = (resources.displayMetrics.density * 320)
-                // progress = startProgress - dy / drawerWidth
-                // 向上滑（dy<0）→ progress 增大 → 抽屉打开
-                // 向下滑（dy>0）→ progress 减小 → 抽屉关闭
-                var progress = (drawerDragStartProgress - dy / drawerWidthPx).coerceIn(0f, 1f)
+                // 行程随形制（M8b-8）：横屏=320dp（右缘抽屉），竖屏=根高 2/3（底部面板）。
+                // 轴向虽不同，progress 语义一致：上滑（dy<0）→ progress 增大 → 抽屉打开，
+                // 下滑（dy>0）→ 关闭——竖屏面板从屏底外上滑，方向天然成立
+                var progress = (drawerDragStartProgress - dy / drawerExtentPx).coerceIn(0f, 1f)
                 // 方向限制：抽屉打开时只允许向关闭方向（progress 减小），
                 // 抽屉关闭时只允许向打开方向（progress 增大），反向滑动无效果
                 if (drawerDragStartOpen) {
@@ -1314,8 +1530,7 @@ class NativeGalleryView @JvmOverloads constructor(
             }
             override fun onVerticalSwipeEnd(dy: Float, velocityY: Float) {
                 if (isAnimating.get()) return
-                val drawerWidthPx = (resources.displayMetrics.density * 320)
-                var currentProgress = (drawerDragStartProgress - dy / drawerWidthPx).coerceIn(0f, 1f)
+                var currentProgress = (drawerDragStartProgress - dy / drawerExtentPx).coerceIn(0f, 1f)
                 // 应用与 drag 相同的方向限制
                 if (drawerDragStartOpen) {
                     currentProgress = currentProgress.coerceAtMost(drawerDragStartProgress)
@@ -1546,6 +1761,9 @@ class NativeGalleryView @JvmOverloads constructor(
         // 竖屏收敛随形制重算：实例随 Activity 存活（manifest configChanges 不重建），
         // buildTopBar 构造时判的可见性在「关着查看器旋转再打开」后会过期；幂等重设。
         applyTopBarFormFactor()
+        // 抽屉形制幂等重设（M8b-8）：同顶栏「构造时判的形制会过期」；竖屏 2/3 高度依赖
+        // 根尺寸，首次 open 根视图 GONE 未布局时挂起，onSizeChanged 补应用
+        applyDrawerFormFactor()
         updateTitle()
         if (autoStartSlideshow) setSlideshow(true)
     }
@@ -1588,8 +1806,9 @@ class NativeGalleryView @JvmOverloads constructor(
             deleteBtn.setColorFilter(colorDanger())
         }
         bottomInfoText.setTextColor(colorTextPrimary())
-        // 抽屉
-        metadataDrawer.setBackgroundColor(colorPanel())
+        // 抽屉（M8b-8：重涂收敛到 applyDrawerBackground——原 setBackgroundColor(纯色) 会把
+        // 横屏渐变边/竖屏顶部圆角抹掉；把手条颜色也随主题走）
+        applyDrawerBackground()
         drawerNameView.setTextColor(colorTextPrimary())
         drawerFolderView.setTextColor(colorTextSecondary())
         drawerPreviewImage.setBackgroundColor(colorPlaceholder())
@@ -1629,14 +1848,23 @@ class NativeGalleryView @JvmOverloads constructor(
         // 取消抽屉宽度动画并重置视觉状态（可能正在动画中）
         drawerWidthAnimator?.cancel()
         drawerWidthAnimator = null
-        val drawerW = (resources.displayMetrics.density * 320)
         metadataDrawer.animate().cancel()
-        metadataDrawer.translationX = drawerW
+        // 关闭位按形制落轴（M8b-8）：竖屏面板藏屏幕下方（行程=根高 2/3），横屏抽屉藏
+        // 右缘（320dp）——竖屏形制只写 translationX=320 会留一条全宽面板竖在屏内
+        if (isCompactPortrait) {
+            metadataDrawer.translationX = 0f
+            metadataDrawer.translationY = drawerExtentPx.toFloat()
+        } else {
+            metadataDrawer.translationY = 0f
+            metadataDrawer.translationX = (resources.displayMetrics.density * 320)
+        }
         primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         // 重置填充进度，下次打开时从 fit 开始
         primaryView.drawerFillProgress = 0f
         secondaryView.drawerFillProgress = 0f
+        // 面板进度权威值同步归零（面板已落回关闭位）
+        drawerPanelProgress = 0f
         // 恢复缩放许可（抽屉已关闭）
         primaryView.allowZoom = true
         secondaryView.allowZoom = true
@@ -2032,20 +2260,30 @@ class NativeGalleryView @JvmOverloads constructor(
         // M5 3.2：「加入画布」仅平板显示（D28）；LAN 图不走画布取流管线，一并隐藏
         val isTablet = resources.configuration.screenWidthDp >= 600 &&
             resources.configuration.screenHeightDp >= 480
-        val canvasItem = MoreMenuItem("加入画布", colorTextPrimary()) { listener?.onAddToCanvas(item.fileId) }
+        val canvasItem = MoreMenuItem("加入画布", colorTextPrimary(), iconRes = R.drawable.ic_lucide_frame) {
+            listener?.onAddToCanvas(item.fileId)
+        }
         // 竖屏收敛（applyTopBarFormFactor）收起的三个动作补进菜单头部：幻灯片/旋转/
         // 图片信息——与顶栏收敛一一对应，播放中文案随态切「幻灯片暂停」（isSlideshowPlaying
-        // 与顶栏 updateSlideshowButtonIcon 同源）；删除菜单里本就有，不重复加。非竖屏该
-        // 列表为空，菜单与原状完全一致。
+        // 与顶栏 updateSlideshowButtonIcon 同源，图标随态切 pause/play）；删除菜单里
+        // 本就有（置底），不重复加。非竖屏该列表为空，菜单与原状完全一致。
         val collapsedItems = if (isCompactPortrait) {
             buildList<MoreMenuItem> {
-                add(MoreMenuItem(if (isSlideshowPlaying()) "幻灯片暂停" else "幻灯片播放", colorTextPrimary()) { toggleSlideshow() })
-                add(MoreMenuItem("旋转", colorTextPrimary()) { rotateCurrent() })
-                add(MoreMenuItem("图片信息", colorTextPrimary()) { toggleDrawer() })
+                add(
+                    MoreMenuItem(
+                        if (isSlideshowPlaying()) "幻灯片暂停" else "幻灯片播放",
+                        colorTextPrimary(),
+                        iconRes = if (isSlideshowPlaying()) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play,
+                    ) { toggleSlideshow() }
+                )
+                add(MoreMenuItem("旋转", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_cw) { rotateCurrent() })
+                add(MoreMenuItem("图片信息", colorTextPrimary(), iconRes = R.drawable.ic_lucide_info) { toggleDrawer() })
             }
         } else {
             emptyList()
         }
+        // 2026-09-27 验收（M8b-8）：菜单项全线配 lucide 图标（色随文字，删除红=图标红）；
+        // 「删除」是危险动作，统一挪到菜单最底部（远离高频区防误触，桌面 ContextMenu 同位）。
         MoreMenuPopup(
             context = context,
             theme = this,
@@ -2060,13 +2298,19 @@ class NativeGalleryView @JvmOverloads constructor(
                 // 已可批量操作）。加入画布走本地取流管线，同样不适用。
                 buildList {
                     addAll(collapsedItems)
-                    add(MoreMenuItem("保存到设备", colorTextPrimary()) {
-                        listener?.onSaveToDevice(item.fileId, item.path)
+                    add(
+                        MoreMenuItem("保存到设备", colorTextPrimary(), iconRes = R.drawable.ic_lucide_download) {
+                            listener?.onSaveToDevice(item.fileId, item.path)
+                        }
+                    )
+                    add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
+                        showSlideshowSettingsDialog()
                     })
                     if (lanAllowEdit) {
-                        add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
+                        add(MoreMenuItem("删除", colorDanger(), iconRes = R.drawable.ic_lucide_trash) {
+                            showDeleteConfirmDialog()
+                        })
                     }
-                    add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
                 }
             } else {
                 buildList {
@@ -2074,19 +2318,37 @@ class NativeGalleryView @JvmOverloads constructor(
                     if (isTablet) add(canvasItem)
                     // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
                     // 分析写本地库，对远端图无意义）
-                    add(MoreMenuItem("AI 分析", colorTextPrimary()) {
-                        listener?.onAiAnalyze(item.fileId)
-                    })
+                    add(
+                        MoreMenuItem("AI 分析", colorTextPrimary(), iconRes = R.drawable.ic_lucide_sparkles) {
+                            listener?.onAiAnalyze(item.fileId)
+                        }
+                    )
                     // M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP embed → 相似图
                     //（结果进 LAN 搜索结果虚拟目录；未连接/桌面模型未就绪宿主 Toast 拦截）
-                    add(MoreMenuItem("在桌面找相似", colorTextPrimary()) {
-                        listener?.onFindSimilar(item.fileId)
+                    add(
+                        MoreMenuItem("在桌面找相似", colorTextPrimary(), iconRes = R.drawable.ic_lucide_scan_search) {
+                            listener?.onFindSimilar(item.fileId)
+                        }
+                    )
+                    add(MoreMenuItem("重命名", colorTextPrimary(), iconRes = R.drawable.ic_lucide_pencil) {
+                        showRenameDialog()
                     })
-                    add(MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() })
-                    add(MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() })
-                    add(MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) })
-                    add(MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) })
-                    add(MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() })
+                    add(
+                        MoreMenuItem("复制到文件夹", colorTextPrimary(), iconRes = R.drawable.ic_lucide_copy) {
+                            listener?.onCopyToFolder(item.fileId)
+                        }
+                    )
+                    add(
+                        MoreMenuItem("移动到文件夹", colorTextPrimary(), iconRes = R.drawable.ic_lucide_folder_input) {
+                            listener?.onMoveToFolder(item.fileId)
+                        }
+                    )
+                    add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
+                        showSlideshowSettingsDialog()
+                    })
+                    add(MoreMenuItem("删除", colorDanger(), iconRes = R.drawable.ic_lucide_trash) {
+                        showDeleteConfirmDialog()
+                    })
                 }
             }
         ).show()
