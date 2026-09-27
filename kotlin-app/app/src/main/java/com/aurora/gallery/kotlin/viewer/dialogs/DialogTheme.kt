@@ -20,8 +20,8 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
  * 所有弹窗组件通过此接口获取主题色，实现解耦。
  *
  * 颜色不在这份接口里写死：实现方从 `AuroraPalette`（唯一的色值表）取值，弹窗与 M1 网格
- * 因此始终是同一套 token。带默认实现的角色（[colorDanger] / [colorMenuBg]）直接查表，
- * 免得每个实现方各抄一份。
+ * 因此始终是同一套 token。带默认实现的角色（[colorDanger] / [colorMenuBg] / [colorPanel]）
+ * 直接查表，免得每个实现方各抄一份。
  */
 interface DialogTheme {
     fun isDarkTheme(): Boolean
@@ -41,6 +41,8 @@ interface DialogTheme {
     fun colorDanger(): Int = AuroraPalettes.of(isDarkTheme()).danger
     /** 「更多」菜单弹层底色 */
     fun colorMenuBg(): Int = AuroraPalettes.of(isDarkTheme()).menuBg
+    /** 弹层半透面板底色（panel token；AuroraDropdown 同款 /90 用） */
+    fun colorPanel(): Int = AuroraPalettes.of(isDarkTheme()).panel
 }
 
 /**

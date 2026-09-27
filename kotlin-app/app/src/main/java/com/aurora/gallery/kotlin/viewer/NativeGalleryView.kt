@@ -196,7 +196,9 @@ class NativeGalleryView @JvmOverloads constructor(
     var lanAllowEdit: Boolean = false
 
     private fun colorBg() = palette.main
-    private fun colorPanel() = palette.panel
+    // colorPanel 不在此处私有定义：DialogTheme 接口已带默认实现（palette.panel 同值），
+    // Kotlin 里私有成员与父类同签名共存会被拒（VIRTUAL_MEMBER_HIDDEN），删掉后调用点
+    // 落回接口默认实现，语义零变化。
     override fun isDarkTheme(): Boolean = isDarkTheme
     override fun colorBorder(): Int = palette.border
     override fun colorTextPrimary(): Int = palette.textPrimary
@@ -232,6 +234,10 @@ class NativeGalleryView @JvmOverloads constructor(
     lateinit private var titleView: TextView
     lateinit private var moreBtn: ImageView
     lateinit private var slideshowBtn: ImageView
+    // 旋转/图片信息钮提成成员：竖屏收敛（applyTopBarFormFactor）要在 buildTopBar 之外
+    // 按形制重设可见性，不能停留在 buildTopBar 的局部 val（slideshowBtn/deleteBtn 先例）。
+    lateinit private var rotateBtn: ImageView
+    lateinit private var infoBtn: ImageView
     lateinit private var deleteBtn: ImageView
     private val bottomInfo: LinearLayout
     private val bottomInfoText: TextView
@@ -565,19 +571,58 @@ class NativeGalleryView @JvmOverloads constructor(
         setupZoomableListeners(secondaryView)
     }
 
+    /**
+     * 竖屏手机形制判定：窄宽（screenWidthDp<600，ui/FormFactor.kt 的 isCompactWidth）
+     * + 竖屏双条件，与图库 TopBar.kt:253 的 isPhonePortrait 同一套判据——横屏手机宽
+     * ≥600dp 不收敛，平板 7 钮直挂零回归。get() 实时读 configuration：查看器实例随
+     * Activity 存活（manifest 声明 orientation|screenSize configChanges，旋转不重建），
+     * 构造时判一次会在旋转后过期。
+     */
+    private val isCompactPortrait: Boolean
+        get() = com.aurora.gallery.kotlin.ui.isCompactWidth(resources.configuration) &&
+            resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+
+    /**
+     * 按竖屏形制收敛/展开顶栏次级钮（幻灯片/旋转/图片信息）。删除键的显隐不在这里管：
+     * 它要叠加 LAN 编辑门禁（updateTitle），两处各写一半会互相覆盖，归 updateTitle 一处。
+     * 收敛用 GONE 而非不 addView：slideshowBtn/deleteBtn 是 lateinit 成员，
+     * updateSlideshowButtonIcon、applyTheme 的 childCount 遍历、沉浸/抽屉动画都握着引用，
+     * GONE 后 FrameLayout/LinearLayout 遍历 childCount 仍安全。
+     */
+    private fun applyTopBarFormFactor() {
+        if (!this::slideshowBtn.isInitialized) return
+        val collapsed = isCompactPortrait
+        slideshowBtn.visibility = if (collapsed) GONE else VISIBLE
+        rotateBtn.visibility = if (collapsed) GONE else VISIBLE
+        infoBtn.visibility = if (collapsed) GONE else VISIBLE
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        // manifest 声明 orientation|screenSize configChanges，查看器打开中旋转时
+        // Activity/View 都不重建，只有这里收得到通知——竖屏收敛即时随形制重算，
+        // 消除「顶栏维持旧形制、菜单却按新形制出项」的二者不一致（deleteBtn 的
+        // 显隐归 updateTitle 一处管，一并重跑；空序列有护栏）。查看器关闭（未
+        // attach）时收不到也无需收——open() 末尾的幂等重调兜底。
+        applyTopBarFormFactor()
+        updateTitle()
+    }
+
     private fun buildTopBar(): LinearLayout {
-        // 状态栏高度
-        val statusBarHeight = run {
-            val resId = resources.getIdentifier("status_bar_height", "dimen", "android")
-            if (resId > 0) resources.getDimensionPixelSize(resId) else 0
-        }
+        val density = resources.displayMetrics.density
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (resources.displayMetrics.density * 56).toInt() + statusBarHeight).apply {
+            // 2026-09-27 验收（顶栏偏低）：组合根（MainActivity AndroidView 外层 Box）已有
+            // statusBarsPadding，此处再自加 status_bar_height 属双重内缩——avd_ai1 实测按钮
+            // 中心 y=352.5，图库 TopBar 基准 237.5，差 115px。改为对齐图库卡片形制：
+            // topMargin 8dp + 行高 56dp → 按钮中心 = statusTop+8+28 ≈ 236.5（±1px）。
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (density * 56).toInt()).apply {
                 gravity = android.view.Gravity.TOP
+                topMargin = (density * 8).toInt()
             }
             setBackgroundColor(colorBgAlpha(0x4D))
-            setPadding(24, statusBarHeight, 24, 0)
+            // 水平 16dp 对齐图库 TopBar 按钮起点（Row horizontal 8dp + 卡片边 8dp）；原 24px。
+            setPadding((density * 16).toInt(), 0, (density * 16).toInt(), 0)
             gravity = android.view.Gravity.CENTER_VERTICAL
 
             // M8b 阶段 3（遗留 #2）：顶栏各键补中文 contentDescription（TalkBack 可读）。
@@ -597,8 +642,8 @@ class NativeGalleryView @JvmOverloads constructor(
             // 定为「幻灯片播放」而非「播放」；播/停两态的图标与描述由
             // updateSlideshowButtonIcon 随播放态同步。
             slideshowBtn = makeIconButton(R.drawable.ic_lucide_play, contentDescription = "幻灯片播放") { toggleSlideshow() }
-            val rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "旋转") { rotateCurrent() }
-            val infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
+            rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "旋转") { rotateCurrent() }
+            infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
             deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
             val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
             moreBtn = makeIconButton(R.drawable.ic_lucide_more_vertical, contentDescription = "更多") { showMoreMenu(moreBtn) }
@@ -611,6 +656,9 @@ class NativeGalleryView @JvmOverloads constructor(
             addView(deleteBtn)
             addView(shareBtn)
             addView(moreBtn)
+            // 竖屏手机 7 钮+标题挤爆（标题缩成 m5...png，2026-09-27 验收）：按形制收敛
+            // 次级钮，只留 返回|标题|分享|更多；被收动作在「更多」菜单头部补位（showMoreMenu）。
+            applyTopBarFormFactor()
         }
     }
 
@@ -639,12 +687,16 @@ class NativeGalleryView @JvmOverloads constructor(
         onClick: () -> Unit,
     ): ImageView {
         val density = resources.displayMetrics.density
-        val pad = (density * 10).toInt()
+        // 2026-09-27 验收（触控目标）：固定 48×48dp 命中盒（移动端硬规范下限；原
+        // wrap_content+10dp padding = 44dp 视觉=44dp 触控，不达标）。14dp 内边距下
+        // ImageView 默认 FIT_CENTER 把 24dp lucide 图标缩到 48−2×14=20dp 视觉——与
+        // 图库 TopBarButton 的 20dp 图标 + 48dp 命中盒完全同带。
+        val pad = (density * 14).toInt()
         return ImageView(context).apply {
             setImageResource(drawableRes)
             setColorFilter(tintColor)
             setPadding(pad, pad, pad, pad)
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams((density * 48).toInt(), (density * 48).toInt())
             // M8b 阶段 3（遗留 #2）：无障碍语义；null 时维持旧行为（无描述）
             this.contentDescription = contentDescription
             setOnClickListener { onClick() }
@@ -1491,6 +1543,9 @@ class NativeGalleryView @JvmOverloads constructor(
         } else {
             loadCurrent(animateIn = false)
         }
+        // 竖屏收敛随形制重算：实例随 Activity 存活（manifest configChanges 不重建），
+        // buildTopBar 构造时判的可见性在「关着查看器旋转再打开」后会过期；幂等重设。
+        applyTopBarFormFactor()
         updateTitle()
         if (autoStartSlideshow) setSlideshow(true)
     }
@@ -1744,7 +1799,10 @@ class NativeGalleryView @JvmOverloads constructor(
         // 确认弹窗 → confirmDelete（查看器自己摘项前进，宿主 onDelete 分流远端删除链路）；
         // 403 门禁态仍隐藏（门禁关闭时删除对远端不可用，M4a「不适用的项不出现」先例）。
         // 分享保留入口（shareCurrentImage 内 !isLan 拦截）。
-        deleteBtn.visibility = if (item.isLan && !lanAllowEdit) GONE else VISIBLE
+        // 竖屏收敛后删除键不直挂（动作收进「更多」菜单），与 LAN 编辑门禁取并：任一
+        // 命中即隐——不加竖屏条件的话，本行每次 open/navigate 都会把收敛掉的删除键
+        // 重新点亮。横屏/平板只有门禁条件，行为与原来一致。
+        deleteBtn.visibility = if (isCompactPortrait || (item.isLan && !lanAllowEdit)) GONE else VISIBLE
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
         bottomInfoText.text = "${item.name}\n$sizeStr"
@@ -1975,6 +2033,19 @@ class NativeGalleryView @JvmOverloads constructor(
         val isTablet = resources.configuration.screenWidthDp >= 600 &&
             resources.configuration.screenHeightDp >= 480
         val canvasItem = MoreMenuItem("加入画布", colorTextPrimary()) { listener?.onAddToCanvas(item.fileId) }
+        // 竖屏收敛（applyTopBarFormFactor）收起的三个动作补进菜单头部：幻灯片/旋转/
+        // 图片信息——与顶栏收敛一一对应，播放中文案随态切「幻灯片暂停」（isSlideshowPlaying
+        // 与顶栏 updateSlideshowButtonIcon 同源）；删除菜单里本就有，不重复加。非竖屏该
+        // 列表为空，菜单与原状完全一致。
+        val collapsedItems = if (isCompactPortrait) {
+            buildList<MoreMenuItem> {
+                add(MoreMenuItem(if (isSlideshowPlaying()) "幻灯片暂停" else "幻灯片播放", colorTextPrimary()) { toggleSlideshow() })
+                add(MoreMenuItem("旋转", colorTextPrimary()) { rotateCurrent() })
+                add(MoreMenuItem("图片信息", colorTextPrimary()) { toggleDrawer() })
+            }
+        } else {
+            emptyList()
+        }
         MoreMenuPopup(
             context = context,
             theme = this,
@@ -1988,6 +2059,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 // 复制/移动需要远端目录选择器，查看器内暂不挂 LanFolderPicker（网格选中集
                 // 已可批量操作）。加入画布走本地取流管线，同样不适用。
                 buildList {
+                    addAll(collapsedItems)
                     add(MoreMenuItem("保存到设备", colorTextPrimary()) {
                         listener?.onSaveToDevice(item.fileId, item.path)
                     })
@@ -1998,6 +2070,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 }
             } else {
                 buildList {
+                    addAll(collapsedItems)
                     if (isTablet) add(canvasItem)
                     // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
                     // 分析写本地库，对远端图无意义）
