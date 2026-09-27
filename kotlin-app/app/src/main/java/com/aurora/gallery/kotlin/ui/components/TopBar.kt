@@ -257,6 +257,8 @@ fun TopBar(
     }
     // 合并菜单开合（受控于 MoreVertical 按钮；与 sortMenu 互斥由 UI 流程保证）
     var moreMenuOpen by remember { mutableStateOf(false) }
+    // 二级子菜单态（M8b 验收反馈：排序方式/分组方式拆成二级菜单）：0=主菜单 1=排序 2=分组
+    var moreSubmenu by remember { mutableStateOf(0) }
     var moreAnchor by remember { mutableStateOf(Rect.Zero) }
 
     Row(
@@ -289,19 +291,24 @@ fun TopBar(
                 )
             }
         }
-        if (showSearch && !searchOpen) {
-            TopBarButton(onClick = {
-                android.util.Log.i("AuroraMenu", "TopBar search click -> open")
-                onSearchOpenChange(true)
-            }) {
-                Icon(
-                    imageVector = IconSearch,
-                    contentDescription = "搜索",
-                    tint = if (searchOpen) colors.primary else colors.textSecondary,
-                    modifier = Modifier.size(19.dp),
-                )
+        // 搜索钮（M8b 验收反馈：竖屏手机移到标题右侧——两侧钮对称时标题屏幕居中；
+        // 平板/横屏维持标题左侧原形制零回归）。searchOpen 时钮隐藏，胶囊占中栏。
+        val searchButton: @Composable () -> Unit = {
+            if (showSearch && !searchOpen) {
+                TopBarButton(onClick = {
+                    android.util.Log.i("AuroraMenu", "TopBar search click -> open")
+                    onSearchOpenChange(true)
+                }) {
+                    Icon(
+                        imageVector = IconSearch,
+                        contentDescription = "搜索",
+                        tint = if (searchOpen) colors.primary else colors.textSecondary,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
             }
         }
+        if (!isPhonePortrait) searchButton()
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             if (!searchOpen) {
                 Text(
@@ -334,6 +341,7 @@ fun TopBar(
                 )
             }
         }
+        if (isPhonePortrait) searchButton()
         if (showSortMenu && !searchOpen && !isPhonePortrait) { // 手机竖屏收进「更多」菜单（1.4）
             var sortAnchor by remember { mutableStateOf(Rect.Zero) }
             Box(Modifier.onGloballyPositioned { sortAnchor = it.boundsInWindow() }) {
@@ -480,44 +488,51 @@ fun TopBar(
                         imageVector = IconMoreVertical,
                         contentDescription = "更多",
                         tint = if (moreMenuOpen) colors.primary else colors.textSecondary,
-                        modifier = Modifier.size(18.dp),
+                        // 20dp（M8b 验收反馈：三点字形视觉偏小，比其余 18dp 钮大一号）
+                        modifier = Modifier.size(20.dp),
                     )
                 }
                 AuroraDropdown(
                     expanded = moreMenuOpen,
                     anchorBoundsInWindow = moreAnchor,
-                    onDismissRequest = { moreMenuOpen = false },
+                    onDismissRequest = {
+                        moreMenuOpen = false
+                        moreSubmenu = 0
+                    },
                 ) {
-                    if (showSortMenu) {
-                        AuroraMenuHeader("排序方式")
-                        sortChoices.forEach { opt ->
+                    when (moreSubmenu) {
+                        // 排序方式二级（M8b 验收反馈：从扁平菜单拆出；含升降序切换）
+                        1 -> {
+                            AuroraSubmenuHeader("排序方式") { moreSubmenu = 0 }
+                            sortChoices.forEach { opt ->
+                                AuroraMenuItem(
+                                    text = when (opt) {
+                                        SortOption.NAME -> "按名称"
+                                        SortOption.DATE -> "按时间"
+                                        SortOption.SIZE -> "按大小"
+                                    },
+                                    checked = sortBy == opt,
+                                    onClick = { onSortChange(opt) },
+                                )
+                            }
+                            AuroraMenuDivider()
                             AuroraMenuItem(
-                                text = when (opt) {
-                                    SortOption.NAME -> "按名称"
-                                    SortOption.DATE -> "按时间"
-                                    SortOption.SIZE -> "按大小"
+                                text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
+                                onClick = onSortDirectionToggle,
+                                trailing = {
+                                    Icon(
+                                        imageVector = IconArrowDownUp,
+                                        contentDescription = null,
+                                        tint = AuroraTheme.colors.textSecondary,
+                                        modifier = Modifier.size(14.dp)
+                                            .rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
+                                    )
                                 },
-                                checked = sortBy == opt,
-                                onClick = { onSortChange(opt) },
                             )
                         }
-                        AuroraMenuDivider()
-                        AuroraMenuItem(
-                            text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
-                            onClick = onSortDirectionToggle,
-                            trailing = {
-                                Icon(
-                                    imageVector = IconArrowDownUp,
-                                    contentDescription = null,
-                                    tint = AuroraTheme.colors.textSecondary,
-                                    modifier = Modifier.size(14.dp)
-                                        .rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
-                                )
-                            },
-                        )
-                        if (showGroupBy) {
-                            AuroraMenuDivider()
-                            AuroraMenuHeader("分组方式")
+                        // 分组方式二级
+                        2 -> {
+                            AuroraSubmenuHeader("分组方式") { moreSubmenu = 0 }
                             val groupLabels = mapOf(
                                 GroupBy.NONE to "无",
                                 GroupBy.TYPE to "类型",
@@ -531,88 +546,130 @@ fun TopBar(
                                 )
                             }
                         }
-                    }
-                    if (showViewMode) {
-                        if (showSortMenu) AuroraMenuDivider()
-                        AuroraMenuItem(
-                            text = "视图：" + when (layoutMode) {
-                                LayoutMode.GRID -> "网格"
-                                LayoutMode.ADAPTIVE -> "自适应"
-                                LayoutMode.MASONRY -> "瀑布流"
-                            },
-                            onClick = {
-                                val cycle = LayoutMode.values()
-                                onLayoutModeChange(cycle[(cycle.indexOf(layoutMode) + 1) % cycle.size])
-                            },
-                            leading = {
-                                Icon(
-                                    imageVector = when (layoutMode) {
-                                        LayoutMode.GRID -> IconGrid
-                                        LayoutMode.ADAPTIVE -> IconLayoutGrid
-                                        LayoutMode.MASONRY -> IconLayoutTemplate
+                        // 主菜单：排序/分组为二级入口（带右箭头），其余直挂
+                        else -> {
+                            if (showSortMenu) {
+                                AuroraMenuItem(
+                                    text = "排序方式",
+                                    leading = {
+                                        Icon(
+                                            imageVector = IconArrowDownUp,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
                                     },
-                                    contentDescription = null,
-                                    tint = AuroraTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp),
+                                    trailing = {
+                                        Icon(
+                                            imageVector = IconChevronRight,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    },
+                                    onClick = { moreSubmenu = 1 },
                                 )
-                            },
-                        )
-                    }
-                    if (showDateFilter) {
-                        AuroraMenuDivider()
-                        AuroraMenuItem(
-                            text = "日期筛选",
-                            checked = dateFilter.start != null,
-                            leading = {
-                                Icon(
-                                    imageVector = IconCalendar,
-                                    contentDescription = null,
-                                    tint = AuroraTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp),
+                                if (showGroupBy) {
+                                    AuroraMenuItem(
+                                        text = "分组方式",
+                                        trailing = {
+                                            Icon(
+                                                imageVector = IconChevronRight,
+                                                contentDescription = null,
+                                                tint = AuroraTheme.colors.textSecondary,
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                        },
+                                        onClick = { moreSubmenu = 2 },
+                                    )
+                                }
+                            }
+                            if (showViewMode) {
+                                AuroraMenuDivider()
+                                AuroraMenuItem(
+                                    text = "视图：" + when (layoutMode) {
+                                        LayoutMode.GRID -> "网格"
+                                        LayoutMode.ADAPTIVE -> "自适应"
+                                        LayoutMode.MASONRY -> "瀑布流"
+                                    },
+                                    onClick = {
+                                        val cycle = LayoutMode.values()
+                                        onLayoutModeChange(cycle[(cycle.indexOf(layoutMode) + 1) % cycle.size])
+                                    },
+                                    leading = {
+                                        Icon(
+                                            imageVector = when (layoutMode) {
+                                                LayoutMode.GRID -> IconGrid
+                                                LayoutMode.ADAPTIVE -> IconLayoutGrid
+                                                LayoutMode.MASONRY -> IconLayoutTemplate
+                                            },
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    },
                                 )
-                            },
-                            onClick = {
-                                moreMenuOpen = false
-                                dateSheetOpen = true
-                            },
-                        )
-                    }
-                    if (showTags) {
-                        AuroraMenuDivider()
-                        AuroraMenuItem(
-                            text = "标签筛选",
-                            leading = {
-                                Icon(
-                                    imageVector = IconTag,
-                                    contentDescription = null,
-                                    tint = AuroraTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp),
+                            }
+                            if (showDateFilter) {
+                                AuroraMenuDivider()
+                                AuroraMenuItem(
+                                    text = "日期筛选",
+                                    checked = dateFilter.start != null,
+                                    leading = {
+                                        Icon(
+                                            imageVector = IconCalendar,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        moreMenuOpen = false
+                                        moreSubmenu = 0
+                                        dateSheetOpen = true
+                                    },
                                 )
-                            },
-                            onClick = {
-                                moreMenuOpen = false
-                                tagsSheetOpen = true
-                            },
-                        )
-                    }
-                    if (showColorSearch) {
-                        AuroraMenuDivider()
-                        AuroraMenuItem(
-                            text = "按颜色搜索",
-                            checked = colorSearchHex != null,
-                            leading = {
-                                Icon(
-                                    imageVector = IconPalette,
-                                    contentDescription = null,
-                                    tint = AuroraTheme.colors.textSecondary,
-                                    modifier = Modifier.size(16.dp),
+                            }
+                            if (showTags) {
+                                AuroraMenuDivider()
+                                AuroraMenuItem(
+                                    text = "标签筛选",
+                                    leading = {
+                                        Icon(
+                                            imageVector = IconTag,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        moreMenuOpen = false
+                                        moreSubmenu = 0
+                                        tagsSheetOpen = true
+                                    },
                                 )
-                            },
-                            onClick = {
-                                moreMenuOpen = false
-                                colorSheetOpen = true
-                            },
-                        )
+                            }
+                            if (showColorSearch) {
+                                AuroraMenuDivider()
+                                AuroraMenuItem(
+                                    text = "按颜色搜索",
+                                    checked = colorSearchHex != null,
+                                    leading = {
+                                        Icon(
+                                            imageVector = IconPalette,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    },
+                                    onClick = {
+                                        moreMenuOpen = false
+                                        moreSubmenu = 0
+                                        colorSheetOpen = true
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -752,6 +809,16 @@ internal fun AuroraDropdown(
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
+    // 状态栏 inset 修正（M8b 验收反馈）：锚点 boundsInWindow() 以主窗口（targetSdk 35
+    // 强制 edge-to-edge，frame=[0,0][屏]）为原点，而 Dialog 应用子窗口的 y 相对父窗口
+    // 内容框（状态栏之下，dumpsys 实测 parent=[0,142]…）——不扣除状态栏高度，菜单整体
+    // 下坠一个状态栏（avd_ai1 实测 142px≈54dp）。
+    val statusTopPx = remember {
+        runCatching {
+            androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(view.rootWindowInsets)
+                .getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
+        }.getOrDefault(0)
+    }
     val latestOnDismiss by rememberUpdatedState(onDismissRequest)
     val latestContent by rememberUpdatedState(content)
     val latestAnchor by rememberUpdatedState(anchorBoundsInWindow)
@@ -874,7 +941,7 @@ internal fun AuroraDropdown(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
             w.attributes.x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
-            w.attributes.y = anchorBoundsInWindow.bottom.roundToInt() + gap
+            w.attributes.y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
             // 圆角窗口投影（Compose shadow 会画在窗口外被裁掉，改用窗口级 elevation）
             w.decorView.outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: Outline) {
@@ -899,7 +966,7 @@ internal fun AuroraDropdown(
             val gap = with(density) { 8.dp.roundToPx() }
             w.attributes = w.attributes.apply {
                 x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
-                y = anchorBoundsInWindow.bottom.roundToInt() + gap
+                y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
             }
         }
     }
@@ -916,6 +983,42 @@ internal fun AuroraMenuHeader(text: String) {
         fontWeight = FontWeight.Bold,
         color = colors.textSecondary,
     )
+}
+
+/**
+ * 二级子菜单头部（M8b 验收反馈：排序/分组拆二级）：左返回箭头（点回主菜单）+ 标题，
+ * React TopBar 手机竖屏子菜单的「back + 标题」头部同位。
+ */
+@Composable
+internal fun AuroraSubmenuHeader(text: String, onBack: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onBack),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IconChevronLeft,
+                contentDescription = "返回",
+                tint = colors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Text(
+            text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = colors.textSecondary,
+        )
+    }
 }
 
 /**
@@ -1751,6 +1854,8 @@ private val IconChevronLeft: ImageVector by lazy {
         lineTo(15f, 6f)
     }
 }
+
+// IconChevronRight 已上移 AuroraIcons.kt 共享，本文件直接引用同包共享版本。
 
 /** lucide more-vertical：竖排三点（M8b 1.4 手机竖屏「更多」菜单按钮）。 */
 private val IconMoreVertical: ImageVector by lazy {
