@@ -38,6 +38,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -94,7 +95,10 @@ import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
+import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import com.aurora.gallery.kotlin.canvas.CanvasScreen
 import com.aurora.gallery.kotlin.canvas.AddResult
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
@@ -1526,6 +1530,31 @@ class MainActivity : ComponentActivity() {
 
         // M7 收口销账：FFI_SMOKE/FILEOP/PINCH 调试广播钩子随里程碑移除
         // （曾登记「归 M7 清理」，M6a-8/M6b-8 LanSmoke/AiSmoke 同款先例）。
+
+        // M8b-15：pre-IME 返回拦截壳（用户要求「点击搜索时可用返回键关闭搜索框」）。
+        // setContent 后立即重挂——此刻 ComposeView 尚未 attach 到窗口，零生命周期扰动。
+        installPreImeInterceptor()
+    }
+
+    /** M8b-15：pre-IME 返回拦截壳（见 [PreImeInterceptorLayout]；null=未装成，功能静默缺席）。 */
+    internal var preImeInterceptor: PreImeInterceptorLayout? = null
+        private set
+
+    private fun installPreImeInterceptor() {
+        val content = findViewById<ViewGroup>(android.R.id.content)
+        if (content.childCount != 1) return
+        val compose = content.getChildAt(0)
+        content.removeAllViews()
+        val interceptor = PreImeInterceptorLayout(this)
+        content.addView(
+            interceptor,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        interceptor.addView(compose, compose.layoutParams)
+        preImeInterceptor = interceptor
     }
 
     /** 4.2 分享：系统分享面板（多图 ACTION_SEND_MULTIPLE，content:// URI + 读授权）。 */
@@ -2140,6 +2169,37 @@ fun App(
 
             else -> state.goBack()
         }
+    }
+
+    // M8b-15：pre-IME 返回桥（壳由 onCreate 垫在 content 与 ComposeView 之间）。软键盘
+    // 弹出时第一次返回被系统 IME 输入段吃掉（只收键盘，搜索框还在——avd_ai1 实测），
+    // Compose BackHandler 属 ViewPostIme 段拿不到那一下；壳的 dispatchKeyEventPreIme
+    // 在 ViewPreImeInputStage（早于 IME）到达。判定按 4.3 返回链口径：
+    // searchOpen 且查询为空 → 返回键=键盘+搜索框一起关（搜索框消失→失焦→IME 自收）；
+    // 有查询词时放行（先收键盘防误丢正在输入的词，再按一次走上面的 BackHandler 链关搜索）；
+    // 查看器/手机抽屉/画布态放行——画布有自己的返回梯子（CanvasScreen BackHandler），
+    // 本壳在 View 层会抢在它之前（Compose BackHandler 的注册序优先级管不到壳），
+    // 不显式守卫会出现「搜索态残留在画布后面，返回被隐形空吃一次」。
+    // 键集变化即重注入，lambda 捕获恒新。
+    DisposableEffect(
+        searchOpen, isPhone, state.layout.isSidebarVisible,
+        tab.viewingFileId, tab.searchQuery, inCanvas,
+    ) {
+        val activity = context as? MainActivity
+        activity?.preImeInterceptor?.backHandler = {
+            when {
+                tab.viewingFileId != null -> false
+                inCanvas -> false
+                isPhone && state.layout.isSidebarVisible -> false
+                searchOpen && tab.searchQuery.isEmpty() -> {
+                    state.setSearchQuery("")
+                    searchOpen = false
+                    true
+                }
+                else -> false
+            }
+        }
+        onDispose { activity?.preImeInterceptor?.backHandler = null }
     }
 
     // 3.5 面板开合 / M8b 1.2 形态分叉（D45）：侧栏与主内容两组合同一套（清单 §1.3
@@ -3070,3 +3130,37 @@ fun App(
 
 /** LAN 上传单次最多张数（系统照片选择器的上限；对齐常见批量体量，超出走多次上传）。 */
 private const val LAN_UPLOAD_MAX_ITEMS = 20
+
+/**
+ * M8b-15：pre-IME 返回拦截壳（2026-09-27 用户要求「点击搜索时可用返回键关闭搜索框」）。
+ * 软键盘弹出时系统把第一次返回派给 IME 输入段（收键盘），Compose 的 BackHandler 在
+ * ViewPostIme 段拿不到那一次。本壳垫在 android.R.id.content 与 ComposeView 之间
+ * （App 组合根的父级，onCreate 里 setContent 后立即重挂——此刻尚未 attach，零生命周期
+ * 扰动），[dispatchKeyEventPreIme] 在 ViewPreImeInputStage（早于 IME）到达。
+ * 判定由 App() 组合侧注入 [backHandler]（按 4.3 返回链口径；返回 true=本壳消费，
+ * DOWN/UP 一起吞，否则原样放行给 IME→BackHandler 现状链）。
+ */
+internal class PreImeInterceptorLayout(context: Context) : FrameLayout(context) {
+    var backHandler: (() -> Boolean)? = null
+    private var swallowUp = false
+
+    override fun dispatchKeyEventPreIme(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            when (event.action) {
+                // 每次 DOWN 都按当次判定重设标志：被消费的手势吞掉对应 UP，未消费的
+                // 手势必须把上一轮可能残留的标志清掉（**UP 不保证回到 pre-IME 通道**，
+                // 残留标志会吃掉后续手势的 UP——查看器梯子在 ACTION_UP 动作，实测症状
+                // 是「搜索框关过一次之后，查看器返回要按两下」）
+                KeyEvent.ACTION_DOWN -> {
+                    swallowUp = backHandler?.invoke() == true
+                    if (swallowUp) return true
+                }
+                KeyEvent.ACTION_UP -> if (swallowUp) {
+                    swallowUp = false
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEventPreIme(event)
+    }
+}
