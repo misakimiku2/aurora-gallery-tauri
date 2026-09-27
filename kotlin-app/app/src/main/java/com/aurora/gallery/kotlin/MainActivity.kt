@@ -108,6 +108,7 @@ import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
+import com.aurora.gallery.kotlin.state.SearchScope
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
 import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
@@ -2353,11 +2354,20 @@ fun App(
                     onSearchQueryChange = { state.setSearchQuery(it) },
                     searchOpen = searchOpen,
                     onSearchOpenChange = { searchOpen = it },
+                    // 搜索框文案与桌面端逐条对齐（M8b-17，2026-09-28 用户要求；桌面
+                    // TopBar.tsx 的 placeholder 链）：①人物/标签总览独占文案；②CLIP 自然语言
+                    // 分支在本端无对应状态（Kotlin 语义搜索由 AI 开关承载），不设；③AI 智能
+                    // 搜索开=「AI 智能搜索」（settings.aiSmartSearch 同串）；④其余按 scope
+                    // 出「搜索文件名…/搜索标签…/搜索文件夹…/搜索…」。旧的两条本端特例文案
+                    // （「搜索图片」「搜索专题」）桌面没有，随本次对齐移除。
                     searchPlaceholder = when {
+                        inPeopleOverview -> "搜索人物"
                         inTagsOverview -> "搜索标签"
-                        inTopicsList -> "搜索专题"
-                        inBrowser -> "搜索图片"
-                        else -> "搜索文件夹"
+                        ai.searchEnabled -> "AI 智能搜索"
+                        tab.searchScope == SearchScope.FILE -> "搜索文件名..."
+                        tab.searchScope == SearchScope.TAG -> "搜索标签..."
+                        tab.searchScope == SearchScope.FOLDER -> "搜索文件夹..."
+                        else -> "搜索..."
                     },
                     // M4b 阶段 3：scope 下拉在 BROWSER（文件夹内/标签筛选）显示，对齐 React 在
                     // people/tags 总览隐藏。M8b-16（2026-09-28 用户要求）：**主界面（文件夹

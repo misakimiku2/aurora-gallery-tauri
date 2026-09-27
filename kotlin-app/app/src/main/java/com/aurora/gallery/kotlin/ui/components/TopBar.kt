@@ -162,8 +162,8 @@ fun TopBar(
      */
     searchOpen: Boolean,
     onSearchOpenChange: (Boolean) -> Unit,
-    /** 搜索胶囊的占位文案（文件夹内部 = 搜索图片，总览 = 搜索文件夹）。 */
-    searchPlaceholder: String = "搜索图片",
+    /** 搜索胶囊的占位文案（M8b-17 起与桌面端同链：人物/标签总览 → AI 态 → scope 驱动，由宿主计算传入）。 */
+    searchPlaceholder: String = "搜索...",
     /** 搜索范围（M4b 阶段 3：scope 下拉，对齐 React TopBar :968-999）。 */
     searchScope: SearchScope = SearchScope.ALL,
     onSearchScopeChange: (SearchScope) -> Unit = {},
