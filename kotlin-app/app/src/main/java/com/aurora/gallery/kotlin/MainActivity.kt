@@ -2359,11 +2359,17 @@ fun App(
                         inBrowser -> "搜索图片"
                         else -> "搜索文件夹"
                     },
-                    // M4b 阶段 3：scope 下拉只在 BROWSER（文件夹内/标签筛选）显示，
-                    // 对齐 React 在 people/tags 总览隐藏；总览按文件夹名过滤无 scope 语义
+                    // M4b 阶段 3：scope 下拉在 BROWSER（文件夹内/标签筛选）显示，对齐 React 在
+                    // people/tags 总览隐藏。M8b-16（2026-09-28 用户要求）：**主界面（文件夹
+                    // 总览）与文件夹内保持一致**，一并展示 scope 控件——用户对照两端搜索框
+                    // （平板总览缺、手机文件夹内有）要求对齐；React 桌面同样在 folders 总览
+                    // 显示该控件（仅 people/tags 总览隐藏），此处补上即与参考实现同口径。
+                    // 总览只有「文件夹」一种条目，四种 scope 的匹配都落在文件夹名上
+                    // （filterFolders 只按 name 匹配；scope 是标签页级全局态，选后在文件夹内生效）。
+                    // 复用上文选择模式段的本地文件夹总览判据；LAN 视图整体排除（搜索入口不提供）。
                     searchScope = tab.searchScope,
                     onSearchScopeChange = { state.setSearchScope(it) },
-                    showScope = inBrowser && !inLanBrowser,
+                    showScope = (inBrowser || inFoldersOverview) && !inLanBrowser,
                     // M6b 阶段 2：AI 搜索开关（与 scope 同域——仅本地 BROWSER；开=回车走
                     // core 改写+全库过滤，桌面 TopBar 紫色图标的触屏同位）
                     aiSearchEnabled = ai.searchEnabled,
