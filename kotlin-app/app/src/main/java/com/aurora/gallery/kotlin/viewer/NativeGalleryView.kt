@@ -413,8 +413,12 @@ class NativeGalleryView @JvmOverloads constructor(
         // 视觉把手 32×4dp 外扩为 32dp 高整宽触控条（触控热区达标）。条排在
         // drawerScrollView 之前——拖它不会带动内容滚动；LinearLayout 里 GONE 不占位，
         // 横屏右缘抽屉内容排布零变化。拖拽跟手逻辑见 setupHandleDrag。
+        // 显隐只切条（drawerHandleStrip）：内层把手 View 恒 VISIBLE——M8b-9 曾把
+        // GONE 留在内层导致竖屏把手消失（M8b-10 用户报）。orientation 必须显式
+        // HORIZONTAL：LinearLayout 默认横排，配合 CENTER 条内把手水平居中。
         drawerHandleStrip = LinearLayout(context).apply {
-            gravity = android.view.Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT,
                 (resources.displayMetrics.density * 32).toInt(),
@@ -427,7 +431,6 @@ class NativeGalleryView @JvmOverloads constructor(
                 (resources.displayMetrics.density * 32).toInt(),
                 (resources.displayMetrics.density * 4).toInt(),
             )
-            visibility = GONE
         }
         drawerHandleStrip.addView(drawerHandleView)
         setupHandleDrag()
@@ -658,11 +661,10 @@ class NativeGalleryView @JvmOverloads constructor(
      */
     private fun applyDrawerBackground() {
         if (isCompactPortrait) {
-            val r = resources.displayMetrics.density * 16
+            // 纯平直角面板（M8b-10 用户拍板：顶部圆角去掉）——面板全宽钉底，与顶部
+            // 图片带平直衔接；单一 panel 实色，无描边无圆角
             metadataDrawer.background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(colorPanel())
-                // cornerRadii 顺序=左上、右上、右下、左下（各 x,y 一对）——只圆顶部两角
-                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
             }
         } else {
             metadataDrawer.background = android.graphics.drawable.GradientDrawable().apply {
