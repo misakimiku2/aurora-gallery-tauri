@@ -248,6 +248,7 @@ class NativeGalleryView @JvmOverloads constructor(
     private val drawerScrollView: ScrollView
     private val drawerContainer: LinearLayout
     /** 拖拽把手条：竖屏底部面板形制的滑动暗示（横屏右缘抽屉形制下 GONE） */
+    private val drawerHandleStrip: LinearLayout
     private val drawerHandleView: View
     private val drawerPreviewImage: android.widget.ImageView
     private val drawerNameView: TextView
@@ -408,20 +409,29 @@ class NativeGalleryView @JvmOverloads constructor(
             isClickable = true
             isFocusable = true
         }
-        // 拖拽把手条（竖屏底部面板的滑动暗示，横屏右缘抽屉无此语义）：宽 32dp 高 4dp、
-        // 圆角 2dp、colorBorder 色、水平居中、上边距 8dp。恒为 metadataDrawer 第一个 child
-        //（排在 drawerScrollView 之前），LinearLayout 里 GONE 不占位，横屏内容排布零变化。
+        // 面板顶缘拖拽条（M8b-9 用户拍板：从面板顶部——把手区——往下滑同样关闭）：
+        // 视觉把手 32×4dp 外扩为 32dp 高整宽触控条（触控热区达标）。条排在
+        // drawerScrollView 之前——拖它不会带动内容滚动；LinearLayout 里 GONE 不占位，
+        // 横屏右缘抽屉内容排布零变化。拖拽跟手逻辑见 setupHandleDrag。
+        drawerHandleStrip = LinearLayout(context).apply {
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LayoutParams.MATCH_PARENT,
+                (resources.displayMetrics.density * 32).toInt(),
+            )
+            visibility = GONE
+            isClickable = true
+        }
         drawerHandleView = View(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 (resources.displayMetrics.density * 32).toInt(),
                 (resources.displayMetrics.density * 4).toInt(),
-            ).apply {
-                gravity = android.view.Gravity.CENTER_HORIZONTAL
-                topMargin = (resources.displayMetrics.density * 8).toInt()
-            }
+            )
             visibility = GONE
         }
-        metadataDrawer.addView(drawerHandleView)
+        drawerHandleStrip.addView(drawerHandleView)
+        setupHandleDrag()
+        metadataDrawer.addView(drawerHandleStrip)
         // 抽屉背景唯一出处（M8b-8）：构建、applyTheme 重涂、applyDrawerFormFactor 换形制
         // 三处共用，不再各自 setBackgroundColor/重建背景——否则深浅色切换或换形制会把
         // 渐变边/顶部圆角互相抹掉
@@ -696,11 +706,11 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerFormFactorPending = false
         drawerFormPortrait = portrait
         if (portrait) {
-            // 竖屏底部面板。图片侧复位成「无抽屉」基线：横屏形制开着时图片被压缩过
-            // （旋转跨界而来），竖屏抽屉是纯覆盖层（用户拍板：竖屏不动图片），此后
-            // applyDrawerProgress 竖屏分支也不再写这些字段——双击缩放/翻页照常。
-            // 进度先于 layoutParams 写（applyDrawerProgress 同款顺序约定：params 触发的
-            // 下一轮布局里 resetToCenter 要读到归零后的 drawerFillProgress）
+            // 竖屏底部面板。图片带复位成「全高、fit 无裁切」基线（progress=0）——压缩与
+            // fill 插值由 applyDrawerProgress 竖屏分支按进度重放（M8b-9 用户拍板的让位
+            // 语义：面板打开时图片沾满顶部带，同平板图片让位左栏）。进度先于 layoutParams
+            // 写（applyDrawerProgress 同款顺序约定：params 触发的下一轮布局里
+            // resetToCenter 要读到归零后的 drawerFillProgress）
             primaryView.drawerFillProgress = 0f
             secondaryView.drawerFillProgress = 0f
             primaryView.drawerFullWidth = 0f
@@ -722,8 +732,8 @@ class NativeGalleryView @JvmOverloads constructor(
             }
         }
         applyDrawerBackground()
-        // 把手条只属于底部面板形制
-        drawerHandleView.visibility = if (portrait) VISIBLE else GONE
+        // 把手拖拽条只属于底部面板形制（横屏右缘抽屉无下滑关闭语义）
+        drawerHandleStrip.visibility = if (portrait) VISIBLE else GONE
         // 位移落回「关闭」位：换了形制/尺寸，旧轴向位移值作废（横屏的 translationX=320
         // 在竖屏全宽面板下会露出一条竖条，反之面板整条悬在屏上）；抽屉开着时调用方
         //（onConfigurationChanged/onSizeChanged）会紧跟 applyDrawerProgress 按当前进度
@@ -734,6 +744,59 @@ class NativeGalleryView @JvmOverloads constructor(
         } else {
             metadataDrawer.translationY = 0f
             metadataDrawer.translationX = drawerWidthPx.toFloat()
+        }
+    }
+
+    /**
+     * 面板顶缘拖拽（M8b-9 用户拍板：从面板顶部——把手区——往下滑同样关闭）。跟手公式
+     * 与图片区 onVerticalSwipeDrag 同式（下拖减进度=关、上拖加进度=开），方向限制取
+     * 「只许向关闭方向」（条只在面板开着时摸得到），松手按位置过半或下甩速度吸附——
+     * 与 onVerticalSwipeEnd 同阈值。条在 drawerScrollView 之前，拖它不会带动内容滚动。
+     */
+    private fun setupHandleDrag() {
+        var startY = 0f
+        var startProgress = 0f
+        var tracking = false
+        var tracker: android.view.VelocityTracker? = null
+        drawerHandleStrip.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    startY = event.rawY
+                    startProgress = drawerPanelProgress
+                    tracking = true
+                    tracker?.recycle()
+                    tracker = android.view.VelocityTracker.obtain()
+                    tracker?.addMovement(event)
+                    // 取消进行中的抽屉动画，跟手接管（onTouchDown 同款）
+                    drawerWidthAnimator?.cancel()
+                    drawerWidthAnimator = null
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (tracking) {
+                        tracker?.addMovement(event)
+                        val p = (startProgress - (event.rawY - startY) / drawerExtentPx)
+                            .coerceIn(0f, startProgress)
+                        applyDrawerProgress(p)
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (tracking) {
+                        tracker?.addMovement(event)
+                        tracker?.computeCurrentVelocity(1000)
+                        val p = (startProgress - (event.rawY - startY) / drawerExtentPx)
+                            .coerceIn(0f, startProgress)
+                        drawerOpen = !(p < 0.5f || (tracker?.yVelocity ?: 0f) > 500f)
+                        animateDrawerTo(drawerOpen, fromProgress = p)
+                        tracking = false
+                    }
+                    tracker?.recycle()
+                    tracker = null
+                    true
+                }
+                else -> false
+            }
         }
     }
 
@@ -918,9 +981,24 @@ class NativeGalleryView @JvmOverloads constructor(
             primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
             secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
         } else {
-            // 竖屏：面板从屏幕底外上滑（translationY=(1-p)×行程），图片不动
+            // 竖屏：底部面板从屏幕底外上滑；图片带高度同步压缩到面板让出的顶部——
+            // M8b-9 用户拍板的让位语义（平板=图片沾满左栏、竖屏=沾满顶部带）。
+            // drawerFillProgress 驱动 fit→fill 插值：开满时图片填满顶部带（宽贴满、
+            // 上下居中裁切）；进度先于 params 写，onSizeChanged→resetToCenter 读到
+            // 最新值（横屏分支同款顺序约定）。drawerFullWidth 竖屏不写（宽度恒定，
+            // fitVw=vw，vh 收缩使 fitS 单调下降无「先降后升」）
+            val imageH = (height - progress * extent).toInt().coerceAtLeast(0)
             metadataDrawer.translationY = (1f - progress) * extent
             metadataDrawer.translationX = 0f
+            primaryView.drawerFillProgress = progress
+            secondaryView.drawerFillProgress = progress
+            // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充
+            // 逻辑冲突（横屏同款）
+            val allowZoom = progress <= 0.01f
+            primaryView.allowZoom = allowZoom
+            secondaryView.allowZoom = allowZoom
+            primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
+            secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
         }
         // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）。横屏滑一个身位
         // 即可：抽屉打开时 onImmersiveToggle(true) 会隐藏系统状态栏，topBar 藏在状态栏
@@ -1030,12 +1108,16 @@ class NativeGalleryView @JvmOverloads constructor(
                 primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
                 secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
             } else {
-                // 竖屏：底部面板高=新根高 2/3 同样要在本测量 pass 生效（同款落后一帧问题；
-                // 用 spec 高 h 而非 height 属性——此刻属性还是旧值）。视觉重放（位移/沉浸
-                // 联动）由 onSizeChanged 的 applyDrawerFormFactor+applyDrawerProgress 完成
+                // 竖屏：底部面板高=新根高 2/3、图片带高=根高−面板高，都要在本测量 pass
+                // 生效（同款落后一帧问题；用 spec 高 h 而非 height 属性——此刻属性还是
+                // 旧值）。视觉重放（位移/fill 进度/沉浸联动）由 onSizeChanged 的
+                // applyDrawerFormFactor+applyDrawerProgress 完成
                 metadataDrawer.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, h * 2 / 3).apply {
                     gravity = android.view.Gravity.BOTTOM
                 }
+                val imageH = (h - h * 2 / 3).coerceAtLeast(0)
+                primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
+                secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
             }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)

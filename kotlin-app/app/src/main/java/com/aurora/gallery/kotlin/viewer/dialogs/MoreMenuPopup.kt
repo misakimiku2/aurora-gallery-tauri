@@ -188,6 +188,23 @@ class MoreMenuPopup(
                 }
             }
             window.setElevation(density * 8)
+            // 显示后自校准（M8b-9）：上面的 statusTop 扣减建立在「insets 与父窗口内容框
+            // 同步」的假设上——查看器有沉浸/系统栏隐藏态（用户真机实测：状态栏隐藏时
+            // 菜单仍下坠一个 statusTop，insets 已报 0 而子窗口内容框原点滞后）。这里读
+            // 弹窗实际落点与目标屏幕坐标（menuX/menuY，锚点 getLocationOnScreen 系）的
+            // 差值一次修正——对任何坐标系偏差自洽，不再依赖系统栏状态假设。
+            menuView.post {
+                val actual = IntArray(2)
+                window.decorView.getLocationOnScreen(actual)
+                val dx = menuX - actual[0]
+                val dy = menuY - actual[1]
+                if (dx != 0 || dy != 0) {
+                    val p = window.attributes
+                    p.x += dx
+                    p.y += dy
+                    window.attributes = p
+                }
+            }
         }
     }
 }
