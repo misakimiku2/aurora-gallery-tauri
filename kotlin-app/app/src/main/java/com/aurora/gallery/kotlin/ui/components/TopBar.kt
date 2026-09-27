@@ -909,9 +909,10 @@ internal fun AuroraDropdown(
                                 .heightIn(max = 480.dp)
                                 .verticalScroll(rememberScrollState())
                                 .clip(RoundedCornerShape(8.dp))
-                                // 2026-09-20 用户要求更透：桌面 /90 基础上降到 /75，
-                                // 透出的模糊背景更明显（想再调就改这个 alpha）
-                                .background(AuroraTheme.colors.panel.copy(alpha = 0.75f))
+                                // 2026-09-20 用户要求更透：桌面 /90 基础上降到 /75。
+                                // M8b 验收反馈二轮：75% 太透（文字与底层网格互相干扰），
+                                // 提到 /90 回到桌面同值（背景仍有 PixelCopy 毛玻璃垫底）
+                                .background(AuroraTheme.colors.panel.copy(alpha = 0.9f))
                                 .border(1.dp, AuroraTheme.colors.subtle, RoundedCornerShape(8.dp))
                                 .padding(vertical = 8.dp),
                             content = { latestContent() },
@@ -1858,15 +1859,27 @@ private val IconChevronLeft: ImageVector by lazy {
 // IconChevronRight 已上移 AuroraIcons.kt 共享，本文件直接引用同包共享版本。
 
 /** lucide more-vertical：竖排三点（M8b 1.4 手机竖屏「更多」菜单按钮）。 */
+// M8b 验收反馈二轮：三点原用「0.01 单位线段+圆头笔帽」画（同 SelectionBar M4b 反馈前的
+// 旧技法），直径 ≈2 视口单位，20dp 下渲染出 ≈1.7dp 的点，用户对比选择栏同款图标偏小。
+// 对齐 SelIconMore（r=2 实心圆，直径 4 视口单位 ≈3.3dp），双处「更多」视觉一致。
 private val IconMoreVertical: ImageVector by lazy {
-    iconBuilder("MoreVertical") {
-        moveTo(12f, 5f)
-        lineTo(12.01f, 5f)
-        moveTo(12f, 12f)
-        lineTo(12.01f, 12f)
-        moveTo(12f, 19f)
-        lineTo(12.01f, 19f)
-    }
+    ImageVector.Builder(
+        name = "MoreVertical",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            listOf(5f, 12f, 19f).forEach { cy ->
+                // 实心圆 r=2：两个 arcTo 半圆拼整圆（NonZero 填充下互不干扰）
+                moveTo(10f, cy)
+                arcTo(2f, 2f, 0f, false, true, 14f, cy)
+                arcTo(2f, 2f, 0f, false, true, 10f, cy)
+                close()
+            }
+        }
+    }.build()
 }
 
 /** lucide panel-left：面板外框 + 左分隔竖线（侧栏开关，React TopBar 最左按钮同款）。 */

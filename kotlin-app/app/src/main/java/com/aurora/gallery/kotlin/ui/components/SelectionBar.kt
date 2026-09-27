@@ -75,7 +75,9 @@ fun SelectionBar(
             .fillMaxWidth()
             .height(56.dp)
             .background(colors.panel)
-            .padding(horizontal = 12.dp),
+            // 8dp 与 TopBar 同边距（M8b 验收反馈：进入/退出选择模式时「更多」钮不许跳位
+            // ——TopBar 竖屏 44dp 钮 + 8dp 边距，本栏原 12dp 边距 + 48dp 钮会横移 ~6dp）
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SelBarButton(onClick = onExit) {
@@ -155,15 +157,22 @@ fun SelectionBar(
 /** 删除按钮的红色（对齐 React text-red-500 #EF4444）。 */
 private val SELECTION_DANGER = Color(0xFFEF4444)
 
-/** 选择栏圆角按钮（48dp 触控目标，对齐 TopBarButton 形制；本文件就近持有一份）。 */
+/**
+ * 选择栏圆角按钮（对齐 [TopBarButton] 形制——M8b 验收反馈「位置一致」：竖屏手机 44dp
+ * （TopBar compact 同值，`minimumInteractiveComponentSize` 把命中区补回 48dp）、平板
+ * 48dp；此前固定 48dp 且栏边距 12dp，与 TopBar 的 8dp+44/48 组合造成切换跳位）。
+ */
 @Composable
 private fun SelBarButton(
     onClick: () -> Unit,
     content: @Composable () -> Unit,
 ) {
+    val compact = com.aurora.gallery.kotlin.ui.isCompactWidth(
+        androidx.compose.ui.platform.LocalConfiguration.current,
+    )
     Box(
         modifier = Modifier
-            .size(48.dp)
+            .size(if (compact) 44.dp else 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
