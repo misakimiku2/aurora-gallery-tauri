@@ -1,16 +1,24 @@
 package com.aurora.gallery.kotlin.viewer.dialogs
 
+import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Outline
+import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.StateListDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
 import android.view.Gravity
 import android.view.View
 import android.view.ViewOutlineProvider
 import android.view.Window
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -85,6 +93,22 @@ class MoreMenuPopup(
         }
 
         // 192dp 与 AuroraDropdown 的 w-48 同值（原 200dp，图库菜单形制对齐）
+        // 毛玻璃垫底（M8b-12 用户拍板：查看器菜单此前只有半透没有模糊）——AuroraDropdown
+        // 同款技法：PixelCopy 从宿主窗口拷贝菜单正后方的区域（只拷宿主自己的 surface，
+        // 不含弹层本身），模糊后垫在 90% 面板底之下。API 26 起才有 PixelCopy、31 起
+        // 才有 RenderEffect 模糊——低版本退化为纯半透明底（文档化回退路径）。快照是
+        // 打开瞬间的静态画面：菜单为模态（打开期间内容不可交互），静态与实时等价。
+        val backdrop = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, v.width, v.height, density * 8)
+                }
+            }
+        }
+        val menuRoot = FrameLayout(context)
+
         val minItemWidth = (192 * density).toInt()
         menuItems.forEach { item ->
             val pressedBg = StateListDrawable().apply {
@@ -138,7 +162,19 @@ class MoreMenuPopup(
             menuView.addView(rowView)
         }
 
-        dialog.setContentView(menuView)
+        dialog.setContentView(
+            menuRoot.apply {
+                addView(
+                    backdrop,
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+                )
+                addView(
+                    menuView,
+                    FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+                )
+            },
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
 
         val maxMeasureWidth = (250 * density).toInt()
         val maxMeasureHeight = context.resources.displayMetrics.heightPixels
@@ -162,6 +198,37 @@ class MoreMenuPopup(
         if (menuX + measuredWidth > screenWidth) menuX = screenWidth - measuredWidth
         if (menuY + measuredHeight > screenHeight) menuY = screenHeight - measuredHeight
         if (menuY < 0) menuY = 0
+
+        // 抓宿主窗口菜单正后方的区域做毛玻璃底（区域=菜单最终落点，宿主窗口
+        // edge-to-edge 故窗口系≈屏幕系，与 AuroraDropdown 同款口径）
+        (context as? Activity)?.window?.let { host ->
+            if (Build.VERSION.SDK_INT >= 26) {
+                val left = menuX.coerceAtLeast(0)
+                val top = menuY.coerceAtLeast(0)
+                val w = minOf(measuredWidth, host.decorView.width - left)
+                val h = minOf(measuredHeight, host.decorView.height - top)
+                if (w > 0 && h > 0) {
+                    val snapshot = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    PixelCopy.request(
+                        host,
+                        Rect(left, top, left + w, top + h),
+                        snapshot,
+                        { result ->
+                            if (result == PixelCopy.SUCCESS) {
+                                backdrop.setImageBitmap(snapshot)
+                                if (Build.VERSION.SDK_INT >= 31) {
+                                    val r = density * 12 // ≈ 桌面 backdrop-blur-md（AuroraDropdown 同值）
+                                    backdrop.setRenderEffect(
+                                        android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP),
+                                    )
+                                }
+                            }
+                        },
+                        Handler(Looper.getMainLooper()),
+                    )
+                }
+            }
+        }
 
         dialog.show()
         dialog.window?.let { window ->

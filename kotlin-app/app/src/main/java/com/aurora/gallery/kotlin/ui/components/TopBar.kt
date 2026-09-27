@@ -50,6 +50,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -102,6 +103,7 @@ import com.aurora.gallery.kotlin.state.SearchScope
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.aurora.gallery.kotlin.ui.theme.LocalAuroraColors
 import uniffi.aurora_core.TagGroup
 import java.util.Calendar
 import java.util.Locale
@@ -846,6 +848,13 @@ internal fun AuroraDropdown(
     val latestOnDismiss by rememberUpdatedState(onDismissRequest)
     val latestContent by rememberUpdatedState(content)
     val latestAnchor by rememberUpdatedState(anchorBoundsInWindow)
+    // 宿主色板（M8b-12 用户拍板：深色主题下弹层不再固定浅色样式）。AuroraDropdown
+    // 组合在应用根 AuroraTheme 内，此处取到的就是宿主当前主题；DisposableEffect 块
+    // 不是 Composable 作用域，须在这里先取。Dialog 独立组合会继承 CompositionLocal，
+    // 但要在 setContent 里用 CompositionLocalProvider 覆盖回宿主值（原来在这里被
+    // AuroraTheme(darkTheme=false) 固定浅色——那是 M4b 时「弹层默认跟随系统而主界面
+    // 跟随用户设置」两者错位的反向修补，如今宿主主题即唯一事实）。
+    val hostColors = AuroraTheme.colors
     val dialogRef = remember { mutableStateOf<Dialog?>(null) }
 
     if (!expanded) return
@@ -875,9 +884,9 @@ internal fun AuroraDropdown(
             view.findViewTreeLifecycleOwner()?.let { setViewTreeLifecycleOwner(it) }
             view.findViewTreeSavedStateRegistryOwner()?.let { setViewTreeSavedStateRegistryOwner(it) }
             setContent {
-                // 与 MainActivity 同款固定浅色：默认参数跟随系统，系统深色下弹层会变
-                // DarkAuroraColors（深色半透明板 + 白字），与浅色主界面不一致
-                AuroraTheme(darkTheme = false) {
+                // 弹层随宿主主题（M8b-12）：覆盖回宿主色板，深色主题下弹层=深色半透明
+                // 板+浅字；大括号与原 AuroraTheme(darkTheme=false) 一一对应，体未改
+                CompositionLocalProvider(LocalAuroraColors provides hostColors) {
                     var backdrop by remember { mutableStateOf<Bitmap?>(null) }
                     var menuHeightPx by remember { mutableIntStateOf(0) }
 
