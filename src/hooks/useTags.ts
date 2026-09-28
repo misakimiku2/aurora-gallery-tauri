@@ -85,16 +85,35 @@ export const useTags = ({
     const tagsToAdd = state.clipboard.items.ids;
     setState(prev => {
       const newFiles = { ...prev.files };
+      const affectedFileIds: string[] = [];
       targetIds.forEach(id => {
         const file = newFiles[id];
         if (file) {
           const newTags = Array.from(new Set([...file.tags, ...tagsToAdd]));
           newFiles[id] = { ...file, tags: newTags };
+          affectedFileIds.push(id);
         }
       });
+
+      affectedFileIds.forEach(id => {
+        const file = newFiles[id];
+        if (file) {
+          dbUpsertFileMetadata({
+            fileId: id,
+            path: file.path,
+            tags: file.tags,
+            description: file.description,
+            sourceUrl: file.sourceUrl,
+            category: file.category,
+            aiData: file.aiData,
+            updatedAt: Date.now()
+          }).catch(err => console.error('Failed to persist tag paste:', err));
+        }
+      });
+
       return { ...prev, files: newFiles };
     });
-    showToast("Tags pasted");
+    showToast(t('context.tagsPasted'));
   };
 
   const handleCreateNewTag = useCallback(() => {
@@ -168,10 +187,28 @@ export const useTags = ({
     setState(prev => {
       const newFiles = { ...prev.files };
       let newCustomTags = [...prev.customTags];
+      const affectedFileIds: string[] = [];
 
-      Object.values(newFiles).forEach(file => {
+      Object.entries(newFiles).forEach(([id, file]) => {
         if (file.tags && file.tags.includes(oldTag)) {
-          file.tags = file.tags.map(tag => tag === oldTag ? trimmedNewTag : tag);
+          newFiles[id] = { ...file, tags: file.tags.map(tag => tag === oldTag ? trimmedNewTag : tag) };
+          affectedFileIds.push(id);
+        }
+      });
+
+      affectedFileIds.forEach(id => {
+        const file = newFiles[id];
+        if (file) {
+          dbUpsertFileMetadata({
+            fileId: id,
+            path: file.path,
+            tags: file.tags,
+            description: file.description,
+            sourceUrl: file.sourceUrl,
+            category: file.category,
+            aiData: file.aiData,
+            updatedAt: Date.now()
+          }).catch(err => console.error('Failed to persist tag rename:', err));
         }
       });
 

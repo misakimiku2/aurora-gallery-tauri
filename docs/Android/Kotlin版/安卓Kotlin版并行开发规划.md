@@ -278,7 +278,7 @@ M6 实施时必须一并解决，可选（按代价从低到高）：① 桌面�
 | Rust command 解耦 | 待 M1 执行 | `lib.rs` 两处 `generate_handler!`（桌面/安卓构建）需拆出纯函数核心。**M0 PoC 评估**：UniFFI 0.32 + proc-macro 用法成熟（`setup_scaffolding!` + `#[uniffi::export]` + `#[derive(uniffi::Record)]`），独立 crate 一次过；PoC 用 3 个函数（init / list_folders / list_images）覆盖"读 db + 返回结构"最小切片。**预估工作量**：参照 `db_commands.rs` / `db/file_index.rs` / `db/file_metadata.rs` 中不依赖 `AppHandle` 的纯函数（约 60–70% 的 command），可抽出独立 core crate；带 `AppHandle` 的（窗口/系统命令）需包一层；JNI 直接调用的安卓特定代码（`android/`）暂不动。**粗估 3–5 天**，M1 开头执行 |
 | 工程组织 | 已定：本仓库 | **M0 决议**：Rust 核心与 Kotlin 工程放本仓库（已建 `kotlin-app/`，复用现有 Gradle wrapper、AGP 版本与 mipmap 图标资源，工具链与桌面 React 安卓版对齐以减少分歧）；UniFFI workspace 拆分（独立 `core` crate）在 M1 lib.rs 解耦时一起做；`ffi-poc/` 作为 PoC 残留保留（旁路、零侵入） |
 | 手机版启动时机 | 已定 | M7 之后（M8+），避免在平板组件未沉淀时做第三布局 |
-| 桌面版标签写入不落库 | 已记录，待验收人排期 | `useTags.ts` 的重命名（`:163`）与粘贴（`:83`）都只改内存、不写 db，重启后改动消失；重命名还在 `:174` 原地改 state 对象。桌面版与 React 安卓版同源同病。详见 [桌面版标签写入不落库问题-待修](../../桌面版标签写入不落库问题-待修.md)。**Kotlin 版按正确语义实现、不照搬**（[M4a 清单](./M4a数据与整理任务清单.md) D14），一致性测试的基准带这份偏差清单；桌面版修不修单独排期，不阻塞 M4a |
+| 桌面版标签写入不落库 | **已修**（2026-09-28，桌面 React 版，发布前修复） | `useTags.ts` 的重命名（`:163`）与粘贴（`:83`）都只改内存、不写 db，重启后改动消失；重命名还在 `:174` 原地改 state 对象。桌面版与 React 安卓版同源同病。详见 [桌面版标签写入不落库问题-待修](../../桌面版标签写入不落库问题-待修.md)。**Kotlin 版按正确语义实现、不照搬**（[M4a 清单](./M4a数据与整理任务清单.md) D14），一致性测试的基准带这份偏差清单；桌面版已于 2026-09-28 修复（重命名/粘贴落库 + 不可变更新 + i18n toast），修复记录见该文档文末 |
 | 两个安卓 App 的隔离 | 已查清（2026-09-21） | Kotlin 版是 `com.aurora.gallery.kotlin`，React 安卓版（Tauri）是 `com.aurora.gallery`——**不同包、不同沙箱、不同数据库**。所以 Kotlin 版的库结构改动（如 M4a D10 新建的 `tags`/`file_tags` 表）不影响正在出货的 React 安卓版，**既不需要双写也不需要迁移**。此条曾被误判为冲突，记录在此避免重复绕路 |
 
 ---
