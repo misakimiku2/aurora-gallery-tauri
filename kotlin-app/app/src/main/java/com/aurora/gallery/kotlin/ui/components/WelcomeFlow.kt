@@ -288,8 +288,10 @@ private fun BrandPanel(
                 if (compact) Spacer(Modifier.height(18.dp))
                 if (downloadLabel != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        WfQrImage(DOWNLOAD_PAGE_URL, size = 72.dp)
-                        Spacer(Modifier.width(10.dp))
+                        // 150dp ≈ 21mm，与桌面端二维码（80 CSS px ≈ 21mm）物理尺寸持平——
+                        // 原先 72dp（≈9.5mm）手机相机对不上焦，扫不出来（用户反馈）
+                        WfQrImage(DOWNLOAD_PAGE_URL, size = 150.dp)
+                        Spacer(Modifier.width(12.dp))
                         Text(
                             downloadLabel,
                             color = Color(0xFFDBEAFE),
@@ -939,41 +941,77 @@ private fun WfTextField(c: WfC, label: String, value: String, onValueChange: (St
 @Composable
 private fun WfQrImage(url: String, size: Dp) {
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val px = with(density) { ((size - 12.dp).toPx()).toInt().coerceAtLeast(8) }
-    val bitmap = remember(url, px) { generateQrBitmap(url, px) }
+    // 整数模块尺寸生成：先算出二维码模块数（含白边），按目标像素取整数放大倍数——
+    // 避免 QRCodeWriter 拉伸导致的模块宽窄不均（手机相机对畸变模块容错低）
+    val targetPx = with(density) { (size - 16.dp).toPx().toInt() }.coerceAtLeast(32)
+    val bitmap = remember(url, targetPx) { generateQrBitmap(url, targetPx) }
     Box(
         Modifier
             .size(size)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(Color.White)
-            .padding(6.dp),
+            .padding(8.dp),
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
             bitmap = bitmap,
-            contentDescription = "Android download QR",
+            contentDescription = "Desktop download QR",
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
 
-private fun generateQrBitmap(content: String, sizePx: Int): androidx.compose.ui.graphics.ImageBitmap {
-    val hints = mapOf(
-        com.google.zxing.EncodeHintType.MARGIN to 0,
-        com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
-    )
+/**
+ * 生成二维码位图。尺寸策略：先按 [targetPx] 求出「整模块」的边长
+ * （模块数含 [QR_MARGIN_MODULES] 圈白边 = quiet zone，扫码器可靠识别的前提），
+ * 再按整数倍画模块，保证边缘锐利。输出可能略小于 [targetPx]，由外层 Image 平滑缩放。
+ */
+private fun generateQrBitmap(content: String, targetPx: Int): androidx.compose.ui.graphics.ImageBitmap {
+    // 先探一次模块数（不含白边）：用 0 边距、足够大的画布拿到 matrix 的真实边长
+    val probe = com.google.zxing.qrcode.QRCodeWriter()
+        .encode(
+            content,
+            com.google.zxing.BarcodeFormat.QR_CODE,
+            256,
+            256,
+            mapOf(
+                com.google.zxing.EncodeHintType.MARGIN to 0,
+                com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
+                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
+            ),
+        )
+    val modules = probe.width // 256 画布下 QRCodeWriter 已按整数倍填充，width 即模块数
+    val total = modules + QR_MARGIN_MODULES * 2
+    // 向上取整：保证生成分辨率不低于显示尺寸（宁可轻微缩小显示，也不要放大糊边）
+    val scale = ((targetPx + total - 1) / total).coerceAtLeast(1)
+    val side = total * scale
+
     val matrix = com.google.zxing.qrcode.QRCodeWriter()
-        .encode(content, com.google.zxing.BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
-    val pixels = IntArray(sizePx * sizePx)
-    for (y in 0 until sizePx) {
-        for (x in 0 until sizePx) {
-            pixels[y * sizePx + x] = if (matrix.get(x, y)) 0xFF111827.toInt() else 0xFFFFFFFF.toInt()
+        .encode(
+            content,
+            com.google.zxing.BarcodeFormat.QR_CODE,
+            modules * scale,
+            modules * scale,
+            mapOf(
+                com.google.zxing.EncodeHintType.MARGIN to QR_MARGIN_MODULES,
+                com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
+                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
+            ),
+        )
+    val pixels = IntArray(side * side)
+    for (y in 0 until side) {
+        for (x in 0 until side) {
+            val on = x < matrix.width && y < matrix.height && matrix.get(x, y)
+            pixels[y * side + x] = if (on) 0xFF111827.toInt() else 0xFFFFFFFF.toInt()
         }
     }
-    return android.graphics.Bitmap.createBitmap(sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888)
-        .apply { setPixels(pixels, 0, sizePx, 0, 0, sizePx, sizePx) }
+    return android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
+        .apply { setPixels(pixels, 0, side, 0, 0, side, side) }
         .asImageBitmap()
 }
+
+/** 二维码白边（quiet zone）圈数：规范要求 ≥4 模块，与外层白色内边距叠加后更宽裕。 */
+private const val QR_MARGIN_MODULES = 3
 
 /**
  * 欢迎页配色：桌面 WelcomeModal 的 Tailwind 灰系/蓝系逐值对齐（浅/深两档）。
