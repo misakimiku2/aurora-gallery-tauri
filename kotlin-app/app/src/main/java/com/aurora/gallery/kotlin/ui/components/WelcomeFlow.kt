@@ -944,14 +944,14 @@ private fun WfQrImage(url: String, size: Dp) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     // 整数模块尺寸生成：先算出二维码模块数（含白边），按目标像素取整数放大倍数——
     // 避免 QRCodeWriter 拉伸导致的模块宽窄不均（手机相机对畸变模块容错低）
-    val targetPx = with(density) { (size - 12.dp).toPx().toInt() }.coerceAtLeast(32)
+    val targetPx = with(density) { (size - 4.dp).toPx().toInt() }.coerceAtLeast(32)
     val bitmap = remember(url, targetPx) { generateQrBitmap(url, targetPx) }
     Box(
         Modifier
             .size(size)
             .clip(RoundedCornerShape(10.dp))
             .background(Color.White)
-            .padding(6.dp),
+            .padding(2.dp),
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
@@ -963,46 +963,36 @@ private fun WfQrImage(url: String, size: Dp) {
 }
 
 /**
- * 生成二维码位图。尺寸策略：先按 [targetPx] 求出「整模块」的边长
- * （模块数含 [QR_MARGIN_MODULES] 圈白边 = quiet zone，扫码器可靠识别的前提），
- * 再按整数倍画模块，保证边缘锐利。输出可能略小于 [targetPx]，由外层 Image 平滑缩放。
+ * 生成二维码位图：**自绘，不经过 [com.google.zxing.qrcode.QRCodeWriter]**。
+ *
+ * 历史坑（2026-09-29 用户两次反馈白边过宽）：QRCodeWriter.encode 返回的矩阵边长恒等于
+ * **请求的画布尺寸**而非模块数，把它当模块数会让后续边距计算全错位，位图里多出一圈白边。
+ * 这里改用低层 `Encoder.encode` 拿真实模块矩阵（width = 模块数），再按整数倍逐模块绘制：
+ * 边距严格等于 [QR_MARGIN_MODULES] 个模块，模块边缘锐利（无拉伸畸变）。
  */
 private fun generateQrBitmap(content: String, targetPx: Int): androidx.compose.ui.graphics.ImageBitmap {
-    // 先探一次模块数（不含白边）：用 0 边距、足够大的画布拿到 matrix 的真实边长
-    val probe = com.google.zxing.qrcode.QRCodeWriter()
-        .encode(
-            content,
-            com.google.zxing.BarcodeFormat.QR_CODE,
-            256,
-            256,
-            mapOf(
-                com.google.zxing.EncodeHintType.MARGIN to 0,
-                com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
-                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
-            ),
-        )
-    val modules = probe.width // 256 画布下 QRCodeWriter 已按整数倍填充，width 即模块数
-    val total = modules + QR_MARGIN_MODULES * 2
-    // 向上取整：保证生成分辨率不低于显示尺寸（宁可轻微缩小显示，也不要放大糊边）
-    val scale = ((targetPx + total - 1) / total).coerceAtLeast(1)
+    val hints = mapOf(
+        com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
+        com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
+    )
+    val qr = com.google.zxing.qrcode.encoder.Encoder.encode(
+        content,
+        com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
+        hints,
+    )
+    val matrix = qr.matrix // ByteMatrix（0/1）：width == 模块数（不含白边）
+    val modules = matrix.width
+    val margin = QR_MARGIN_MODULES
+    val total = modules + margin * 2
+    val scale = (targetPx / total).coerceAtLeast(1)
     val side = total * scale
 
-    val matrix = com.google.zxing.qrcode.QRCodeWriter()
-        .encode(
-            content,
-            com.google.zxing.BarcodeFormat.QR_CODE,
-            modules * scale,
-            modules * scale,
-            mapOf(
-                com.google.zxing.EncodeHintType.MARGIN to QR_MARGIN_MODULES,
-                com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
-                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.M,
-            ),
-        )
     val pixels = IntArray(side * side)
     for (y in 0 until side) {
+        val my = y / scale - margin
         for (x in 0 until side) {
-            val on = x < matrix.width && y < matrix.height && matrix.get(x, y)
+            val mx = x / scale - margin
+            val on = mx in 0 until modules && my in 0 until modules && matrix.get(mx, my).toInt() == 1
             pixels[y * side + x] = if (on) 0xFF111827.toInt() else 0xFFFFFFFF.toInt()
         }
     }
@@ -1012,10 +1002,13 @@ private fun generateQrBitmap(content: String, targetPx: Int): androidx.compose.u
 }
 
 /**
- * 二维码白边（quiet zone）圈数。规范建议 ≥4 模块；此处取 2 圈 + 外层 6dp 内边距 ≈ 3.5 模块
- * （2026-09-29 用户反馈白边太宽，从 3 圈+8dp 收窄）。再小会明显影响手机相机识别，不建议降。
+ * 二维码白边（quiet zone）圈数：1 圈 —— 与外层 2dp 内边距合计占白盒宽 ≈4%，
+ * 与桌面端（qrserver 图，实测白边 6px/144px ≈ 4.2%）视觉对齐（2026-09-29 用户三轮反馈
+ * 白边偏宽，从 3 圈+8dp 逐步收到此值；同轮还修掉了 QRCodeWriter 画布尺寸被误当模块数
+ * 导致的多余白边）。规范建议 ≥4 模块，此处刻意压薄换取两端一致；若个别机型扫不出，
+ * 优先加回外层内边距（改动小、不影响模块锐度）。
  */
-private const val QR_MARGIN_MODULES = 2
+private const val QR_MARGIN_MODULES = 1
 
 /**
  * 欢迎页配色：桌面 WelcomeModal 的 Tailwind 灰系/蓝系逐值对齐（浅/深两档）。
