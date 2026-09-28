@@ -734,6 +734,11 @@ export const translations = {
         androidConnectTip: '安卓端扫码连接后自动建立双向互联，可在左侧边栏浏览手机图片',
         bidirectional: '双向',
         qrTip: '手机扫码即可自动连接，无需手动输入访问码',
+        androidDownload: {
+          title: '获取安卓端',
+          hint: '安卓手机或平板浏览器扫码，直接下载安装包',
+          qrFailed: '二维码加载失败，可复制下方地址在手机浏览器中打开',
+        },
         client: {
           title: '连接桌面端',
           description: '扫码连接桌面端后，桌面端可浏览本机图片（双向互联）',
@@ -1767,6 +1772,11 @@ export const translations = {
         androidConnectTip: 'Android devices establish a two-way link after scanning to connect; browse phone photos in the sidebar',
         bidirectional: 'Two-way',
         qrTip: 'Scan with phone to auto-connect, no access code needed',
+        androidDownload: {
+          title: 'Get the Android app',
+          hint: 'Scan with an Android phone or tablet browser to install the APK',
+          qrFailed: 'QR code failed to load — copy the link below and open it on your phone',
+        },
         client: {
           title: 'Connect to Desktop',
           description: 'After scanning to connect, the desktop can browse photos on this device (two-way)',

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, type LucideIcon } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
 import { AppSettings, AIConfig } from '../../types';
@@ -6,8 +6,8 @@ import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
 
-/** 双端下载页（update/android.json homepage 主源；安卓 APK 与桌面安装包同仓发布）。 */
-const DOWNLOAD_PAGE_URL = 'https://gitee.com/misakimiku2/aurora_gallery/releases';
+/** 双端下载页常量与设置面板共用一处定义（utils/androidDownload），避免发版改链接漏改。 */
+import { ANDROID_DOWNLOAD_PAGE_URL as DOWNLOAD_PAGE_URL } from '../../utils/androidDownload';
 
 interface WelcomeModalProps {
     show: boolean;
@@ -77,9 +77,24 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
         return () => { cancelled = true; };
     }, [step]);
 
-    // 二维码地址变化（回退页 → 直链）时 img 会按 key 重挂载，转圈重新计时
+    /**
+     * 二维码只在互联步渲染，命中缓存时 <img> 可能在 React 挂上 onLoad **之前**就已 complete
+     * （二次进入互联步、热更新重挂载必现），只等 onLoad 会让转圈永远收不起来。
+     * 所以核对放在 ref 回调里——节点一挂上就看一眼。
+     */
+    const androidQrRef = useRef<HTMLImageElement | null>(null);
+    const attachAndroidQr = (img: HTMLImageElement | null) => {
+        androidQrRef.current = img;
+        if (img?.complete) setQrLoading(false);
+    };
+
+    /**
+     * 地址变化（回退页 → 直链）时 img 按 key 重挂载：转圈重新计时。
+     * ref 回调跑在 passive effect 之前，故此处再核对一次 complete，覆盖上面刚点亮的转圈。
+     */
     useEffect(() => {
         setQrLoading(true);
+        if (androidQrRef.current?.complete) setQrLoading(false);
     }, [androidQrUrl]);
 
     if (!show) return null;
@@ -227,6 +242,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                     )}
                                     <img
                                         key={androidQrUrl}
+                                        ref={attachAndroidQr}
                                         data-testid="welcome-android-qr"
                                         src={generateQRCodeUrl(androidQrUrl)}
                                         alt="Android download QR"

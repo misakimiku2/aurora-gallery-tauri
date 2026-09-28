@@ -231,6 +231,22 @@ describe('WelcomeModal 四步向导', () => {
     expect(screen.queryByTestId('welcome-qr-loading')).toBeNull();
   });
 
+  it('互联步：图片命中缓存（挂载即 complete）时转圈不留挂', () => {
+    // 缓存命中时 load 事件在 React 挂上 onLoad 前就已触发，只等 onLoad 会永远转圈
+    const proto = window.HTMLImageElement.prototype;
+    const original = Object.getOwnPropertyDescriptor(proto, 'complete');
+    Object.defineProperty(proto, 'complete', { configurable: true, get: () => true });
+    try {
+      gotoStep4();
+      // 先确认码在渲染，否则「没有转圈」是空断言
+      expect(screen.getByTestId('welcome-android-qr')).toBeInTheDocument();
+      expect(screen.queryByTestId('welcome-qr-loading')).toBeNull();
+    } finally {
+      if (original) Object.defineProperty(proto, 'complete', original);
+      else delete (proto as any).complete;
+    }
+  });
+
   it('互联步：文案与二维码底部对齐', () => {
     gotoStep4();
     const row = screen.getByTestId('welcome-qr-row');

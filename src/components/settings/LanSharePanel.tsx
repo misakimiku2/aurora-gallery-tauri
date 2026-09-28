@@ -15,6 +15,7 @@ import {
 } from '../../api/tauri-bridge';
 import { isAndroidPlatform } from '../../utils/androidPlatform';
 import { LanClientPanel } from '../lan-client/LanClientPanel';
+import { AndroidDownloadCard } from './AndroidDownloadCard';
 import { androidClientRegistry } from '../android-client/androidClientApi';
 
 interface LanSharePanelProps {
@@ -71,10 +72,22 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
     ? JSON.stringify({ type: 'aurora-lan', url: serverUrl, code: settings.accessCode })
     : null;
 
+  /**
+   * 命中图片缓存时 <img> 可能在 React 挂上 onLoad **之前**就已 complete（重开设置面板、
+   * 热更新重挂载必现），只等 onLoad 会让白底转圈永远盖着二维码——用户看到的就是一个转不完的圈。
+   * 核对放在 ref 回调上（节点一挂上就看），effect 里再补一次，覆盖换地址时的重挂载。
+   */
+  const qrImgRef = useRef<HTMLImageElement | null>(null);
+  const attachQrImg = (img: HTMLImageElement | null) => {
+    qrImgRef.current = img;
+    if (img?.complete) setQrLoading(false);
+  };
+
   useEffect(() => {
     if (qrContent) {
       setQrLoading(true);
       setQrCodeUrl(generateQRCodeUrl(qrContent));
+      if (qrImgRef.current?.complete) setQrLoading(false);
     } else {
       setQrCodeUrl('');
       setQrLoading(false);
@@ -393,13 +406,18 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                 </label>
                 <div className="bg-white rounded-lg p-3 inline-block border border-subtle overflow-hidden relative">
                   {qrLoading && (
-                    <div className="absolute top-3 left-3 w-36 h-36 bg-white rounded flex items-center justify-center z-10">
+                    <div
+                      data-testid="lan-connect-qr-loading"
+                      className="absolute top-3 left-3 w-36 h-36 bg-white rounded flex items-center justify-center z-10"
+                    >
                       <Loader2 size={32} className="text-gray-400 animate-spin" />
                     </div>
                   )}
                   {qrCodeUrl ? (
                     <img
                       src={qrCodeUrl}
+                      ref={attachQrImg}
+                      data-testid="lan-connect-qr"
                       alt="QR Code"
                       className="w-36 h-36 object-contain block"
                       onLoad={() => setQrLoading(false)}
@@ -635,6 +653,9 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* 共享未开启时给一条安卓端下载链路；开启后让位给上面的「扫码连接」二维码 */}
+      {!settings.enabled && <AndroidDownloadCard t={t} />}
     </div>
   );
 };
