@@ -430,6 +430,14 @@ private fun LanPersonCard(
         ) {
             AuroraMenuItem(
                 text = "重命名",
+                leading = {
+                    Icon(
+                        imageVector = IconPencil,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
                 onClick = {
                     menuOpen = false
                     onRename()
@@ -437,6 +445,14 @@ private fun LanPersonCard(
             )
             AuroraMenuItem(
                 text = "改描述",
+                leading = {
+                    Icon(
+                        imageVector = IconType,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
                 onClick = {
                     menuOpen = false
                     onDescribe()
@@ -445,6 +461,14 @@ private fun LanPersonCard(
             if (lanAllowEdit) {
                 AuroraMenuItem(
                     text = "换头像",
+                    leading = {
+                        Icon(
+                            imageVector = IconImage,
+                            contentDescription = null,
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
                     onClick = {
                         menuOpen = false
                         onAvatarChange()

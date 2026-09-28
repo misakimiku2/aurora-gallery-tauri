@@ -1180,16 +1180,8 @@ private val IconChevronDown: ImageVector by lazy {
     }
 }
 
-/** lucide Layout（专题 Section；与 TopBar 的 LayoutTemplate 同形）。 */
-private val IconLayout: ImageVector by lazy {
-    iconBuilder("Layout") {
-        roundedRect(3f, 3f, 18f, 18f, 2f)
-        moveTo(3f, 9f)
-        lineTo(21f, 9f)
-        moveTo(9f, 21f)
-        lineTo(9f, 9f)
-    }
-}
+// IconLayout（专题 Section）已上移 AuroraIcons.kt 共享（2026-09-28 长按菜单图形化顺带
+// 收编，几何不变），本文件直接引用同包共享版本。
 
 // IconHardDrive / IconWifiOff（本地相册/网络 Section）已上移 AuroraIcons.kt 共享
 // （M4c 2.6），本文件直接引用同包共享版本。

@@ -65,6 +65,17 @@ import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
+import com.aurora.gallery.kotlin.ui.components.IconClipboard
+import com.aurora.gallery.kotlin.ui.components.IconCopy
+import com.aurora.gallery.kotlin.ui.components.IconFolderInput
+import com.aurora.gallery.kotlin.ui.components.IconFrame
+import com.aurora.gallery.kotlin.ui.components.IconImage
+import com.aurora.gallery.kotlin.ui.components.IconLayout
+import com.aurora.gallery.kotlin.ui.components.IconPencil
+import com.aurora.gallery.kotlin.ui.components.IconScanSearch
+import com.aurora.gallery.kotlin.ui.components.IconSparkles
+import com.aurora.gallery.kotlin.ui.components.IconTag
+import com.aurora.gallery.kotlin.ui.components.IconTrash2
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
 import com.aurora.gallery.kotlin.ui.components.TargetPickerDialog
 import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
@@ -2249,20 +2260,20 @@ fun App(
         // 适用，不出现（M4a「不适用的项不出现」先例）。
         inBrowser && inLanBrowser -> buildList {
             if (lanAllowEdit) {
-                add(SelectionMoreAction("加入专题…") { showLanTopicPicker = true })
+                add(SelectionMoreAction("加入专题…", IconLayout) { showLanTopicPicker = true })
                 if (tab.selectedFileIds.size == 1) {
-                    add(SelectionMoreAction("重命名…") { lanRenamePath = tab.selectedFileIds.first() })
+                    add(SelectionMoreAction("重命名…", IconPencil) { lanRenamePath = tab.selectedFileIds.first() })
                 }
-                add(SelectionMoreAction("删除") { showDeleteConfirm = true })
-                add(SelectionMoreAction("复制到…") { lanPickerMode = LanPickerMode.COPY })
-                add(SelectionMoreAction("移动到…") { lanPickerMode = LanPickerMode.MOVE })
+                add(SelectionMoreAction("删除", IconTrash2) { showDeleteConfirm = true })
+                add(SelectionMoreAction("复制到…", IconCopy) { lanPickerMode = LanPickerMode.COPY })
+                add(SelectionMoreAction("移动到…", IconFolderInput) { lanPickerMode = LanPickerMode.MOVE })
             }
         }
         inBrowser -> buildList {
             // M5 3.1：画布组置顶（仅平板，D28）。单实例（D21）语义 =「加入画布」，
             // 不做「新建画布」入口；计数显示全画布 N/24，超 24 拦截 Toast
             if (isTablet) {
-                add(SelectionMoreAction("加入画布（${canvasStore.count}/24）") {
+                add(SelectionMoreAction("加入画布（${canvasStore.count}/24）", IconFrame) {
                     val ids = tab.selectedFileIds
                     when {
                         canvasStore.isFull ->
@@ -2278,65 +2289,65 @@ fun App(
                     }
                 })
             }
-            add(SelectionMoreAction("加入专题…") { showTopicPicker = true })
+            add(SelectionMoreAction("加入专题…", IconLayout) { showTopicPicker = true })
             if (tab.selectedFileIds.size == 1) {
-                add(SelectionMoreAction("编辑标签…") { editTagsFileId = tab.selectedFileIds.first() })
-                add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
+                add(SelectionMoreAction("编辑标签…", IconTag) { editTagsFileId = tab.selectedFileIds.first() })
+                add(SelectionMoreAction("复制标签", IconCopy) { onCopyTags(tab.selectedFileIds) })
             }
-            add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
+            add(SelectionMoreAction("粘贴标签", IconClipboard) { onPasteTags(tab.selectedFileIds) })
             // M6b 阶段 2：AI 入口（桌面 ContextMenu 文件分支同位——AI 分析/AI 重命名）。
             // 未配置 provider 时宿主入口自行友好拦截，菜单项常驻。
-            add(SelectionMoreAction("AI 分析…") { ai.onAnalyze(tab.selectedFileIds.toList()) })
-            add(SelectionMoreAction("AI 重命名…") { ai.onRename(tab.selectedFileIds.toList()) })
+            add(SelectionMoreAction("AI 分析…", IconSparkles) { ai.onAnalyze(tab.selectedFileIds.toList()) })
+            add(SelectionMoreAction("AI 重命名…", IconSparkles) { ai.onRename(tab.selectedFileIds.toList()) })
             // M6b 阶段 4（D37）：人物识别=图字节卸载桌面 WD14→general 标签进本地词表、
             // character 归组建本地人物（未连接桌面时 VM 内拦截提示）
-            add(SelectionMoreAction("AI 人物识别…") {
+            add(SelectionMoreAction("AI 人物识别…", IconScanSearch) {
                 ai.onWd14PersonPipeline(tab.selectedFileIds.toList())
             })
-            add(SelectionMoreAction("复制到…") {
+            add(SelectionMoreAction("复制到…", IconCopy) {
                 pickerType = "copy"
                 pickerFileIds = tab.selectedFileIds.toList()
             })
-            add(SelectionMoreAction("移动到…") {
+            add(SelectionMoreAction("移动到…", IconFolderInput) {
                 pickerType = "move"
                 pickerFileIds = tab.selectedFileIds.toList()
             })
             if (tab.selectedFileIds.size == 1) {
-                add(SelectionMoreAction("重命名…") { renameFileId = tab.selectedFileIds.first() })
+                add(SelectionMoreAction("重命名…", IconPencil) { renameFileId = tab.selectedFileIds.first() })
             }
         }
         inTopicDetail && tab.activeTopicId != null && tab.selectedFileIds.isNotEmpty() -> buildList {
             if (tab.selectedFileIds.size == 1) {
-                add(SelectionMoreAction("编辑标签…") { editTagsFileId = tab.selectedFileIds.first() })
-                add(SelectionMoreAction("复制标签") { onCopyTags(tab.selectedFileIds) })
+                add(SelectionMoreAction("编辑标签…", IconTag) { editTagsFileId = tab.selectedFileIds.first() })
+                add(SelectionMoreAction("复制标签", IconCopy) { onCopyTags(tab.selectedFileIds) })
                 // 桌面「设置专题封面」的触屏同位（桌面在专题卡片右键弹选图器，
                 // 平板收敛为「详情里选中一张成员图 → 设为封面」，见 TopicsOverview KDoc）
-                add(SelectionMoreAction("设为封面") {
+                add(SelectionMoreAction("设为封面", IconImage) {
                     onSetTopicCover(tab.activeTopicId!!, tab.selectedFileIds.first())
                 })
             }
-            add(SelectionMoreAction("粘贴标签") { onPasteTags(tab.selectedFileIds) })
-            add(SelectionMoreAction("从专题移除") {
+            add(SelectionMoreAction("粘贴标签", IconClipboard) { onPasteTags(tab.selectedFileIds) })
+            add(SelectionMoreAction("从专题移除", IconTrash2) {
                 onRemoveFromTopic(tab.activeTopicId!!, tab.selectedFileIds)
             })
         }
         inFoldersOverview && tab.selectedFileIds.isNotEmpty() -> buildList {
             // M6b 阶段 2：相册卡片长按选中后的「AI 分析相册」（桌面文件夹右键同位；
             // 扁平 bucket 无递归语义，成员=该相册全部图片）
-            add(SelectionMoreAction("AI 分析相册…") { ai.onFolderAnalyze(tab.selectedFileIds.toList()) })
-            add(SelectionMoreAction("复制到…") {
+            add(SelectionMoreAction("AI 分析相册…", IconSparkles) { ai.onFolderAnalyze(tab.selectedFileIds.toList()) })
+            add(SelectionMoreAction("复制到…", IconCopy) {
                 onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
                     pickerType = "copy"
                     pickerFileIds = ids
                 }
             })
-            add(SelectionMoreAction("移动到…") {
+            add(SelectionMoreAction("移动到…", IconFolderInput) {
                 onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
                     pickerType = "move"
                     pickerFileIds = ids
                 }
             })
-            add(SelectionMoreAction("删除") { showDeleteConfirm = true })
+            add(SelectionMoreAction("删除", IconTrash2) { showDeleteConfirm = true })
         }
         else -> emptyList()
     }

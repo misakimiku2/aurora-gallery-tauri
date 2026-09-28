@@ -864,7 +864,8 @@ private fun TopBarButton(
  * 弹层是独立组合，ComposeView 挂宿主 ViewTree 的 Lifecycle/SavedState owners；
  * 内容与关闭回调经 rememberUpdatedState 取最新值。点外部/返回键触发
  * [onDismissRequest]；选项点击后不收起（调用方控制 expanded，对齐 React 可连续
- * 调字段/方向/分组）。内容超高时内部滚动（48dp 触控行高下矮屏的安全阀）。
+ * 调字段/方向/分组）。高度上限 = 锚点下方到屏幕底缘的可用空间（2026-09-28 起，
+ * 原固定 480dp 会把空间充足时的长菜单也截进滚动区）；真放不下时内部滚动兜底。
  */
 @Composable
 internal fun AuroraDropdown(
@@ -967,6 +968,21 @@ internal fun AuroraDropdown(
                     }
 
                     Box(Modifier.width(192.dp)) {
+                        // 高度上限 = 锚点下缘到屏幕底缘的实际可用空间（留 16dp 底距），
+                        // 而非旧的固定 480dp——480dp 会把 10 项的长按菜单（≈496dp）在
+                        // 下方空间充足时也截进滚动区、末行裁半（2026-09-28 用户反馈：
+                        // 屏幕高度够就应完整展示全部内容，不需要滚动）。空间真不够
+                        // （矮屏/横屏/锚点贴底）时上限随之收紧并保底 120dp，
+                        // verticalScroll 仍是安全阀。坐标口径：锚点是宿主窗口系、
+                        // 屏高是全屏系，宿主 edge-to-edge 两系原点一致，statusTop 不用扣。
+                        val menuMaxHeight = with(density) {
+                            val bottomMargin = 16.dp.toPx()
+                            val gapPx = 8.dp.toPx()
+                            (context.resources.displayMetrics.heightPixels -
+                                latestAnchor.bottom.roundToInt() - gapPx - bottomMargin)
+                                .coerceAtLeast(with(density) { 120.dp.toPx() })
+                                .toDp()
+                        }
                         // 模糊后的背景快照垫底；菜单打开期间内容区不可交互，
                         // 快照与实时画面等价（对齐桌面 backdrop-blur 的静态语义）
                         backdrop?.let { bmp ->
@@ -989,7 +1005,7 @@ internal fun AuroraDropdown(
                             Modifier
                                 .onSizeChanged { menuHeightPx = it.height }
                                 .fillMaxWidth()
-                                .heightIn(max = 480.dp)
+                                .heightIn(max = menuMaxHeight)
                                 .verticalScroll(rememberScrollState())
                                 .clip(RoundedCornerShape(8.dp))
                                 // 2026-09-20 用户要求更透：桌面 /90 基础上降到 /75。
@@ -1983,25 +1999,8 @@ private val IconPanelLeft: ImageVector by lazy {
 }
 
 /** lucide tag：标签牌 + 铆点（标签筛选按钮）。 */
-private val IconTag: ImageVector by lazy {
-    iconBuilder("Tag") {
-        // lucide tag 主路径（圆角五边形斜挂）
-        moveTo(12.586f, 2.586f)
-        arcTo(2f, 2f, 0f, false, false, 11.172f, 2f)
-        lineTo(4f, 2f)
-        arcTo(2f, 2f, 0f, false, false, 2f, 4f)
-        lineTo(2f, 11.172f)
-        arcTo(2f, 2f, 0f, false, false, 2.586f, 12.586f)
-        lineTo(11.29f, 21.29f)
-        arcTo(2.426f, 2.426f, 0f, false, false, 14.71f, 21.29f)
-        lineTo(21.29f, 14.71f)
-        arcTo(2.426f, 2.426f, 0f, false, false, 21.29f, 11.29f)
-        close()
-        // 铆点 circle(7.5, 7.5, r=0.5)：stroke 圆头放大成可见小点
-        moveTo(7.5f, 7.5f)
-        lineTo(7.51f, 7.5f)
-    }
-}
+// IconTag 已上移 AuroraIcons.kt 共享（2026-09-28 长按菜单图形化顺带收编，几何不变），
+// 本文件直接引用同包共享版本。
 
 /** lucide settings-2：双横线 + 双旋钮（设置入口，M4c 横屏手机顶栏兜底）。 */
 private val IconSettings2: ImageVector by lazy {

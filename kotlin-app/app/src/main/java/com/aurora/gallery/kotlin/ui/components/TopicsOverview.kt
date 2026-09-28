@@ -750,6 +750,14 @@ private fun LanTopicCard(
             AuroraMenuItem(
                 text = "删除",
                 textColor = Color(0xFFEF4444),
+                leading = {
+                    Icon(
+                        imageVector = IconTrash2,
+                        contentDescription = null,
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
                 onClick = {
                     menuOpen = false
                     onDelete()
@@ -988,6 +996,14 @@ private fun TopicCardMenuOverlay(
     ) {
         AuroraMenuItem(
             text = "重命名",
+            leading = {
+                Icon(
+                    imageVector = IconPencil,
+                    contentDescription = null,
+                    tint = AuroraTheme.colors.textSecondary,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
             onClick = {
                 onMenuOpenChange(false)
                 onRename()
@@ -997,6 +1013,14 @@ private fun TopicCardMenuOverlay(
         AuroraMenuItem(
             text = "删除",
             textColor = Color(0xFFEF4444),
+            leading = {
+                Icon(
+                    imageVector = IconTrash2,
+                    contentDescription = null,
+                    tint = Color(0xFFEF4444),
+                    modifier = Modifier.size(16.dp),
+                )
+            },
             onClick = {
                 onMenuOpenChange(false)
                 onDelete()

@@ -46,8 +46,16 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
  * （[moreExpanded]/[onMoreExpandedChange] 提升到宿主）——长按已选中项要从网格侧把它
  * 打开（M1 占位「长按已选中项的上下文菜单」的同位收口，桌面同位是文件右键菜单）。
  */
-/** 「更多」菜单项（标签 + 动作；3.2 归入/移除 + 4.3 标签三项）。 */
-data class SelectionMoreAction(val label: String, val onClick: () -> Unit)
+/**
+ * 「更多」菜单项（图标 + 标签 + 动作；3.2 归入/移除 + 4.3 标签三项）。[icon] 非空时经
+ * [AuroraMenuItem] 的 leading 槽渲染（16dp textSecondary，TopBar 排序菜单同款）——长按
+ * 菜单图形化对齐查看器 MoreMenuPopup 的行首 lucide 图标。
+ */
+data class SelectionMoreAction(
+    val label: String,
+    val icon: ImageVector? = null,
+    val onClick: () -> Unit,
+)
 
 @Composable
 fun SelectionBar(
@@ -143,6 +151,16 @@ fun SelectionBar(
                 moreActions.forEach { action ->
                     AuroraMenuItem(
                         text = action.label,
+                        leading = action.icon?.let { icon ->
+                            {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = colors.textSecondary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        },
                         onClick = {
                             onMoreExpandedChange(false)
                             action.onClick()

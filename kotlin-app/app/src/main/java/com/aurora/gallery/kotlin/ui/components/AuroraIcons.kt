@@ -715,3 +715,188 @@ internal val IconLogOut: ImageVector by lazy {
         lineTo(9f, 12f)
     }
 }
+
+// —— 长按菜单图标（2026-09-28：网格/专题/人物长按菜单图形化，对齐查看器 MoreMenuPopup
+//  的 ic_lucide_* drawable 与桌面 ContextMenu.tsx 的 lucide-react 引用；几何凡查看器已有
+//  drawable 的取同一官方 lucide v1.48 路径，保证两套菜单同项同形）——
+
+/** lucide frame（查看器菜单「加入画布」同款 ic_lucide_frame：# 形四线框）。 */
+internal val IconFrame: ImageVector by lazy {
+    auroraIcon("Frame") {
+        moveTo(2f, 6f)
+        lineTo(22f, 6f)
+        moveTo(2f, 18f)
+        lineTo(22f, 18f)
+        moveTo(6f, 2f)
+        lineTo(6f, 22f)
+        moveTo(18f, 2f)
+        lineTo(18f, 22f)
+    }
+}
+
+/** lucide layout（桌面 ContextMenu「添加到主题」的 Layout：面板分栏）。 */
+internal val IconLayout: ImageVector by lazy {
+    auroraIcon("Layout") {
+        roundedRect(3f, 3f, 18f, 18f, 2f)
+        moveTo(3f, 9f)
+        lineTo(21f, 9f)
+        moveTo(9f, 21f)
+        lineTo(9f, 9f)
+    }
+}
+
+/** lucide tag（编辑标签；几何取 TopBar.kt 已验证的 IconTag 同一笔顺）。 */
+internal val IconTag: ImageVector by lazy {
+    auroraIcon("Tag") {
+        moveTo(12.586f, 2.586f)
+        arcTo(2f, 2f, 0f, false, false, 11.172f, 2f)
+        lineTo(4f, 2f)
+        arcTo(2f, 2f, 0f, false, false, 2f, 4f)
+        lineTo(2f, 11.172f)
+        arcTo(2f, 2f, 0f, false, false, 2.586f, 12.586f)
+        lineTo(11.29f, 21.29f)
+        arcTo(2.426f, 2.426f, 0f, false, false, 14.71f, 21.29f)
+        lineTo(21.29f, 14.71f)
+        arcTo(2.426f, 2.426f, 0f, false, false, 21.29f, 11.29f)
+        close()
+        dot(7.5f, 7.5f)
+    }
+}
+
+/** lucide copy（复制标签/复制到；同查看器 ic_lucide_copy：双层圆角矩形）。 */
+internal val IconCopy: ImageVector by lazy {
+    auroraIcon("Copy") {
+        roundedRect(8f, 8f, 14f, 14f, 2f)
+        moveTo(4f, 16f)
+        curveTo(2.9f, 16f, 2f, 15.1f, 2f, 14f)
+        lineTo(2f, 4f)
+        curveTo(2f, 2.9f, 2.9f, 2f, 4f, 2f)
+        lineTo(14f, 2f)
+        curveTo(15.1f, 2f, 16f, 2.9f, 16f, 4f)
+    }
+}
+
+/** lucide clipboard（粘贴标签；桌面 ContextMenu 的 Clipboard：板身 + 顶夹）。 */
+internal val IconClipboard: ImageVector by lazy {
+    auroraIcon("Clipboard") {
+        roundedRect(8f, 2f, 8f, 4f, 1f)
+        moveTo(16f, 4f)
+        lineTo(18f, 4f)
+        curveTo(19.1f, 4f, 20f, 4.9f, 20f, 6f)
+        lineTo(20f, 20f)
+        curveTo(20f, 21.1f, 19.1f, 22f, 18f, 22f)
+        lineTo(6f, 22f)
+        curveTo(4.9f, 22f, 4f, 21.1f, 4f, 20f)
+        lineTo(4f, 6f)
+        curveTo(4f, 4.9f, 4.9f, 4f, 6f, 4f)
+        lineTo(8f, 4f)
+    }
+}
+
+/** lucide pencil（重命名；同查看器 ic_lucide_pencil v1.48 几何。SVG 的 a1,1 弧弦长超出
+ *  直径，SVG 规范自动放大 r≈2.82——PathBuilder 无此自适应，直接写放大后半径）。 */
+internal val IconPencil: ImageVector by lazy {
+    auroraIcon("Pencil") {
+        moveTo(21.174f, 6.812f)
+        arcTo(2.825f, 2.825f, 0f, false, false, 17.188f, 2.825f)
+        lineTo(3.842f, 16.174f)
+        arcTo(2f, 2f, 0f, false, false, 3.342f, 17.004f)
+        lineTo(2.021f, 21.356f)
+        arcTo(0.5f, 0.5f, 0f, false, false, 2.644f, 21.978f)
+        lineTo(6.997f, 20.658f)
+        arcTo(2f, 2f, 0f, false, false, 7.827f, 20.161f)
+        close()
+        moveTo(15f, 5f)
+        lineTo(19f, 9f)
+    }
+}
+
+/** lucide sparkles（AI 分析/重命名/相册分析；同查看器 ic_lucide_sparkles：主星 + 十字 + 圆点）。 */
+internal val IconSparkles: ImageVector by lazy {
+    auroraIcon("Sparkles") {
+        moveTo(11.017f, 2.814f)
+        arcTo(1f, 1f, 0f, false, true, 12.983f, 2.814f)
+        lineTo(14.034f, 8.372f)
+        arcTo(2f, 2f, 0f, false, false, 15.628f, 9.966f)
+        lineTo(21.186f, 11.017f)
+        arcTo(1f, 1f, 0f, false, true, 21.186f, 12.983f)
+        lineTo(15.628f, 14.034f)
+        arcTo(2f, 2f, 0f, false, false, 14.034f, 15.628f)
+        lineTo(12.983f, 21.186f)
+        arcTo(1f, 1f, 0f, false, true, 11.017f, 21.186f)
+        lineTo(9.966f, 15.628f)
+        arcTo(2f, 2f, 0f, false, false, 8.372f, 14.034f)
+        lineTo(2.814f, 12.983f)
+        arcTo(1f, 1f, 0f, false, true, 2.814f, 11.017f)
+        lineTo(8.372f, 9.966f)
+        arcTo(2f, 2f, 0f, false, false, 9.966f, 8.372f)
+        close()
+        moveTo(20f, 2f)
+        lineTo(20f, 6f)
+        moveTo(22f, 4f)
+        lineTo(18f, 4f)
+        fullCircle(4f, 20f, 2f)
+    }
+}
+
+/** lucide scan-search（AI 人物识别；同查看器 ic_lucide_scan_search：取景框 + 放大镜圆）。 */
+internal val IconScanSearch: ImageVector by lazy {
+    auroraIcon("ScanSearch") {
+        moveTo(3f, 7f)
+        lineTo(3f, 5f)
+        arcTo(2f, 2f, 0f, false, true, 5f, 3f)
+        lineTo(7f, 3f)
+        moveTo(17f, 3f)
+        lineTo(19f, 3f)
+        arcTo(2f, 2f, 0f, false, true, 21f, 5f)
+        lineTo(21f, 7f)
+        moveTo(21f, 17f)
+        lineTo(21f, 19f)
+        arcTo(2f, 2f, 0f, false, true, 19f, 21f)
+        lineTo(17f, 21f)
+        moveTo(7f, 21f)
+        lineTo(5f, 21f)
+        arcTo(2f, 2f, 0f, false, true, 3f, 19f)
+        lineTo(3f, 17f)
+        fullCircle(12f, 12f, 3f)
+        moveTo(16f, 16f)
+        lineTo(14.1f, 14.1f)
+    }
+}
+
+/** lucide folder-input（移动到；同查看器「移动到文件夹」ic_lucide_folder_input）。 */
+internal val IconFolderInput: ImageVector by lazy {
+    auroraIcon("FolderInput") {
+        moveTo(2f, 9f)
+        lineTo(2f, 5f)
+        arcTo(2f, 2f, 0f, false, true, 4f, 3f)
+        lineTo(7.9f, 3f)
+        arcTo(2f, 2f, 0f, false, true, 9.59f, 3.9f)
+        lineTo(10.4f, 5.1f)
+        arcTo(2f, 2f, 0f, false, false, 12.07f, 6f)
+        lineTo(20f, 6f)
+        arcTo(2f, 2f, 0f, false, true, 22f, 8f)
+        lineTo(22f, 18f)
+        arcTo(2f, 2f, 0f, false, true, 20f, 20f)
+        lineTo(4f, 20f)
+        arcTo(2f, 2f, 0f, false, true, 2f, 18f)
+        lineTo(2f, 17f)
+        moveTo(2f, 13f)
+        lineTo(12f, 13f)
+        moveTo(9f, 16f)
+        lineTo(12f, 13f)
+        lineTo(9f, 10f)
+    }
+}
+
+/** lucide image（设为封面/换头像；桌面 TopicModule 设封面的 FileImage 同语义）。 */
+internal val IconImage: ImageVector by lazy {
+    auroraIcon("Image") {
+        roundedRect(3f, 3f, 18f, 18f, 2f)
+        fullCircle(9f, 9f, 2f)
+        moveTo(21f, 15f)
+        lineTo(17.914f, 11.914f)
+        arcTo(2f, 2f, 0f, false, false, 15.086f, 11.914f)
+        lineTo(6f, 21f)
+    }
+}
