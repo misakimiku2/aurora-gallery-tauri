@@ -1,6 +1,6 @@
 [package]
 name = "aurora-gallery"
-version = "2.0.0"
+version = "2.1.0"
 description = "A modern image gallery and management application"
 authors = ["MISAKIMIKU"]
 license = "MIT"

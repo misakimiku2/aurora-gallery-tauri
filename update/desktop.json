@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "platform": "desktop",
-  "version": "2.0.0",
-  "release_name": "v2.0.0",
-  "release_notes": "2.0 全新大版本，Android 原生客户端首发（Kotlin + Jetpack Compose，与桌面端共用 Rust 核心）：\n\n【全新·安卓】\n· 本地图库：网格/瀑布流/列表三视图、捏合换列、进夹直出、热更新对账\n· 原生查看器：手势缩放/翻页、GIF 与动画 WebP、幻灯片、信息编辑\n· 平板还原桌面端双栏布局，手机专属抽屉导航与精简顶栏\n· 画布与比较器、文件管理（先改后授权，开「所有文件访问」后零弹窗）\n· 全维搜索：scope 搜索、HSV 取色器、CIEDE2000 颜色搜索\n· 标签/人物/专题管理、AI 人物识别与语义搜索、以图搜图\n· 局域网互联：扫码配对桌面端、上传下载、在线读写、双向配对\n· 应用内更新、扫描通知、备份导出导入\n\n【全新·桌面】\n· 局域网共享大升级：双向配对（侧栏「移动设备」）、元数据/人物/专题同步、手机端在线读写\n· AI 算力卸载端点：手机可调用桌面 WD14/CLIP（人物识别、语义搜索、以图搜图）\n· 经典 3D 文件夹图标、更新检查器四级降级链\n\n【修复】桌面标签重命名/粘贴不落库（重启丢改动）、文件重命名后元数据丢失、移动设备不亮、文件夹图标视觉问题；安卓端超大图卡死、进夹白屏、返回刷新、分组布局错位等数十项。\n\n完整清单见 Release 页。",
+  "version": "2.1.0",
+  "release_name": "v2.1.0",
+  "release_notes": "2.1 首次启动体验补齐（与安卓同步升级）：\n\n【全新】\n· 欢迎向导从 2 步扩到 4 步：新增 AI 服务步（服务商/接口/密钥 + 测试连接）与设备互联步（当场开启共享、出地址与访问码）\n· 「扫码下载安卓端」二维码直连当前版本安装包，手机扫码即下载，不再跳发行页\n· 桌面二维码放大到 144px 并提高出图分辨率，加载期间转圈占位\n· 设置 → 局域网共享未开启时新增「获取安卓端」卡片（二维码 + 可复制地址）\n· 文件夹图标默认改为 Canvas 版（已显式选过样式的仍按存档）\n\n【修复】二维码命中缓存时转圈收不起来、欢迎页第 3 步输入框把按钮挤出卡片、Logo 投影画成方形、失效的主色调提示与撑变形底栏等。\n\n完整清单见 Release 页。",
   "published_at": "2026-09-29",
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "installer",
-      "name": "Aurora.Gallery_2.0.0_x64-setup.exe",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/Aurora.Gallery_2.0.0_x64-setup.exe",
+      "name": "Aurora.Gallery_2.1.0_x64-setup.exe",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.1.0/Aurora.Gallery_2.1.0_x64-setup.exe",
       "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.0.0/Aurora.Gallery_2.0.0_x64-setup.exe",
-      "size": 12578632,
+      "size": 12595219,
       "size_text": "12.0 MB",
-      "sha256": "356ab9f5939fcc9b38df6842e061e11fc1baf0274526c139000d39e4d08ebafb"
+      "sha256": "91e607d9993a948e53920d8468d8a37cefbab7971a865af779b2545c23b8d1ff"
     }
   ]
 }
