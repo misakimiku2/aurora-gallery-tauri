@@ -470,6 +470,12 @@ async fn check_github_fallback(
 const GITEE_MANIFEST_URL: &str =
     "https://gitee.com/misakimiku2/aurora_gallery/raw/master/update/desktop.json";
 
+/// 安卓发布清单（`update/android.json`，与 desktop.json 同一份 schema）：欢迎页二维码
+/// 「扫码直接下载安装包」的数据源。清单每次发版都会更新，所以从这里取到的 APK 直链
+/// 天然指向当前版本——比把版本号写死在二维码里更耐用。
+const GITEE_ANDROID_MANIFEST_URL: &str =
+    "https://gitee.com/misakimiku2/aurora_gallery/raw/master/update/android.json";
+
 /// 清单里的一个附件条目（schema 与安卓端 `update/android.json` 完全相同）
 #[derive(Debug, Clone, Deserialize)]
 struct ManifestAsset {
@@ -588,12 +594,64 @@ pub(crate) async fn fetch_manifest_from(
     })
 }
 
+/// 从安卓清单 JSON 里挑出 APK 直链（欢迎页二维码用）。
+///
+/// 纯函数、不联网：解析失败 / assets 为空 / url 为空一律 `None`，调用方据此回退到发行页。
+/// 选取规则：优先 `kind == "apk"`，没有 kind 标记时退回第一条（与桌面清单取 installer 同思路）。
+pub(crate) fn android_apk_url_from_manifest(json: &str) -> Option<String> {
+    let manifest: UpdateManifest = serde_json::from_str(json).ok()?;
+    let asset = manifest
+        .assets
+        .iter()
+        .find(|a| a.kind == "apk")
+        .or_else(|| manifest.assets.first())?;
+    let url = asset.url.trim();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
+    }
+}
+
+/// 拉取安卓清单并返回当前版本 APK 直链（欢迎页二维码「扫码直接下载安装包」）。
+///
+/// 与桌面更新走同一条 Gitee raw 静态清单链路（免鉴权、发版即更新）；带时间戳绕开
+/// CDN 缓存。失败时返回 Err，前端回退到发行页二维码。
+pub async fn fetch_android_apk_url() -> Result<String, String> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let url = format!("{}?t={}", GITEE_ANDROID_MANIFEST_URL, ts);
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let response = client
+        .get(&url)
+        .header("User-Agent", "Aurora-Gallery-Updater/1.0")
+        .header("Cache-Control", "no-cache")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch android manifest: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("android manifest HTTP {}", response.status()));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read android manifest: {}", e))?;
+    android_apk_url_from_manifest(&body).ok_or_else(|| "manifest has no apk asset".to_string())
+}
+
 /// 从 URL 中提取版本号
 fn extract_version_from_url(url: &str) -> Option<String> {
     // URL 格式: https://github.com/misakimiku2/aurora-gallery-tauri/releases/tag/v1.0.0
     // 或者: https://github.com/misakimiku2/aurora-gallery-tauri/releases/tag/1.0.0
     
-    // 查找 /tag/ 后面的版本号
     if let Some(tag_pos) = url.find("/tag/") {
         let version_start = tag_pos + 5;
         let remaining = &url[version_start..];
@@ -1022,5 +1080,58 @@ mod tests {
         let (url, size) = result.unwrap();
         assert_eq!(url, "https://example.com/setup.exe");
         assert_eq!(size, 16777216);
+    }
+
+    // ===== 安卓 APK 直链提取（欢迎页二维码「扫码直接下载安装包」用）=====
+
+    /// 真实 update/android.json 结构（v2.0 发布时的实际内容，字段裁剪到与本函数相关）。
+    const ANDROID_MANIFEST_FIXTURE: &str = r#"{
+        "schema": 1,
+        "platform": "android",
+        "version": "2.0",
+        "version_code": 2,
+        "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
+        "assets": [
+            {
+                "kind": "apk",
+                "name": "AuroraGallery-v2.0.0.apk",
+                "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk",
+                "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk",
+                "size": 37616039
+            }
+        ]
+    }"#;
+
+    #[test]
+    fn test_android_apk_url_prefers_apk_asset() {
+        let url = android_apk_url_from_manifest(ANDROID_MANIFEST_FIXTURE);
+        assert_eq!(
+            url.as_deref(),
+            Some("https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk")
+        );
+    }
+
+    #[test]
+    fn test_android_apk_url_skips_non_apk_when_apk_present() {
+        // 清单里混入非 apk 条目时仍挑 apk（顺序无关）
+        let json = r#"{
+            "version": "9.9",
+            "assets": [
+                { "kind": "notes", "name": "readme.txt", "url": "https://example.com/readme.txt" },
+                { "kind": "apk", "name": "A.apk", "url": "https://example.com/A.apk" }
+            ]
+        }"#;
+        assert_eq!(android_apk_url_from_manifest(json).as_deref(), Some("https://example.com/A.apk"));
+    }
+
+    #[test]
+    fn test_android_apk_url_falls_back_to_first_asset_and_handles_junk() {
+        // 没有 kind 标记时退回第一条
+        let json = r#"{ "version": "9.9", "assets": [ { "name": "A.apk", "url": "https://example.com/A.apk" } ] }"#;
+        assert_eq!(android_apk_url_from_manifest(json).as_deref(), Some("https://example.com/A.apk"));
+        // 空 assets / 非法 JSON / 空 url 一律 None——调用方据此回退发行页
+        assert_eq!(android_apk_url_from_manifest(r#"{ "version": "9.9", "assets": [] }"#), None);
+        assert_eq!(android_apk_url_from_manifest("not json"), None);
+        assert_eq!(android_apk_url_from_manifest(r#"{ "assets": [ { "kind": "apk", "url": "" } ] }"#), None);
     }
 }

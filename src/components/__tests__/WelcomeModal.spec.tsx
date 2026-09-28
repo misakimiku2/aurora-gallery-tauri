@@ -4,11 +4,19 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { WelcomeModal } from '../modals/WelcomeModal';
 import { AppSettings } from '../../types';
 import { lanShareStart } from '../../api/tauri-bridge';
+import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
 
 vi.mock('../../api/tauri-bridge', () => ({
   lanShareStart: vi.fn(async () => ({ port: 8765, local_ip: '192.168.1.10' })),
   lanShareStop: vi.fn(async () => {}),
+}));
+
+vi.mock('../../api/tauri-bridge/updater', () => ({
+  // 默认失败 → 二维码回退发行页（个别用例单独 mockResolvedValue 覆盖为直链）
+  androidApkDownloadUrl: vi.fn(async () => {
+    throw new Error('offline');
+  }),
 }));
 
 vi.mock('../../services/aiService', () => ({
@@ -192,11 +200,28 @@ describe('WelcomeModal 四步向导', () => {
     expect(screen.getByTestId('welcome-ai-provider-openai')).toHaveTextContent('welcome.aiProviderOnline');
   });
 
-  it('互联步：品牌区显示安卓端扫码下载二维码', () => {
+  it('互联步：品牌区显示安卓端扫码下载二维码（取直链失败时回退发行页）', async () => {
     gotoStep4();
     const qr = screen.getByTestId('welcome-android-qr');
-    expect(qr.getAttribute('src')).toContain(
-      encodeURIComponent('https://gitee.com/misakimiku2/aurora_gallery/releases')
+    await waitFor(() =>
+      expect(qr.getAttribute('src')).toContain(
+        encodeURIComponent('https://gitee.com/misakimiku2/aurora_gallery/releases')
+      )
+    );
+  });
+
+  it('互联步：清单可取时二维码直连当前版本 APK', async () => {
+    vi.mocked(androidApkDownloadUrl).mockResolvedValueOnce(
+      'https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk'
+    );
+    gotoStep4();
+    const qr = screen.getByTestId('welcome-android-qr');
+    await waitFor(() =>
+      expect(qr.getAttribute('src')).toContain(
+        encodeURIComponent(
+          'https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk'
+        )
+      )
     );
   });
 });

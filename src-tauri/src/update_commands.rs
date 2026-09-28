@@ -63,3 +63,16 @@ pub fn open_update_download_folder() -> Result<(), String> {
     let downloader = update_downloader::get_downloader();
     downloader.open_download_folder()
 }
+
+/// 欢迎页二维码用：拉取安卓发布清单，返回当前版本 APK 的直链。
+/// 失败由前端回退到发行页二维码（不阻断向导）。
+#[tauri::command]
+pub async fn android_apk_download_url() -> Result<String, String> {
+    let start = std::time::Instant::now();
+    let result = updater::fetch_android_apk_url().await;
+    match &result {
+        Ok(url) => log::info!("[Welcome] android apk url resolved in {:?}: {}", start.elapsed(), url),
+        Err(e) => log::warn!("[Welcome] android apk url fetch failed in {:?}: {}", start.elapsed(), e),
+    }
+    result
+}

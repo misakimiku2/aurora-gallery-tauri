@@ -3,6 +3,7 @@ import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Serve
 import { AuroraLogo } from '../Logo';
 import { AppSettings, AIConfig } from '../../types';
 import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
+import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
 
 /** 双端下载页（update/android.json homepage 主源；安卓 APK 与桌面安装包同仓发布）。 */
@@ -48,6 +49,9 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
     const [mobileStarting, setMobileStarting] = useState(false);
     const [mobileError, setMobileError] = useState<string | null>(null);
     const [serverInfo, setServerInfo] = useState<{ local_ip?: string; port: number } | null>(null);
+    // 安卓端下载二维码：优先直连当前版本 APK（后端读发布清单，发版即更新），
+    // 取不到（离线/清单异常）回退发行页——扫码落点至少是可下载的页面
+    const [androidQrUrl, setAndroidQrUrl] = useState(DOWNLOAD_PAGE_URL);
 
     useEffect(() => {
         if (step === 3) {
@@ -55,6 +59,18 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
             setAiTestResult(null);
         }
     }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // 进互联步时取一次 APK 直链（失败静默——二维码保持发行页，不打断向导）
+    useEffect(() => {
+        if (step !== 4) return;
+        let cancelled = false;
+        androidApkDownloadUrl()
+            .then(url => {
+                if (!cancelled && url) setAndroidQrUrl(url);
+            })
+            .catch(() => { /* 保持发行页回退 */ });
+        return () => { cancelled = true; };
+    }, [step]);
 
     if (!show) return null;
 
@@ -191,7 +207,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                             <div className="flex items-center gap-3">
                                 <img
                                     data-testid="welcome-android-qr"
-                                    src={generateQRCodeUrl(DOWNLOAD_PAGE_URL)}
+                                    src={generateQRCodeUrl(androidQrUrl)}
                                     alt="Android download QR"
                                     className="w-20 h-20 rounded-lg bg-white p-1.5"
                                 />

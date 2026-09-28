@@ -2045,6 +2045,7 @@ pub fn run() {
         update_commands::get_update_download_progress,
         update_commands::install_update,
         update_commands::open_update_download_folder,
+        update_commands::android_apk_download_url,
         system_commands::proxy_http_request,
         clip_commands::clip_search_by_text,
         clip_commands::clip_search_by_image,

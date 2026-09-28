@@ -157,3 +157,14 @@ export const openUpdateDownloadFolder = async (): Promise<void> => {
     throw error;
   }
 };
+
+/**
+ * 欢迎页二维码用：取当前版本安卓 APK 的直链（后端读发布清单 `update/android.json`，
+ * 发版即更新；比在二维码里写死版本号耐用）。失败抛错，调用方回退发行页。
+ */
+export const androidApkDownloadUrl = async (): Promise<string> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('androidApkDownloadUrl is only available in Tauri environment');
+  }
+  return await invoke<string>('android_apk_download_url');
+};

@@ -943,14 +943,14 @@ private fun WfQrImage(url: String, size: Dp) {
     val density = androidx.compose.ui.platform.LocalDensity.current
     // 整数模块尺寸生成：先算出二维码模块数（含白边），按目标像素取整数放大倍数——
     // 避免 QRCodeWriter 拉伸导致的模块宽窄不均（手机相机对畸变模块容错低）
-    val targetPx = with(density) { (size - 16.dp).toPx().toInt() }.coerceAtLeast(32)
+    val targetPx = with(density) { (size - 12.dp).toPx().toInt() }.coerceAtLeast(32)
     val bitmap = remember(url, targetPx) { generateQrBitmap(url, targetPx) }
     Box(
         Modifier
             .size(size)
             .clip(RoundedCornerShape(10.dp))
             .background(Color.White)
-            .padding(8.dp),
+            .padding(6.dp),
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
@@ -1010,8 +1010,11 @@ private fun generateQrBitmap(content: String, targetPx: Int): androidx.compose.u
         .asImageBitmap()
 }
 
-/** 二维码白边（quiet zone）圈数：规范要求 ≥4 模块，与外层白色内边距叠加后更宽裕。 */
-private const val QR_MARGIN_MODULES = 3
+/**
+ * 二维码白边（quiet zone）圈数。规范建议 ≥4 模块；此处取 2 圈 + 外层 6dp 内边距 ≈ 3.5 模块
+ * （2026-09-29 用户反馈白边太宽，从 3 圈+8dp 收窄）。再小会明显影响手机相机识别，不建议降。
+ */
+private const val QR_MARGIN_MODULES = 2
 
 /**
  * 欢迎页配色：桌面 WelcomeModal 的 Tailwind 灰系/蓝系逐值对齐（浅/深两档）。
