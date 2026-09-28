@@ -120,7 +120,24 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     val folders = mutableStateOf<List<Folder>>(emptyList())
     val images = mutableStateOf<List<Image>>(emptyList())
+    /**
+     * 序列取数进行中（[reloadImages]/[reloadLanImages] 换视图清空之后、结果落地之前）。
+     * 空态文案（「文件夹为空」等）只在 `!imagesPending && images.isEmpty()` 时显示：
+     * 「还没查完」不是「真的空」，清空到落地之间的窗口把空态文案亮出来，就是用户看到的
+     * 「进文件夹先闪一两帧文件夹为空」（M8b-23 用户报障）。
+     */
+    val imagesPending = mutableStateOf(false)
     val scanning = mutableStateOf(false)
+
+    /**
+     * 进目录即时首发的序列缓存（key 见 [sequenceKey]/[lanSequenceKey]）：近期看过的目录
+     * 再进时，[openFolder] 在导航切换**之前**同步把缓存发布进 [images]，重组的第一帧就
+     * 是网格而不是「文件夹为空」；随后的 [reloadImages] 因 key 相同不清空，查询落地后
+     * 照常对账纠偏（stale-while-revalidate）。写入只走 [cachePutImages]（LRU 双限淘汰，
+     * 防大库把整个索引抬进内存）；[scanAndReconcile] **不**清它——对账会因任何应用触碰
+     * MediaStore 频繁触发，整表清空等于打回每次冷启，过期项靠进夹时的重查自愈。
+     */
+    private val imagesCacheByKey = LinkedHashMap<String, List<Image>>(16, 0.75f, true)
 
     // —— M4a 2.0 标签数据层 ——
     //
@@ -152,6 +169,35 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** [reloadImages] 上次取数用的序列源（folder|tags|topic 的复合 key），区分「换视图」与「同一视图热刷新」。 */
     private var loadedImagesKey: String? = null
+
+    /** 序列源复合 key 的唯一拼装点（folder|tags|topic 三输入）：[reloadImages] 判「换视图」
+     *  与 [openFolder] 的首发缓存共用，别处不许手拼——格式漂移 = 首发缓存认不出 key。 */
+    private fun sequenceKey(folderId: String?, tags: Collection<String>, topicId: String?): String =
+        "f=${folderId ?: "-"}|g=${tags.joinToString(",")}|t=${topicId ?: "-"}"
+
+    /** LAN 序列源的 key（[reloadLanImages] 清空判定与 [openFolder] 首发缓存共用，同理不许手拼）。 */
+    private fun lanSequenceKey(folderId: String): String = "lan|$folderId"
+
+    /** 当前活动 tab 的序列源 key（发布/失败守卫与 [imagesPending] 复位共用）。 */
+    private fun activeSequenceKey(): String {
+        val now = appState.activeTab
+        return sequenceKey(
+            now.folderId,
+            now.activeTags,
+            if (now.viewMode == ViewMode.TOPICS_OVERVIEW) now.activeTopicId else null,
+        )
+    }
+
+    /** 首发缓存的唯一写入口：LRU 双限（条目 ≤6 且图片总数 ≤1.5 万，约几 MB 对象开销），超限从头淘汰。 */
+    private fun cachePutImages(key: String, imgs: List<Image>) {
+        imagesCacheByKey[key] = imgs
+        while (imagesCacheByKey.size > 6 || imagesCacheByKey.values.sumOf { it.size } > 15_000) {
+            val eldest = imagesCacheByKey.entries.iterator()
+            if (!eldest.hasNext()) break
+            eldest.next()
+            eldest.remove()
+        }
+    }
 
     /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
     val appState = AppState(initialLayout = initialLayout)
@@ -1707,6 +1753,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (notifyScan) scanNotifier.progress()
         Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
         withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
+        // 首发缓存**不**随对账清空（M8b-23 真机反馈二轮：任何应用触碰 MediaStore 都会
+        // 触发对账，整表清空等于把「进夹秒开」打回每次都闪空白）。缓存在这里只承担
+        // 首帧预览，每次进夹 reloadImages 都会重查对账，已删/已挪的项落地后一帧内
+        // 自愈——拿一瞬的旧快照换稳定的零空白进夹，值。
         Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
         folders.value = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
         Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
@@ -2285,10 +2335,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * 为 false，网格可见性与标题分支要单独加它。
      */
     private suspend fun reloadLanImages(folderId: String) {
-        val key = "lan|$folderId"
-        if (key != loadedImagesKey) images.value = emptyList()
+        val key = lanSequenceKey(folderId)
+        // 与本地分支同款：换源清空 + 置 pending（「还在连」≠「远端目录为空」），缓存先首发
+        if (key != loadedImagesKey) {
+            images.value = imagesCacheByKey[key] ?: emptyList()
+            imagesPending.value = true
+        }
         loadedImagesKey = key
-        val session = lan.currentSession() ?: return
+        val session = lan.currentSession() ?: run {
+            // 断线早退也要放下 pending：空态文案（「远端目录为空」）是此时唯一的状态交代
+            if (activeSequenceKey() == key) imagesPending.value = false
+            return
+        }
         // tag 筛选虚拟目录（阶段 5）：纯内存过滤，不发网络请求。判定必须吃 folderId
         // 整串（lanTagFilterOrNull 内部自带 lan: 前缀剥离）；对剥完前缀的 remotePath 再调
         // 会因「lan: 已不在」恒落空、误进 browse 分支（E2E 实测翻过的车）。
@@ -2371,6 +2429,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         val now = appState.activeTab
         if (now.viewMode == ViewMode.BROWSER && now.folderId == folderId) {
             images.value = imgs
+            cachePutImages(key, imgs)
+            imagesPending.value = false
             Log.i(TAG, "[Lan] 目录就绪 ${imgs.size} 张（视频项已过滤）")
         }
     }
@@ -3417,14 +3477,15 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             if (!byTag && tab.folderId == null) return
         }
         // 换视图的 key 必须覆盖三条序列源的所有输入
-        val key = buildString {
-            append("f=").append(tab.folderId ?: "-")
-            append("|g=").append(tab.activeTags.joinToString(","))
-            append("|t=").append(topicId ?: "-")
-        }
+        val key = sequenceKey(tab.folderId, tab.activeTags, topicId)
         // 只在**序列源换了**（进文件夹 / 改筛选 / 换专题）时先清空：否则从 B 切回 A 的
         // 那一帧会闪现上一个视图的内容。热刷新（MediaStore 变更）key 不变，不能清——清了就是闪白。
-        if (key != loadedImagesKey) images.value = emptyList()
+        // 清空的同时置 [imagesPending]（「还没查完」≠「真的空」，空态文案由它压住不闪
+        // 「文件夹为空」）；有缓存先首发缓存再查（进目录第一帧就出网格，M8b-23），落地后对账。
+        if (key != loadedImagesKey) {
+            images.value = imagesCacheByKey[key] ?: emptyList()
+            imagesPending.value = true
+        }
         loadedImagesKey = key
         val imgs = try {
             withContext(Dispatchers.IO) {
@@ -3440,18 +3501,15 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         } catch (e: Exception) {
             // 取数失败留空网格而不是旧内容：旧的可能是**另一个视图**的，比空着更误导
             Log.w(TAG, "[Load] images failed topic=$topicId byTag=$byTag folderId=${tab.folderId}", e)
+            // 还停在这个序列源上就把 pending 放下来，让空态文案恢复可见（不放=空态被永久吞掉）
+            if (activeSequenceKey() == key) imagesPending.value = false
             return
         }
         // 取数期间用户可能已经导航走或改了筛选，过期结果直接丢弃
-        val now = appState.activeTab
-        val nowTopic = if (now.viewMode == ViewMode.TOPICS_OVERVIEW) now.activeTopicId else null
-        val nowKey = buildString {
-            append("f=").append(now.folderId ?: "-")
-            append("|g=").append(now.activeTags.joinToString(","))
-            append("|t=").append(nowTopic ?: "-")
-        }
-        if (nowKey == key) {
+        if (activeSequenceKey() == key) {
             images.value = imgs
+            cachePutImages(key, imgs)
+            imagesPending.value = false
         }
     }
 
@@ -3492,7 +3550,36 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder。
         // 取数不在这里：M4a 4.1 起统一由组合根的 LaunchedEffect(viewMode, folderId,
         // activeTags) 触发 [reloadImages]，导航与筛选共用一个触发点。
+        //
+        // M8b-23 唯一例外：序列的**同步首发**。LaunchedEffect 在重组之后才跑，清空/取数
+        // 都慢一帧——进文件夹的头一两帧只能看到空列表，空态文案就被误亮出来（用户报障）。
+        // 这里在切导航之前同步把 images 备好：
+        //  - 缓存命中（近期看过的目录）→ 直接首发缓存并预写 loadedImagesKey，第一帧就是
+        //    网格；随后 reloadImages 因 key 相同不清空，查询落地后对账纠偏（SWR）。
+        //  - 未命中 → 同步清空 + 置 pending：第一帧既不给上一个视图的内容，也不闪
+        //    「文件夹为空」，只有一小段空白。
+        // key 已在载（侧栏点当前目录这类不触发重查的入口）则原地不动，别把网格清了。
+        // key 形态必须与 reloadImages 的分流/拼装一致（LAN 分流含虚拟搜索目录）。
+        if (tabSequenceDiffers(folder.id)) {
+            val isLan = folder.id.startsWith(LAN_FOLDER_ID_PREFIX) || folder.id == LAN_SEARCH_FOLDER_ID
+            val key = if (isLan) lanSequenceKey(folder.id) else sequenceKey(folder.id, emptyList(), null)
+            val cached = imagesCacheByKey[key]
+            images.value = cached ?: emptyList()
+            imagesPending.value = cached == null
+            loadedImagesKey = key
+        }
         appState.openFolder(folder.id)
+    }
+
+    /** 目标目录的序列源是否与当前已载入的不同（[openFolder] 首发的前置判定）。 */
+    private fun tabSequenceDiffers(folderId: String): Boolean {
+        val tab = appState.activeTab
+        if (tab.viewMode != ViewMode.BROWSER) return true
+        val isLan = folderId.startsWith(LAN_FOLDER_ID_PREFIX) || folderId == LAN_SEARCH_FOLDER_ID
+        val tabIsLan = tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true || tab.folderId == LAN_SEARCH_FOLDER_ID
+        if (isLan != tabIsLan) return true
+        return if (isLan) tab.folderId != folderId
+        else tab.folderId != folderId || tab.activeTags.isNotEmpty() || tab.activeTopicId != null
     }
 
     private fun scanMediaStore(): List<MediaImage> {

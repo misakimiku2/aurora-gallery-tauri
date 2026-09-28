@@ -274,10 +274,18 @@ fun FileGrid(
     // 注意：cellWidthPx（单元格宽度）**不在 key 里**。换档必然伴随列宽变化，若列宽变化触发
     // submit，全量刷新会重新 bind 所有 item，把 FLIP 的初始位移抹掉（表现为硬切）。
     // 列宽改用 adapter.applyCellWidth 同步到可见 item，不 notify。
+    // M8b-23③：数据提交必须在**组合期**同步发生（原在 LaunchedEffect 里，比首帧慢一拍
+    // ——进文件夹时 RV 的第一帧画的是空 adapter，肉眼看就是「先闪一段空白再出图」，
+    // 序列缓存命中也躲不过这帧；FoldersOverview 同款症状当年是靠 RV 复用掩盖的）。
+    // remember 键控与原 LaunchedEffect 完全同键：键不变不重复提交；selectedIds/
+    // collapsedIds 不进 key（选择走 updateSelection 增量，同旧行为，避免全量重绑）。
+    // submit 自带幂等守卫（参数全等返回 false 不 notify），模式切换的 FLIP 提交路径
+    // （update 块内另有一次同步 submit）不受影响。
+    val submitChanged = remember(items, layoutMode, gapPx) {
+        adapter.submit(items, selectedIds, layoutMode, gapPx, collapsedIds)
+    }
     LaunchedEffect(items, layoutMode, gapPx) {
-        if (adapter.submit(items, selectedIds, layoutMode, gapPx, collapsedIds)) {
-            modeFlipEpoch.value++
-        }
+        if (submitChanged) modeFlipEpoch.value++
     }
 
     LaunchedEffect(selectedIds) {

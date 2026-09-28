@@ -1301,6 +1301,7 @@ class MainActivity : ComponentActivity() {
                     // M6b 阶段 2/3：AI 命中集与颜色命中集共用同一过滤分支（null=普通过滤）
                     aiFilterIds = viewModel.aiSearchIds.value ?: viewModel.colorSearchIds.value,
                 )
+                val imagesPending = viewModel.imagesPending.value
                 Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
                         state = appState,
@@ -1309,6 +1310,7 @@ class MainActivity : ComponentActivity() {
                         folders = viewModel.folders.value,
                         images = viewModel.images.value,
                         displayImages = displayImages,
+                        imagesPending = imagesPending,
                         tagGroups = viewModel.tagGroups.value,
                         topics = viewModel.topics.value,
                         coverImagesById = viewModel.coverImagesById.value,
@@ -1957,6 +1959,9 @@ fun App(
     images: List<Image>,
     /** 展示序列（过滤+排序后）由组合根算好传入：查看器的进入序列必须是同一条（M3 2.2）。 */
     displayImages: List<Image>,
+    /** M8b-23：序列取数进行中（换视图清空后、结果未落地）。空态文案的门闩——「还没查完」
+     *  不是「真的空」，否则进文件夹的头一两帧会先闪「文件夹为空」（用户报障）。 */
+    imagesPending: Boolean,
     /** 侧栏标签 Section 的分组 + 计数（Rust 算好的顺序原样渲染，M4a 3.1）。 */
     tagGroups: List<TagGroup>,
     /** 全部专题（M4a 3.2 总览网格）。 */
@@ -2822,8 +2827,8 @@ fun App(
                                 Text("专题不存在", color = AuroraTheme.colors.textSecondary)
                             }
                         }
-                    } else if (displayImages.isEmpty()) {
-                        // 空态没有滚动主体，头部不需要收起逻辑
+                    } else if (!imagesPending && displayImages.isEmpty()) {
+                        // 空态没有滚动主体，头部不需要收起逻辑（pending 期间走下方完整分支，不闪空态）
                         Column(Modifier.fillMaxWidth().weight(1f)) {
                             TopicHero(
                                 topic = currentTopic,
@@ -2947,7 +2952,9 @@ fun App(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 // 文件夹内网格（选择/查看器共用同一展示序列）
-                inBrowser -> {                    if (displayImages.isEmpty()) {
+                // M8b-23：空态文案必须等取数落地（!imagesPending）——「还没查完」≠「真的空」，
+                // pending 期间走下方网格分支渲染空网格（一小段空白），不再闪「文件夹为空」
+                inBrowser -> {                    if (!imagesPending && displayImages.isEmpty()) {
                         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                             val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
                             val emptyText = when {
@@ -2996,7 +3003,9 @@ fun App(
                         FoldersOverview(
                             folders = displayLanFolders,
                             thumbnailLoader = thumbnailLoader,
-                            onFolderClick = { folder -> state.openFolder(folder.id) },
+                            // M8b-23②补：与本地总览同走 onFolderClick（→viewModel.openFolder），
+                            // 远端目录序列也吃「进夹同步首发」缓存，不再直连 state 绕过
+                            onFolderClick = { folder -> onFolderClick(folder) },
                             onFolderLongClick = {},
                             rvState = lanOverviewRvState,
                             level = state.gridLevel,
