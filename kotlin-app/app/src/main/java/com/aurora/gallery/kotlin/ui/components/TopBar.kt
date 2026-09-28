@@ -130,13 +130,16 @@ import kotlin.math.roundToInt
  *    徽标、搜索框、按 [TagGroup] 分组展示的 chips。**组序与组内序都取 Rust
  *    `get_grouped_tags` 的原样**（M4a 1.2 起 UI 侧不再自己排，见清单 §1）；chips 可点，
  *    点下去 = 单选筛选（与侧栏标签行同一个 [onTagClick]）；
- *  - 取色搜索（M6b 阶段 3，D39 双入口的 TopBar 侧）：底部弹层预设 14 色板（桌面
- *    `ColorPickerPopover` 的 bottom-sheet 形态；HSV 自定义拾色器不做）——点色块 =
- *    发起颜色搜索并收起弹层（[onColorSearch]，互斥清 AI 态由宿主处理）；胶囊内色点
- *    芯片（[colorSearchHex] 非 null 时显示）展示过滤态，点击 = [onClearColorSearch] 清除。
+ *  - 取色搜索（M6b 阶段 3，D39 双入口的 TopBar 侧；2026-09-28 升级为 HSV 取色器，
+ *    对齐 React `MobileColorPickerSheet.tsx`）：SV 面板 + Hue 滑块 + hex 输入 + 预设
+ *    16 色 + 最近使用，颜色变化 300ms 防抖后实时搜索（[onColorSearch]，互斥清 AI 态
+ *    由宿主处理），弹层/面板不再「点一下就收起」（收起走底部「完成」）。
+ *    **形态分宿主**：平板 = 右侧推挤面板（宿主承载，本组件只发 [onToggleColorPanel]），
+ *    手机竖屏/横屏 = 本组件内的底部弹层。胶囊内色点芯片（[colorSearchHex] 非 null 时
+ *    显示）展示过滤态，点击 = [onClearColorSearch] 清除。
  *
- * 与 React 版的差异（均有意为之，见各处注释）：色板搜索已落地（M6b 阶段 3：TopBar
- * 取色按钮 + 预设 14 色板 bottom sheet，HSV 自定义拾色器不做）。工具按钮按视图提供
+ * 与 React 版的差异（均有意为之，见各处注释）：颜色搜索已落地（TopBar 取色按钮 +
+ * HSV 取色器，形态分宿主见上）。工具按钮按视图提供
  * （2026-09-17 起）：文件夹内部 = 搜索/排序/视图/日期全量；总览 = 搜索（按文件夹名过滤，
  * React 总览搜索是全局文件搜索、Kotlin M1 无此管道）+ 排序 + 日期筛选（Folder 带
  * createdAt/modifiedAt 后接入）；总览的视图循环（folderLayoutMode）判定不做——文件夹
@@ -182,13 +185,27 @@ fun TopBar(
     /**
      * M6b 阶段 3：取色搜索（桌面 `ColorPickerPopover` 的触屏同位，D39 双入口的
      * TopBar 侧；查看器抽屉色块为另一入口）。[showColorSearch] 与 [showSearch] 同域
-     * （本地 BROWSER 视图才显示）。预设 14 色板版，HSV 自定义拾色器不做。
+     * （本地 BROWSER 视图才显示）。
+     *
+     * 2026-09-28 起取色器升级为 HSV 版（对齐 React `MobileColorPickerSheet.tsx`：
+     * SV 面板 + Hue 滑块 + hex 输入 + 预设 16 色 + 最近使用），并按形态分宿主：
+     * 平板（[com.aurora.gallery.kotlin.ui.isTabletForm]）= 右侧推挤面板（宿主承载，
+     * 本组件只通过 [onToggleColorPanel] 触发、用 [colorPanelOpen] 画高亮）；其余形态
+     * （手机竖屏/横屏）= 本组件内的底部弹层（[ColorPickerPanelContent] 同一个内容
+     * 组合，只是容器不同）。颜色变化 300ms 防抖后实时搜索，不再「点一下就收起」。
      */
     showColorSearch: Boolean = false,
     /** 非 null = 颜色过滤态：胶囊内显示色点芯片（比较不分大小写）。 */
     colorSearchHex: String? = null,
-    /** 选中预设色（宿主发起颜色搜索 + 清 AI 态；弹层关闭在组件内处理）。 */
+    /** 颜色落定（面板内防抖后）→ 宿主发起颜色搜索 + 清 AI 态。 */
     onColorSearch: (String) -> Unit = {},
+    /**
+     * 平板右侧取色面板的开合态（宿主持有；非平板形态恒 false——那时由本组件的底部
+     * 弹层承担，[colorSheetOpen] 是组件内私有态）。仅用于按钮/菜单项的高亮。
+     */
+    colorPanelOpen: Boolean = false,
+    /** 平板形态下点取色入口 = 开关右侧面板（宿主翻转 AppState.layout）。 */
+    onToggleColorPanel: () -> Unit = {},
     /** 胶囊色点芯片点击清除（整颗芯片可点）。 */
     onClearColorSearch: () -> Unit = {},
     dateFilter: DateFilter,
@@ -257,6 +274,11 @@ fun TopBar(
         com.aurora.gallery.kotlin.ui.isCompactWidth(it) &&
             it.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
     }
+    // 2026-09-28：取色器的宿主形态判据（唯一一套，见 FormFactor.kt）——平板走右侧
+    // 推挤面板，其余（手机竖屏/横屏）走本组件的底部弹层。手机竖屏明确要求「从下方弹起」；
+    // 横屏手机高 <480dp，右侧面板会把主内容挤没，同样走底部。
+    val useRightColorPanel = com.aurora.gallery.kotlin.ui.isTabletForm(LocalConfiguration.current)
+    val colorPanelActive = colorSheetOpen || colorPanelOpen
     // 合并菜单开合（受控于 MoreVertical 按钮；与 sortMenu 互斥由 UI 流程保证）
     var moreMenuOpen by remember { mutableStateOf(false) }
     // 二级子菜单态（M8b 验收反馈：排序方式/分组方式拆成二级菜单）：0=主菜单 1=排序 2=分组
@@ -487,19 +509,24 @@ fun TopBar(
                 )
             }
         }
-        // M6b 阶段 3：取色搜索入口（桌面 ColorPickerPopover 的触屏同位；预设 14 色板版）。
-        // 高亮口径同日期筛选：弹层打开或已有颜色过滤生效时点亮。
+        // M6b 阶段 3：取色搜索入口（桌面 ColorPickerPopover 的触屏同位；2026-09-28 起
+        // 升级为 HSV 取色器，形态分宿主见 [useRightColorPanel]）。
+        // 高亮只随面板/弹层开合（2026-09-28 用户反馈：颜色过滤生效≠功能被启用，按钮
+        // 常亮/菜单打勾会被误读成开关态——过滤态由搜索胶囊内的色点芯片展示与清除，
+        // 查看器色块入口发起的搜索同样不会点亮这里）。
         // searchOpen 时隐藏：手机屏宽下主 Row 固定图标已把中栏挤到 ~60dp，再留取色按钮
-        // SearchPill 会坍缩成圆（实测）；胶囊内的颜色芯片承担过滤态展示与清除。
+        // SearchPill 会坍缩成圆（实测）。
         if (showColorSearch && !searchOpen && !isPhonePortrait) {
             TopBarButton(
-                highlighted = colorSheetOpen,
-                onClick = { colorSheetOpen = true },
+                highlighted = colorPanelActive,
+                onClick = {
+                    if (useRightColorPanel) onToggleColorPanel() else colorSheetOpen = true
+                },
             ) {
                 Icon(
                     imageVector = IconPalette,
                     contentDescription = "按颜色搜索",
-                    tint = if (colorSheetOpen || colorSearchHex != null) colors.primary else colors.textSecondary,
+                    tint = if (colorPanelActive) colors.primary else colors.textSecondary,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -682,9 +709,10 @@ fun TopBar(
                             }
                             if (showColorSearch) {
                                 AuroraMenuDivider()
+                                // 不画选中勾（2026-09-28 用户反馈）：颜色过滤生效≠功能被
+                                // 启用，勾会被误读成开关态；过滤态由胶囊色点芯片承担
                                 AuroraMenuItem(
                                     text = "按颜色搜索",
-                                    checked = colorSearchHex != null,
                                     leading = {
                                         Icon(
                                             imageVector = IconPalette,
@@ -696,7 +724,7 @@ fun TopBar(
                                     onClick = {
                                         moreMenuOpen = false
                                         moreSubmenu = 0
-                                        colorSheetOpen = true
+                                        if (useRightColorPanel) onToggleColorPanel() else colorSheetOpen = true
                                     },
                                 )
                             }
@@ -766,6 +794,9 @@ fun TopBar(
         }
     }
 
+    // 手机形态（竖屏/横屏）的取色弹层：与平板右侧面板同一个内容组合（ColorPickerPanel
+    // .ColorPickerPanelContent），只是容器是底部 sheet（2026-09-28 用户要求：手机竖屏
+    // 从下方弹起）。弹层每次打开都是新组合，初值直接取当前过滤色。
     if (colorSheetOpen) {
         ModalBottomSheet(
             onDismissRequest = { colorSheetOpen = false },
@@ -773,12 +804,17 @@ fun TopBar(
             // 同日期/标签弹层的教训：内容型弹层打开即全展，否则横屏下半开锚点截断
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
-            ColorPickerSheet(
-                selectedHex = colorSearchHex,
-                onSelect = { hex ->
-                    onColorSearch(hex)
-                    colorSheetOpen = false
-                },
+            ColorPickerPanelContent(
+                initialHex = colorSearchHex,
+                onColorChange = onColorSearch,
+                onClose = { colorSheetOpen = false },
+                // 内容本身 fillMaxHeight（滚动区靠 weight 撑开，需要确定高度），这里给
+                // 80% 屏高上限：手机竖屏弹层不该顶满整屏（React 版当初就是因为
+                // bottom sheet 几乎占满屏才改的右侧面板，见 docs/Android/安卓端颜色
+                // 搜索与主色调提取优化记录.md §13.1），留下主内容作关闭暗示。
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.8f).dp),
             )
         }
     }
@@ -1358,80 +1394,6 @@ private fun scopeLabelOf(scope: SearchScope): String = when (scope) {
     SearchScope.FILE -> "文件名"
     SearchScope.TAG -> "标签"
     SearchScope.FOLDER -> "文件夹"
-}
-
-/**
- * 预设 14 色（桌面 `src/components/ColorPickerPopover.tsx` 的 presetColors 逐字照抄，
- * 顺序也不动：7 列 × 2 行）。HSV 自定义拾色器 Android 不做（M6b 阶段 3 只做预设色板）。
- */
-private val presetSearchColors = listOf(
-    "#ff0000", "#ffa500", "#ffff00", "#008000", "#0000ff", "#4b0082", "#ee82ee",
-    "#ffffff", "#000000", "#808080", "#a52a2a", "#00ffff", "#ff00ff", "#c0c0c0",
-)
-
-/**
- * 取色搜索底部弹层（桌面 `ColorPickerPopover` 的 bottom-sheet 形态，M6b 阶段 3）：
- * 标题 + 预设 14 色网格（7 列 × 2 行，[presetSearchColors]）。点色块 = [onSelect] 上报
- * 并收起弹层（宿主发起颜色搜索）。白/银与浅色面板底融为一体，补 1dp 边框（桌面
- * `ring-1 ring-black/10` 同旨）；当前过滤色画 2dp primary 外圈（比较不分大小写）。
- * 每格命中区 44dp（移动端最小触控目标）。
- */
-@Composable
-private fun ColorPickerSheet(
-    selectedHex: String?,
-    onSelect: (String) -> Unit,
-) {
-    val colors = AuroraTheme.colors
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
-            .padding(bottom = 12.dp),
-    ) {
-        Text(
-            "按颜色搜索",
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
-            color = colors.textPrimary,
-        )
-        Spacer(Modifier.height(12.dp))
-        presetSearchColors.chunked(7).forEach { rowColors ->
-            Row(Modifier.fillMaxWidth()) {
-                rowColors.forEach { hex ->
-                    val selected = selectedHex != null && selectedHex.equals(hex, ignoreCase = true)
-                    // 白/银与浅色面板底融为一体，补 1dp 边框免得看不见
-                    val needsEdge = hex == "#ffffff" || hex == "#c0c0c0"
-                    val fill = Color(android.graphics.Color.parseColor(hex))
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        Box(
-                            Modifier
-                                .size(44.dp)
-                                // 命中区先挂（44dp 整格可点），再画选中外圈：
-                                // 环画在 44dp 边界上不被 clip 裁剪，色块本体缩进 1dp 让环完整可见
-                                .clickable { onSelect(hex) }
-                                .then(
-                                    if (selected) {
-                                        Modifier.border(2.dp, colors.primary, CircleShape).padding(1.dp)
-                                    } else {
-                                        Modifier
-                                    },
-                                )
-                                .clip(CircleShape)
-                                .background(fill)
-                                .then(
-                                    if (!selected && needsEdge) {
-                                        Modifier.border(1.dp, colors.border, CircleShape)
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
-                        )
-                    }
-                }
-            }
-        }
-    }
 }
 
 /** scope 按钮的 chevron（lucide chevron-down，本文件就近自绘一份）。 */

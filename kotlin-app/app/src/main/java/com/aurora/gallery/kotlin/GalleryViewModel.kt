@@ -704,6 +704,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     private var colorTaskId: String? = null
 
+    /** 颜色搜索进行中到达的最新请求色（HSV 面板防抖连发时补跑用，见 startColorSearch）。 */
+    @Volatile
+    private var pendingColorHex: String? = null
+
     /** 颜色库幂等初始化（FFI 进程级单槽；首次建库，重复 init=switch 幂等）。 */
     private suspend fun ensureColorDb() {
         if (colorDbReady) return
@@ -819,7 +823,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** 按颜色搜索（查看器色块/TopBar 取色器共用）：命中集顶替文本过滤（AI 搜索同管线，互斥清理）。 */
     fun startColorSearch(hex: String) {
-        if (colorSearchBusy.value) return
+        // 搜索进行中又来新色（HSV 面板防抖连发）：只记下最新色，本轮收尾后补跑一次——
+        // 直接丢弃会让「面板上停下来的颜色」与实际过滤色不一致（末次调用被吞）。
+        if (colorSearchBusy.value) {
+            pendingColorHex = hex
+            return
+        }
         viewModelScope.launch {
             colorSearchBusy.value = true
             clearAiSearch() // 与 AI 命中集互斥：颜色命中顶替 AI 命中（反向互斥见 performAiSearch）
@@ -836,6 +845,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 aiToast("颜色搜索失败：${e.message ?: "未知错误"}")
             } finally {
                 colorSearchBusy.value = false
+                // 补跑搜索期间到达的最新色（见函数头的 pendingColorHex 说明）
+                val next = pendingColorHex?.also { pendingColorHex = null }
+                if (next != null && !next.equals(hex, ignoreCase = true)) startColorSearch(next)
             }
         }
     }

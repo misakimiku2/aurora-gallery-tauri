@@ -81,6 +81,8 @@ import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SettingsCategory
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
+import com.aurora.gallery.kotlin.ui.components.ColorPickerPane
+import com.aurora.gallery.kotlin.ui.components.ColorPickerPanelContent
 import com.aurora.gallery.kotlin.ui.components.PhoneSidebarDrawerHost
 import com.aurora.gallery.kotlin.ui.components.SIDEBAR_WIDTH_DP
 import com.aurora.gallery.kotlin.ui.components.TopBar
@@ -1890,6 +1892,16 @@ fun App(
     var createTopicParent by remember { mutableStateOf<String?>(null) }
     // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
     val ptrState = remember { PullToRefreshState() }
+    // 2026-09-28：平板右侧取色面板的初值快照。面板常驻组合不卸载（收起态 0 宽裁剪），
+    // 因此不能把 colorSearchHex 直接当 initialHex 传——面板内拖拽引发的同值回流会重置
+    // 拖拽中的 HSV。只在「打开」这一刻取一次当前过滤色。
+    var colorPanelInitialHex by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.layout.isColorPickerVisible) {
+        if (state.layout.isColorPickerVisible) colorPanelInitialHex = colorSearchHex
+    }
+    // 沉浸态（选择模式/查看器）进入时程序性收起取色面板——与抽屉同口径
+    LaunchedEffect(state.selectionMode) { if (state.selectionMode) state.closeColorPicker() }
+    LaunchedEffect(tab.viewingFileId) { if (tab.viewingFileId != null) state.closeColorPicker() }
 
     if (scanning) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -2179,10 +2191,17 @@ fun App(
     // 条件短路行为与现状逐字一致）。
     BackHandler(
         enabled = tab.viewingFileId == null &&
-            ((isPhone && state.layout.isSidebarVisible) || searchOpen || state.selectionMode || tab.history.canBack),
+            (
+                (isPhone && state.layout.isSidebarVisible) ||
+                    state.layout.isColorPickerVisible ||
+                    searchOpen || state.selectionMode || tab.history.canBack
+            ),
     ) {
         when {
             isPhone && state.layout.isSidebarVisible -> closeDrawer()
+
+            // 平板右侧取色面板（推挤面板不吃系统返回窗口，必须显式接进链）
+            state.layout.isColorPickerVisible -> state.closeColorPicker()
 
             searchOpen -> {
                 // 对齐 React close-android-search：清词 + 关胶囊
@@ -2416,6 +2435,10 @@ fun App(
                     colorSearchHex = colorSearchHex,
                     onColorSearch = onColorSearch,
                     onClearColorSearch = onClearColorSearch,
+                    // 2026-09-28：取色器的形态分宿主——平板走右侧推挤面板（宿主承载），
+                    // 手机走 TopBar 内的底部弹层（组件内私有态，此处恒 false）
+                    colorPanelOpen = state.layout.isColorPickerVisible,
+                    onToggleColorPanel = { state.toggleColorPicker() },
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
                     sortBy = state.sortBy,
@@ -2797,6 +2820,18 @@ fun App(
                 sidebarContent()
             }
             mainContent(Modifier.weight(1f).fillMaxHeight())
+            // 2026-09-28：右侧取色面板（平板形态；React `RightPanel.tsx` 的安卓取色器
+            // 同款推挤容器，与侧栏互斥——见 AppState.toggleColorPicker）
+            ColorPickerPane(
+                visible = state.layout.isColorPickerVisible,
+                modifier = Modifier.fillMaxHeight(),
+            ) {
+                ColorPickerPanelContent(
+                    initialHex = colorPanelInitialHex,
+                    onColorChange = onColorSearch,
+                    onClose = { state.closeColorPicker() },
+                )
+            }
         }
     } else {
         // 手机（D45）：查看器/选择模式 = 沉浸态，进入时程序性收起抽屉（手势禁用随

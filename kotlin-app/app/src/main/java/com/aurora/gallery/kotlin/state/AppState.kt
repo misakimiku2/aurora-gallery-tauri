@@ -243,12 +243,16 @@ data class TabState(
  * 面板可见状态（Kotlin 化 React `AppState.layout`，`src/types.ts:564-568`）。
  *
  * 初始值对齐 `src/utils/layoutSettings.ts` 的安卓分支：横屏开侧栏、元数据面板收起。
- * React 版的 isColorPickerVisible 属桌面取色器面板，安卓端不实现，故省略。
  * 3.5 面板开合在此之上做互斥（对齐 `App.tsx:1793-1812`：开一个关其余）。
+ *
+ * [isColorPickerVisible]（2026-09-28 接上，注释里预留的槽位）：平板形态的右侧取色
+ * 面板开合态——React `RightPanel.tsx` 的安卓取色器同款推挤面板。手机形态不消费它
+ * （走 TopBar 内的底部弹层，属一次性弹层不进布局态）。
  */
 data class LayoutVisibility(
     val isSidebarVisible: Boolean,
     val isMetadataVisible: Boolean = false,
+    val isColorPickerVisible: Boolean = false,
 )
 
 /**
@@ -325,10 +329,33 @@ class AppState(
      * 侧栏开合（3.5，TopBar 左侧开关按钮消费）。
      * 对齐 React `App.tsx` toggleSidebar 的安卓分支：开一个面板时收起其余（互斥开合），
      * 避免两面板同时挤占内容宽度。（isMetadataVisible 的唯一消费者本来是元数据面板，
-     * v15 已拍板 4.2 改期不做，字段与互斥置 false 保留——将来做颜色搜索面板时直接接上。）
+     * v15 已拍板 4.2 改期不做，字段与互斥置 false 保留。）
      */
     fun toggleSidebar() {
-        layout = layout.copy(isSidebarVisible = !layout.isSidebarVisible, isMetadataVisible = false)
+        layout = layout.copy(
+            isSidebarVisible = !layout.isSidebarVisible,
+            isMetadataVisible = false,
+            isColorPickerVisible = false,
+        )
+    }
+
+    /**
+     * 右侧取色面板开合（2026-09-28；对齐 React `App.tsx` toggleColorPicker 的三方互斥）。
+     * 与侧栏互斥：平板屏宽下两个推挤面板同时开会把主内容挤到零宽。
+     */
+    fun toggleColorPicker() {
+        layout = layout.copy(
+            isColorPickerVisible = !layout.isColorPickerVisible,
+            isSidebarVisible = false,
+            isMetadataVisible = false,
+        )
+    }
+
+    /** 取色面板收起（幂等；返回链/沉浸态进入时程序性调用）。 */
+    fun closeColorPicker() {
+        if (layout.isColorPickerVisible) {
+            layout = layout.copy(isColorPickerVisible = false)
+        }
     }
 
     // —— 单标签页（D5：移动版不做多标签）——
