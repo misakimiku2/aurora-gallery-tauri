@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- D50：更新 APK 落在 filesDir/updates/（与 ApkDownloader 的目录常量同名），
+         经 content:// 授权给系统安装器读取——Android 7+ 禁止跨包传 file:// URI。
+         若改了 ApkDownloader 的落盘目录，这里必须同步改。 -->
+    <files-path name="update_apks" path="updates/" />
+</paths>

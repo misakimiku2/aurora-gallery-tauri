@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "platform": "android",
+  "version": "0.1.0",
+  "version_code": 1,
+  "release_name": "v0.1.0",
+  "release_notes": "占位清单：与当前 APK 同版本，客户端判定无更新。发版时按 README 步骤替换。",
+  "published_at": "2026-09-28",
+  "min_version_code": 1,
+  "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
+  "assets": [
+    {
+      "kind": "apk",
+      "name": "AuroraGallery-v0.1.0.apk",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v0.1.0/AuroraGallery-v0.1.0.apk",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v0.1.0/AuroraGallery-v0.1.0.apk",
+      "size": 0,
+      "size_text": "",
+      "sha256": ""
+    }
+  ]
+}

@@ -87,6 +87,7 @@ import com.aurora.gallery.kotlin.state.LanSavedServer
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.toAiConfig
+import com.aurora.gallery.kotlin.update.UpdateController
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -121,6 +122,8 @@ internal fun SettingsHost(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    /** D50：更新检查状态机（关于页「软件更新」区与更新弹窗共用同一实例）。 */
+    update: UpdateController,
     /** M6a 阶段 3：LAN 连接状态机（面板与侧栏共用同一 StateFlow 快照）。 */
     lan: LanManager,
     /**
@@ -169,6 +172,7 @@ internal fun SettingsHost(
             settings = settings,
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
+            update = update,
             lan = lan,
             lanServer = lanServer,
             onLanguageChange = onLanguageChange,
@@ -202,6 +206,7 @@ internal fun SettingsHost(
             settings = settings,
             cacheSizeText = cacheSizeText,
             appVersion = appVersion,
+            update = update,
             lan = lan,
             lanServer = lanServer,
             onLanguageChange = onLanguageChange,
@@ -263,6 +268,8 @@ private fun CategoryContent(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    /** D50：更新检查状态机（关于页「软件更新」区的数据与操作源）。 */
+    update: UpdateController,
     /** false = 不渲染与分类同名的首个节标题（手机二级页：顶栏已是分类名，重复）。 */
     includeSectionHeaders: Boolean = true,
     lan: LanManager,
@@ -347,6 +354,7 @@ private fun CategoryContent(
     if (SettingsCategory.ABOUT in categories) {
         AboutContent(
             appVersion = appVersion,
+            update = update,
             includeSectionHeaders = includeSectionHeaders,
             onOpenUrl = onOpenUrl,
             onAiSettingsChange = onAiSettingsChange,
@@ -1570,10 +1578,149 @@ private fun PlaceholderContent(
     SettingsPlaceholderCard(icon = icon, title = title, description = description)
 }
 
-/** 关于类（对齐桌面 AboutPanel 版式）：软件信息大卡 + 技术栈版本三卡 + 相关链接 + 致谢。检查更新不做（D27）。 */
+/**
+ * 更新弹窗（D50）：启动自动检查或手动检查发现新版本时，在 MainActivity 顶层弹出。
+ * 与关于页共用同一个 [UpdateController] 实例，所以两边看到的下载进度天然一致。
+ * 形制沿用设置对话框：`usePlatformDefaultWidth=false` + rounded 16dp content 卡。
+ */
+@Composable
+internal fun UpdateDialog(
+    update: UpdateController,
+    onDismiss: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    val context = LocalContext.current
+    val config = LocalConfiguration.current
+    val manifest = update.release.value ?: return
+    val phase = update.phase.value
+    val hasApk = update.downloadExists()
+    val asset = manifest.primaryAsset
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier.width(((config.screenWidthDp - 64).coerceAtMost(480)).dp),
+            shape = RoundedCornerShape(16.dp),
+            color = colors.content,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Icon(
+                        imageVector = IconArrowDown,
+                        contentDescription = null,
+                        tint = colors.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text("发现新版本", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+                    Spacer(Modifier.weight(1f))
+                    SettingsBadge("v${manifest.version}", bg = colors.primary.copy(alpha = 0.20f), fg = colors.primary)
+                }
+                if (manifest.releaseNotes.isNotBlank()) {
+                    Text(
+                        "更新内容",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.textPrimary,
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                    Text(
+                        manifest.releaseNotes,
+                        fontSize = 13.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+                val size = asset?.sizeText?.ifBlank { asset.size.takeIf { it > 0 }?.let(::formatUpdateBytes).orEmpty() }.orEmpty()
+                val meta = listOf(
+                    manifest.publishedAt.takeIf { it.isNotBlank() }?.let { "发布于 $it" },
+                    asset?.name?.takeIf { it.isNotBlank() },
+                    size.takeIf { it.isNotBlank() },
+                    update.sourceLabel.value.takeIf { it.isNotBlank() }?.let { "来源 $it" },
+                ).filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+                if (meta.isNotBlank()) {
+                    Text(meta, fontSize = 12.sp, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
+                }
+                if (phase == UpdateController.Phase.DOWNLOADING) {
+                    LinearProgressIndicator(
+                        progress = { update.progress },
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                        color = colors.primary,
+                        trackColor = colors.surface,
+                    )
+                    Text(
+                        "${(update.progress * 100).toInt()}% · ${formatUpdateBytes(update.downloadedBytes.value)}" +
+                            if (update.totalBytes.value > 0) " / ${formatUpdateBytes(update.totalBytes.value)}" else "",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                update.downloadError.value?.let { err ->
+                    Text(err, fontSize = 12.sp, color = Color(colors.palette.danger), modifier = Modifier.padding(top = 8.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    SettingsAction("稍后提醒", onClick = onDismiss)
+                    Spacer(Modifier.size(10.dp))
+                    SettingsAction("忽略此版本", onClick = {
+                        update.ignoreCurrentVersion()
+                        onDismiss()
+                    })
+                    Spacer(Modifier.weight(1f))
+                    Box(Modifier.width(132.dp)) {
+                        LanPrimaryButton(
+                            label = when (phase) {
+                                UpdateController.Phase.DOWNLOADING -> "下载中…"
+                                UpdateController.Phase.FAILED -> if (hasApk) "安装" else "重试下载"
+                                else -> if (hasApk) "安装" else "下载更新"
+                            },
+                            enabled = phase != UpdateController.Phase.DOWNLOADING && (hasApk || asset != null),
+                            onClick = {
+                                if (hasApk) {
+                                    val intent = update.installOrAsk()
+                                    if (intent != null) {
+                                        context.startActivity(intent)
+                                        Toast.makeText(context, "请先开启「允许来自此来源的应用」，再回来点安装", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    update.startDownload()
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 更新用字节格式化（与缓存计数的 `formatCount` 分开：这里要 MB 精度）。 */
+private fun formatUpdateBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 KB"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.0f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    return String.format("%.2f GB", mb / 1024.0)
+}
+
+/**
+ * 关于类（对齐桌面 AboutPanel 版式）：软件信息大卡 + 软件更新区 + 技术栈版本三卡 +
+ * 相关链接 + 致谢。
+ *
+ * D50（2026-09-28）**修订 D27「检查更新不做」**：原先不做的理由是「无渠道」，如今
+ * `update/android.json` 清单 + GitHub/Gitee 双源已就绪，更新检查搬入（见 D50）。
+ */
 @Composable
 private fun AboutContent(
     appVersion: String,
+    /** D50：更新检查状态机（清单获取/下载/安装都在这里发起）。 */
+    update: UpdateController,
     includeSectionHeaders: Boolean = true,
     onOpenUrl: (String) -> Unit,
     /** M6b 阶段 2：AI 设置的即时保存口（面板逐项变更即提交，对齐 GeneralContent 惯例）。 */
@@ -1632,6 +1779,127 @@ private fun AboutContent(
                 }
             }
         }
+
+    // —— 软件更新区（D50：清单双源 GitHub→Gitee）——
+    //
+    // 对齐桌面 AboutPanel「检查更新」区：当前版本 + 状态提示 + 检查按钮。桌面是下载
+    // 安装包后调 installUpdate；安卓是下载 APK 再唤起系统安装界面——形态不同、语义一致。
+    val ctx = LocalContext.current
+    val isChecking = update.checking.value
+    val found = update.release.value
+    val checkErr = update.checkError.value
+    val phase = update.phase.value
+    val hasApk = update.downloadExists()
+    SettingsSubLabel("软件更新", icon = IconArrowDown, topPadding = 20)
+    SettingsCard {
+        Column(Modifier.padding(vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    SettingsBadge(
+                        "v$appVersion",
+                        bg = colors.primary.copy(alpha = 0.20f),
+                        fg = colors.primary,
+                    )
+                    Text(
+                        when {
+                            isChecking -> "正在检查新版本…"
+                            found != null -> "发现新版本 ${found.version}"
+                            checkErr != null -> checkErr
+                            update.checkedOnce.value ->
+                                "已是最新版本" + if (update.sourceLabel.value.isNotBlank()) "（${update.sourceLabel.value}）" else ""
+                            else -> "尚未进行更新检查"
+                        },
+                        fontSize = 13.sp,
+                        color = if (checkErr != null) Color(colors.palette.danger) else colors.textSecondary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                Spacer(Modifier.size(10.dp))
+                if (found == null) {
+                    LanSecondaryButton(
+                        label = if (isChecking) "检查中" else "检查更新",
+                        enabled = !isChecking,
+                        onClick = { update.check(force = true) },
+                        modifier = Modifier.width(110.dp),
+                    )
+                }
+            }
+            if (found != null) {
+                val asset = found.primaryAsset
+                if (found.releaseNotes.isNotBlank()) {
+                    Text("更新内容", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary, modifier = Modifier.padding(top = 10.dp))
+                    Text(found.releaseNotes, fontSize = 13.sp, color = colors.textSecondary, modifier = Modifier.padding(top = 4.dp))
+                }
+                val meta = buildList {
+                    if (found.publishedAt.isNotBlank()) add("发布于 ${found.publishedAt}")
+                    if (asset != null) {
+                        val size = asset.sizeText.ifBlank {
+                            if (asset.size > 0) formatUpdateBytes(asset.size) else ""
+                        }
+                        add(asset.name + if (size.isNotBlank()) " · $size" else "")
+                    }
+                }.joinToString("　")
+                if (meta.isNotBlank()) {
+                    Text(meta, fontSize = 12.sp, color = colors.textSecondary, modifier = Modifier.padding(top = 6.dp))
+                }
+                if (phase == UpdateController.Phase.DOWNLOADING) {
+                    LinearProgressIndicator(
+                        progress = { update.progress },
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        color = colors.primary,
+                        trackColor = colors.surface,
+                    )
+                    Text(
+                        "${(update.progress * 100).toInt()}% · ${formatUpdateBytes(update.downloadedBytes.value)}" +
+                            if (update.totalBytes.value > 0) " / ${formatUpdateBytes(update.totalBytes.value)}" else "",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                update.downloadError.value?.let { err ->
+                    Text(err, fontSize = 12.sp, color = Color(colors.palette.danger), modifier = Modifier.padding(top = 6.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                    val primaryLabel = when (phase) {
+                        UpdateController.Phase.DOWNLOADING -> "下载中…"
+                        UpdateController.Phase.FAILED -> if (hasApk) "安装" else "重试下载"
+                        else -> if (hasApk) "安装" else "下载更新"
+                    }
+                    val primaryEnabled = phase != UpdateController.Phase.DOWNLOADING &&
+                        (hasApk || found.primaryAsset != null)
+                    Box(Modifier.weight(1f)) {
+                        LanPrimaryButton(
+                            label = primaryLabel,
+                            enabled = primaryEnabled,
+                            onClick = {
+                                if (hasApk) {
+                                    // 未获「安装未知应用」授权时拿回一个跳设置页的意图
+                                    val intent = update.installOrAsk()
+                                    if (intent != null) {
+                                        ctx.startActivity(intent)
+                                        Toast.makeText(ctx, "请先开启「允许来自此来源的应用」，再回来点安装", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    update.startDownload()
+                                }
+                            },
+                        )
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    if (phase == UpdateController.Phase.DOWNLOADING) {
+                        LanSecondaryButton("取消", onClick = { update.cancelDownload() }, modifier = Modifier.width(88.dp))
+                    } else {
+                        LanSecondaryButton(
+                            "下载页",
+                            onClick = { update.openReleaseHomepage()?.let(ctx::startActivity) },
+                            modifier = Modifier.width(88.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     // 技术栈版本三卡（桌面 grid-cols-3：应用版本 / Tauri / React → Kotlin 对应）
     SettingsSubLabel("技术栈版本", icon = IconCode, topPadding = 20)
@@ -1704,6 +1972,7 @@ private fun SettingsTabletDialog(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    update: UpdateController,
     lan: LanManager,
     lanServer: LanServerManager?,
     onLanguageChange: (String) -> Unit,
@@ -1831,6 +2100,7 @@ private fun SettingsTabletDialog(
                         settings = settings,
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
+                        update = update,
                         lan = lan,
                         lanServer = lanServer,
                         onLanguageChange = onLanguageChange,
@@ -1871,6 +2141,7 @@ private fun SettingsPhonePage(
     settings: AppSettings,
     cacheSizeText: String,
     appVersion: String,
+    update: UpdateController,
     lan: LanManager,
     lanServer: LanServerManager?,
     onLanguageChange: (String) -> Unit,
@@ -2006,6 +2277,7 @@ private fun SettingsPhonePage(
                         settings = settings,
                         cacheSizeText = cacheSizeText,
                         appVersion = appVersion,
+                        update = update,
                         includeSectionHeaders = false,
                         lan = lan,
                         lanServer = lanServer,

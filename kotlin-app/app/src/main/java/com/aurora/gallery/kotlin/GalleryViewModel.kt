@@ -166,6 +166,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     val settingsStore = SettingsStore(appContext)
 
     /**
+     * D50：更新检查（GitHub→Gitee 双源清单 + 应用内下载安装）。
+     * 挂在 ViewModel 作用域而不是 Activity：APK 下载是长任务，旋屏/重建不能被掐断。
+     */
+    val updateController = com.aurora.gallery.kotlin.update.UpdateController(appContext, viewModelScope)
+
+    /**
      * M6a 阶段 3：LAN 客户端连接状态机（auth/心跳/周期重试/重启恢复）。
      * 状态与远端目录经 [LanManager.snapshot] StateFlow 暴露，设置 LAN 面板与侧栏
      * 网络 Section 消费；LAN 会话是纯 HTTP（LanClient），本地库/词表零接触。
@@ -603,10 +609,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** 应用改名提案（确认弹窗「应用」）：走 M4b 重命名管线（系统授权+元数据挂住由它负责）。 */
-    fun applyAiRenameProposals(targets: List<Pair<android.net.Uri, String>>, onDone: (Int) -> Unit = {}) {
+    /** 应用改名提案（确认弹窗「应用」）：走 M4b 重命名管线（直写+兜底授权由它负责）。 */
+    fun applyAiRenameProposals(
+        targets: List<Pair<android.net.Uri, String>>,
+        onDone: (Int) -> Unit = {},
+        onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit = { _, _ -> },
+    ) {
         aiRenameProposals.value = null
-        renameFiles(targets, onDone)
+        renameFiles(targets, onDone, onBlocked)
     }
 
     /** AI 搜索：query → core 改写（一次 HTTP）→ 全库过滤 → 命中集自带全库序列驱动网格。 */
@@ -1213,26 +1223,50 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * API < 30 的删除兜底（[MainActivity] 走 MediaStore.createDeleteRequest 的前置系统
-     * 弹窗需要 API 30）：直接逐条 contentResolver.delete。本应用自建的媒体可删成功；
-     * 三方媒体的共享存储删除在无 WRITE 权限时抛 SecurityException/Reject——逐条
-     * try/catch，成功多少算多少，失败只记日志。
+     * 删除：直接逐条 contentResolver.delete（主路径，不再是「API < 30 的兜底」）。
+     * 本应用自建/已授权过的行系统直接放行，零弹窗；非本应用创建的行抛
+     * RecoverableSecurityException → 收进 [onBlocked] 由宿主决定是否走
+     * MediaStore.createDeleteRequest 授权一次（重试只针对被拦的那几行）。
+     * 无写权限时的普通 SecurityException 逐条吞掉，成功多少算多少。
      */
-    fun deleteDirect(uris: List<android.net.Uri>, onDone: (Int) -> Unit = {}) {
+    fun deleteDirect(
+        uris: List<android.net.Uri>,
+        onDone: (Int) -> Unit = {},
+        onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit =
+            deleteConsentFallback ?: { _, _ -> },
+    ) {
+        if (uris.isEmpty()) {
+            onDone(0)
+            return
+        }
         viewModelScope.launch {
-            val deleted = withContext(Dispatchers.IO) {
-                var n = 0
-                for (uri in uris) {
+            writeWithConsentFallback(
+                items = uris,
+                uriOf = { it },
+                write = { uri ->
                     try {
-                        if (appContext.contentResolver.delete(uri, null, null) > 0) n++
+                        // delete 返回 0（行已不存在）也算成功：删除是幂等的，「文件没了」
+                        // 就是目标达成——索引死行（MediaStore 已无此行但列表还在显示）
+                        // 由此获得清理机会，而不是永远报「删除失败」（真机 17:54 实测）。
+                        appContext.contentResolver.delete(uri, null, null) >= 0
                     } catch (e: Exception) {
-                        Log.w(TAG, "[Delete] direct delete failed: $uri", e)
+                        // 重删已被系统删掉的（createDeleteRequest 静默执行后）行时，华为
+                        // 会直接抛异常而不是返回 0——此时行已不存在，删除同样达成。
+                        val gone = runCatching { queryDisplayName(uri) == null }.getOrDefault(false)
+                        if (gone) {
+                            debugLog("delete: row already gone, count as success: $uri")
+                            true
+                        } else {
+                            throw e
+                        }
                     }
-                }
-                n
-            }
-            Log.i(TAG, "[Delete] direct deleted=$deleted/${uris.size}")
-            onDone(deleted)
+                },
+                onDone = { n ->
+                    Log.i(TAG, "[Delete] deleted=$n/${uris.size}")
+                    onDone(n)
+                },
+                onBlocked = onBlocked,
+            )
         }
     }
 
@@ -1241,18 +1275,96 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // 与桌面 file_operations.rs 不同源（那边是文件系统语义 + 路径哈希迁移元数据；这边
     // 是 MediaStore 行操作），实现不互抄。三个原语都收 **content uri**（UI 边界把
     // file id 解析成 uri 只做一次，写授权也要用同一批 uri），公共纪律：
-    //  - 授权在宿主（[MainActivity.requestWriteAccess]，createWriteRequest 攒一批一次弹）；
-    //    复制是 insert 新行（App 拥有新行），不需要写授权；
+    //  - **先改后授权**（2026-09-28 改，用户要求「编辑直接生效，不弹系统窗」）：一律先
+    //    直接 update/delete；只有系统抛 RecoverableSecurityException 的行（非本应用创建
+    //    且未授权过）才交给宿主弹一次批量授权、允许后重试那几行。App 自有/已授权过的行
+    //    全程零弹窗，且授权是持久的——同一行只会弹一次。复制是 insert 新行（App 拥有
+    //    新行），本来就不要授权；
     //  - 重命名/移动只改 MediaStore 行的 DISPLAY_NAME/RELATIVE_PATH，_id 与 content_uri
     //    不变 → file_id 不变 → 元数据自然还挂着（规划五要点②），不写任何迁移代码；
-    //  - 全部 Dispatchers.IO + 逐条 try/catch（deleteDirect 同款，成功多少算多少）；
+    //  - 全部 Dispatchers.IO + 逐条 try/catch（成功多少算多少，被系统拦下的不算失败）；
     //  - 完成后主动 scanAndReconcile + reloadImages：observer 的 1s 防抖会兜底，但主动
     //    触发让 UI 即时反映，不赌时序（五要点③「UI 不能等下次扫描才变」）。
+
+    /**
+     * 系统要求用户授权才能改这一行（API 29+ 的 RecoverableSecurityException）。
+     *
+     * 判定走类名字符串而非 `e is RecoverableSecurityException`：minSdk 24，直接引用该类
+     * 在旧设备上一旦执行到判定指令就会 NoClassDefFoundError（SDK 守卫只能保证不执行到，
+     * 字符串判定连这层依赖都不留）。
+     */
+    private fun isWriteConsentRequired(e: Throwable): Boolean =
+        Build.VERSION.SDK_INT >= 29 &&
+            e.javaClass.name == "android.app.RecoverableSecurityException"
+
+    /** 逐个执行 [write]：成功计数，被系统拦下的收进 blocked（不计失败）。IO 线程调用。 */
+    private fun <T> runWriteBatch(
+        items: List<T>,
+        uriOf: (T) -> android.net.Uri,
+        write: (T) -> Boolean,
+    ): Pair<Int, List<T>> {
+        var ok = 0
+        val blocked = ArrayList<T>()
+        for (item in items) {
+            try {
+                if (write(item)) ok++
+            } catch (e: Exception) {
+                if (isWriteConsentRequired(e)) {
+                    Log.i(TAG, "[FileOp] system consent required: ${uriOf(item)}")
+                    blocked += item
+                } else {
+                    Log.w(TAG, "[FileOp] write failed: ${uriOf(item)}", e)
+                }
+            }
+        }
+        return ok to blocked
+    }
+
+    /**
+     * 三个原语共用的「先改后授权」流程：先直写一批 → 全过就结束（[onDone] 一次）；
+     * 有被拦下的则把「被拦的 uri + 重试闭包」交给 [onBlocked]（宿主决定弹窗），授权后
+     * 只重试这批并把两次计数合并回 [onDone]——成功的那批不重复执行。
+     *
+     * [onDone] 因此**在整批最终结束后才回调一次**（Toast 只弹一次）。宿主若不打算请求
+     * 授权（如 API < 30 的删除没有对应 API），不要调 retry，自行收尾。
+     */
+    private suspend fun <T> writeWithConsentFallback(
+        items: List<T>,
+        uriOf: (T) -> android.net.Uri,
+        write: (T) -> Boolean,
+        onDone: (Int) -> Unit,
+        onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit,
+    ) {
+        val first = withContext(Dispatchers.IO) { runWriteBatch(items, uriOf, write) }
+        val ok = first.first
+        val blocked = first.second
+        debugLog("writeBatch ok=$ok blocked=${blocked.size}/${items.size}")
+        // 无条件对账：成功要反映变更；失败（含对索引死行的操作——update/delete 返回 0
+        // 不抛异常）也要把 MediaStore 已不存在的行从索引清出去，否则幽灵文件反复失败
+        // （真机 17:54 实测踩过）。
+        refreshAfterWrite()
+        if (blocked.isEmpty()) {
+            onDone(ok)
+            return
+        }
+        onBlocked(blocked.map(uriOf)) {
+            viewModelScope.launch {
+                val retried = withContext(Dispatchers.IO) { runWriteBatch(blocked, uriOf, write) }
+                refreshAfterWrite()
+                if (retried.second.isNotEmpty()) {
+                    Log.w(TAG, "[FileOp] ${retried.second.size} item(s) still blocked after consent")
+                }
+                onDone(ok + retried.first)
+            }
+        }
+    }
 
     /** 选中集上下文菜单/查看器共用：把文件 id 解析成 content uri（读索引，不挑当前视图）。 */
     fun resolveFileUris(fileIds: Collection<String>, onReady: (List<android.net.Uri>) -> Unit) {
         viewModelScope.launch {
-            onReady(resolveUris(fileIds).map { it.second })
+            val uris = resolveUris(fileIds).map { it.second }
+            debugLog("resolveFileUris ids=$fileIds -> ${uris.size} uris")
+            onReady(uris)
         }
     }
 
@@ -1279,69 +1391,83 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 重命名（改 DISPLAY_NAME）。[targets] = (uri, 新名)；调用方先过宿主授权（单选场景
-     * 只有一个 uri，同样走 [MainActivity.requestWriteAccess] 一条路径）。
+     * 重命名（改 DISPLAY_NAME）。[targets] = (uri, 新名)。
+     *
+     * **直接 update MediaStore 行**（慢图浏览同款体验，2026-09-28 终版）：App 自有/
+     * 已授权过的行直接改成功；非本应用创建的行被系统拦下（华为不认 MANAGE_MEDIA）
+     * 时，把被拦的 uri 交给 [onBlocked]——宿主发一次 `MediaStore.createWriteRequest`
+     * 申请，用户同意后 retry 直写成功。**授权是持久的**：同一行只弹一次，之后永久
+     * 直写。曾经试过「换名复制+删源」绕过弹窗（全静默），验收后否决：行为不直观、
+     * file_id 变化、非标准目录（Huawei Share/ 等）失败，且源删除回执不可靠会造成
+     * 「报失败但实际成功」的假失败。`_id` 不变 → file_id 不变 → 元数据自然挂着
+     * （规划五要点②），不需要任何迁移。
      */
-    fun renameFiles(targets: List<Pair<android.net.Uri, String>>, onDone: (Int) -> Unit = {}) {
+    fun renameFiles(
+        targets: List<Pair<android.net.Uri, String>>,
+        onDone: (Int) -> Unit = {},
+        onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit = { _, _ -> },
+    ) {
         if (targets.isEmpty()) {
             onDone(0)
             return
         }
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) {
-                var count = 0
-                for ((uri, newName) in targets) {
-                    try {
-                        val values = ContentValues().apply {
-                            put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                        }
-                        if (appContext.contentResolver.update(uri, values, null, null) > 0) count++
-                    } catch (e: Exception) {
-                        Log.w(TAG, "[FileOp] rename failed $uri -> $newName", e)
+            writeWithConsentFallback(
+                items = targets,
+                uriOf = { it.first },
+                write = { (uri, newName) ->
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, newName)
                     }
-                }
-                count
-            }
-            Log.i(TAG, "[FileOp] renamed=$n/${targets.size}")
-            if (n > 0) refreshAfterWrite()
-            onDone(n)
+                    appContext.contentResolver.update(uri, values, null, null) > 0
+                },
+                onDone = { n ->
+                    Log.i(TAG, "[FileOp] renamed=$n/${targets.size}")
+                    onDone(n)
+                },
+                onBlocked = onBlocked,
+            )
         }
     }
 
     /**
      * 移动到目标相册（改 RELATIVE_PATH 跨 bucket）。[targetRelPath] 由宿主解析好传入
      * （既有相册的 RELATIVE_PATH 或新相册的 `Pictures/<名字>`，见 resolveFolderRelPath /
-     * MainActivity 的新建相册分支）；授权（批量一次）由调用方先行完成。
+     * MainActivity 的新建相册分支）。与 [renameFiles] 同款：直写 + 被拦时经 [onBlocked]
+     * 走 createWriteRequest 申请（授权持久），不复制不删源。
      */
-    fun moveFiles(uris: List<android.net.Uri>, targetRelPath: String, onDone: (Int) -> Unit = {}) {
+    fun moveFiles(
+        uris: List<android.net.Uri>,
+        targetRelPath: String,
+        onDone: (Int) -> Unit = {},
+        onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit = { _, _ -> },
+    ) {
         if (uris.isEmpty()) {
             onDone(0)
             return
         }
         val relPath = targetRelPath.ensureTrailingSlash()
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) {
-                var count = 0
-                for (uri in uris) {
-                    try {
-                        val values = ContentValues()
-                        if (Build.VERSION.SDK_INT >= 29) {
-                            values.put(MediaStore.Images.Media.RELATIVE_PATH, relPath)
-                        } else {
-                            // API < 29 没有 RELATIVE_PATH 列：按旧语义直接改 DATA 全路径
-                            val name = queryDisplayName(uri) ?: continue
-                            values.put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
-                        }
-                        if (appContext.contentResolver.update(uri, values, null, null) > 0) count++
-                    } catch (e: Exception) {
-                        Log.w(TAG, "[FileOp] move failed $uri -> $relPath", e)
+            writeWithConsentFallback(
+                items = uris,
+                uriOf = { it },
+                write = write@{ uri ->
+                    val values = ContentValues()
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        values.put(MediaStore.Images.Media.RELATIVE_PATH, relPath)
+                    } else {
+                        // API < 29 没有 RELATIVE_PATH 列：按旧语义直接改 DATA 全路径
+                        val name = queryDisplayName(uri) ?: return@write false
+                        values.put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
                     }
-                }
-                count
-            }
-            Log.i(TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
-            if (n > 0) refreshAfterWrite()
-            onDone(n)
+                    appContext.contentResolver.update(uri, values, null, null) > 0
+                },
+                onDone = { n ->
+                    Log.i(TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
+                    onDone(n)
+                },
+                onBlocked = onBlocked,
+            )
         }
     }
 
@@ -1366,34 +1492,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 var count = 0
                 for (source in uris) {
                     try {
-                        val uri = insertImageCopy(source, relPath) ?: continue
-                        appContext.contentResolver.openInputStream(source)?.use { input ->
-                            appContext.contentResolver.openOutputStream(uri)?.use { output ->
-                                input.copyTo(output)
-                            } ?: throw IllegalStateException("openOutputStream failed: $uri")
-                        } ?: throw IllegalStateException("openInputStream failed: $source")
-                        // 元数据/标签搬运；失败只记日志（副本本体已落地，别让它回滚计数）。
-                        // uri 必须重导成扫描管道同款规范形式：insert 返回的是
-                        // external_primary 形式，与 scanMediaStore 拼的 external 形式指向
-                        // 同一行但字符串不同 → generateId 哈希不同 → 元数据写到索引永远
-                        // 对不上的孤儿 id 上（本轮实测踩过）。
-                        try {
-                            val canonicalUri = ContentUris.withAppendedId(
-                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                ContentUris.parseId(uri),
-                            )
-                            val newId = generateId(canonicalUri.toString())
-                            val sourceId = generateId(source.toString())
-                            getFileMetadata(sourceId)?.let { meta ->
-                                upsertFileMetadata(meta.copy(fileId = newId, path = canonicalUri.toString()))
-                            }
-                            getAllFileTags().firstOrNull { it.fileId == sourceId }?.tags?.let { tags ->
-                                if (tags.isNotEmpty()) setFileTags(newId, tags)
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
-                        }
-                        count++
+                        if (copyOneWithMetadata(source, relPath) != null) count++
                     } catch (e: Exception) {
                         Log.w(TAG, "[FileOp] copy failed $source -> $relPath", e)
                     }
@@ -1401,8 +1500,77 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 count
             }
             Log.i(TAG, "[FileOp] copied=$n/${uris.size} -> $relPath")
-            if (n > 0) refreshAfterWrite()
+            refreshAfterWrite()
             onDone(n)
+        }
+    }
+
+    /**
+     * 单文件复制原语：insert 新行（[overrideName] 覆盖名字，改名即「换名复制」）+
+     * 字节流拷贝 + 元数据/标签搬运。返回新 uri（失败 null）。
+     *
+     * 流拷贝失败时回收刚 insert 的行（App 自有行可直接删）——不回收会留 0 字节孤儿，
+     * 对账把它当真文件抬进索引（真机踩过）。元数据/标签搬运失败只记日志，不回滚。
+     */
+    private fun copyOneWithMetadata(
+        source: android.net.Uri,
+        relPath: String,
+        overrideName: String? = null,
+    ): android.net.Uri? {
+        val uri = insertImageCopy(source, relPath, overrideName)
+        debugLog("copyOne insert=$uri src=$source override=$overrideName relPath=$relPath")
+        if (uri == null) return null
+        try {
+            appContext.contentResolver.openInputStream(source)?.use { input ->
+                appContext.contentResolver.openOutputStream(uri)?.use { output ->
+                    input.copyTo(output)
+                } ?: throw IllegalStateException("openOutputStream failed: $uri")
+            } ?: throw IllegalStateException("openInputStream failed: $source")
+        } catch (e: Exception) {
+            debugLog("copyOne stream failed $source -> $uri: $e")
+            Log.w(TAG, "[FileOp] copy stream failed $source -> $uri", e)
+            runCatching { appContext.contentResolver.delete(uri, null, null) }
+            return null
+        }
+        // uri 必须重导成扫描管道同款规范形式：insert 返回的是 external_primary 形式，
+        // 与 scanMediaStore 拼的 external 形式指向同一行但字符串不同 → generateId 哈希
+        // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。
+        try {
+            val canonicalUri = ContentUris.withAppendedId(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                ContentUris.parseId(uri),
+            )
+            val newId = generateId(canonicalUri.toString())
+            val sourceId = generateId(source.toString())
+            getFileMetadata(sourceId)?.let { meta ->
+                upsertFileMetadata(meta.copy(fileId = newId, path = canonicalUri.toString()))
+            }
+            getAllFileTags().firstOrNull { it.fileId == sourceId }?.tags?.let { tags ->
+                if (tags.isNotEmpty()) setFileTags(newId, tags)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
+        }
+        return uri
+    }
+
+    /**
+     * 删除被系统拦下时的兜底（宿主在启动时设置：createDeleteRequest 发起；已开
+     * 「管理媒体」时系统**不弹窗直接执行**删除，结果经 [MainActivity.deleteLauncher]
+     * 回来调 retry 重删——delete 现在是幂等的（>=0 都算成功），计数/收尾都正确）。
+     * rename/move 的「删源」阶段复用同一条兜底链。未设置（理论不可达）时被拦项按失败丢弃。
+     */
+    var deleteConsentFallback: ((List<android.net.Uri>, retry: () -> Unit) -> Unit)? = null
+
+    /**
+     * 华为真机吞第三方 App 的 logcat（AuroraKotlin tag 无输出，17:27/17:51 两次实测），
+     * 文件操作的关键路径落盘到 filesDir/debug_fileop.log，`adb shell run-as
+     * com.aurora.gallery.kotlin cat files/debug_fileop.log` 可读。
+     */
+    private fun debugLog(msg: String) {
+        try {
+            java.io.File(appContext.filesDir, "debug_fileop.log").appendText("$msg\n")
+        } catch (_: Exception) {
         }
     }
 
@@ -1462,8 +1630,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             null, null, null,
         )?.use { if (it.moveToFirst()) it.getString(0) else null }
 
-    /** insert 一行并返回新 uri（携带源的尺寸/日期等列；R+ 走 VOLUME_EXTERNAL_PRIMARY）。 */
-    private fun insertImageCopy(source: android.net.Uri, relPath: String): android.net.Uri? {
+    /** insert 一行并返回新 uri（携带源的尺寸/日期等列；[overrideName] 覆盖 DISPLAY_NAME；R+ 走 VOLUME_EXTERNAL_PRIMARY）。 */
+    private fun insertImageCopy(
+        source: android.net.Uri,
+        relPath: String,
+        overrideName: String? = null,
+    ): android.net.Uri? {
         val resolver = appContext.contentResolver
         val projection = arrayOf(
             MediaStore.Images.Media.DISPLAY_NAME,
@@ -1476,7 +1648,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         )
         resolver.query(source, projection, null, null, null)?.use { c ->
             if (!c.moveToFirst()) return null
-            val name = c.getString(0) ?: return null
+            val name = overrideName ?: c.getString(0) ?: return null
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 if (!c.isNull(1)) put(MediaStore.Images.Media.MIME_TYPE, c.getString(1))

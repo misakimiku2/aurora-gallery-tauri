@@ -141,7 +141,10 @@ async fn check_repo_exists(owner: &str, repo: &str, github_token: Option<&str>) 
     let url = format!("https://api.github.com/repos/{}/{}", owner, repo);
     
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        // D50：GitHub API 走**短超时**——国内网络多数情况是连不上而不是慢，卡满 10s 会
+        // 让整次「检查更新」失去响应感；早点失败才能早点降级到 Gitee 清单。
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(6))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     
@@ -192,31 +195,46 @@ pub async fn check_for_updates(
             match check_github_api_list(current_version, owner, repo, github_token).await {
                 Ok(result) => Ok(result),
                 Err(list_err) => {
-                    log::warn!("GitHub API list failed: {}, trying fallback...", list_err);
+                    log::warn!("GitHub API list failed: {}, trying Gitee manifest...", list_err);
                     
-                    // 如果 API 都失败，尝试备用方案
-                    match check_github_fallback(current_version, owner, repo).await {
+                    // GitHub API 走不通（国内网络常见）时降级到 Gitee 清单——免鉴权的 raw
+                    // 直链，是第二条发布渠道（D50，与安卓端共用同一份 `update/*.json` schema）。
+                    match check_gitee_manifest(current_version, owner, repo).await {
                         Ok(result) => Ok(result),
-                        Err(fallback_err) => {
-                            // 如果备用方案也是 404，说明没有 Release
-                            if fallback_err.contains("404") || fallback_err.contains("not found") {
-                                log::info!("No releases found in repository");
-                                return Ok(UpdateCheckResult {
-                                    has_update: false,
-                                    current_version: current_version.to_string(),
-                                    latest_version: current_version.to_string(),
-                                    download_url: format!("https://github.com/{}/{}/releases", owner, repo),
-                                    installer_url: None,
-                                    installer_size: None,
-                                    release_name: String::new(),
-                                    release_notes: "No releases found. This might be a development build.".to_string(),
-                                    published_at: String::new(),
-                                    error: None,
-                                });
+                        Err(manifest_err) => {
+                            log::warn!("Gitee manifest failed: {}, trying fallback...", manifest_err);
+
+                            // 如果 API 与清单都失败，尝试备用方案
+                            match check_github_fallback(current_version, owner, repo).await {
+                                Ok(result) => Ok(result),
+                                Err(fallback_err) => {
+                                    // 如果备用方案也是 404，说明两侧渠道都没有 Release
+                                    if fallback_err.contains("404") || fallback_err.contains("not found") {
+                                        log::info!("No releases found in repository");
+                                        return Ok(UpdateCheckResult {
+                                            has_update: false,
+                                            current_version: current_version.to_string(),
+                                            latest_version: current_version.to_string(),
+                                            download_url: format!("https://github.com/{}/{}/releases", owner, repo),
+                                            installer_url: None,
+                                            installer_size: None,
+                                            release_name: String::new(),
+                                            release_notes: "No releases found. This might be a development build.".to_string(),
+                                            published_at: String::new(),
+                                            error: None,
+                                        });
+                                    }
+
+                                    log::error!(
+                                        "All methods failed. API: {} | List: {} | Manifest: {} | Fallback: {}",
+                                        api_err, list_err, manifest_err, fallback_err
+                                    );
+                                    Err(format!(
+                                        "GitHub API: {} | List: {} | Gitee manifest: {} | Fallback: {}",
+                                        api_err, list_err, manifest_err, fallback_err
+                                    ))
+                                }
                             }
-                            
-                            log::error!("All methods failed. API: {} | List: {} | Fallback: {}", api_err, list_err, fallback_err);
-                            Err(format!("GitHub API: {} | List: {} | Fallback: {}", api_err, list_err, fallback_err))
                         }
                     }
                 }
@@ -238,7 +256,10 @@ async fn check_github_api_latest(
     );
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        // D50：GitHub API 走**短超时**——国内网络多数情况是连不上而不是慢，卡满 10s 会
+        // 让整次「检查更新」失去响应感；早点失败才能早点降级到 Gitee 清单。
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(6))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -297,7 +318,10 @@ async fn check_github_api_list(
     );
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        // D50：GitHub API 走**短超时**——国内网络多数情况是连不上而不是慢，卡满 10s 会
+        // 让整次「检查更新」失去响应感；早点失败才能早点降级到 Gitee 清单。
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(6))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -438,6 +462,130 @@ async fn check_github_fallback(
 
     log::error!("Could not extract version from HTML, status: {}", status);
     Err("Could not extract version from release page".to_string())
+}
+
+/// 第二条发布渠道：Gitee 仓库里的静态清单（D50）。
+///
+/// ⚠️ 分支名必须与 Gitee 仓库的默认分支一致（新建仓库默认 `master`）；换分支只改这里。
+const GITEE_MANIFEST_URL: &str =
+    "https://gitee.com/misakimiku2/aurora_gallery/raw/master/update/desktop.json";
+
+/// 清单里的一个附件条目（schema 与安卓端 `update/android.json` 完全相同）
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestAsset {
+    url: String,
+    #[serde(default)]
+    #[allow(dead_code)] // 清单里有这一项（UI 展示文件名用），桌面当前只读 url/size
+    name: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    size: Option<u64>,
+}
+
+/// 更新清单（`update/desktop.json`）
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateManifest {
+    version: String,
+    // 注意：清单里的 version_code / min_version_code / sha256 桌面端不用（桌面版本来自
+    // CARGO_PKG_VERSION，只比 SemVer），留着字段是为了与安卓共用同一份 schema
+    #[serde(rename = "release_name", default)]
+    release_name: Option<String>,
+    #[serde(rename = "release_notes", default)]
+    release_notes: Option<String>,
+    #[serde(rename = "published_at", default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    homepage: Option<String>,
+    #[serde(default)]
+    assets: Vec<ManifestAsset>,
+}
+
+/// 降级源：Gitee 仓库里的静态清单（`update/desktop.json`）。
+///
+/// 为什么用清单而不是 Gitee 的 releases API：Gitee OpenAPI 的 `/releases/latest`
+/// 需要 access_token，且仓库无 Release 时直接 404；而公开仓库的 raw 文件是
+/// **免鉴权**的静态直链（实测返回 302 到真实文件，reqwest 默认跟随重定向），
+/// 与安卓端 `UpdateClient` 的 Gitee 源是同一个 URL 写法。
+async fn check_gitee_manifest(
+    current_version: &str,
+    owner: &str,
+    repo: &str,
+) -> Result<UpdateCheckResult, String> {
+    // 时间戳参数：绕开 CDN / 代理对 raw 文件的缓存，清单更新后能立刻生效
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let url = format!("{}?t={}", GITEE_MANIFEST_URL, ts);
+    fetch_manifest_from(&url, current_version, owner, repo).await
+}
+
+/// 清单获取与映射的**可测核心**：URL 参数化（正式路径传 GITEE_MANIFEST_URL，
+/// 单测传本地回环地址起迷你 HTTP server 验证，不依赖外网）。
+pub(crate) async fn fetch_manifest_from(
+    url: &str,
+    current_version: &str,
+    owner: &str,
+    repo: &str,
+) -> Result<UpdateCheckResult, String> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(url)
+        .header("User-Agent", "Aurora-Gallery-Updater/1.0")
+        .header("Cache-Control", "no-cache")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch Gitee manifest: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Gitee manifest HTTP {}", response.status()));
+    }
+
+    let manifest: UpdateManifest = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Gitee manifest: {}", e))?;
+
+    let latest_version = manifest.version.trim_start_matches(['v', 'V']).to_string();
+    let has_update = match (SemVer::parse(current_version), SemVer::parse(&latest_version)) {
+        (Some(current), Some(latest)) => latest > current,
+        // 版本号不合 SemVer 时不猜：**当作无更新**，避免误报成可升级
+        _ => false,
+    };
+
+    let asset = manifest
+        .assets
+        .iter()
+        .find(|a| a.kind == "installer" || a.kind == "apk")
+        .or_else(|| manifest.assets.first());
+
+    Ok(UpdateCheckResult {
+        has_update,
+        current_version: current_version.to_string(),
+        latest_version,
+        download_url: manifest
+            .homepage
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("https://github.com/{}/{}/releases", owner, repo)),
+        installer_url: asset.map(|a| a.url.clone()),
+        installer_size: asset.and_then(|a| a.size),
+        release_name: manifest
+            .release_name
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("v{}", manifest.version)),
+        release_notes: manifest.release_notes.clone().unwrap_or_default(),
+        published_at: manifest.published_at.clone().unwrap_or_default(),
+        error: None,
+    })
 }
 
 /// 从 URL 中提取版本号
@@ -728,6 +876,75 @@ fn process_release(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+
+    /// 起一个只应答一次的迷你 HTTP server，返回其地址（供清单降级源的可测核心用，
+    /// 不依赖外网 / Gitee）。
+    fn serve_manifest_once(body: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+        format!("http://{}", addr)
+    }
+
+    /// D50：Gitee 清单降级源的解析与映射（schema 与安卓端 update/android.json 一致）。
+    #[tokio::test]
+    async fn test_gitee_manifest_fallback() {
+        let body = r#"{
+            "schema": 1,
+            "platform": "desktop",
+            "version": "9.9.9",
+            "version_code": 99,
+            "release_name": "v9.9.9",
+            "release_notes": "单测清单",
+            "published_at": "2026-09-28",
+            "min_version_code": 1,
+            "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
+            "assets": [{
+                "kind": "installer",
+                "name": "AuroraGallery_9.9.9_x64-setup.exe",
+                "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v9.9.9/AuroraGallery_9.9.9_x64-setup.exe",
+                "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v9.9.9/AuroraGallery_9.9.9_x64-setup.exe",
+                "size": 12345678,
+                "size_text": "",
+                "sha256": ""
+            }]
+        }"#;
+        let base = serve_manifest_once(body);
+        let result =
+            fetch_manifest_from(&format!("{}/update/desktop.json", base), "1.1.3", "misakimiku2", "aurora-gallery-tauri")
+                .await
+                .expect("清单降级源应解析成功");
+        assert!(result.has_update, "9.9.9 > 1.1.3 应判定有更新");
+        assert_eq!(result.latest_version, "9.9.9");
+        assert_eq!(
+            result.installer_url.as_deref(),
+            Some("https://gitee.com/misakimiku2/aurora_gallery/releases/download/v9.9.9/AuroraGallery_9.9.9_x64-setup.exe")
+        );
+        assert_eq!(result.installer_size, Some(12345678));
+        assert_eq!(result.release_notes, "单测清单");
+    }
+
+    /// 同版本（清单 version <= 当前 CARGO_PKG_VERSION）时不得误报可升级。
+    #[tokio::test]
+    async fn test_gitee_manifest_no_update_when_same_version() {
+        let body = r#"{"schema":1,"platform":"desktop","version":"1.1.3","release_name":"v1.1.3","release_notes":"","published_at":"","homepage":"","assets":[]}"#;
+        let base = serve_manifest_once(body);
+        let result =
+            fetch_manifest_from(&format!("{}/update/desktop.json", base), "1.1.3", "o", "r").await.unwrap();
+        assert!(!result.has_update);
+        assert!(result.installer_url.is_none(), "空 assets 时不应给出安装包地址");
+    }
 
     #[test]
     fn test_semver_parse() {

@@ -293,6 +293,15 @@ Upgrade-Insecure-Requests: 1
 
 ## 更新日志
 
+### 2026-09-28
+- ✅ **第二发布渠道（Gitee 清单降级）**（对应 Kotlin 版 D50 决策，与安卓端共用同一份 `update/*.json` schema）：
+  - `updater.rs` 降级链改为 **GitHub API latest → list → Gitee 清单（新增）→ 网页抓取**；
+  - Gitee 源走仓库内静态清单 raw 直链（`update/desktop.json`），**免鉴权**——Gitee 的 releases OpenAPI 需要 access_token，刻意不用；
+  - GitHub API 超时收紧为 3s 连接 / 6s 总（原 10s），连不上时尽快降级；
+  - 清单获取抽成 `fetch_manifest_from(url, ...)` 可测核心，新增单测 `test_gitee_manifest_fallback` / `test_gitee_manifest_no_update_when_same_version`（本地迷你 HTTP server，不依赖外网）；
+  - 清单字段与发版步骤见仓库 `update/README.md`（两仓库各放一份清单 + Release 附件，GitHub 清单在 `main` 分支）。
+- ⚠️ 当前状态：**代码完成、渠道未发布**（Gitee 仓库 `misakimiku2/aurora_gallery` 为空、清单未推送、Release 未建）。
+
 ### 2026-02-19
 - ✅ 修复更新日期显示 "Invalid date" 问题
   - 前端 `formatDate` 函数添加空字符串和无效日期检查

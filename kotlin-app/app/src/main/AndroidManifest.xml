@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- MediaStore 图片读取（Android 13+ 用 READ_MEDIA_IMAGES，更低版本用 READ_EXTERNAL_STORAGE） -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -18,6 +19,27 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- D50：应用内更新——下载 APK 后唤起系统安装界面。
+         这不是运行时权限弹窗，而是「特殊权限」：首次安装需用户在系统设置里打开
+         「允许来自此来源的应用」（ApkDownloader.unknownSourcesIntent 会引导过去）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- 2026-09-28 免弹窗主路径：管理媒体（特殊权限，API 31+，不弹运行时窗）。
+         授予后 createDeleteRequest 由系统静默执行（删除零弹窗，真机实测）；但华为
+         对 update（改名/移动）仍要求逐张授权，故它不是「一次授权永久免弹」的终解。 -->
+    <uses-permission
+        android:name="android.permission.MANAGE_MEDIA"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- 2026-09-28 终版：所有文件访问（特殊权限，API 30+，Solid Explorer 同款）。
+         MediaStore 的 createWriteRequest 授权是**按单张**的（改另一张会再弹）；只有
+         授予它之后，直写 update/delete/insert 一律放行，才真正做到「一次开启、此后再
+         无任何系统授权弹窗」。MainActivity.withMediaWriteConsent 在被拦时引导一次，
+         引导期间待执行的操作持久化在 SharedPreferences，回程 onResume 自动续跑。 -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
@@ -43,6 +65,18 @@
             android:name=".LanServerService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- D50：更新 APK 的临时读授权出口（filesDir/updates/，路径见 res/xml/file_paths.xml）。
+             authorities 必须与 ApkDownloader 里 `${packageName}.fileprovider` 一致。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
