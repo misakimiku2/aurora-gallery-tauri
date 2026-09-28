@@ -1,11 +1,20 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -36,15 +47,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.LanServerSnapshot
@@ -53,7 +77,6 @@ import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.WelcomeFlowState
 import com.aurora.gallery.kotlin.state.WelcomeStep
 import com.aurora.gallery.kotlin.ui.isCompactWidth
-import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -61,14 +84,18 @@ import kotlinx.coroutines.launch
 private const val DOWNLOAD_PAGE_URL = "https://gitee.com/misakimiku2/aurora_gallery/releases"
 
 /**
- * 欢迎向导（启动流程优化 2026-09-29，设计文档 docs/启动欢迎流程优化-设计方案.md 4.x）：
- * 首启时由宿主以全屏覆盖层渲染于主界面之上，四步对齐桌面 WelcomeModal——
- * 权限（拒绝兜底=去系统设置）→ 偏好（主题/语言）→ AI 设置（可跳）→ 互联（可跳）。
+ * 欢迎向导（启动流程优化 2026-09-29；三轮反馈起视觉全面对齐桌面 WelcomeModal）：
  *
- * 文案按 [language]（settings.language）在组合内即时切中/英——主界面其余 UI 仍是
- * 中文硬编码（既有惯例），欢迎页自备字典保证自身完整双语，全量 i18n 另案。
- * 触控目标 ≥48dp（desktop-to-android 规范）；返回手势经 BackHandler 走步骤回退，
- * 无死路。状态机见 [WelcomeFlowState]（纯 Kotlin，JUnit 覆盖）。
+ * - 装饰背景：点阵纹理 + 四枚径向渐变色斑（透明度呼吸脉冲对齐桌面 animate-pulse；
+ *   径向渐变免 Modifier.blur，全 API 档一致）；
+ * - 居中悬浮圆角卡片：平板横屏 = 左蓝品牌栏/右内容区各半（对齐桌面 md:flex-row、500px 卡），
+ *   手机竖屏 = 上品牌横幅/下内容（卡片化带边距）；
+ * - 配色取桌面 Tailwind 灰系/蓝系逐值（[wfC] 浅/深两档），不走 AuroraPalette；
+ * - AuroraLogoMark = 桌面 Logo.tsx SVG 逐元素 Canvas 复刻；
+ * - 状态机 [WelcomeFlowState]（纯 Kotlin，JUnit 覆盖）与宿主接线不变。
+ *
+ * 触控目标 ≥48dp（desktop-to-android 规范）；返回手势经 BackHandler 走步骤回退；
+ * 文案按 [language] 在组合内即时切中/英（主界面全量 i18n 另案）。
  */
 @Composable
 fun WelcomeFlow(
@@ -79,6 +106,7 @@ fun WelcomeFlow(
     language: String,
     ai: AiSettings,
     lanSnapshot: LanServerSnapshot?,
+    darkTheme: Boolean,
     onThemeChange: (String) -> Unit,
     onLanguageChange: (String) -> Unit,
     onAiChange: (AiSettings) -> Unit,
@@ -89,13 +117,22 @@ fun WelcomeFlow(
     onFinish: () -> Unit,
 ) {
     val text = welText(language)
-    val colors = AuroraTheme.colors
+    val c = wfC(darkTheme)
     val compact = isCompactWidth(LocalConfiguration.current)
+
+    // AI 步草稿提升到本层（对齐桌面语义：点「下一步」才提交，跳过不落盘；回退后重进以已存值重置）
+    var aiDraft by remember(state.step) { mutableStateOf(ai) }
 
     BackHandler(enabled = state.canBack) { onStateChange(state.back()) }
     // 状态机走到 DONE（互联步「开始使用」推进）即收尾：写 onboarded + 揭幕主界面
     LaunchedEffect(state.step) {
         if (state.step == WelcomeStep.DONE) onFinish()
+    }
+
+    // 下一步：AI 步先提交草稿（跳过路径走 state.skip() 不经过这里，故不落盘）
+    val handleNext = {
+        if (state.step == WelcomeStep.AI && aiDraft != ai) onAiChange(aiDraft)
+        onStateChange(state.next())
     }
 
     val title = when (state.step) {
@@ -113,70 +150,233 @@ fun WelcomeFlow(
         WelcomeStep.DONE -> ""
     }
 
-    Box(Modifier.fillMaxSize().background(colors.main)) {
-        if (compact) {
-            Column(Modifier.fillMaxSize()) {
-                BrandContent(Modifier.fillMaxWidth(), compact = true, title = title, desc = desc, step = state.step)
-                StepContent(
-                    Modifier.weight(1f), text, state, permissionDenied, theme, language, ai, lanSnapshot,
-                    onThemeChange, onLanguageChange, onAiChange, aiTestConnection, enableLanServer,
-                    onRequestPermission, onOpenAppSettings,
+    Box(Modifier.fillMaxSize().background(c.pageBg)) {
+        WfDecoratedBackground(c)
+        Box(
+            Modifier
+                .align(Alignment.Center)
+                .padding(16.dp)
+                .navigationBarsPadding()
+                .then(
+                    if (compact) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier.width(720.dp).height(520.dp)
+                    },
                 )
-                BottomBar(Modifier, text, state, onStateChange)
-            }
-        } else {
-            Row(Modifier.fillMaxSize()) {
-                BrandContent(Modifier.width(320.dp).fillMaxHeight(), compact = false, title = title, desc = desc, step = state.step)
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    StepContent(
-                        Modifier.weight(1f), text, state, permissionDenied, theme, language, ai, lanSnapshot,
-                        onThemeChange, onLanguageChange, onAiChange, aiTestConnection, enableLanServer,
-                        onRequestPermission, onOpenAppSettings,
+                .shadow(
+                    elevation = 16.dp,
+                    shape = RoundedCornerShape(16.dp),
+                    ambientColor = Color(0x1A000000),
+                    spotColor = Color(0x33111827),
+                )
+                .clip(RoundedCornerShape(16.dp))
+                .background(c.cardBg)
+                .border(1.dp, c.border, RoundedCornerShape(16.dp)),
+        ) {
+            if (compact) {
+                Column(Modifier.fillMaxSize()) {
+                    BrandPanel(
+                        Modifier.fillMaxWidth(), compact = true, title = title, desc = desc,
+                        step = state.step, downloadLabel = null,
                     )
-                    BottomBar(Modifier, text, state, onStateChange)
+                    Column(Modifier.weight(1f).fillMaxWidth().background(c.rightBg)) {
+                        StepContent(
+                            Modifier.weight(1f), c, text, state, permissionDenied, theme, language, aiDraft,
+                            lanSnapshot, onThemeChange, onLanguageChange, { aiDraft = it }, aiTestConnection,
+                            enableLanServer, onRequestPermission, onOpenAppSettings,
+                        )
+                        BottomBar(Modifier, c, text, state, onStateChange, handleNext)
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxSize()) {
+                    BrandPanel(
+                        Modifier.fillMaxHeight().width(360.dp), compact = false, title = title, desc = desc,
+                        step = state.step,
+                        downloadLabel = text.scanDownloadAndroid.takeIf { state.step == WelcomeStep.CONNECT },
+                    )
+                    Column(Modifier.weight(1f).fillMaxHeight().background(c.rightBg)) {
+                        StepContent(
+                            Modifier.weight(1f), c, text, state, permissionDenied, theme, language, aiDraft,
+                            lanSnapshot, onThemeChange, onLanguageChange, { aiDraft = it }, aiTestConnection,
+                            enableLanServer, onRequestPermission, onOpenAppSettings,
+                        )
+                        BottomBar(Modifier, c, text, state, onStateChange, handleNext)
+                    }
                 }
             }
         }
     }
 }
 
-/** 品牌区：手机=顶部横幅（compact），平板横屏=左侧整列（对齐桌面左半栏）。 */
+/**
+ * 左蓝品牌栏（桌面 bg-blue-600 纯色 + 蓝右下/紫左上装饰圆 + 白字 + 步骤条）。
+ * 手机竖屏 compact=true 为卡片顶部横幅。[downloadLabel] 非空时在步骤条上方展示
+ * 「扫码下载安卓端」二维码（平板互联步，对齐桌面第 4 步左栏入口）。
+ */
 @Composable
-private fun BrandContent(modifier: Modifier, compact: Boolean, title: String, desc: String, step: WelcomeStep) {
-    Column(
+private fun BrandPanel(
+    modifier: Modifier,
+    compact: Boolean,
+    title: String,
+    desc: String,
+    step: WelcomeStep,
+    downloadLabel: String?,
+) {
+    Box(
         modifier
-            .background(Brush.verticalGradient(listOf(Color(0xFF2563EB), Color(0xFF4F46E5))))
-            .padding(if (compact) 20.dp else 28.dp),
-        verticalArrangement = if (compact) Arrangement.spacedBy(16.dp) else Arrangement.SpaceBetween,
+            .background(Color(0xFF2563EB))
+            .clipToBounds(),
     ) {
-        Column {
+        // 装饰圆（桌面 -bottom-20 -right-20 blur-3xl 圆的径向渐变替代）
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .size(180.dp)
+                .offset(x = 60.dp, y = 60.dp)
+                .background(Brush.radialGradient(listOf(Color(0x803B82F6), Color.Transparent))),
+        )
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .size(140.dp)
+                .offset(x = (-40).dp, y = (-30).dp)
+                .background(Brush.radialGradient(listOf(Color(0x4DA855F7), Color.Transparent))),
+        )
+        Column(
+            // 平板=左侧整列（fillMaxSize 撑满卡高）；手机=顶部横幅（必须 wrap 高度，
+            // 否则 fillMaxSize 会把整张卡吃光、内容区与底栏被挤出屏幕）
+            Modifier
+                .then(if (compact) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
+                .padding(if (compact) 24.dp else 28.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.22f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("A", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                }
+                AuroraLogoMark(size = if (compact) 36.dp else 40.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("AURORA", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text(
+                    "AURORA",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp,
+                )
             }
             if (compact) {
-                Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text(desc, color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 20.sp)
+                Spacer(Modifier.height(12.dp))
+                Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, lineHeight = 28.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(desc, color = Color(0xFFDBEAFE).copy(alpha = 0.9f), fontSize = 14.sp, lineHeight = 20.sp)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!compact) {
+                    Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(desc, color = Color(0xFFDBEAFE).copy(alpha = 0.9f), fontSize = 14.sp, lineHeight = 20.sp)
+                }
+                if (downloadLabel != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        WfQrImage(DOWNLOAD_PAGE_URL, size = 72.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            downloadLabel,
+                            color = Color(0xFFDBEAFE),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                WfStepDots(step)
             }
         }
-        if (!compact) {
-            Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text(desc, color = Color.White.copy(alpha = 0.85f), fontSize = 14.sp, lineHeight = 20.sp)
-        }
-        WfStepDots(step)
     }
+}
+
+/**
+ * 桌面同款 Aurora logo（Logo.tsx SVG 逐元素 Canvas 复刻）：靛→紫→粉对角渐变圆角方块
+ * + 双白色波浪 + 高光圆点。桌面另有 feDropShadow 蓝色投影，Canvas 无模糊近似省略。
+ */
+@Composable
+private fun AuroraLogoMark(size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val s = this.size.width / 256f
+        drawRoundRect(
+            brush = Brush.linearGradient(
+                colors = listOf(Color(0xFF4F46E5), Color(0xFF8B5CF6), Color(0xFFEC4899)),
+                start = Offset(0f, 256f),
+                end = Offset(256f, 0f),
+            ),
+            topLeft = Offset(32f * s, 32f * s),
+            size = Size(192f * s, 192f * s),
+            cornerRadius = CornerRadius(48f * s, 48f * s),
+        )
+        val wave1 = Path().apply {
+            moveTo(32f * s, 138f * s)
+            cubicTo(70f * s, 100f * s, 186f * s, 196f * s, 224f * s, 158f * s)
+        }
+        drawPath(wave1, Color.White.copy(alpha = 0.4f), style = Stroke(width = 20f * s, cap = StrokeCap.Round))
+        val wave2 = Path().apply {
+            moveTo(32f * s, 110f * s)
+            cubicTo(80f * s, 70f * s, 176f * s, 166f * s, 224f * s, 126f * s)
+        }
+        drawPath(wave2, Color.White.copy(alpha = 0.6f), style = Stroke(width = 12f * s, cap = StrokeCap.Round))
+        drawCircle(Color.White.copy(alpha = 0.95f), radius = 14f * s, center = Offset(176f * s, 80f * s))
+    }
+}
+
+/** 装饰背景：点阵（桌面 40px 网格 1.5px 点）+ 四枚色斑。 */
+@Composable
+private fun WfDecoratedBackground(c: WfC) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val w = maxWidth
+        val h = maxHeight
+        Canvas(Modifier.fillMaxSize()) {
+            val step = 40.dp.toPx()
+            val r = 1.5.dp.toPx()
+            var y = 0f
+            while (y <= size.height) {
+                var x = 0f
+                while (x <= size.width) {
+                    drawCircle(c.dotGrid, r, Offset(x, y))
+                    x += step
+                }
+                y += step
+            }
+        }
+        // 桌面四枚色斑的方位/尺寸/动画时长逐一对齐（top-left 蓝 / bottom-right 紫 / top-right 青 / bottom-left 靛）
+        WfBlob(c.blobBlue, Modifier.align(Alignment.TopStart).size(w * 0.6f, h * 0.6f).offset(x = -w * 0.10f, y = -h * 0.10f), 7000, 0)
+        WfBlob(c.blobPurple, Modifier.align(Alignment.BottomEnd).size(w * 0.7f, h * 0.7f).offset(x = w * 0.10f, y = h * 0.10f), 10000, 2000)
+        WfBlob(c.blobCyan, Modifier.align(Alignment.TopEnd).size(w * 0.45f, h * 0.45f).offset(x = -w * 0.10f, y = h * 0.20f), 13000, 4000)
+        WfBlob(c.blobIndigo, Modifier.align(Alignment.BottomStart).size(w * 0.4f, h * 0.4f).offset(x = w * 0.10f, y = -h * 0.20f), 9000, 1000)
+    }
+}
+
+/** 单枚色斑：径向渐变（免 blur 全档一致）+ 透明度呼吸（对齐桌面 animate-pulse）。 */
+@Composable
+private fun WfBlob(color: Color, modifier: Modifier, periodMs: Int, delayMs: Int) {
+    val transition = rememberInfiniteTransition(label = "wfBlob")
+    val pulse by transition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(periodMs, delayMs, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "wfBlobAlpha",
+    )
+    Box(
+        modifier
+            .graphicsLayer { alpha = pulse }
+            .background(Brush.radialGradient(listOf(color, Color.Transparent))),
+    )
 }
 
 @Composable
 private fun StepContent(
     modifier: Modifier,
+    c: WfC,
     text: WelText,
     state: WelcomeFlowState,
     permissionDenied: Boolean,
@@ -192,20 +392,23 @@ private fun StepContent(
     onRequestPermission: () -> Unit,
     onOpenAppSettings: () -> Unit,
 ) {
-    val colors = AuroraTheme.colors
-    Column(
-        modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = if (LocalConfiguration.current.screenWidthDp < 600) 20.dp else 32.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        when (state.step) {
-            WelcomeStep.PERMISSION -> PermissionStep(text, permissionDenied, onRequestPermission, onOpenAppSettings)
-            WelcomeStep.PREFERENCES -> PreferencesStep(text, theme, language, onThemeChange, onLanguageChange)
-            WelcomeStep.AI -> AiStep(text, ai, onAiChange, aiTestConnection)
-            WelcomeStep.CONNECT -> ConnectStep(text, lanSnapshot, enableLanServer)
-            WelcomeStep.DONE -> Text("", color = colors.textSecondary)
+    // Box 居中：内容短（权限/偏好步）时像桌面 justify-center/m-auto 一样垂直居中，
+    // 内容长（AI 步三输入框）时撑满并可滚——两种形态一套结构
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            when (state.step) {
+                WelcomeStep.PERMISSION -> PermissionStep(c, text, permissionDenied, onRequestPermission, onOpenAppSettings)
+                WelcomeStep.PREFERENCES -> PreferencesStep(c, text, theme, language, onThemeChange, onLanguageChange)
+                WelcomeStep.AI -> AiStep(c, text, ai, onAiChange, aiTestConnection)
+                WelcomeStep.CONNECT -> ConnectStep(c, text, lanSnapshot, enableLanServer)
+                WelcomeStep.DONE -> {}
+            }
         }
     }
 }
@@ -213,139 +416,199 @@ private fun StepContent(
 @Composable
 private fun BottomBar(
     modifier: Modifier,
+    c: WfC,
     text: WelText,
     state: WelcomeFlowState,
     onStateChange: (WelcomeFlowState) -> Unit,
+    onNext: () -> Unit,
 ) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (state.canSkip) {
-            Text(
-                text.skipHint,
-                fontSize = 14.sp,
-                color = AuroraTheme.colors.textSecondary,
-                modifier = Modifier
+    Column(modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+        // 桌面同款分隔线（border-t border-gray-100）
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .navigationBarsPadding(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state.canSkip) {
+                Text(
+                    text.skip,
+                    fontSize = 14.sp,
+                    color = c.skipText,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .clickable { onStateChange(state.skip()) }
+                        .padding(horizontal = 8.dp, vertical = 14.dp),
+                )
+            } else {
+                Spacer(Modifier.width(1.dp))
+            }
+            // 桌面同款胶囊主按钮（浅色 bg-gray-900 白字 / 深色 bg-white 黑字）
+            val enabled = state.step != WelcomeStep.PERMISSION
+            val pillShape = RoundedCornerShape(50)
+            Row(
+                Modifier
                     .heightIn(min = 48.dp)
-                    .clickable { onStateChange(state.skip()) }
-                    .padding(horizontal = 8.dp, vertical = 14.dp),
-            )
-        } else {
-            Spacer(Modifier.width(1.dp))
-        }
-        val enabled = state.step != WelcomeStep.PERMISSION
-        WfPrimaryButton(if (state.isLast) text.finish else text.next, enabled = enabled) {
-            onStateChange(state.next())
+                    .clip(pillShape)
+                    .background(if (enabled) c.pillBg else c.disabledBg)
+                    .clickable(enabled = enabled) { onNext() }
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    if (state.isLast) text.finish else text.next,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (enabled) c.pillText else c.disabledText,
+                )
+                Icon(
+                    imageVector = IconChevronRight,
+                    contentDescription = null,
+                    tint = if (enabled) c.pillText else c.disabledText,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
         }
     }
 }
 
-// ===== 各步内容 =====
+// ===== 各步内容（桌面 WelcomeModal 右栏逐块对齐）=====
 
 @Composable
 private fun PermissionStep(
+    c: WfC,
     text: WelText,
     permissionDenied: Boolean,
     onRequestPermission: () -> Unit,
     onOpenAppSettings: () -> Unit,
 ) {
-    val colors = AuroraTheme.colors
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(colors.panel)
-            .border(1.dp, colors.border, RoundedCornerShape(16.dp))
-            .padding(20.dp),
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(text.permissionBody, fontSize = 14.sp, lineHeight = 21.sp, color = colors.textPrimary)
-            if (permissionDenied) {
-                Text(text.permissionDeniedHint, fontSize = 13.sp, lineHeight = 19.sp, color = colors.textSecondary)
-                WfSecondaryButton(text.openSettings, onClick = onOpenAppSettings)
-            }
-            WfPrimaryButton(text.authorize, onClick = onRequestPermission, modifier = Modifier.fillMaxWidth())
+        // 桌面 step1 同款大圆图标
+        Box(
+            Modifier.size(64.dp).clip(CircleShape).background(c.blueIconBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IconImage,
+                contentDescription = null,
+                tint = c.blueIconFg,
+                modifier = Modifier.size(28.dp),
+            )
         }
+        Text(
+            text.permissionBody,
+            fontSize = 14.sp,
+            lineHeight = 21.sp,
+            color = c.textPrimary,
+            textAlign = TextAlign.Center,
+        )
+        if (permissionDenied) {
+            Text(
+                text.permissionDeniedHint,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                color = c.textSecondary,
+                textAlign = TextAlign.Center,
+            )
+            WfSecondaryButton(c, text.openSettings, onClick = onOpenAppSettings)
+        }
+        WfBlueButton(c, text.authorize, onClick = onRequestPermission, modifier = Modifier.fillMaxWidth())
     }
 }
 
 @Composable
 private fun PreferencesStep(
+    c: WfC,
     text: WelText,
     theme: String,
     language: String,
     onThemeChange: (String) -> Unit,
     onLanguageChange: (String) -> Unit,
 ) {
-    val colors = AuroraTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(text.themeLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.textSecondary)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WfChip(text.themeLight, theme == AppSettings.THEME_LIGHT, Modifier.weight(1f)) { onThemeChange(AppSettings.THEME_LIGHT) }
-            WfChip(text.themeDark, theme == AppSettings.THEME_DARK, Modifier.weight(1f)) { onThemeChange(AppSettings.THEME_DARK) }
-            WfChip(text.themeSystem, theme == AppSettings.THEME_SYSTEM, Modifier.weight(1f)) { onThemeChange(AppSettings.THEME_SYSTEM) }
+        Text(text.languageLabel, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = c.label)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            WfChip(c, "中文", language != AppSettings.LANGUAGE_EN, Modifier.weight(1f)) { onLanguageChange(AppSettings.LANGUAGE_ZH) }
+            WfChip(c, "English", language == AppSettings.LANGUAGE_EN, Modifier.weight(1f)) { onLanguageChange(AppSettings.LANGUAGE_EN) }
         }
         Spacer(Modifier.height(8.dp))
-        Text(text.languageLabel, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = colors.textSecondary)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WfChip("中文", language != AppSettings.LANGUAGE_EN, Modifier.weight(1f)) { onLanguageChange(AppSettings.LANGUAGE_ZH) }
-            WfChip("English", language == AppSettings.LANGUAGE_EN, Modifier.weight(1f)) { onLanguageChange(AppSettings.LANGUAGE_EN) }
+        Text(text.themeLabel, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = c.label)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WfChip(c, text.themeLight, theme == AppSettings.THEME_LIGHT, Modifier.weight(1f), icon = IconSun) { onThemeChange(AppSettings.THEME_LIGHT) }
+            WfChip(c, text.themeDark, theme == AppSettings.THEME_DARK, Modifier.weight(1f), icon = IconMoon) { onThemeChange(AppSettings.THEME_DARK) }
+            WfChip(c, text.themeSystem, theme == AppSettings.THEME_SYSTEM, Modifier.weight(1f), icon = IconMonitor) { onThemeChange(AppSettings.THEME_SYSTEM) }
         }
     }
 }
 
-private val AI_PROVIDERS = listOf("openai" to "OpenAI", "ollama" to "Ollama", "lmstudio" to "LM Studio")
+/** 三档 AI 服务商（openai 档显示为「在线」，对齐设置面板 AISettingsPanel 语义）。 */
+private data class WfProvider(val id: String, val label: String, val icon: ImageVector)
+private val AI_PROVIDERS = listOf(
+    WfProvider("openai", "Online", IconGlobe),
+    WfProvider("ollama", "Ollama", IconBot),
+    WfProvider("lmstudio", "LM Studio", IconMonitor),
+)
 
 @Composable
 private fun AiStep(
+    c: WfC,
     text: WelText,
-    ai: AiSettings,
-    onAiChange: (AiSettings) -> Unit,
+    draft: AiSettings,
+    onDraftChange: (AiSettings) -> Unit,
     aiTestConnection: suspend (AiSettings) -> Result<Unit>,
 ) {
-    val colors = AuroraTheme.colors
     val scope = rememberCoroutineScope()
-    // 草稿只在「下一步」时提交（跳过不落盘）；离开该步即弃（重进以已保存值重置）——对齐桌面
-    var draft by remember { mutableStateOf(ai) }
     var testing by remember { mutableStateOf(false) }
     var testOk by remember { mutableStateOf<Boolean?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            AI_PROVIDERS.forEach { (id, label) ->
-                WfChip(label, draft.provider == id, Modifier.weight(1f)) {
-                    draft = draft.copy(provider = id)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AI_PROVIDERS.forEach { p ->
+                WfChip(
+                    c,
+                    if (p.id == "openai") text.aiProviderOnline else p.label,
+                    draft.provider == p.id,
+                    Modifier.weight(1f),
+                    icon = p.icon,
+                ) {
+                    onDraftChange(draft.copy(provider = p.id))
                     testOk = null
                 }
             }
         }
         WfTextField(
+            c,
             label = text.aiEndpoint,
             value = aiEndpointOf(draft),
-            onValueChange = { v -> draft = withEndpoint(draft, v) },
+            onValueChange = { v -> onDraftChange(withEndpoint(draft, v)) },
             hint = "http://127.0.0.1:1234",
         )
         if (draft.provider == "openai") {
             WfTextField(
+                c,
                 label = text.aiApiKey,
                 value = draft.openaiApiKey,
-                onValueChange = { v -> draft = draft.copy(openaiApiKey = v) },
+                onValueChange = { v -> onDraftChange(draft.copy(openaiApiKey = v)) },
                 hint = "sk-…",
             )
         }
         WfTextField(
+            c,
             label = text.aiModel,
             value = aiModelOf(draft),
-            onValueChange = { v -> draft = withModel(draft, v) },
+            onValueChange = { v -> onDraftChange(withModel(draft, v)) },
             hint = "",
         )
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            WfSecondaryButton(if (testing) text.aiTesting else text.aiTest, enabled = !testing) {
+            WfSecondaryButton(c, if (testing) text.aiTesting else text.aiTest, enabled = !testing) {
                 if (aiEndpointOf(draft).isNotBlank()) {
                     testing = true
                     testOk = null
@@ -361,16 +624,11 @@ private fun AiStep(
                     if (testOk == true) text.aiConnected else text.aiDisconnected,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(if (testOk == true) 0xFF16A34A else 0xFFEF4444),
+                    color = if (testOk == true) c.success else c.danger,
                 )
             }
         }
-        Text(
-            text.aiHint,
-            fontSize = 12.sp,
-            lineHeight = 17.sp,
-            color = colors.textSecondary,
-        )
+        Text(text.aiHint, fontSize = 12.sp, lineHeight = 17.sp, color = c.textSecondary)
     }
 }
 
@@ -400,28 +658,28 @@ private fun withModel(ai: AiSettings, v: String): AiSettings = when (ai.provider
 
 @Composable
 private fun ConnectStep(
+    c: WfC,
     text: WelText,
     lanSnapshot: LanServerSnapshot?,
     enableLanServer: suspend () -> Boolean,
 ) {
-    val colors = AuroraTheme.colors
     val scope = rememberCoroutineScope()
     val enabled = lanSnapshot?.enabled == true
     var starting by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 开关卡（桌面同款灰底圆角行）
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(colors.panel)
-                .border(1.dp, colors.border, RoundedCornerShape(14.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.sectionBg)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text.connectEnable, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+            Text(text.connectEnable, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
             Switch(
                 checked = enabled,
                 enabled = !starting,
@@ -434,64 +692,49 @@ private fun ConnectStep(
                         failed = !ok
                     }
                 },
-                colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
+                colors = SwitchDefaults.colors(checkedTrackColor = Color(0xFF2563EB)),
             )
         }
         if (starting) {
-            Text(text.connectStarting, fontSize = 13.sp, color = colors.textSecondary)
+            Text(text.connectStarting, fontSize = 13.sp, color = c.textSecondary)
         }
         if (failed) {
-            Text(text.connectFailed, fontSize = 13.sp, color = Color(0xFFEF4444))
+            Text(text.connectFailed, fontSize = 13.sp, color = c.danger)
         }
         if (enabled && lanSnapshot?.running == true) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(colors.panel)
-                    .border(1.dp, colors.border, RoundedCornerShape(14.dp))
-                    .padding(16.dp),
-            ) {
+            WfSectionCard(c) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(text.connectRunning, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF16A34A))
-                    Text("http://${lanSnapshot.ip}:${lanSnapshot.port}", fontSize = 15.sp, color = colors.textPrimary)
-                    Text("${text.connectAccessCode}：${lanSnapshot.accessCode}", fontSize = 13.sp, color = colors.textSecondary)
-                    Text(text.connectHint, fontSize = 12.sp, lineHeight = 17.sp, color = colors.textSecondary)
+                    Text(text.connectRunning, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.success)
+                    Text("http://${lanSnapshot.ip}:${lanSnapshot.port}", fontSize = 15.sp, color = c.textPrimary)
+                    Text("${text.connectAccessCode}：${lanSnapshot.accessCode}", fontSize = 13.sp, color = c.textSecondary)
+                    Text(text.connectHint, fontSize = 12.sp, lineHeight = 17.sp, color = c.textSecondary)
                 }
             }
         }
-        DesktopDownloadCard(text)
+        DesktopDownloadCard(c, text)
     }
 }
 
 /** 桌面端下载入口（与桌面欢迎页「扫码下载安卓端」对映）：展示下载页链接 + 复制按钮。 */
 @Composable
-private fun DesktopDownloadCard(text: WelText) {
-    val colors = AuroraTheme.colors
+private fun DesktopDownloadCard(c: WfC, text: WelText) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
 
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(colors.panel)
-            .border(1.dp, colors.border, RoundedCornerShape(14.dp))
-            .padding(16.dp),
-    ) {
+    WfSectionCard(c) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(text.desktopDownloadTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
-            Text(text.desktopDownloadHint, fontSize = 12.sp, lineHeight = 17.sp, color = colors.textSecondary)
+            Text(text.desktopDownloadTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
+            Text(text.desktopDownloadHint, fontSize = 12.sp, lineHeight = 17.sp, color = c.textSecondary)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     DOWNLOAD_PAGE_URL,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
-                    color = colors.primary,
+                    color = c.blue,
                     modifier = Modifier.weight(1f),
                 )
-                WfSecondaryButton(if (copied) text.desktopDownloadCopied else text.desktopDownloadCopy) {
+                WfSecondaryButton(c, if (copied) text.desktopDownloadCopied else text.desktopDownloadCopy) {
                     clipboard.setText(AnnotatedString(DOWNLOAD_PAGE_URL))
                     copied = true
                     scope.launch {
@@ -504,7 +747,21 @@ private fun DesktopDownloadCard(text: WelText) {
     }
 }
 
-// ===== 小组件（自包含样式；SettingsDialog 的 Lan* 系为文件私有不可跨文件复用）=====
+// ===== 小组件（桌面 WelcomeModal 样式逐块对齐）=====
+
+@Composable
+private fun WfSectionCard(c: WfC, content: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.sectionBg)
+            .border(1.dp, c.border, RoundedCornerShape(12.dp))
+            .padding(16.dp),
+    ) {
+        content()
+    }
+}
 
 @Composable
 private fun WfStepDots(step: WelcomeStep) {
@@ -513,112 +770,274 @@ private fun WfStepDots(step: WelcomeStep) {
             // 纯指示器（不可点）：移动端回退走系统返回手势（BackHandler），避免 <48dp 命中区
             Box(
                 Modifier
-                    .size(width = 26.dp, height = 6.dp)
+                    .size(width = 28.dp, height = 6.dp)
                     .clip(RoundedCornerShape(3.dp))
                     .background(
-                        if (s == step) Color.White else Color.White.copy(alpha = if (s.ordinal < step.ordinal) 0.7f else 0.3f),
+                        when {
+                            s == step -> Color.White
+                            s.ordinal < step.ordinal -> Color.White.copy(alpha = 0.7f)
+                            else -> Color.White.copy(alpha = 0.3f)
+                        },
                     ),
             )
         }
     }
 }
 
+/** 主操作（bg-blue-600 白字圆角 + 蓝色软投影，桌面 selectFolder/授权按钮同款）。 */
 @Composable
-private fun WfPrimaryButton(text: String, enabled: Boolean = true, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val colors = AuroraTheme.colors
+private fun WfBlueButton(c: WfC, text: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
     Box(
         modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (enabled) colors.primaryDeep else colors.subtle)
+            .shadow(elevation = 8.dp, shape = shape, ambientColor = Color(0x473B82F6), spotColor = Color(0x663B82F6))
+            .clip(shape)
+            .background(if (enabled) c.blue else c.disabledBg)
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 28.dp, vertical = 12.dp),
+            .padding(horizontal = 24.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
-            color = if (enabled) Color.White else colors.textSecondary,
+            color = if (enabled) Color.White else c.disabledText,
+            textAlign = TextAlign.Center,
         )
     }
 }
 
 @Composable
-private fun WfSecondaryButton(text: String, enabled: Boolean = true, onClick: () -> Unit) {
-    val colors = AuroraTheme.colors
+private fun WfSecondaryButton(c: WfC, text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
     Box(
         Modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(colors.palette.buttonSecondaryBg))
-            .border(1.dp, colors.border, RoundedCornerShape(12.dp))
+            .clip(shape)
+            .background(c.inputBg)
+            .border(1.dp, c.inputBorder, shape)
             .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(colors.palette.buttonSecondaryText))
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = c.textPrimary)
     }
 }
 
+/** 选中态对齐桌面 chip：蓝边 + blue-50/blue-900@20% 底 + 蓝字（深浅两档都可读）。 */
 @Composable
-private fun WfChip(text: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val colors = AuroraTheme.colors
-    Box(
+private fun WfChip(
+    c: WfC,
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    val fg = if (selected) c.blueText else c.textPrimary
+    Column(
         modifier
             .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            // 选中态=实心 primary 底 + 白字（对齐侧栏「本地相册」选中惯例）：
-            // dark 档 primaryWeak 是浅蓝底，配 primary 蓝字对比不足（模拟器实测发现）
-            .background(if (selected) colors.primary else Color.Transparent)
-            .border(
-                1.dp,
-                if (selected) colors.primary else colors.border,
-                RoundedCornerShape(12.dp),
-            )
+            .clip(shape)
+            .background(if (selected) c.blueChipBg else Color.Transparent)
+            .border(1.dp, if (selected) c.blue else c.border, shape)
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        contentAlignment = Alignment.Center,
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.height(2.dp))
+        }
         Text(
             text,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) Color.White else colors.textPrimary,
+            color = fg,
+            maxLines = 1,
         )
     }
 }
 
 @Composable
-private fun WfTextField(label: String, value: String, onValueChange: (String) -> Unit, hint: String) {
-    val colors = AuroraTheme.colors
+private fun WfTextField(c: WfC, label: String, value: String, onValueChange: (String) -> Unit, hint: String) {
     Column {
-        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colors.textSecondary)
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = c.textSecondary)
         Spacer(Modifier.height(4.dp))
+        val shape = RoundedCornerShape(8.dp)
         Box(
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(colors.palette.textBoxBg))
-                .border(1.dp, colors.border, RoundedCornerShape(10.dp))
+                .clip(shape)
+                .background(c.inputBg)
+                .border(1.dp, c.inputBorder, shape)
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             if (value.isEmpty() && hint.isNotEmpty()) {
-                Text(hint, fontSize = 15.sp, color = Color(colors.palette.hint))
+                Text(hint, fontSize = 15.sp, color = c.hint)
             }
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 singleLine = true,
-                textStyle = TextStyle(fontSize = 15.sp, color = colors.textPrimary),
-                cursorBrush = SolidColor(colors.primary),
+                textStyle = TextStyle(fontSize = 15.sp, color = c.textPrimary),
+                cursorBrush = SolidColor(c.blue),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
 }
+
+/**
+ * 二维码：本地 zxing 生成（离线可用、无网络依赖；桌面端用 qrserver 外链——国内网络
+ * 实测加载不出白块，安卓端改本地渲染，qrserver 不再使用）。
+ */
+@Composable
+private fun WfQrImage(url: String, size: Dp) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val px = with(density) { ((size - 12.dp).toPx()).toInt().coerceAtLeast(8) }
+    val bitmap = remember(url, px) { generateQrBitmap(url, px) }
+    Box(
+        Modifier
+            .size(size)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White)
+            .padding(6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap,
+            contentDescription = "Android download QR",
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+private fun generateQrBitmap(content: String, sizePx: Int): androidx.compose.ui.graphics.ImageBitmap {
+    val hints = mapOf(
+        com.google.zxing.EncodeHintType.MARGIN to 0,
+        com.google.zxing.EncodeHintType.CHARACTER_SET to "UTF-8",
+    )
+    val matrix = com.google.zxing.qrcode.QRCodeWriter()
+        .encode(content, com.google.zxing.BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+    val pixels = IntArray(sizePx * sizePx)
+    for (y in 0 until sizePx) {
+        for (x in 0 until sizePx) {
+            pixels[y * sizePx + x] = if (matrix.get(x, y)) 0xFF111827.toInt() else 0xFFFFFFFF.toInt()
+        }
+    }
+    return android.graphics.Bitmap.createBitmap(sizePx, sizePx, android.graphics.Bitmap.Config.ARGB_8888)
+        .apply { setPixels(pixels, 0, sizePx, 0, 0, sizePx, sizePx) }
+        .asImageBitmap()
+}
+
+/**
+ * 欢迎页配色：桌面 WelcomeModal 的 Tailwind 灰系/蓝系逐值对齐（浅/深两档）。
+ * 不走 AuroraPalette——桌面该卡片本身用的就是 Tailwind 原色（bg-gray-50/border-gray-200…）。
+ */
+private data class WfC(
+    val pageBg: Color,
+    val cardBg: Color,
+    val rightBg: Color,
+    val border: Color,
+    val divider: Color,
+    val inputBorder: Color,
+    val inputBg: Color,
+    val sectionBg: Color,
+    val label: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val skipText: Color,
+    val hint: Color,
+    val pillBg: Color,
+    val pillText: Color,
+    val blue: Color,
+    val blueText: Color,
+    val blueChipBg: Color,
+    val blueIconBg: Color,
+    val blueIconFg: Color,
+    val disabledBg: Color,
+    val disabledText: Color,
+    val success: Color,
+    val danger: Color,
+    val dotGrid: Color,
+    val blobBlue: Color,
+    val blobPurple: Color,
+    val blobCyan: Color,
+    val blobIndigo: Color,
+)
+
+private fun wfC(dark: Boolean): WfC = if (dark) WfC(
+    pageBg = Color(0xFF030712),      // gray-950
+    cardBg = Color(0xFF111827),      // gray-900
+    rightBg = Color(0xFF111827),     // gray-900
+    border = Color(0xFF1F2937),      // gray-800
+    divider = Color(0xFF1F2937),     // gray-800
+    inputBorder = Color(0xFF374151), // gray-700
+    inputBg = Color(0xFF1F2937),     // gray-800
+    sectionBg = Color(0xFF1F2937),   // gray-800
+    label = Color(0xFFD1D5DB),       // gray-300
+    textPrimary = Color(0xFFF9FAFB), // gray-50
+    textSecondary = Color(0xFF9CA3AF), // gray-400
+    skipText = Color(0xFF9CA3AF),
+    hint = Color(0xFF6B7280),        // gray-500
+    pillBg = Color.White,            // dark:bg-white
+    pillText = Color(0xFF111827),
+    blue = Color(0xFF3B82F6),        // border-blue-500
+    blueText = Color(0xFF60A5FA),    // dark:text-blue-400
+    blueChipBg = Color(0x331E3A8A),  // dark:bg-blue-900/20
+    blueIconBg = Color(0x4D1E3A8A),  // dark:bg-blue-900/30
+    blueIconFg = Color(0xFF60A5FA),  // dark:text-blue-400
+    disabledBg = Color(0xFF374151),
+    disabledText = Color(0xFF9CA3AF),
+    success = Color(0xFF4ADE80),     // green-400
+    danger = Color(0xFFEF4444),
+    dotGrid = Color(0x1A93C5FD),     // blue-300/10
+    blobBlue = Color(0x262563EB),    // dark:bg-blue-600/15
+    blobPurple = Color(0x269333EA),  // purple-600/15
+    blobCyan = Color(0x1A0891B2),    // cyan-600/10
+    blobIndigo = Color(0x334F46E5),  // indigo-600/20
+) else WfC(
+    pageBg = Color.White,
+    cardBg = Color.White,
+    rightBg = Color(0xFFF9FAFB),     // gray-50
+    border = Color(0xFFE5E7EB),      // gray-200
+    divider = Color(0xFFF3F4F6),     // gray-100（桌面底栏分隔线 border-gray-100）
+    inputBorder = Color(0xFFE5E7EB),
+    inputBg = Color.White,
+    sectionBg = Color(0xFFF3F4F6),   // gray-100
+    label = Color(0xFF374151),       // gray-700
+    textPrimary = Color(0xFF111827), // gray-900
+    textSecondary = Color(0xFF6B7280), // gray-500
+    skipText = Color(0xFF9CA3AF),    // gray-400
+    hint = Color(0xFF9CA3AF),
+    pillBg = Color(0xFF111827),      // bg-gray-900
+    pillText = Color.White,
+    blue = Color(0xFF2563EB),        // blue-600
+    blueText = Color(0xFF2563EB),    // text-blue-600
+    blueChipBg = Color(0xFFEFF6FF),  // bg-blue-50
+    blueIconBg = Color(0xFFDBEAFE),  // bg-blue-100
+    blueIconFg = Color(0xFF2563EB),
+    disabledBg = Color(0xFFE5E7EB),
+    disabledText = Color(0xFF9CA3AF),
+    success = Color(0xFF16A34A),     // green-600
+    danger = Color(0xFFEF4444),
+    dotGrid = Color(0x1A1E3A8A),     // blue-900/10
+    blobBlue = Color(0x4D60A5FA),    // blue-400/30
+    blobPurple = Color(0x4DC084FC),  // purple-400/30
+    blobCyan = Color(0x4022D3EE),    // cyan-400/25
+    blobIndigo = Color(0x4D818CF8),  // indigo-400/30
+)
 
 // ===== 双语文案（组合内字典：主界面全量 i18n 另案，见设计文档 4.2 范围约束）=====
 
@@ -638,6 +1057,7 @@ private data class WelText(
     val languageLabel: String,
     val aiTitle: String,
     val aiDesc: String,
+    val aiProviderOnline: String,
     val aiEndpoint: String,
     val aiApiKey: String,
     val aiModel: String,
@@ -658,9 +1078,10 @@ private data class WelText(
     val desktopDownloadHint: String,
     val desktopDownloadCopy: String,
     val desktopDownloadCopied: String,
+    val scanDownloadAndroid: String,
     val next: String,
     val finish: String,
-    val skipHint: String,
+    val skip: String,
 )
 
 private fun welText(language: String): WelText =
@@ -673,13 +1094,14 @@ private fun welText(language: String): WelText =
         openSettings = "Open system settings",
         preferencesTitle = "Personalize",
         preferencesDesc = "Pick a theme and language for the app.",
-        themeLabel = "THEME",
+        themeLabel = "Theme",
         themeLight = "Light",
         themeDark = "Dark",
         themeSystem = "System",
-        languageLabel = "LANGUAGE",
+        languageLabel = "Language",
         aiTitle = "AI Analysis (Optional)",
         aiDesc = "Configure an AI provider for auto-tagging, descriptions and smart search.",
+        aiProviderOnline = "Online",
         aiEndpoint = "Endpoint",
         aiApiKey = "API Key",
         aiModel = "Model",
@@ -700,9 +1122,10 @@ private fun welText(language: String): WelText =
         desktopDownloadHint = "Open the link below in a browser on your PC to download the desktop version.",
         desktopDownloadCopy = "Copy link",
         desktopDownloadCopied = "Copied",
+        scanDownloadAndroid = "Scan to get the mobile app",
         next = "Next",
         finish = "Start using",
-        skipHint = "Skip, set up later in Settings",
+        skip = "Skip",
     )
     else WelText(
         permissionTitle = "欢迎使用极光图库",
@@ -713,13 +1136,14 @@ private fun welText(language: String): WelText =
         openSettings = "去系统设置授权",
         preferencesTitle = "个性化设置",
         preferencesDesc = "选择应用的主题与语言。",
-        themeLabel = "主题",
+        themeLabel = "颜色主题",
         themeLight = "浅色",
         themeDark = "深色",
         themeSystem = "跟随系统",
-        languageLabel = "语言",
+        languageLabel = "界面语言",
         aiTitle = "AI 智能分析（可选）",
         aiDesc = "配置 AI 服务商，启用自动标签、图片描述与智能搜索。",
+        aiProviderOnline = "在线",
         aiEndpoint = "服务地址",
         aiApiKey = "API Key",
         aiModel = "模型",
@@ -740,7 +1164,8 @@ private fun welText(language: String): WelText =
         desktopDownloadHint = "在电脑浏览器打开下方链接，即可下载桌面版。",
         desktopDownloadCopy = "复制链接",
         desktopDownloadCopied = "已复制",
+        scanDownloadAndroid = "扫码下载安卓端",
         next = "下一步",
         finish = "开始使用",
-        skipHint = "跳过，稍后在设置中配置",
+        skip = "跳过",
     )

@@ -1761,6 +1761,7 @@ class MainActivity : ComponentActivity() {
                         language = viewModel.settings.value.language,
                         ai = viewModel.settings.value.ai,
                         lanSnapshot = welcomeLanSnap,
+                        darkTheme = dark,
                         onThemeChange = { viewModel.setTheme(it) },
                         onLanguageChange = { viewModel.setLanguage(it) },
                         onAiChange = { viewModel.updateAiSettings(it) },
