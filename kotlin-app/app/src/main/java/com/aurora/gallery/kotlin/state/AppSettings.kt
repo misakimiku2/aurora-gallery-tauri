@@ -298,6 +298,16 @@ class SettingsStore(context: Context) {
     }
 
     /**
+     * 首启欢迎向导完成标记（启动流程优化 2026-09-29）：缺省 false。老用户升级路径
+     * （已授权）由 MainActivity 静默补写，不弹向导——见设计文档 4.3 触发与升级兼容。
+     */
+    fun loadOnboarded(): Boolean = prefs.getBoolean(KEY_ONBOARDED, false)
+
+    fun saveOnboarded() {
+        prefs.edit().putBoolean(KEY_ONBOARDED, true).apply()
+    }
+
+    /**
      * 4 位数字访问码（M6a 阶段 7）：首次开启服务端时生成并持久化——**重启不变**，
      * 桌面端保存的配对记录才不会失效。空串 = 尚未生成过（由 LanServerManager 首启时写）。
      * 日志纪律：该值绝不整串入日志。
@@ -330,6 +340,7 @@ class SettingsStore(context: Context) {
         const val KEY_LAN_SAVED_SERVERS = "lanSavedServers"
         const val KEY_LAN_SERVER_ENABLED = "lanServerEnabled"
         const val KEY_LAN_ACCESS_CODE = "lanAccessCode"
+        const val KEY_ONBOARDED = "onboarded"
         /** 最近服务器上限（React savedServers 同值）。 */
         const val SAVED_SERVERS_LIMIT = 10
         val VALID_THEMES = setOf(AppSettings.THEME_LIGHT, AppSettings.THEME_DARK, AppSettings.THEME_SYSTEM)

@@ -60,6 +60,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.WelcomeFlow
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
@@ -124,6 +125,9 @@ import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.SearchScope
+import com.aurora.gallery.kotlin.state.WelcomeFlowState
+import com.aurora.gallery.kotlin.state.WelcomeStep
+import com.aurora.gallery.kotlin.state.toAiConfig
 import com.aurora.gallery.kotlin.state.lanRemotePathOrNull
 import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
 import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
@@ -161,6 +165,12 @@ class MainActivity : ComponentActivity() {
      */
     private var systemDark by mutableStateOf(false)
 
+    // —— 首启欢迎向导（启动流程优化 2026-09-29，设计文档 4.3）——
+    // 仅当无 onboarded 标记且媒体权限未授予时显示；状态机见 WelcomeFlowState（JUnit 覆盖）。
+    private var showWelcome by mutableStateOf(false)
+    private var welcomeState by mutableStateOf(WelcomeFlowState.initial(false))
+    private var welcomePermissionDenied by mutableStateOf(false)
+
     /**
      * 数据与 UI 状态都住在 GalleryViewModel（跨旋转重建保留）。factory 只在 ViewModel
      * 首次创建时求值，这里的横竖屏判断即初始面板可见性，旋转后不会被重算覆盖。
@@ -181,7 +191,13 @@ class MainActivity : ComponentActivity() {
     private val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) viewModel.startScanIfNeeded()
+        if (granted) {
+            viewModel.startScanIfNeeded()
+            // 欢迎向导权限步：授权即推进状态机（向导继续走，扫描已在后台跑）
+            if (showWelcome) welcomeState = welcomeState.onPermissionGranted()
+        } else if (showWelcome) {
+            welcomePermissionDenied = true
+        }
         requestNotificationPermissionIfNeeded()
     }
 
@@ -1734,11 +1750,55 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { viewModel.updateController.dismiss() },
                     )
                 }
+                // —— 首启欢迎向导（启动流程优化）：全屏覆盖层，完成后写 onboarded 并揭幕 ——
+                if (showWelcome) {
+                    val welcomeLanSnap by viewModel.lanServer.snapshot.collectAsState()
+                    WelcomeFlow(
+                        state = welcomeState,
+                        onStateChange = { welcomeState = it },
+                        permissionDenied = welcomePermissionDenied,
+                        theme = viewModel.settings.value.theme,
+                        language = viewModel.settings.value.language,
+                        ai = viewModel.settings.value.ai,
+                        lanSnapshot = welcomeLanSnap,
+                        onThemeChange = { viewModel.setTheme(it) },
+                        onLanguageChange = { viewModel.setLanguage(it) },
+                        onAiChange = { viewModel.updateAiSettings(it) },
+                        aiTestConnection = { ai ->
+                            val cfg = ai.toAiConfig(viewModel.settings.value.language)
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                runCatching { uniffi.aurora_core.aiCheckConnection(cfg); Unit }
+                            }
+                        },
+                        enableLanServer = { viewModel.lanServer.setEnabledOn(autoEnable = true) },
+                        onRequestPermission = {
+                            welcomePermissionDenied = false
+                            requestPermission.launch(mediaPermission())
+                        },
+                        onOpenAppSettings = { openAppDetailsSettings() },
+                        onFinish = {
+                            viewModel.settingsStore.saveOnboarded()
+                            showWelcome = false
+                        },
+                    )
+                }
                 }
             }
         }
 
-        requestMediaPermissionIfNeeded()
+        // —— 首启欢迎向导（启动流程优化 2026-09-29，设计文档 4.3）——
+        // 首启（无 onboarded 标记且媒体权限未授予）→ 先走欢迎向导，权限申请挪进向导权限步
+        // （带拒绝兜底），替代原先冷启动裸弹系统权限框；其余路径（老用户升级已授权 /
+        // 已 onboarded）行为与 2.0.0 完全一致，缺标记时静默补写不弹向导。
+        val onboarded = viewModel.settingsStore.loadOnboarded()
+        if (!onboarded && !hasMediaPermission()) {
+            welcomeState = WelcomeFlowState.initial(false)
+            welcomePermissionDenied = false
+            showWelcome = true
+        } else {
+            if (!onboarded) viewModel.settingsStore.saveOnboarded()
+            requestMediaPermissionIfNeeded()
+        }
 
         // M6b 阶段 2：AI 任务通知「取消」action 的常驻接收（非调试钩子——通知是生产
         // 面向用户的，收不到取消按钮就成了摆设）。NOT_EXPORTED + 显式包名， PendingIntent
@@ -1855,6 +1915,12 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        // 欢迎向导权限步：用户从系统设置授权页返回时 launcher 不会回调——这里按当前
+        // 权限态推进（授权了就走 onPermissionGranted 并开扫，仍被拒则留在权限步）
+        if (showWelcome && welcomeState.step == WelcomeStep.PERMISSION && hasMediaPermission()) {
+            welcomeState = welcomeState.onPermissionGranted()
+            viewModel.startScanIfNeeded()
+        }
         val op = consumePendingOp() ?: return
         if (hasAllFilesAccess()) {
             Log.i("AuroraKotlin", "[FileOp] all-files granted, resuming pending op: ${op.optString("type")}")
@@ -1901,17 +1967,38 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestMediaPermissionIfNeeded() {
-        val permission = if (Build.VERSION.SDK_INT >= 33) {
+    /** 媒体库读权限字符串（API 33+ 为 READ_MEDIA_IMAGES，以下为 READ_EXTERNAL_STORAGE）。 */
+    private fun mediaPermission(): String =
+        if (Build.VERSION.SDK_INT >= 33) {
             Manifest.permission.READ_MEDIA_IMAGES
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
-        if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
+
+    private fun hasMediaPermission(): Boolean =
+        checkSelfPermission(mediaPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestMediaPermissionIfNeeded() {
+        if (hasMediaPermission()) {
             viewModel.startScanIfNeeded()
             requestNotificationPermissionIfNeeded()
         } else {
-            requestPermission.launch(permission)
+            requestPermission.launch(mediaPermission())
+        }
+    }
+
+    /** 欢迎向导权限拒绝兜底：跳系统应用详情页；授权后 onResume 推进（launcher 不回调）。 */
+    private fun openAppDetailsSettings() {
+        try {
+            startActivity(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.fromParts("package", packageName, null),
+                ),
+            )
+        } catch (e: Exception) {
+            Log.w("AuroraKotlin", "[Welcome] open app settings failed", e)
+            Toast.makeText(this, "无法打开系统设置", Toast.LENGTH_SHORT).show()
         }
     }
 }
