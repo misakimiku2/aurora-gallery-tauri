@@ -39,8 +39,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,7 +54,11 @@ import com.aurora.gallery.kotlin.state.WelcomeFlowState
 import com.aurora.gallery.kotlin.state.WelcomeStep
 import com.aurora.gallery.kotlin.ui.isCompactWidth
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/** 双端下载页（与桌面端欢迎页二维码同源：update/android.json homepage 主源，双平台安装包同仓发布）。 */
+private const val DOWNLOAD_PAGE_URL = "https://gitee.com/misakimiku2/aurora_gallery/releases"
 
 /**
  * 欢迎向导（启动流程优化 2026-09-29，设计文档 docs/启动欢迎流程优化-设计方案.md 4.x）：
@@ -453,6 +460,47 @@ private fun ConnectStep(
                 }
             }
         }
+        DesktopDownloadCard(text)
+    }
+}
+
+/** 桌面端下载入口（与桌面欢迎页「扫码下载安卓端」对映）：展示下载页链接 + 复制按钮。 */
+@Composable
+private fun DesktopDownloadCard(text: WelText) {
+    val colors = AuroraTheme.colors
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var copied by remember { mutableStateOf(false) }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.panel)
+            .border(1.dp, colors.border, RoundedCornerShape(14.dp))
+            .padding(16.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text.desktopDownloadTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = colors.textPrimary)
+            Text(text.desktopDownloadHint, fontSize = 12.sp, lineHeight = 17.sp, color = colors.textSecondary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    DOWNLOAD_PAGE_URL,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = colors.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                WfSecondaryButton(if (copied) text.desktopDownloadCopied else text.desktopDownloadCopy) {
+                    clipboard.setText(AnnotatedString(DOWNLOAD_PAGE_URL))
+                    copied = true
+                    scope.launch {
+                        delay(1500)
+                        copied = false
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -606,6 +654,10 @@ private data class WelText(
     val connectFailed: String,
     val connectAccessCode: String,
     val connectHint: String,
+    val desktopDownloadTitle: String,
+    val desktopDownloadHint: String,
+    val desktopDownloadCopy: String,
+    val desktopDownloadCopied: String,
     val next: String,
     val finish: String,
     val skipHint: String,
@@ -644,6 +696,10 @@ private fun welText(language: String): WelText =
         connectFailed = "Failed to start. Retry later in Settings → LAN sharing.",
         connectAccessCode = "Access code",
         connectHint = "On the desktop, open Settings → LAN sharing → Connect Android device and enter the address and code above.",
+        desktopDownloadTitle = "Get the desktop app",
+        desktopDownloadHint = "Open the link below in a browser on your PC to download the desktop version.",
+        desktopDownloadCopy = "Copy link",
+        desktopDownloadCopied = "Copied",
         next = "Next",
         finish = "Start using",
         skipHint = "Skip, set up later in Settings",
@@ -680,6 +736,10 @@ private fun welText(language: String): WelText =
         connectFailed = "启动失败，请稍后在「设置 → 局域网共享」中重试。",
         connectAccessCode = "访问码",
         connectHint = "在桌面端打开「设置 → 局域网共享 → 连接安卓设备」，填入上方地址与访问码即可连接。",
+        desktopDownloadTitle = "下载桌面端",
+        desktopDownloadHint = "在电脑浏览器打开下方链接，即可下载桌面版。",
+        desktopDownloadCopy = "复制链接",
+        desktopDownloadCopied = "已复制",
         next = "下一步",
         finish = "开始使用",
         skipHint = "跳过，稍后在设置中配置",

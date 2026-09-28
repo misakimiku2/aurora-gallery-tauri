@@ -180,4 +180,23 @@ describe('WelcomeModal 四步向导', () => {
     fireEvent.click(screen.getByTestId('welcome-step-dot-3'));
     expect(screen.getByTestId('welcome-step-content-3')).toBeInTheDocument();
   });
+
+  it('第 2 步不再显示主色调提取提示', () => {
+    setup({ currentPath: '/pics' });
+    fireEvent.click(screen.getByTestId('welcome-next-button'));
+    expect(screen.queryByText('welcome.step2ColorExtractDesc')).toBeNull();
+  });
+
+  it('AI 步：第一个服务商显示为「在线」短标签', () => {
+    gotoStep3();
+    expect(screen.getByTestId('welcome-ai-provider-openai')).toHaveTextContent('welcome.aiProviderOnline');
+  });
+
+  it('互联步：品牌区显示安卓端扫码下载二维码', () => {
+    gotoStep4();
+    const qr = screen.getByTestId('welcome-android-qr');
+    expect(qr.getAttribute('src')).toContain(
+      encodeURIComponent('https://gitee.com/misakimiku2/aurora_gallery/releases')
+    );
+  });
 });

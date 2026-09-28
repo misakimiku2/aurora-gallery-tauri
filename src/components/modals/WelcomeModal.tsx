@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Sparkles, Smartphone } from 'lucide-react';
+import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, type LucideIcon } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
 import { AppSettings, AIConfig } from '../../types';
 import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
 import { aiService } from '../../services/aiService';
+
+/** 双端下载页（update/android.json homepage 主源；安卓 APK 与桌面安装包同仓发布）。 */
+const DOWNLOAD_PAGE_URL = 'https://gitee.com/misakimiku2/aurora_gallery/releases';
 
 interface WelcomeModalProps {
     show: boolean;
@@ -19,10 +22,11 @@ interface WelcomeModalProps {
 
 const WELCOME_STEPS = [1, 2, 3, 4] as const;
 
-const AI_PROVIDERS: { id: AIConfig['provider']; label: string }[] = [
-    { id: 'openai', label: 'OpenAI' },
-    { id: 'ollama', label: 'Ollama' },
-    { id: 'lmstudio', label: 'LM Studio' },
+const AI_PROVIDERS: { id: AIConfig['provider']; label: string; icon: LucideIcon }[] = [
+    // openai=OpenAI 兼容的在线云端 API（对齐设置面板 AISettingsPanel 的「在线云端」档，短标签）
+    { id: 'openai', label: 'welcome.aiProviderOnline', icon: Globe },
+    { id: 'ollama', label: 'Ollama', icon: Zap },
+    { id: 'lmstudio', label: 'LM Studio', icon: Server },
 ];
 
 const generateAccessCode = (): string => {
@@ -169,7 +173,8 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                 <div className="w-full md:w-1/2 bg-blue-600 p-8 flex flex-col justify-between text-white relative overflow-hidden">
                     <div className="z-10">
                         <div className="flex items-center space-x-2 mb-4">
-                            <AuroraLogo size={40} className="shadow-lg" />
+                            {/* SVG 自带圆角投影 filter，勿再加 box-shadow 类——svg 根元素是矩形盒，会画出方形投影 */}
+                            <AuroraLogo size={40} />
                             <span className="font-bold text-xl tracking-wider">AURORA</span>
                         </div>
                         <h1 className="text-3xl font-bold leading-tight mb-4">{stepTitles[step - 1]}</h1>
@@ -180,24 +185,39 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                     <div className="absolute -bottom-20 -right-20 w-64 h-64 bg-blue-500 rounded-full opacity-50 blur-3xl"></div>
                     <div className="absolute top-20 -left-20 w-48 h-48 bg-purple-500 rounded-full opacity-30 blur-3xl"></div>
 
-                    {/* Step Indicators */}
-                    <div className="flex space-x-2 z-10">
-                        {WELCOME_STEPS.map(s => (
-                            <div
-                                key={s}
-                                role="button"
-                                aria-label={`Go to step ${s}`}
-                                data-testid={`welcome-step-dot-${s}`}
-                                onClick={() => { if (s < step) setStep(s); }}
-                                className={`h-1.5 w-8 rounded-full transition-colors ${step === s ? 'bg-white' : s < step ? 'bg-white/70 cursor-pointer hover:bg-white' : 'bg-white/30'}`}
-                            />
-                        ))}
+                    {/* Step Indicators + 移动端下载入口（仅互联步：扫码即达下载页，双平台安装包同仓发布） */}
+                    <div className="z-10 space-y-4">
+                        {step === 4 && (
+                            <div className="flex items-center gap-3">
+                                <img
+                                    data-testid="welcome-android-qr"
+                                    src={generateQRCodeUrl(DOWNLOAD_PAGE_URL)}
+                                    alt="Android download QR"
+                                    className="w-20 h-20 rounded-lg bg-white p-1.5"
+                                />
+                                <div className="text-sm text-blue-100 leading-snug">{t('welcome.scanDownloadAndroid')}</div>
+                            </div>
+                        )}
+                        <div className="flex space-x-2">
+                            {WELCOME_STEPS.map(s => (
+                                <div
+                                    key={s}
+                                    role="button"
+                                    aria-label={`Go to step ${s}`}
+                                    data-testid={`welcome-step-dot-${s}`}
+                                    onClick={() => { if (s < step) setStep(s); }}
+                                    className={`h-1.5 w-8 rounded-full transition-colors ${step === s ? 'bg-white' : s < step ? 'bg-white/70 cursor-pointer hover:bg-white' : 'bg-white/30'}`}
+                                />
+                            ))}
+                        </div>
                     </div>
                 </div>
 
                 {/* Right Side: Actions */}
-                <div className="w-full md:w-1/2 p-8 flex flex-col relative bg-gray-50 dark:bg-gray-900">
-                    <div className="flex-1 flex flex-col justify-center space-y-6" data-testid={`welcome-step-content-${step}`}>
+                <div className="w-full md:w-1/2 p-8 flex flex-col relative bg-gray-50 dark:bg-gray-900 min-h-0">
+                    {/* 内容区可滚动：AI 步字段多，固定 500px 卡内不溢出底部按钮（m-auto=短内容居中、长内容可滚） */}
+                    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col" data-testid={`welcome-step-content-${step}`}>
+                        <div className="m-auto w-full space-y-6">
                         {step === 1 && (
                             <div className="text-center">
                                 <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
@@ -281,17 +301,11 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                         ))}
                                     </div>
                                 </div>
-
-                                {/* Right-bottom hint */}
-                                <div className="absolute right-4 bottom-4 text-xs text-gray-500">{t('welcome.step2ColorExtractDesc')}</div>
                             </div>
                         )}
 
                         {step === 3 && (
                             <div className="space-y-4 relative">
-                                <div className="flex items-center justify-center w-14 h-14 mx-auto bg-purple-100 dark:bg-purple-900/30 rounded-full text-purple-600 dark:text-purple-400">
-                                    <Sparkles size={28} />
-                                </div>
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('welcome.aiProvider')}</label>
                                     <div className="grid grid-cols-3 gap-2">
@@ -300,9 +314,11 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                                 key={p.id}
                                                 data-testid={`welcome-ai-provider-${p.id}`}
                                                 onClick={() => { setAiDraft(d => ({ ...d, provider: p.id })); setAiTestResult(null); }}
-                                                className={`px-2 py-2 rounded-lg border text-xs font-bold transition-all ${aiDraft.provider === p.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                                                className={`px-2 py-2 rounded-lg border text-xs font-bold transition-all flex flex-col items-center justify-center ${aiDraft.provider === p.id ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
                                             >
-                                                {p.label}
+                                                <p.icon size={18} className="mb-1" />
+                                                {/* openai 档在欢迎页显示为「在线」短标签（对齐设置面板语义），其余为产品名 */}
+                                                {p.id === 'openai' ? t(p.label) : p.label}
                                             </button>
                                         ))}
                                     </div>
@@ -392,16 +408,17 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                 <div className="text-xs text-gray-500 text-center">{t('welcome.mobileHint')}</div>
                             </div>
                         )}
+                        </div>
                     </div>
 
-                    <div className="mt-6 flex justify-between items-center pt-6 border-t border-gray-100 dark:border-gray-800">
+                    <div className="mt-6 flex justify-between items-center pt-6 border-t border-gray-100 dark:border-gray-800 flex-shrink-0">
                         {(step === 3 || step === 4) ? (
                             <button
                                 data-testid="welcome-skip-button"
                                 onClick={handleSkip}
-                                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm font-medium px-4"
+                                className="whitespace-nowrap flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm font-medium px-4 py-2"
                             >
-                                {t('welcome.skipHint')}
+                                {t('welcome.skip')}
                             </button>
                         ) : (
                             <div></div>
@@ -410,7 +427,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                             data-testid="welcome-next-button"
                             onClick={() => { if (isLastStep) onFinish(); else goNext(); }}
                             disabled={step === 1 && (!currentPath || isScanning) || (step === 4 && mobileStarting)}
-                            className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && (!currentPath || isScanning) || (step === 4 && mobileStarting) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
+                            className={`whitespace-nowrap flex-shrink-0 px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && (!currentPath || isScanning) || (step === 4 && mobileStarting) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
                         >
                             {isLastStep ? t('welcome.finish') : t('welcome.next')}
                             <ChevronRight size={16} className="ml-2" />
