@@ -202,9 +202,8 @@ describe('WelcomeModal 四步向导', () => {
 
   it('互联步：品牌区显示安卓端扫码下载二维码（取直链失败时回退发行页）', async () => {
     gotoStep4();
-    const qr = screen.getByTestId('welcome-android-qr');
     await waitFor(() =>
-      expect(qr.getAttribute('src')).toContain(
+      expect(screen.getByTestId('welcome-android-qr').getAttribute('src')).toContain(
         encodeURIComponent('https://gitee.com/misakimiku2/aurora_gallery/releases')
       )
     );
@@ -215,13 +214,26 @@ describe('WelcomeModal 四步向导', () => {
       'https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk'
     );
     gotoStep4();
-    const qr = screen.getByTestId('welcome-android-qr');
+    // 每次重新查询：二维码地址变化时 <img> 按 key 重挂载，不能持有旧节点引用
     await waitFor(() =>
-      expect(qr.getAttribute('src')).toContain(
+      expect(screen.getByTestId('welcome-android-qr').getAttribute('src')).toContain(
         encodeURIComponent(
           'https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk'
         )
       )
     );
+  });
+
+  it('互联步：二维码生成期间显示转圈，图片加载完成后收起', () => {
+    gotoStep4();
+    expect(screen.getByTestId('welcome-qr-loading')).toBeInTheDocument();
+    fireEvent.load(screen.getByTestId('welcome-android-qr'));
+    expect(screen.queryByTestId('welcome-qr-loading')).toBeNull();
+  });
+
+  it('互联步：文案与二维码底部对齐', () => {
+    gotoStep4();
+    const row = screen.getByTestId('welcome-qr-row');
+    expect(row.className).toContain('items-end');
   });
 });

@@ -34,8 +34,12 @@ const generateAccessCode = (): string => {
     return Math.floor(1000 + Math.random() * 9000).toString();
 };
 
-const generateQRCodeUrl = (text: string): string => {
-    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(text)}`;
+/**
+ * 二维码外链（qrserver）。[size] 是**请求分辨率**而非显示尺寸：显示 144px 在高分屏上
+ * 需要 ~2x 的位图，故按 400px 请求，避免放大发虚影响扫描成功率。
+ */
+const generateQRCodeUrl = (text: string, size = 400): string => {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
 };
 
 export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning }) => {
@@ -52,6 +56,7 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
     // 安卓端下载二维码：优先直连当前版本 APK（后端读发布清单，发版即更新），
     // 取不到（离线/清单异常）回退发行页——扫码落点至少是可下载的页面
     const [androidQrUrl, setAndroidQrUrl] = useState(DOWNLOAD_PAGE_URL);
+    const [qrLoading, setQrLoading] = useState(true);
 
     useEffect(() => {
         if (step === 3) {
@@ -71,6 +76,11 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
             .catch(() => { /* 保持发行页回退 */ });
         return () => { cancelled = true; };
     }, [step]);
+
+    // 二维码地址变化（回退页 → 直链）时 img 会按 key 重挂载，转圈重新计时
+    useEffect(() => {
+        setQrLoading(true);
+    }, [androidQrUrl]);
 
     if (!show) return null;
 
@@ -204,14 +214,29 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                     {/* Step Indicators + 移动端下载入口（仅互联步：扫码即达下载页，双平台安装包同仓发布） */}
                     <div className="z-10 space-y-4">
                         {step === 4 && (
-                            <div className="flex items-center gap-3">
-                                <img
-                                    data-testid="welcome-android-qr"
-                                    src={generateQRCodeUrl(androidQrUrl)}
-                                    alt="Android download QR"
-                                    className="w-20 h-20 rounded-lg bg-white p-1.5"
-                                />
-                                <div className="text-sm text-blue-100 leading-snug">{t('welcome.scanDownloadAndroid')}</div>
+                            <div className="flex items-end gap-3" data-testid="welcome-qr-row">
+                                <div className="relative shrink-0">
+                                    {/* 二维码生成/加载期间转圈占位（外链图片 + 清单直链切换都要等） */}
+                                    {qrLoading && (
+                                        <div
+                                            data-testid="welcome-qr-loading"
+                                            className="absolute inset-0 rounded-lg bg-white flex items-center justify-center"
+                                        >
+                                            <Loader2 size={22} className="animate-spin text-blue-500" />
+                                        </div>
+                                    )}
+                                    <img
+                                        key={androidQrUrl}
+                                        data-testid="welcome-android-qr"
+                                        src={generateQRCodeUrl(androidQrUrl)}
+                                        alt="Android download QR"
+                                        onLoad={() => setQrLoading(false)}
+                                        onError={() => setQrLoading(false)}
+                                        /* 尺寸对齐安卓平板端（面板宽度的 ~42%、卡高的 ~29%） */
+                                        className="w-36 h-36 rounded-lg bg-white p-1.5"
+                                    />
+                                </div>
+                                <div className="text-sm text-blue-100 leading-snug pb-1">{t('welcome.scanDownloadAndroid')}</div>
                             </div>
                         )}
                         <div className="flex space-x-2">

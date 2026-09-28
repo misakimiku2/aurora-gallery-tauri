@@ -287,9 +287,8 @@ private fun BrandPanel(
                 // 描述文字与步骤条之间必须显式留白，否则会直接贴在一起
                 if (compact) Spacer(Modifier.height(18.dp))
                 if (downloadLabel != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 150dp ≈ 21mm，与桌面端二维码（80 CSS px ≈ 21mm）物理尺寸持平——
-                        // 原先 72dp（≈9.5mm）手机相机对不上焦，扫不出来（用户反馈）
+                    // 文案与二维码底部对齐（用户反馈：原先垂直居中，应贴齐二维码白盒底边）
+                    Row(verticalAlignment = Alignment.Bottom) {
                         WfQrImage(DOWNLOAD_PAGE_URL, size = 150.dp)
                         Spacer(Modifier.width(12.dp))
                         Text(
@@ -297,7 +296,9 @@ private fun BrandPanel(
                             color = Color(0xFFDBEAFE),
                             fontSize = 13.sp,
                             lineHeight = 18.sp,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(bottom = 4.dp),
                         )
                     }
                 }
