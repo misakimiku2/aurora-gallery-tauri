@@ -111,6 +111,17 @@ internal val IconDatabase: ImageVector by lazy {
     }
 }
 
+/** lucide alert-circle（主色调节错误文件区，桌面 StoragePanel 的 AlertCircle 同款）。 */
+internal val IconAlertCircle: ImageVector by lazy {
+    auroraIcon("AlertCircle") {
+        fullCircle(12f, 12f, 10f)
+        moveTo(12f, 8f)
+        lineTo(12f, 12f)
+        moveTo(12f, 16f)
+        lineTo(12.01f, 16f)
+    }
+}
+
 /**
  * lucide bot→brain（AI 智能导航）。取 TreeSidebar「人物」Section 的 IconBrain（M4a 的
  * 贝塞尔脑叶，观感对齐桌面 Brain）作为共享版，替换原 Bot 简形。

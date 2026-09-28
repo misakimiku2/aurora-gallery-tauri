@@ -1486,7 +1486,14 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { showSettings = false },
                         // —— M6b 阶段 3：主色调数据库面板（VM 状态 → 面板类型映射 + 操作直连）——
                         colorStats = viewModel.colorStats.value?.let {
-                            PanelColorStats(it.total, it.pending, it.extracted, it.error)
+                            PanelColorStats(
+                                total = it.total,
+                                pending = it.pending,
+                                extracted = it.extracted,
+                                error = it.error,
+                                libraryImages = it.libraryImages,
+                                dbSizeBytes = it.dbSizeBytes,
+                            )
                         },
                         colorTask = viewModel.colorTaskState.value?.let {
                             PanelColorTask(it.current, it.total, it.paused)

@@ -657,8 +657,21 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // `_id` 派生，改名/移动不变形），落 colors.db 的 file_path 列。LAN 项（path 是 http
     // URL）不进颜色库——调用方必须用 contentUri 判别，本层 decodeRgba 也再拦一道。
 
-    /** 主色调节统计（colorDbStats 的 UI 形；null=面板未加载过）。 */
-    data class ColorDbStatsUi(val total: Int, val pending: Int, val extracted: Int, val error: Int)
+    /**
+     * 主色调节统计（colorDbStats 的 UI 形；null=面板未加载过）。
+     *
+     * [libraryImages]：本地图库图片总数（桌面「当前目录图片数」的安卓对应量），用于推算
+     * 尚未入库的图片数（= 本值 − extracted − pending）；-1 = 本次刷新还没取到。
+     * [dbSizeBytes]：colors.db（含 WAL/SHM）磁盘占用，对应桌面 StoragePanel「数据库大小」。
+     */
+    data class ColorDbStatsUi(
+        val total: Int,
+        val pending: Int,
+        val extracted: Int,
+        val error: Int,
+        val libraryImages: Int = -1,
+        val dbSizeBytes: Long = 0L,
+    )
 
     /** 批量提取任务运行态（null=空闲）。paused 由本层维护（Rust 只发终态）。 */
     data class ColorTaskState(val current: Int, val total: Int, val paused: Boolean)
@@ -700,6 +713,19 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 colorDbReady = true
             }
         }
+    }
+
+    /** 颜色库文件本体（面板「数据库大小」也按此路径统计）。 */
+    private fun colorDbFile(): File = File(appContext.filesDir, "colors.db")
+
+    /**
+     * colors.db + WAL + SHM 的磁盘占用字节数（对齐桌面 StoragePanel 的
+     * `dbSize + walSize`：SQLite 写入大多先落在 WAL，只算主库会严重低估）。
+     */
+    private fun colorDbSizeBytes(): Long {
+        val base = colorDbFile()
+        return listOf(base, File(base.parentFile, "colors.db-wal"), File(base.parentFile, "colors.db-shm"))
+            .sumOf { runCatching { it.length() }.getOrDefault(0L) }
     }
 
     /**
@@ -821,7 +847,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         colorSearchResultImages.value = emptyList()
     }
 
-    /** 主色调节刷新：先清一次磁盘上已不存在的路径残留（桌面同语义；file_id 键保留），再读统计+错误数。 */
+    /**
+     * 主色调节刷新：先清一次磁盘上已不存在的路径残留（桌面同语义；file_id 键保留），
+     * 再读统计 + 错误数 + 图库总数 + 库文件占用（后两项供面板的「数据库大小」与
+     * 「尚未入库图片数」——桌面取当前目录图片数，安卓的提取面向全库，故取全库量）。
+     */
     fun refreshColorPanel() {
         viewModelScope.launch {
             runCatching {
@@ -829,8 +859,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 withContext(Dispatchers.IO) {
                     cleanupColorNonexistent()
                     val s = colorDbStats()
-                    colorStats.value =
-                        ColorDbStatsUi(s.total.toInt(), s.pending.toInt(), s.extracted.toInt(), s.error.toInt())
+                    colorStats.value = ColorDbStatsUi(
+                        total = s.total.toInt(),
+                        pending = s.pending.toInt(),
+                        extracted = s.extracted.toInt(),
+                        error = s.error.toInt(),
+                        libraryImages = allImageIds().size,
+                        dbSizeBytes = colorDbSizeBytes(),
+                    )
                     colorErrorCount.value = getColorErrorFiles().size
                 }
             }.onFailure { Log.w(TAG, "[Color] panel refresh failed", it) }

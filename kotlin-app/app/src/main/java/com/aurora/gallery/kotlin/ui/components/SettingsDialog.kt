@@ -67,6 +67,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.Manifest
@@ -88,6 +90,9 @@ import com.aurora.gallery.kotlin.state.toAiConfig
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import java.text.DecimalFormat
+import java.text.NumberFormat
+import kotlin.math.max
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -1204,11 +1209,47 @@ private fun GeneralContent(
 /**
  * M6b 阶段 3：主色调数据库统计快照（UI 只读）。字段与 GalleryViewModel 的同名嵌套类一致；
  * internal 以便 MainActivity 挂载 SettingsHost 时构造实例传入（VM 侧类型由主线程适配）。
+ *
+ * [libraryImages] = 本地图库图片总数（桌面取「当前目录图片数」；安卓的批量提取面向全库，
+ * 故取全库量），用于推算尚未入库的图片数；[dbSizeBytes] = colors.db（含 WAL/SHM）占用，
+ * 对应面板「数据库大小」。
  */
-internal data class ColorDbStatsUi(val total: Int, val pending: Int, val extracted: Int, val error: Int)
+internal data class ColorDbStatsUi(
+    val total: Int,
+    val pending: Int,
+    val extracted: Int,
+    val error: Int,
+    val libraryImages: Int = -1,
+    val dbSizeBytes: Long = 0L,
+)
 
 /** M6b 阶段 3：主色调提取任务快照（null = 当前无任务在跑）。字段约定同 [ColorDbStatsUi]。 */
 internal data class ColorTaskState(val current: Int, val total: Int, val paused: Boolean)
+
+// 状态分布条四档语义色：桌面 StoragePanel 的 bg-green-500/blue-500/yellow-500/red-500 字面值。
+private val ColorBarExtracted = Color(0xFF22C55E)
+private val ColorBarPending = Color(0xFF3B82F6)
+private val ColorBarProcessing = Color(0xFFEAB308)
+private val ColorBarError = Color(0xFFEF4444)
+
+/** 主色调节标题图标色（桌面 `text-purple-500`）。 */
+private val ColorBarPurple = Color(0xFFA855F7)
+
+/** 千分位计数（桌面 StoragePanel 的 `toLocaleString()`）。 */
+private fun formatCount(n: Int): String = NumberFormat.getIntegerInstance().format(n)
+
+/** 字节数人类可读（同 `src/components/settings/utils.ts` 的 formatBytes：1024 进制，最多两位小数）。 */
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    var unit = 0
+    var value = bytes.toDouble()
+    while (value >= 1024.0 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    return "${DecimalFormat("0.##").format(value)} ${units[unit]}"
+}
 
 /** 存储类：缓存清理（M4b 能力换新形制）+ 主色调数据库（M6b 阶段 3，对齐桌面 StoragePanel）+ 数据备份。 */
 @Composable
@@ -1235,6 +1276,18 @@ private fun StorageContent(
     val colors = AuroraTheme.colors
     // 面板打开即拉统计 + 错误列表（VM 侧含清理残留记录语义）
     LaunchedEffect(Unit) { onRefreshColorPanel() }
+    val task = colorTask
+    val stats = colorStats
+    val pendingCount = stats?.pending ?: 0
+    val extractedCount = stats?.extracted ?: 0
+    // 尚未入库的图片数 = 图库图片数 − 颜色库行数。行数含 error 行，与桌面「− 已提取 − 待处理」
+    // 的差别就在这：桌面把失败文件也算成「待提取」，会让存在错误文件时永远到不了「提取完毕」；
+    // 安卓按「有没有库记录」判，失败项由错误文件卡单独交代。
+    val untrackedCount = stats?.let { (it.libraryImages - it.total).coerceAtLeast(0) } ?: 0
+    // 「提取完毕」判据：确有已提取记录，且既无待处理也无未入库（空库不算完成，仍显示「开始提取」）
+    val allExtracted = task == null && stats != null && extractedCount > 0 && pendingCount == 0 && untrackedCount == 0
+    // 无可提取对象（库空且图库无图）时禁用按钮，语义同桌面 `disabled={无图片}`
+    val startEnabled = stats == null || stats.total > 0 || untrackedCount > 0
 
     if (includeSectionHeaders) {
         SettingsSection("存储")
@@ -1247,13 +1300,23 @@ private fun StorageContent(
         }
     }
 
-    SettingsSection("主色调数据库", icon = IconDatabase)
+    // —— 主色调数据库（分区与形制全照桌面 StoragePanel：标题行 + 刷新 → 概览两卡 →
+    // 状态分布 → 提取任务 → 错误文件）——
+    SettingsSection("主色调数据库", icon = IconPalette, iconTint = ColorBarPurple) {
+        TextButton(onClick = onRefreshColorPanel, enabled = stats != null) {
+            androidx.compose.material3.Icon(
+                imageVector = IconRefreshCcw,
+                contentDescription = null,
+                tint = AuroraTheme.colors.textSecondary,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.size(4.dp))
+            Text("刷新", fontSize = 13.sp, color = AuroraTheme.colors.textPrimary)
+        }
+    }
 
-    // 统计卡：已提取 / 待处理 / 错误三格（数字 16sp SemiBold + 11sp 灰字标签，权重均分；
-    // 对齐桌面 StoragePanel 的统计卡片）
-    SettingsCard {
-        val stats = colorStats
-        if (stats == null) {
+    if (stats == null) {
+        SettingsCard {
             Text(
                 "加载中…",
                 fontSize = 12.sp,
@@ -1262,81 +1325,155 @@ private fun StorageContent(
                     .fillMaxWidth()
                     .padding(vertical = 14.dp),
             )
-        } else {
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
-                ColorStatCell(label = "已提取", count = stats.extracted)
-                ColorStatCell(label = "待处理", count = stats.pending)
-                ColorStatCell(label = "错误", count = stats.error, danger = stats.error > 0)
+        }
+    } else {
+        // 概览两卡（桌面 `grid-cols-2 gap-3`：总记录数 / 数据库大小）
+        Row(Modifier.fillMaxWidth()) {
+            ColorOverviewCard(label = "总记录数", value = formatCount(stats.total), modifier = Modifier.weight(1f))
+            Spacer(Modifier.size(12.dp))
+            ColorOverviewCard(label = "数据库大小", value = formatBytes(stats.dbSizeBytes), modifier = Modifier.weight(1f))
+        }
+
+        // 状态分布（桌面各条：标签 → 进度条 → 计数，占比以 total 为分母）
+        SettingsCard {
+            val processing = (stats.total - stats.pending - stats.extracted - stats.error).coerceAtLeast(0)
+            Text(
+                "状态分布",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Spacer(Modifier.size(6.dp))
+            ColorStatusBar("已提取", stats.extracted, stats.total, false, ColorBarExtracted)
+            ColorStatusBar("待处理", stats.pending, stats.total, false, ColorBarPending)
+            if (processing > 0) {
+                ColorStatusBar("处理中", processing, stats.total, false, ColorBarProcessing)
             }
+            ColorStatusBar("错误", stats.error, stats.total, true, ColorBarError)
+            Spacer(Modifier.size(4.dp))
         }
     }
 
-    // 自动提取开关卡（形制照抄 AiContent 任务开关卡）
+    // 自动提取开关卡（安卓专属设置，桌面放 GeneralPanel；形制照抄 AiContent 任务开关卡）
     SettingsCard {
         SettingsRow("浏览时自动提取主色调", "打开查看器时自动为新图片提取") {
             Switch(checked = autoExtractPalette, onCheckedChange = onAutoExtractChange)
         }
     }
 
-    // 提取任务卡：无任务=开始提取（空库禁用）；任务中=暂停/恢复 + 取消，底部进度条
+    // 提取任务卡（桌面「主色调提取任务」：标题行 + 右侧按钮组 + 进度/提示）
     SettingsCard {
-        val task = colorTask
-        val stats = colorStats
-        SettingsRow(
-            label = "主色调提取",
-            value = if (task != null) {
-                "${task.current}/${task.total}"
-            } else {
-                "共 ${stats?.total ?: 0} 条记录"
-            },
-        ) {
-            if (task == null) {
-                SettingsAction("开始提取", enabled = stats?.total != 0, onClick = onStartColorExtract)
-                if (stats != null && stats.pending > 0) {
-                    Text(
-                        "有待处理图片",
-                        fontSize = 11.sp,
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(start = 6.dp),
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "主色调提取任务",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (task == null) {
+                    // 提取完毕 → 按钮文案换成「提取完毕」并禁用（pending/未入库归零且确有已提取记录）
+                    SettingsAction(
+                        label = if (allExtracted) "提取完毕" else "开始提取",
+                        enabled = if (allExtracted) false else startEnabled,
+                        onClick = onStartColorExtract,
                     )
+                } else if (task.paused) {
+                    SettingsAction("继续", onClick = onResumeColorExtract)
+                    Spacer(Modifier.size(4.dp))
+                    SettingsAction("停止", onClick = onCancelColorExtract)
+                } else {
+                    SettingsAction("暂停", onClick = onPauseColorExtract)
+                    Spacer(Modifier.size(4.dp))
+                    SettingsAction("停止", onClick = onCancelColorExtract)
                 }
-            } else if (task.paused) {
-                SettingsAction("恢复", onClick = onResumeColorExtract)
-                Spacer(Modifier.size(4.dp))
-                SettingsAction("取消", onClick = onCancelColorExtract)
-            } else {
-                SettingsAction("暂停", onClick = onPauseColorExtract)
-                Spacer(Modifier.size(4.dp))
-                SettingsAction("取消", onClick = onCancelColorExtract)
             }
-        }
-        if (task != null && task.total > 0) {
-            LinearProgressIndicator(
-                progress = { (task.current.toFloat() / task.total.toFloat()).coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-            )
+
+            if (task != null) {
+                // 进度行：`正在提取/已暂停` + 百分比 → 进度条 → 计数（桌面同序）
+                val percent = task.current.toFloat() / max(1, task.total).toFloat()
+                Spacer(Modifier.size(6.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (task.paused) "已暂停" else "正在提取主色调…",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("${(percent * 100).toInt()}%", fontSize = 12.sp, color = colors.textSecondary)
+                }
+                Spacer(Modifier.size(6.dp))
+                LinearProgressIndicator(
+                    progress = { percent.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (task.paused) ColorBarProcessing else colors.primary,
+                    trackColor = colors.subtle,
+                    // M3 1.3 默认在条尾画停止指示点；桌面版没有，去掉以保持同款进度条
+                    drawStopIndicator = {},
+                )
+                Spacer(Modifier.size(6.dp))
+                Text("${task.current} / ${task.total}", fontSize = 11.sp, color = colors.textSecondary)
+            } else {
+                // 提示语（桌面四级判定；安卓文案把「当前目录」换成「本地图库」——批量提取面向全库）
+                val hint = when {
+                    stats == null -> "正在读取主色调数据库…"
+                    pendingCount > 0 -> "有 $pendingCount 个图片待处理主色调"
+                    untrackedCount > 0 -> "有 $untrackedCount 个图片待提取主色调"
+                    extractedCount > 0 -> "本地图库所有图片的主色调已提取完成"
+                    else -> "点击按钮开始提取本地图库图片的主色调"
+                }
+                Text(
+                    hint,
+                    fontSize = 11.sp,
+                    color = colors.textSecondary,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
         }
     }
 
-    // 错误文件管理卡：重试=重新入队 / 删除=移除记录 / 清理=清掉磁盘上已不存在的路径记录
-    //（沿用桌面语义）
-    SettingsCard {
-        SettingsRow(label = "错误文件", value = "$colorErrorCount 个") {
-            SettingsAction("重试", enabled = colorErrorCount > 0, onClick = onRetryColorErrors)
-            Spacer(Modifier.size(4.dp))
-            SettingsAction("删除", enabled = colorErrorCount > 0, onClick = onDeleteColorErrors)
-            Spacer(Modifier.size(4.dp))
-            SettingsAction("清理", onClick = onCleanupColorRecords)
+    // 错误文件管理（桌面：error>0 才现身——红色标题行 + 全体操作；安卓额外留了删除/清理）
+    if (colorErrorCount > 0) {
+        SettingsCard {
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Icon(
+                    imageVector = IconAlertCircle,
+                    contentDescription = null,
+                    tint = Color(colors.palette.danger),
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    "发现 $colorErrorCount 个错误文件",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(colors.palette.danger),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                // 头行只放桌面同款的「全部重试」；删除/清理（安卓独有）挪到卡片底部，
+                // 否则窄屏上标题会被三个按钮挤成省略号
+                SettingsAction("全部重试", onClick = onRetryColorErrors)
+            }
+            Text(
+                "错误文件无法提取主色调（损坏或不支持的格式），可重试或删除记录",
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SettingsAction("删除记录", onClick = onDeleteColorErrors)
+                Spacer(Modifier.size(4.dp))
+                SettingsAction("清理无效记录", onClick = onCleanupColorRecords)
+            }
         }
     }
-    Text(
-        "错误文件无法提取主色调（损坏或不支持的格式），可重试或删除记录",
-        fontSize = 11.sp,
-        color = colors.textSecondary,
-        modifier = Modifier.padding(top = 6.dp, start = 4.dp),
-    )
 
     SettingsSection("数据备份")
     SettingsCard {
@@ -1349,27 +1486,70 @@ private fun StorageContent(
 }
 
 /**
- * 主色调统计三格中的一格（数字 16sp SemiBold + 下方 11sp 灰字标签，权重均分；
- * [danger] 时数字用危险色——沿用 LanContent 的 `colors.palette.danger` 字面色用法）。
+ * 主色调概览数字卡（桌面 `grid-cols-2 gap-3` 里的一张：`bg-surface rounded-lg p-3 border`，
+ * 上 11sp 灰字标签 + 下 18sp 粗体值）。
  */
 @Composable
-private fun RowScope.ColorStatCell(label: String, count: Int, danger: Boolean = false) {
+private fun ColorOverviewCard(label: String, value: String, modifier: Modifier = Modifier) {
     val colors = AuroraTheme.colors
-    Column(
-        Modifier.weight(1f),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Surface(
+        modifier = modifier.padding(top = 12.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.border),
     ) {
-        Text(
-            "$count",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (danger) Color(colors.palette.danger) else colors.textPrimary,
-        )
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(label, fontSize = 11.sp, color = colors.textSecondary)
+            Text(
+                value,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 状态分布行（桌面 `w-20 标签 + 中间进度条 + w-16 计数`）：条长 = [count]/[total]，
+ * [danger] 时计数走危险色；[barColor] 取桌面四档语义色（绿/蓝/黄/红）。
+ */
+@Composable
+private fun ColorStatusBar(label: String, count: Int, total: Int, danger: Boolean, barColor: Color) {
+    val colors = AuroraTheme.colors
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(
             label,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = colors.textSecondary,
-            modifier = Modifier.padding(top = 2.dp),
+            maxLines = 1,
+            modifier = Modifier.width(56.dp),
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(colors.subtle),
+        ) {
+            if (count > 0) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction = if (total > 0) count.toFloat() / total.toFloat() else 0f)
+                        .fillMaxHeight()
+                        .background(barColor),
+                )
+            }
+        }
+        Text(
+            formatCount(count),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (danger) Color(colors.palette.danger) else colors.textPrimary,
+            modifier = Modifier.width(52.dp),
+            textAlign = TextAlign.End,
         )
     }
 }
@@ -1864,16 +2044,22 @@ private fun SettingsPhonePage(
 /**
  * 节标题：18sp 粗体 + 底部分隔线（对齐桌面 `text-lg font-bold border-subtle pb-2`）；
  * [icon] 非空时前置 20dp primary 色图标（外观/默认布局/关于节，对齐桌面 flex items-center）。
+ * [trailing] 为标题行右端控件（桌面主色调节右端的「刷新」按钮即此口）。
  */
 @Composable
-private fun SettingsSection(title: String, icon: ImageVector? = null) {
+private fun SettingsSection(
+    title: String,
+    icon: ImageVector? = null,
+    iconTint: Color? = null,
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
     Column(Modifier.padding(top = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {
                 androidx.compose.material3.Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = AuroraTheme.colors.primary,
+                    tint = iconTint ?: AuroraTheme.colors.primary,
                     modifier = Modifier.size(18.dp),
                 )
                 Spacer(Modifier.size(8.dp))
@@ -1884,6 +2070,8 @@ private fun SettingsSection(title: String, icon: ImageVector? = null) {
                 fontWeight = FontWeight.Bold,
                 color = AuroraTheme.colors.textPrimary,
             )
+            Spacer(Modifier.weight(1f))
+            trailing()
         }
         Box(
             Modifier
