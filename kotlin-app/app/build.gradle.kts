@@ -1,3 +1,13 @@
+import java.util.Properties
+
+// Release 签名走根目录 keystore.properties（不进 git，见 .gitignore）：文件缺失时
+// release 构建退回未签名（与旧版行为一致），dev 机无需 keystore 也能出 debug 包
+val keystoreProperties = Properties()
+val hasReleaseSigning = rootProject.file("keystore.properties").exists()
+if (hasReleaseSigning) {
+    rootProject.file("keystore.properties").inputStream().use { keystoreProperties.load(it) }
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -11,13 +21,27 @@ android {
         applicationId = "com.aurora.gallery.kotlin"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "2.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
     }
 
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

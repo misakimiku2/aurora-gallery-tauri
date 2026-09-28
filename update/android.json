@@ -1,22 +1,22 @@
 {
   "schema": 1,
   "platform": "android",
-  "version": "0.1.0",
-  "version_code": 1,
-  "release_name": "v0.1.0",
-  "release_notes": "占位清单：与当前 APK 同版本，客户端判定无更新。发版时按 README 步骤替换。",
-  "published_at": "2026-09-28",
+  "version": "2.0",
+  "version_code": 2,
+  "release_name": "v2.0",
+  "release_notes": "2.0 全新大版本，Android 原生客户端首发（Kotlin + Jetpack Compose）：\n· 本地图库：网格/瀑布流/列表三视图、捏合换列、进夹直出\n· 原生查看器：手势缩放/翻页、GIF 与动画 WebP、幻灯片、分享\n· 平板还原桌面端双栏布局，手机专属抽屉导航与精简顶栏\n· 文件管理：重命名/移动/删除/复制，开启「所有文件访问」后零弹窗\n· 全维搜索：scope 搜索、HSV 取色器、CIEDE2000 颜色搜索\n· 标签/人物/专题管理、AI 人物识别、局域网互联（扫码配对桌面端、上传下载、在线读写、以图搜图）\n· 应用内更新\n桌面端同期升级：局域网共享大升级（双向配对/元数据人物专题同步/在线读写）、AI 算力卸载端点、更新检查器四级降级链、标签重命名与粘贴落库修复。",
+  "published_at": "2026-09-29",
   "min_version_code": 1,
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "apk",
-      "name": "AuroraGallery-v0.1.0.apk",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v0.1.0/AuroraGallery-v0.1.0.apk",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v0.1.0/AuroraGallery-v0.1.0.apk",
-      "size": 0,
-      "size_text": "",
-      "sha256": ""
+      "name": "AuroraGallery-v2.0.0.apk",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.0.0/AuroraGallery-v2.0.0.apk",
+      "size": 37616039,
+      "size_text": "35.9 MB",
+      "sha256": "e3e27d78e64e4a5299ba91ee8217a0ee05702fa1c636aa0b85226d892838ec0d"
     }
   ]
 }

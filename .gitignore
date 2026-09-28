@@ -58,3 +58,7 @@ kotlin-app/build/
 kotlin-app/app/build/
 kotlin-app/build2/
 kotlin-app/local.properties
+# Release 签名（正式 keystore 与密码，绝不进 git——丢了将无法给已装用户推应用内更新）
+kotlin-app/keystore.properties
+kotlin-app/keystore/
+release-out/
