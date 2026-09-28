@@ -116,4 +116,43 @@ class WelcomeFlowStateTest {
         val done = base.onPermissionGranted().next().next().next()
         assertEquals(done, done.back())
     }
+
+    // ===== 跳到指定步骤（点步骤条回退，对齐桌面 onclick={s < step && setStep(s)}）=====
+
+    @Test
+    fun `goTo 可跨步回退 - 互联步点步骤条直接回偏好步`() {
+        val s = WelcomeFlowState.initial(false).onPermissionGranted().next().next() // CONNECT
+        assertEquals(WelcomeStep.AI, s.goTo(WelcomeStep.AI).step)
+        assertEquals(WelcomeStep.PREFERENCES, s.goTo(WelcomeStep.PREFERENCES).step)
+    }
+
+    @Test
+    fun `goTo 不前进 - 目标靠后或等于当前步时不变`() {
+        val ai = WelcomeFlowState.initial(false).onPermissionGranted().next() // AI
+        assertEquals(ai, ai.goTo(WelcomeStep.AI))
+        assertEquals(ai, ai.goTo(WelcomeStep.CONNECT))
+        assertEquals(ai, ai.goTo(WelcomeStep.DONE))
+    }
+
+    @Test
+    fun `goTo 不指向权限步 - 权限已解决不当回退目标`() {
+        val s = WelcomeFlowState.initial(false).onPermissionGranted().next() // AI
+        assertEquals(s, s.goTo(WelcomeStep.PERMISSION))
+    }
+
+    @Test
+    fun `goTo 在 DONE 步幂等`() {
+        val done = WelcomeFlowState.initial(false).onPermissionGranted().next().next().next()
+        assertEquals(done, done.goTo(WelcomeStep.AI))
+    }
+
+    @Test
+    fun `canGoTo 与 goTo 判定一致`() {
+        val s = WelcomeFlowState.initial(false).onPermissionGranted().next().next() // CONNECT
+        assertTrue(s.canGoTo(WelcomeStep.AI))
+        assertTrue(s.canGoTo(WelcomeStep.PREFERENCES))
+        assertFalse(s.canGoTo(WelcomeStep.PERMISSION))
+        assertFalse(s.canGoTo(WelcomeStep.CONNECT))
+        assertFalse(s.canGoTo(WelcomeStep.DONE))
+    }
 }

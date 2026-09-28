@@ -179,14 +179,15 @@ fun WelcomeFlow(
                     BrandPanel(
                         Modifier.fillMaxWidth(), compact = true, title = title, desc = desc,
                         step = state.step, downloadLabel = null,
+                        onDotClick = { onStateChange(state.goTo(it)) },
                     )
                     Column(Modifier.weight(1f).fillMaxWidth().background(c.rightBg)) {
                         StepContent(
                             Modifier.weight(1f), c, text, state, permissionDenied, theme, language, aiDraft,
                             lanSnapshot, onThemeChange, onLanguageChange, { aiDraft = it }, aiTestConnection,
-                            enableLanServer, onRequestPermission, onOpenAppSettings,
+                            enableLanServer, onRequestPermission, onOpenAppSettings, compact = true,
                         )
-                        BottomBar(Modifier, c, text, state, onStateChange, handleNext)
+                        BottomBar(Modifier, c, text, state, onStateChange, handleNext, compact = true)
                     }
                 }
             } else {
@@ -195,14 +196,15 @@ fun WelcomeFlow(
                         Modifier.fillMaxHeight().width(360.dp), compact = false, title = title, desc = desc,
                         step = state.step,
                         downloadLabel = text.scanDownloadAndroid.takeIf { state.step == WelcomeStep.CONNECT },
+                        onDotClick = { onStateChange(state.goTo(it)) },
                     )
                     Column(Modifier.weight(1f).fillMaxHeight().background(c.rightBg)) {
                         StepContent(
                             Modifier.weight(1f), c, text, state, permissionDenied, theme, language, aiDraft,
                             lanSnapshot, onThemeChange, onLanguageChange, { aiDraft = it }, aiTestConnection,
-                            enableLanServer, onRequestPermission, onOpenAppSettings,
+                            enableLanServer, onRequestPermission, onOpenAppSettings, compact = false,
                         )
-                        BottomBar(Modifier, c, text, state, onStateChange, handleNext)
+                        BottomBar(Modifier, c, text, state, onStateChange, handleNext, compact = false)
                     }
                 }
             }
@@ -223,6 +225,7 @@ private fun BrandPanel(
     desc: String,
     step: WelcomeStep,
     downloadLabel: String?,
+    onDotClick: (WelcomeStep) -> Unit,
 ) {
     Box(
         modifier
@@ -288,7 +291,7 @@ private fun BrandPanel(
                         )
                     }
                 }
-                WfStepDots(step)
+                WfStepDots(step, onDotClick)
             }
         }
     }
@@ -391,6 +394,7 @@ private fun StepContent(
     enableLanServer: suspend () -> Boolean,
     onRequestPermission: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    compact: Boolean,
 ) {
     // Box 居中：内容短（权限/偏好步）时像桌面 justify-center/m-auto 一样垂直居中，
     // 内容长（AI 步三输入框）时撑满并可滚——两种形态一套结构
@@ -399,7 +403,11 @@ private fun StepContent(
             Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                // 平板卡大、内容居中后仍要离边框有呼吸感（桌面 p-8 = 32px）；手机紧凑档收窄
+                .padding(
+                    horizontal = if (compact) 24.dp else 32.dp,
+                    vertical = if (compact) 20.dp else 28.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             when (state.step) {
@@ -421,14 +429,23 @@ private fun BottomBar(
     state: WelcomeFlowState,
     onStateChange: (WelcomeFlowState) -> Unit,
     onNext: () -> Unit,
+    compact: Boolean,
 ) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 24.dp)) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (compact) 24.dp else 32.dp),
+    ) {
         // 桌面同款分隔线（border-t border-gray-100）
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp)
+                // 底栏与卡底留白（桌面 mt-6 pt-6 pb-8 量级）：胶囊按钮不再贴着卡片下边缘
+                .padding(
+                    top = if (compact) 10.dp else 14.dp,
+                    bottom = if (compact) 12.dp else 20.dp,
+                )
                 .navigationBarsPadding(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -764,10 +781,12 @@ private fun WfSectionCard(c: WfC, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun WfStepDots(step: WelcomeStep) {
+private fun WfStepDots(step: WelcomeStep, onDotClick: (WelcomeStep) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         WelcomeStep.entries.filter { it != WelcomeStep.DONE }.forEach { s ->
-            // 纯指示器（不可点）：移动端回退走系统返回手势（BackHandler），避免 <48dp 命中区
+            // 可点回退（对齐桌面 onclick={s < step && setStep(s)}）：靠前的条点击跳回该步，
+            // 当前/靠后/权限步为死区（不响应，视觉也不变）。条本身不放大命中区，仅整条可点。
+            val clickable = s.ordinal < step.ordinal && s != WelcomeStep.PERMISSION
             Box(
                 Modifier
                     .size(width = 28.dp, height = 6.dp)
@@ -777,6 +796,13 @@ private fun WfStepDots(step: WelcomeStep) {
                             s == step -> Color.White
                             s.ordinal < step.ordinal -> Color.White.copy(alpha = 0.7f)
                             else -> Color.White.copy(alpha = 0.3f)
+                        },
+                    )
+                    .then(
+                        if (clickable) {
+                            Modifier.clickable { onDotClick(s) }
+                        } else {
+                            Modifier
                         },
                     ),
             )

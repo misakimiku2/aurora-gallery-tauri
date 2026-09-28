@@ -47,6 +47,19 @@ data class WelcomeFlowState(
         else -> copy(step = WelcomeStep.entries[step.ordinal - 1])
     }
 
+    /**
+     * 跳到指定步骤（点步骤条回退，对齐桌面 `onclick={s < step && setStep(s)}`）：
+     * 只允许往靠前的步跳；权限步不作为目标（权限已解决，回去没有意义）；
+     * 当前步/靠后的步/DONE 步一律不动。
+     */
+    fun goTo(target: WelcomeStep): WelcomeFlowState =
+        if (canGoTo(target)) copy(step = target) else this
+
+    fun canGoTo(target: WelcomeStep): Boolean =
+        step != WelcomeStep.DONE &&
+            target != WelcomeStep.PERMISSION &&
+            target.ordinal < step.ordinal
+
     /** 跳过是否可用（仅 AI/CONNECT 两步——「可选跳过」语义）。 */
     val canSkip: Boolean
         get() = step == WelcomeStep.AI || step == WelcomeStep.CONNECT
