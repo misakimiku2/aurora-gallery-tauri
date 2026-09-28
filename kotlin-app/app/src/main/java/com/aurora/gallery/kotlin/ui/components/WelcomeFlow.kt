@@ -151,28 +151,32 @@ fun WelcomeFlow(
     }
 
     Box(Modifier.fillMaxSize().background(c.pageBg)) {
-        WfDecoratedBackground(c)
+        // 装饰背景（点阵 + 色斑）只服务平板悬浮卡：手机端卡片铺满全屏，背景看不见也不该白画
+        if (!compact) WfDecoratedBackground(c)
         Box(
             Modifier
-                .align(Alignment.Center)
-                .padding(16.dp)
-                .navigationBarsPadding()
                 .then(
                     if (compact) {
-                        Modifier.fillMaxSize()
+                        // 手机：整卡铺满全屏（无外边距/圆角/投影/边框——它就是整屏本身）
+                        Modifier.fillMaxSize().background(c.cardBg)
                     } else {
-                        Modifier.width(720.dp).height(520.dp)
+                        Modifier
+                            .align(Alignment.Center)
+                            .padding(16.dp)
+                            .navigationBarsPadding()
+                            .width(720.dp)
+                            .height(520.dp)
+                            .shadow(
+                                elevation = 16.dp,
+                                shape = RoundedCornerShape(16.dp),
+                                ambientColor = Color(0x1A000000),
+                                spotColor = Color(0x33111827),
+                            )
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(c.cardBg)
+                            .border(1.dp, c.border, RoundedCornerShape(16.dp))
                     },
-                )
-                .shadow(
-                    elevation = 16.dp,
-                    shape = RoundedCornerShape(16.dp),
-                    ambientColor = Color(0x1A000000),
-                    spotColor = Color(0x33111827),
-                )
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.cardBg)
-                .border(1.dp, c.border, RoundedCornerShape(16.dp)),
+                ),
         ) {
             if (compact) {
                 Column(Modifier.fillMaxSize()) {
@@ -195,7 +199,8 @@ fun WelcomeFlow(
                     BrandPanel(
                         Modifier.fillMaxHeight().width(360.dp), compact = false, title = title, desc = desc,
                         step = state.step,
-                        downloadLabel = text.scanDownloadAndroid.takeIf { state.step == WelcomeStep.CONNECT },
+                        // 互相推广：本端是安卓包，这里扫的是桌面端下载（桌面端的对应入口扫的是安卓包）
+                        downloadLabel = text.scanDownloadDesktop.takeIf { state.step == WelcomeStep.CONNECT },
                         onDotClick = { onStateChange(state.goTo(it)) },
                     )
                     Column(Modifier.weight(1f).fillMaxHeight().background(c.rightBg)) {
@@ -1107,7 +1112,7 @@ private data class WelText(
     val desktopDownloadHint: String,
     val desktopDownloadCopy: String,
     val desktopDownloadCopied: String,
-    val scanDownloadAndroid: String,
+    val scanDownloadDesktop: String,
     val next: String,
     val finish: String,
     val skip: String,
@@ -1151,7 +1156,7 @@ private fun welText(language: String): WelText =
         desktopDownloadHint = "Open the link below in a browser on your PC to download the desktop version.",
         desktopDownloadCopy = "Copy link",
         desktopDownloadCopied = "Copied",
-        scanDownloadAndroid = "Scan to get the mobile app",
+        scanDownloadDesktop = "Scan to get the desktop app",
         next = "Next",
         finish = "Start using",
         skip = "Skip",
@@ -1193,7 +1198,7 @@ private fun welText(language: String): WelText =
         desktopDownloadHint = "在电脑浏览器打开下方链接，即可下载桌面版。",
         desktopDownloadCopy = "复制链接",
         desktopDownloadCopied = "已复制",
-        scanDownloadAndroid = "扫码下载安卓端",
+        scanDownloadDesktop = "扫码下载桌面端",
         next = "下一步",
         finish = "开始使用",
         skip = "跳过",
