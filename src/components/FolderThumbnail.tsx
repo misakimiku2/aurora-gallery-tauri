@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { FileNode, LayoutMode } from '../types';
+import { FileNode, FolderIconStyle, LayoutMode } from '../types';
+import { DEFAULT_FOLDER_ICON_STYLE } from '../constants';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
@@ -56,7 +57,7 @@ const count = folderItemCount(file) ?? 0;
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: 'classic' | 'tiles' | 'canvas' }) => {
+export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle = DEFAULT_FOLDER_ICON_STYLE }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: FolderIconStyle }) => {
   const isAndroid = resourceRoot === 'android_media_store';
   const [ref, isInView, wasInView] = useInView({ rootMargin: '600px' });
 

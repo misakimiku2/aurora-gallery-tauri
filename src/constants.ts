@@ -1,4 +1,4 @@
-import { TabState, LayoutMode, SortOption, SortDirection, GroupByOption } from './types';
+import { TabState, LayoutMode, SortOption, SortDirection, GroupByOption, FolderIconStyle } from './types';
 
 // LAN 根目录虚拟文件夹 ID：容纳资源根目录下未归入子文件夹的散落图片
 export const LAN_ROOT_IMAGES_ID = '__lan_root_images__';
@@ -42,3 +42,8 @@ export const DEFAULT_LAYOUT_SETTINGS = {
     sortDirection: 'asc' as SortDirection,
     groupBy: 'none' as GroupByOption
 };
+
+// 文件夹图标默认样式：Canvas 预合成版（滚动时不参与逐卡片 DOM 合成）。
+// 用户没在「设置-外观-文件夹图标」里选过时取这个值；不支持 Sprite 合成的环境
+// 由 FolderThumbnail 自己回退到 DOM 经典版，所以这里不必按设备能力分档。
+export const DEFAULT_FOLDER_ICON_STYLE: FolderIconStyle = 'canvas';

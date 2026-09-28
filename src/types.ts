@@ -403,11 +403,13 @@ export interface ConnectedDevice {
   deviceType: string;        // 设备类型: "desktop", "tablet", "phone"
 }
 
+// 文件夹图标样式：classic = 经典 3D 文件夹（DOM）；tiles = 简洁图片瓷砖拼贴；canvas = 经典 3D 文件夹（Canvas 预合成）
+export type FolderIconStyle = 'classic' | 'tiles' | 'canvas';
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   language: 'zh' | 'en';
-  // 文件夹图标样式：classic = 经典 3D 文件夹（DOM）；tiles = 简洁图片瓷砖拼贴；canvas = 经典 3D 文件夹（Canvas 预合成）
-  folderIconStyle?: 'classic' | 'tiles' | 'canvas';
+  folderIconStyle?: FolderIconStyle;
   autoStart: boolean;
   exitAction: 'ask' | 'minimize' | 'exit';
   animateOnHover: boolean;
@@ -422,7 +424,6 @@ export interface AppSettings {
   performance: {
     refreshInterval: number; // 毫秒
     scrollProfiling?: boolean; // 滚动性能记录（默认关闭）
-    debugLogs?: boolean; // 调试日志 console.log 开关（默认开启；真机量帧率时关掉）
   };
   lanShare: LanShareSettings;
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析

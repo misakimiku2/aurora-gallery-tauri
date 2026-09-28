@@ -1,11 +1,11 @@
 import React from 'react';
 import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
+import { DEFAULT_FOLDER_ICON_STYLE } from '../../constants';
 import { Folder3DIcon } from '../Folder3DIcon';
 import { Folder3DIconCanvas } from '../Folder3DIconCanvas';
 import { FolderTilesIconCanvas } from '../FolderTilesIconCanvas';
 import { isSpriteSupportedSafe } from '../../utils/spriteCache';
-import { isDebugLogEnabled, setDebugLogEnabled } from '../../utils/debugLog';
 
 // 通用设置 + 外观设置面板组件
 interface GeneralPanelProps {
@@ -106,38 +106,6 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
               </button>
             </div>
 
-            {/* 调试日志开关（临时）：安卓端「性能」分类入口是隐藏的，所以放在通用页，
-                两边都能直接开关，不用重启。 */}
-            <div className={`pt-3 border-subtle`} style={isAndroid ? { minHeight: '55px' } : undefined}>
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="font-bold text-gray-800 dark:text-gray-200">
-                    {t('settings.debugLogs') || '调试日志（console.log）'}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                    {t('settings.debugLogsDesc') || '真机量帧率时关掉：每条 console.log 都要经调试通道序列化，高频手势期间会占主线程。'}
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    const newValue = !(settings.performance?.debugLogs ?? isDebugLogEnabled());
-                    setDebugLogEnabled(newValue);
-                    onUpdateSettingsData({
-                      performance: {
-                        ...(settings.performance || { refreshInterval: 5000 }),
-                        debugLogs: newValue,
-                      },
-                    });
-                    // 开启时这条能被看到，正好验证开关生效
-                    console.log(`[debugLog] console.log ${newValue ? 'ENABLED' : 'DISABLED'}`);
-                  }}
-                  className={`relative inline-flex h-6 w-11 flex-none items-center rounded-full transition-colors ${(settings.performance?.debugLogs ?? isDebugLogEnabled()) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.performance?.debugLogs ?? isDebugLogEnabled()) ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-              </div>
-            </div>
-
             {!isAndroid && (
               <div className="pt-3 border-subtle">
                 <div className="flex items-center justify-between">
@@ -197,7 +165,7 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
               { id: 'tiles', label: t('settings.folderIconStyleTiles') || '简洁' },
               { id: 'canvas', label: t('settings.folderIconStyleCanvas') || 'Canvas' },
             ] as const).map(opt => {
-              const current = settings.folderIconStyle || 'classic';
+              const current = settings.folderIconStyle || DEFAULT_FOLDER_ICON_STYLE;
               const isSelected = current === opt.id;
               return (
                 <button
