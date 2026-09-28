@@ -278,6 +278,9 @@ private fun BrandPanel(
                     Spacer(Modifier.height(4.dp))
                     Text(desc, color = Color(0xFFDBEAFE).copy(alpha = 0.9f), fontSize = 14.sp, lineHeight = 20.sp)
                 }
+                // 手机紧凑档：横幅按内容撑高、外层 SpaceBetween 无余量可分配——
+                // 描述文字与步骤条之间必须显式留白，否则会直接贴在一起
+                if (compact) Spacer(Modifier.height(18.dp))
                 if (downloadLabel != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         WfQrImage(DOWNLOAD_PAGE_URL, size = 72.dp)
