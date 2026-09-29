@@ -1,8 +1,8 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.8（2026-09-29 验收人实库首跑后补两处：§10 偏差 9——**导入出来的专题要自己补封面**（桌面那条「归入成员时取首图当封面」的规则在前端 `useTopics.ts:89-98`，导入器直接落库会绕过它，提交 `00c1cc2bb`）；偏差 10——上报文案是纯文本渲染，不许带 markdown 星号（提交 `63cd70566`）。v4.7 的更正保留如下）
+> 版本： v4.9（2026-09-29 验收人两条拍板落地：**① 删父专题级联删子专题**（收到 `core/src/db/topics.rs::delete_topic`，安卓在 ViewModel 里手工补的那层现在成兜底）；**② 同名看板从「不新建也不合并成员」改为「不新建、成员并进去」**（§4 表与 §4.6 规则 4 改写，报告栏 `topics_skipped_name` → `topics_merged_name`，新增 `topics_covered`）。提交 `9ff5728c`。v4.8 保留如下）
 >
-> v4.7（2026-09-29 实现首轮落账：新增 §10 实现落账与偏差登记；**§4.7/§9 的 `skipped_unsupported_type` 本机预期由 53 更正为 52**——本机 `video/mp4` 共 53 条，其中 1 条在 Trash 子树里，已被 `excluded_trash` 吃掉，再计一次正是 §4.8 自己明令避免的「同一条目重复计入两栏」。其余同 v4.6）
+> v4.8（2026-09-29 实库首跑后补两处：§10 偏差 9——**导入出来的专题要自己补封面**（桌面那条「归入成员时取首图当封面」的规则在前端 `useTopics.ts:89-98`，导入器直接落库会绕过它，提交 `00c1cc2bb`）；偏差 10——上报文案是纯文本渲染，不许带 markdown 星号（提交 `63cd70566`））
 > 状态： **核心与两个入口已实现，并已由验收人在实库首跑**（2026-09-29 21:07，§9 全栏逐栏命中，见 §10）。解码/断言/层级/并集全部有单测覆盖（core 130 条 Rust + 前端 85 条）。首跑遗留一项：偏差 9 的封面修复晚于他的导入，`阿松大`/`test` 两行的 `cover_file_id` 仍待补
 > 范围拍板（2026-09-29 与验收人对齐，v4 扩充）：v1 只迁 **标签 + 描述 + 来源链接 + 手动合集**；评分、文件夹固定封面、近重复检测三项不进本期（§5）
 > §8 的 scanner 豁免移除已落地，`cargo check` 与运行时验证均通过
@@ -100,7 +100,7 @@
 | `tags.category` / `tags.pinyin` / `tag_groups` / `tags.group_id` | — | **丢弃**：`category` 与我们 `getPinyinGroup`（`textUtils.ts:1-42`）归组等价，实测 10/10（⑧）；`tag_groups` 本机无样本，遇到则上报条数 | **已定**（⑧） |
 | `entries.description`（文件） | `file_metadata.description` | **trim 后**仅当我们该行为空时填，不覆盖用户已写内容 | **已定**（⑨） |
 | `entries.description`（文件夹） | `file_metadata.description`（folder 节点的行） | 同上一条。**展示位本来就有**，见 §4.4 | **已定**（⑩） |
-| `boards` + `board_entries`（**含层级；智能节点可验证时固化**） | `topics` + `topic_files`（`position` 从现有 `COUNT(*)` 起排，同 `core/src/db/topics.rs:405` 语义） | 判据按 ⑪；**层级照搬**（§4.6，v4.1）：`parent_id=1`→我们 topics 根，其余挂到父节点映射出的 topic；**智能节点按 ⑭ 复算筛选、计数断言通过后固化为快照专题**（v4.2），断言不过或筛选含未标定键则跳过并上报，其手动子节点降级挂最近的已迁祖先；查重键 `(映射后父级, name)`，同名已有专题不新建也不合并成员；`boards.description` 非空时写入 `topics.description` | **已定**（⑪ + ⑭ + §4.6） |
+| `boards` + `board_entries`（**含层级；智能节点可验证时固化**） | `topics` + `topic_files`（`position` 从现有 `COUNT(*)` 起排，同 `core/src/db/topics.rs:405` 语义） | 判据按 ⑪；**层级照搬**（§4.6，v4.1）：`parent_id=1`→我们 topics 根，其余挂到父节点映射出的 topic；**智能节点按 ⑭ 复算筛选、计数断言通过后固化为快照专题**（v4.2），断言不过或筛选含未标定键则跳过并上报，其手动子节点降级挂最近的已迁祖先；查重键 `(映射后父级, name)`，**同名已有专题时不新建、成员并进去**（v4.9 改，原为「不新建也不合并成员」）；`boards.description` 非空时写入 `topics.description`（并入已有专题时「空着才补」） | **已定**（⑪ + ⑭ + §4.6，v4.9 拍板合并） |
 | `board_entries.entry_kind` | — | 校验：本机 4 条全为 1（文件）。若出现 0（文件夹），我们 `topic_files` 语义未定义 → **跳过该成员并上报** | **已定**（v4 新增，§4.8） |
 | `entries.rating` | — | **不迁**（§5） | 决定：本期不做 |
 | `folders.fixed_cover_id` / `folders.cover_id` / `icon` / `icon_color` | — | **不迁**（§5）。v4 补：`cover_id` 16/28 非空（它自算的夹子封面），`fixed_cover_id` / `icon` / `icon_color` 本机 0 非空 | 决定：本期不做 |
@@ -133,7 +133,8 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 1. **按树迁移手动节点**：`parent_id = 1` 的 board 挂到我们 topics 的根（我们侧根专题 `parent_id` 为 NULL）；其余 board 挂到「其父 board 映射出的 topic」下。先序遍历 boards 树，父节点先落库拿到我们的 topic id，子节点再用它做 parent。
 2. **智能节点不是一律跳过：能验证就固化，不能验证才跳过（v4.2，规则 7/8）**。被跳过的智能节点，它的手动子节点不陪葬：降级挂到**最近的已迁祖先**（即跳过链上第一个成功映射的 topic）；若一个都没有，挂到 topics 根。两种降级都上报条数（`topics_reparented`）。理由：子看板是用户手工维护的成员集合，父级只是个查询条件，不该连坐。
 3. 查重键是 **`(映射后的我们父级, name)`**，不是裸名字——名字在树里不唯一，裸名字查重会把不同父下的同名合集合并掉。
-4. 命中同名已有专题时：**不新建、也不合并成员**，上报 `topics_skipped_name`。往别人已有的专题里塞成员是不可逆且出乎意料的。该专题仍参与映射表（它的 PixCall 子节点可以继续挂进去），避免整棵子树失联。
+4. 命中同名已有专题时：**不新建，但把成员并进它**（v4.9 拍板，推翻原案「不新建也不合并成员」）。并的时候三件事守住：名字与父级不改（那是用户给专题起的、放的位置是他排的）；封面与描述**空着才补**——用户钉过的封面、写过的简介一律不动；`position` 从现有 `COUNT(*)` 续排，已在里的成员由 `INSERT OR IGNORE` 自然跳过，所以重跑是空操作。该节点仍写进映射表，它的子看板继续挂在同一个专题下。计数走 `topics_merged_name`，补了封面的另计 `topics_covered`。
+   原案担心的「往别人已有的专题里塞成员是不可逆且出乎意料的」在同名同父这个前提下不成立：那个专题就是他在同一个位置用同一个名字要的东西。真出问题时靠的是 §6.5 的记录 + 重跑只做增量这一条。
 5. `boards.description` 非空时写入 `topics.description`（两边列都在；本机 0 非空，空值安全）。
 6. **智能合集固化为快照专题（v4.2，验收人拍板「只要文件过去就行」）**：用标定的筛选语义（⑭）在 PixCall 的 `entries` 上复算成员集合，再走标准 join 链落到我们的 `topic_files`。**语义上是快照**：导入后该专题是静态成员表，新产生的符合条件文件不会自动加入——我们侧没有智能专题机制，这是数据模型决定的，验收时要知晓。
 7. **计数断言是硬门禁**：复算出的成员数必须**精确等于** `boards.file_count`，才允许落表；不相等就跳过并上报 `topics_skipped_unverifiable`。这条断言把「猜筛选语义」变成「可验证复算或放弃」：猜错桶边界（如把 small 猜成 <2 MiB 会得 2220）必然过不了断言。注意 `file_count` 是缓存值，源库在断言之后又增长时断言会保守失败——跳过比导入错名单安全。
@@ -150,7 +151,7 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 | `tags_unioned` / `tags_words_added` | 并集的行数 / 词表净增词数 | 8 行 / 9 词（`明日方舟：终末地` 已存在） |
 | `descriptions_written` / `descriptions_skipped_existing` | 写入 / 因我们侧非空而让位 | 9 / **1**（NTE 夹） |
 | `source_urls_written` / `source_urls_skipped_existing` | 同上 | 5 / 0 |
-| `topics_created` / `topic_files_added` / `topics_skipped_name` / `topics_materialized` / `topics_skipped_unverifiable` / `topics_reparented` | 合集各态：新建（含智能固化）/ 成员落表 / 同名让位 / 智能节点固化成功 / 断言不过或含未标定键而跳过 / 手动子节点降级挂祖先 | 2 / 1461 / 0 / 1 / 0 / 0 |
+| `topics_created` / `topic_files_added` / `topics_merged_name` / `topics_covered` / `topics_materialized` / `topics_skipped_unverifiable` / `topics_reparented` | 合集各态：新建（含智能固化）/ 成员落表（并入时只算这次真新增的）/ 同名命中已有专题并并入成员 / 其中原本没封面、这次补了首张 / 智能节点固化成功 / 断言不过或含未标定键而跳过 / 手动子节点降级挂祖先 | 2 / 1461 / 0 / 0 / 1 / 0 / 0 |
 | `skipped_unsupported_type` / 其中带标注者 / `topic_members_skipped_type` | `is_indexable` 为 false 的条目（今天即视频）/ 其中挂着标签、描述或来源链接的 / 合集成员里因类型被搁置的（§4.9） | **52**（v4.7 更正，原记 53：本机 `video/mp4` 共 53 条，其中 1 条在 Trash 子树、已计入 `excluded_trash`） / **1** / 0 |
 | `excluded_trash` / `excluded_trash_names` | Trash 子树条目数 / 其名清单（v4.5 拍板 A：不复制、只列名；名字附原夹，取自 `source_path`） | 1 / 1（`Zenless Zone Zero 2026.07.13 - 23.38.12.01.mp4`，原夹 `Zenless Zone Zero`） |
 | `unmatched` | 路径不命中清单（如实上报，不模糊猜） | 0 |
@@ -339,6 +340,10 @@ unmatched                 0
 8. **adb 三脚本除 `pidof` 外还换了 logcat 过滤标签**：原 `aurora_gallery_lib` / `Tauri/Console` 随安卓壳一起失效，只改包名仍抓不到东西。现指向现役 Kotlin 标签（`AuroraKotlin` / `AuroraLan*` / `AuroraCanvas` 等，对齐 `scripts/kotlin-dev.ps1:84`）。
 9. **导入出来的专题必须自己补封面**（验收人实库首跑指出）：桌面把「专题还没有封面且本次归入了新成员 → 取第一个 Image 成员当封面」这条规则写在前端（`useTopics.ts:89-98`），而导入器是直接写 `topics` + `topic_files`，绕过了它，结果 `阿松大`/`test` 的 `cover_file_id` 全是 NULL、卡片空封面。现在 `apply_plan` 落库时补同一条规则：成员按 §4.9 的 `is_indexable` 过滤后全是 `image/*`，所以「首个成员」就是「首张图」。**只在新建时给**——同名让位的已有专题一行都不碰（§4.6 规则 4），用户自己钉过的封面不会被重跑打回。彩排时这一条被意外验到：只删 `test`、留着 `阿松大` 时，重跑只给 `test` 补封面。
 10. **上报文案是纯文本渲染**：设置面板展开区与 welcome 结果行都不是 markdown，所以警告文案里不许出现 `**快照**` 这类强调符号（第一版写了，验收人截图里就是两个杂散星号）。文案也照验收人的偏好砍短，语义留在句子里。
+11. **删父专题级联子专题（v4.9 拍板，收进 core）**：`topics::delete_topic` 原先只删自己那行 + 两张关联表。安卓早就按「删父连带子」的心智在用，但那层是补在 `GalleryViewModel.deleteTopic` 里手工递归的；桌面 React 的 `useTopics.handleDeleteTopic` 没有这一步——于是删父之后子专题变成孤儿行（`parent_id` 指向已不存在的专题，看不见也删不掉）。现在 BFS 过 `parent_id` 一次性删整棵子树（`visited` 拦环，只删专题与关联、不动图片文件），两条线共用，安卓那段预删降为兜底（重复删已不存在的 id 是 no-op，注释已改）。桌面内存态同步摘子树。
+    这条和偏差 9 是连着的：**导入出来的专题 id 是从源看板 id 确定性派生的**（`md5("pixcall-board|{board_id}|0")` 前 9 位），所以删掉父专题再重导会拿回同一个 id，幸存的子专题的 `parent_id` 又正好重新指向它——查重键 `(父级, name)` 于是命中，子专题被当成「已有的同名专题」。旧规则 4「一行都不碰」在这种情况下就把空封面永久锁死了（`阿松大`/`test` 那次）。
+12. **同名看板改为并入成员（v4.9 拍板，推翻 §4.6 规则 4 原案）**：见改写后的规则 4。报告栏 `topics_skipped_name` 换名 `topics_merged_name`，新增 `topics_covered`；`has_anything_to_migrate` 现在也把「并入成员」和「补封面」算作动过库（只补一张封面也要留下迁移记录）。UI 摘要多一句「并入已有专题 N 个」，免得 `专题 0 个` 被读成没动静。
+    **历史 `import_records` 里的行仍带着 `topicsSkippedName` 键**（改名前落的），摘要不读这一栏所以照旧可渲染，不必迁移旧数据。
 
 **验收人实库首跑结果（2026-09-29 21:07，双软并用机器）**：`import_records` 落 1 行（schema 22、matched 13、unmatched 0、让位 1、52），报告全栏与更正后的 §9 **逐栏一致**；`file_metadata` 13→22 行（带标签 5→10、带描述 6→15、带链接 3→8），NTE 夹保留他自己写的长备注，`72C2…png` 为 `["test2","王权","极乐净土","CEP"]`（原序保留 + 新词追加）。偏差 9 的封面修复在克隆库上彩排过（删两专题 → 重导 → `topics_created 2`、两个封面都等于各自 position 最小的成员，且他自己的 OPK/Koc 同样符合这条规则），**实库那两行的封面仍待他用带修复的构建重导或手工补**。
 
@@ -440,3 +445,10 @@ unmatched                 0
 | §4.6 规则 4 的「不碰已有专题」 | 只写了「不新建也不合并成员」 | 实库彩排把它延伸验到封面：只删 `test`、留着 `阿松大` 时重跑只给 `test` 补封面，`阿松大` 一行未动——「一行都不碰」原来还含封面这一项 |
 | §4.7 上报文案 | 未规定渲染形态 | 设置面板展开区与 welcome 结果行都是纯文本，第一版带了 markdown 的 `**快照**` 被读成杂散星号 → 文案不许出现强调符号（§10 偏差 10，提交 `63cd70566`） |
 | §9 实库首跑 | 预期表 | **逐栏命中**（含更正后的 52）；`import_records` 落 1 行，`file_metadata` 13→22 行、NTE 让位、`72C2…png` 并集保留原序。命令层 + UI 这条路径由验收人跑通（此前只有 `core/examples` 与单测验过） |
+
+| 项 | v4.8 说法 | v4.9 拍板结论 |
+|---|---|---|
+| §4.6 规则 4「同名已有专题不新建也不合并成员」 | 已定（理由：往别人已有的专题里塞成员不可逆且出乎意料） | **推翻（验收人：「如果专题同名时则合并就好了」）**：不新建、成员并进去；名字与父级不改，封面与描述「空着才补」。§4 表与规则 4 同步改写，报告栏 `topics_skipped_name` → `topics_merged_name`，新增 `topics_covered`（提交 `9ff5728c`） |
+| 删除父专题的行为 | 文档未涉及（只写了 topics 的写入侧） | **拍板「删除父专题自然要关联到子专题」**：级联收进 `core/src/db/topics.rs::delete_topic`。安卓此前在 `GalleryViewModel.deleteTopic` 手工递归补了一层，桌面漏了——删父后子专题变成看不见也删不掉的孤儿行。这是公共层行为变更，Kotlin 线一并生效，那段预删降为兜底 |
+| 导入专题的 id 形态 | 未规定 | 实现是确定性的（`md5("pixcall-board\|{board_id}\|0")` 前 9 位）。副作用记 §10 偏差 11：重导会拿回同一个 id，幸存的子专题因此重新认父并被查重命中——旧规则 4 正是这样把空封面永久锁死的（`阿松大`/`test` 那次的真因） |
+| §10 待办「实库两行封面仍为 NULL」 | 待重导或手工补 | 验收人 21:34 把两个专题都删掉重导（报告 `topicsCreated 2`/`topicFilesAdded 1461`），实库两行封面已补齐。合并路径另在克隆上彩排：清空 `test` 封面 + 删 3 个成员 → 一次导入 `merged 2 / created 0 / files_added 3 / covered 1`，再跑一次全 0 且不写新记录 |
