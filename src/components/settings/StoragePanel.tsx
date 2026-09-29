@@ -29,6 +29,7 @@ import {
 } from '../../api/tauri-bridge';
 import { getGlobalCache, getThumbnailPathCache } from '../../utils/thumbnailCache';
 import { formatFileSize, formatEstimatedTimeMs } from './utils';
+import PixcallImportSection from './PixcallImportSection';
 
 // 存储设置 + 主色调数据库管理面板组件
 interface StoragePanelProps {
@@ -695,6 +696,14 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             </button>
           </div>
         </div>
+
+        {/* PixCall 标注迁移：存量/换库用户的入口（设计方案 §6.1 第 4 条）。
+            语义与 welcome 那颗不同——根目录已定，只往当前打开的库里导标注。 */}
+        <PixcallImportSection
+          t={t}
+          currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
+          onShowToast={onShowToast}
+        />
       </section>
 
       {/* 主色调数据库管理 */}

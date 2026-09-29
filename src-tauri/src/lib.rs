@@ -7,6 +7,7 @@ pub mod image_utils;
 pub mod scanner;
 pub mod file_operations;
 pub mod db_commands;
+pub mod import_commands;
 pub mod system_commands;
 pub mod window_commands;
 pub mod color_commands;
@@ -2036,6 +2037,12 @@ pub fn run() {
         db_commands::retry_color_extraction,
         db_commands::delete_color_db_error_files,
         db_commands::cleanup_stale_color_records,
+        // PixCall 标注迁移（设计方案 §6.1；第二期 Eagle 只换适配器）
+        import_commands::pixcall_discover,
+        import_commands::pixcall_probe,
+        import_commands::pixcall_import,
+        import_commands::pixcall_last_import_report,
+        import_commands::pixcall_import_records,
         update_commands::check_for_updates_command,
         system_commands::open_external_link,
         update_commands::start_update_download,
@@ -2307,6 +2314,10 @@ pub fn run() {
                 }
             };
             app.manage(app_db_pool);
+
+            // PixCall 迁移：probe 与 import 共用同一份只读快照（设计方案 §6.2 末），
+            // 快照按库根存这里，跨两次命令调用活着。
+            app.manage(import_commands::PixcallSnapshots::default());
             
             #[cfg(not(target_os = "android"))]
             app.manage(LanShareState::new());

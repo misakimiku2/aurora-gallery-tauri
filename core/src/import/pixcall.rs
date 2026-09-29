@@ -41,9 +41,6 @@ impl UnmatchedSet {
             self.paths.push(path);
         }
     }
-    fn len(&self) -> usize {
-        self.seen.len()
-    }
     fn into_parts(self) -> (usize, Vec<String>) {
         let mut paths = self.paths;
         paths.sort();

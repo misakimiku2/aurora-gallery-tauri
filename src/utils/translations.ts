@@ -645,6 +645,7 @@ export const translations = {
       dataBackup: '数据备份',
       exportTags: '导出元数据 (标签/人物/专题)',
       importTags: '导入元数据 (标签/人物/专题)',
+      usePixcallLibrary: '使用 PixCall 库',
       importSuccess: '导入成功',
       importError: '导入失败：文件格式无效',
       lmStudioModelSwitched: 'LM Studio 模型已切换为：',
@@ -1035,6 +1036,25 @@ export const translations = {
       uploadFailed: '上传失败',
       uploadDone: '上传完成 {x}/{n}',
       uploadPartial: '上传完成 {x}/{n}（部分失败）'
+    },
+    import: {
+      summary: '标签 {tags}（新词 {words}）· 描述 {desc} · 来源链接 {links} · 专题 {topics}（成员 {files}）',
+      skippedExisting: '跳过 {count} 项已有内容',
+      unmatched: '未匹配 {count} 条路径',
+      trashSkipped: '跳过 {count} 条回收站项，仍在 PixCall 废纸篓中',
+      videoParked: '{count} 条视频标注将在支持视频后自动补齐',
+      running: '处理中…',
+      pickLibrary: '选择要导入的 PixCall 库',
+      probing: '正在读取 PixCall 库…',
+      importing: '正在导入标注…',
+      doneToast: 'PixCall 标注导入完成，侧栏与专题已刷新',
+      failed: '导入失败：{message}',
+      nothingFound: '未发现可迁移的标注',
+      lastReport: '上次导入报告',
+      reportAt: '{time} · 来自 {root}',
+      reportUnreadable: '报告内容无法解析',
+      trashItem: '跳过 1 条回收站项：{name}，仍在 PixCall 废纸篓中',
+      trashItemWithOrigin: '跳过 1 条回收站项：{name}（原 {folder}），仍在 PixCall 废纸篓中'
     }
   },
   en: {
@@ -1683,6 +1703,7 @@ export const translations = {
       dataBackup: 'Data Backup',
       exportTags: 'Export Metadata (Tags/People/Topics)',
       importTags: 'Import Metadata (Tags/People/Topics)',
+      usePixcallLibrary: 'Use PixCall Library',
       importSuccess: 'Import successful',
       importError: 'Import failed: Invalid file format',
       lmStudioModelSwitched: 'LM Studio model switched to: ',
@@ -2073,6 +2094,25 @@ export const translations = {
       uploadFailed: 'Upload failed',
       uploadDone: 'Upload complete {x}/{n}',
       uploadPartial: 'Upload complete {x}/{n} (some failed)'
+    },
+    import: {
+      summary: 'Tags {tags} (+{words} new) · Descriptions {desc} · Source links {links} · Topics {topics} ({files} items)',
+      skippedExisting: 'Skipped {count} already filled',
+      unmatched: '{count} paths unmatched',
+      trashSkipped: 'Skipped {count} trash items, still in PixCall trash',
+      videoParked: '{count} video annotations will land once video is supported',
+      running: 'Working…',
+      pickLibrary: 'Pick a PixCall library',
+      probing: 'Reading PixCall library…',
+      importing: 'Importing annotations…',
+      doneToast: 'PixCall annotations imported; sidebar and topics refreshed',
+      failed: 'Import failed: {message}',
+      nothingFound: 'Nothing to import',
+      lastReport: 'Last import report',
+      reportAt: '{time} · from {root}',
+      reportUnreadable: 'Report could not be parsed',
+      trashItem: 'Skipped 1 trash item: {name}, still in PixCall trash',
+      trashItemWithOrigin: 'Skipped 1 trash item: {name} (was in {folder}), still in PixCall trash'
     }
   }
 };
