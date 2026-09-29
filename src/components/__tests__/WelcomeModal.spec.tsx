@@ -307,12 +307,17 @@ describe('WelcomeModal 四步向导', () => {
     expect(takeover).toHaveBeenCalledWith('C:/Pix');
     expect(pixcallProbe).toHaveBeenCalledWith('C:/Pix');
 
-    // 结果行必须带「让位」与「回收站计数」两栏，缺一栏在验收时就像丢数据（§4.7）
+    // 结果区必须带「未覆盖已有内容」与「回收站计数」「视频待补」几栏，缺一栏在验收时就像丢数据（§4.7）
     const row = await screen.findByTestId('welcome-pixcall-result');
-    expect(row.textContent).toContain('import.summary');
-    expect(row.textContent).toContain('import.skippedExisting');
-    expect(row.textContent).toContain('import.trashSkipped');
-    expect(row.textContent).toContain('import.videoParked');
+    expect(row.textContent).toContain('import.done');
+    expect(row.textContent).toContain('import.statTags');
+    expect(row.textContent).toContain('import.noteExisting');
+    expect(row.textContent).toContain('import.noteTrash');
+    expect(row.textContent).toContain('import.noteVideo');
+    // 库只印文件夹名，整串路径留给悬停（DOM 常驻、CSS 控制可见）
+    const library = screen.getByTestId('pixcall-library-row');
+    expect(library.textContent).toContain('Pix');
+    expect(screen.getByTestId('pixcall-library-path').textContent).toBe('C:/Pix');
     expect(screen.getByTestId('welcome-next-button')).toBeEnabled();
   });
 

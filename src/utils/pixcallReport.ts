@@ -3,10 +3,12 @@ import { MigrationReport } from '../api/tauri-bridge';
 /**
  * PixCall 迁移报告的文案口径（设计方案 §4.7 / §6.1）。
  *
- * welcome 卡片的结果行与设置-存储面板的报告展开区共用这一套，两处措辞不许各写一遍。
+ * welcome 卡片的结果区与设置-存储面板的报告展开区共用这一套，两处措辞不许各写一遍。
+ * 呈现形态是「徽章 + 短备注」而不是长句：验收要的栏位一个不少，但读起来是一眼扫完的数字，
+ * 不是一行用 · 串起来的段落。
  */
 
-/** 现有 i18n 没有插值引擎，靠调用方 replace（与 StoragePanel 的 {count} 用法一致） */
+/** 现有 i18n 没有插值引擎，靠调用方 fillTemplate（与 StoragePanel 的 {count} 用法一致） */
 export const fillTemplate = (text: string, pairs: Record<string, string | number>): string =>
   Object.entries(pairs).reduce(
     (acc, [key, value]) => acc.split(`{${key}}`).join(String(value)),
@@ -14,39 +16,83 @@ export const fillTemplate = (text: string, pairs: Record<string, string | number
   );
 
 /**
- * §4.7 各栏压成一句话。
- *
- * 「跳过 N 项已有内容」这一栏不能省：本机 PixCall 有 5 条夹子备注、实际只写进 4 条
- * （NTE 夹我们侧已有内容必须让位），没有这栏在验收时就像丢了数据。
+ * 库根 → 展示用的文件夹名。完整路径只在悬停时出现（见 PixcallLibraryRow），
+ * 因为 `D:\资源` 这种串按钮里一排摆着既读不出重点，也撑破布局。
  */
-export const buildPixcallSummary = (report: MigrationReport, t: (key: string) => string): string => {
-  const parts = [
-    fillTemplate(t('import.summary'), {
-      tags: report.tagsUnioned,
-      words: report.tagsWordsAdded,
-      desc: report.descriptionsWritten,
-      links: report.sourceUrlsWritten,
-      topics: report.topicsCreated,
-      files: report.topicFilesAdded,
-    }),
-  ];
-  const yielded = report.descriptionsSkippedExisting + report.sourceUrlsSkippedExisting;
-  if (yielded > 0) parts.push(fillTemplate(t('import.skippedExisting'), { count: yielded }));
-  // v4.9 拍板：同名不新建、成员并进去。这一栏要说出来，否则「专题 0 个」会被读成没动静
-  if (report.topicsMergedName > 0)
-    parts.push(fillTemplate(t('import.mergedTopics'), { count: report.topicsMergedName }));
-  if (report.unmatched > 0) parts.push(fillTemplate(t('import.unmatched'), { count: report.unmatched }));
-  // v4.5 拍板 A：welcome 卡片只给计数，名字明细在设置面板的导入详情里
-  if (report.excludedTrash > 0) {
-    parts.push(fillTemplate(t('import.trashSkipped'), { count: report.excludedTrash }));
-  }
-  // §4.9 第 2 条：搁置的视频标注要在文案里明说，不是静默丢弃
-  if (report.skippedUnsupportedType > 0) {
-    parts.push(fillTemplate(t('import.videoParked'), { count: report.skippedUnsupportedType }));
-  }
-  return parts.join(' · ');
+export const libraryDisplayName = (root: string): string => {
+  const segments = root.split(/[\\/]+/).filter(Boolean);
+  // 盘符根（`D:\`）只剩一段时直接回原文，否则「D:」孤零零不如整串清楚
+  return segments.length > 1 ? segments[segments.length - 1] : root;
 };
 
-/** 报告里到底有没有真写进东西（决定结果行显示摘要还是「未发现可迁移的标注」） */
+/** §4.7 的计数栏 → 界面上的数字徽章（0 的不显示，全 0 时由 reportHasWrites 走「没有可迁移」） */
+export interface ReportStat {
+  label: string;
+  value: number;
+}
+
+export const buildReportStats = (report: MigrationReport, t: (key: string) => string): ReportStat[] => {
+  const stats: ReportStat[] = [
+    { label: t('import.statTags'), value: report.tagsUnioned },
+    { label: t('import.statDescriptions'), value: report.descriptionsWritten },
+    { label: t('import.statLinks'), value: report.sourceUrlsWritten },
+    // 并入已有专题也算「这次动过的专题」，否则新建 0 会被读成没动静（§10 偏差 12）
+    { label: t('import.statTopics'), value: report.topicsCreated + report.topicsMergedName },
+    { label: t('import.statFiles'), value: report.topicFilesAdded },
+  ];
+  return stats.filter(stat => stat.value > 0);
+};
+
+/**
+ * 徽章之下的短备注。
+ *
+ * 「已有内容 N 项未覆盖」这一栏不能省：本机 PixCall 有 5 条夹子备注、实际只写进 4 条
+ * （NTE 夹我们侧已有内容必须让位），没有它就像丢了数据。
+ * `hint` 挂到悬停提示上——要交代的后果留着，但不占版面。
+ */
+export interface ReportNote {
+  text: string;
+  hint?: string;
+}
+
+export const buildReportNotes = (report: MigrationReport, t: (key: string) => string): ReportNote[] => {
+  const notes: ReportNote[] = [];
+  const yielded = report.descriptionsSkippedExisting + report.sourceUrlsSkippedExisting;
+  if (yielded > 0) notes.push({ text: fillTemplate(t('import.noteExisting'), { count: yielded }) });
+  if (report.topicsMergedName > 0)
+    notes.push({ text: fillTemplate(t('import.noteMerged'), { count: report.topicsMergedName }) });
+  if (report.unmatched > 0)
+    notes.push({ text: fillTemplate(t('import.noteUnmatched'), { count: report.unmatched }) });
+  // v4.5 拍板 A：welcome 只给计数，名字明细在设置面板的展开区
+  if (report.excludedTrash > 0)
+    notes.push({ text: fillTemplate(t('import.noteTrash'), { count: report.excludedTrash }) });
+  // §4.9 第 2 条：搁置的视频标注要说出来，不是静默丢弃
+  if (report.skippedUnsupportedType > 0)
+    notes.push({
+      text: fillTemplate(t('import.noteVideo'), { count: report.skippedUnsupportedType }),
+      hint: t('import.noteVideoHint'),
+    });
+  return notes;
+};
+
+/** 展开区多给的一行细节：welcome 版面窄，这些留在设置里 */
+export const buildReportDetails = (report: MigrationReport, t: (key: string) => string): string[] => {
+  const details: string[] = [];
+  if (report.tagsWordsAdded > 0)
+    details.push(fillTemplate(t('import.noteWords'), { count: report.tagsWordsAdded }));
+  if (report.topicsMaterialized > 0)
+    details.push(fillTemplate(t('import.noteMaterialized'), { count: report.topicsMaterialized }));
+  if (report.topicsCovered > 0)
+    details.push(fillTemplate(t('import.noteCovered'), { count: report.topicsCovered }));
+  return details;
+};
+
+/** 报告里到底有没有真写进东西（决定结果显示摘要还是「没有可迁移的标注」） */
 export const reportHasWrites = (report: MigrationReport): boolean =>
-  report.tagsUnioned + report.descriptionsWritten + report.sourceUrlsWritten + report.topicsCreated > 0;
+  report.tagsUnioned +
+    report.descriptionsWritten +
+    report.sourceUrlsWritten +
+    report.topicsCreated +
+    report.topicsMergedName +
+    report.topicsCovered >
+  0;

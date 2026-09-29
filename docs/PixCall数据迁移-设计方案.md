@@ -1,6 +1,14 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.10（2026-09-29 收尾：**首跑环境实测命中**，§9 的两套预期（并用机器 / 空库首跑）至此全部验完，welcome 那条接管链也在真应用里跑通了；§9 末段一处 v4.9 改名漏网的 `topics_skipped_name` 已跟着改成 `topics_merged_name`。验收人清场重验的做法与「哪几处数据必须一起清」记进 §10 待办段）
+> 版本： v4.14（2026-09-30 界面第四轮：条目行行首图标**去掉圆角方块底**、图标放大到填满那颗砖（标题行 28px、库行 22px）；PixCall 标记从 `<img src>` 改成 `?raw` **内联进 bundle**（验收人真应用里 `<img>` 版出破图，浏览器里却正常——内联后运行时零请求，CSP/缓存/资源协议都不再是变量）。见 §10 偏差 15）
+>
+> v4.13（2026-09-30 界面第三轮：撤销 v4.12 的 `max-w-md` 收窄——**导入来源卡与存储页其它元素同宽（整宽）**，「导出元数据 / 导入元数据」两颗从窄按钮改成并排一行的整宽条目行，条目行的壳收进 `settings/constants.ts` 的 `ROW_CLASS`/`ROW_ICON_CLASS` 供两处共用。见 §10 偏差 14 第二条）
+>
+> v4.12（2026-09-29 界面第二轮：设置里那颗入口收成**一行折叠卡**（点开才出库列表/进度/报告），整列宽度收在 `max-w-md`——后续 Eagle 等来源要排进同一列；PixCall 官方标记 `src/assets/pixcall_logo.svg` 用进 welcome 按钮、welcome 卡片与设置卡头。见 §10 偏差 14）
+>
+> v4.11（2026-09-29 界面收尾：两个入口的 PixCall 库改为**只显示文件夹名**，悬停（含键盘聚焦）时整行让位、横贯显示完整路径；§4.7 的报告由「·」串起来的长句改成**数字徽章 + 短备注**（栏位一栏不省，视频那栏的后果挂到悬停提示）；文案整体砍短。见 §10 偏差 13）
+>
+> v4.10（2026-09-29 收尾：**首跑环境实测命中**，§9 的两套预期（并用机器 / 空库首跑）至此全部验完，welcome 那条接管链也在真应用里跑通了；§9 末段一处 v4.9 改名漏网的 `topics_skipped_name` 已跟着改成 `topics_merged_name`。验收人清场重验的做法与「哪几处数据必须一起清」记进 §10 待办段）
 >
 > v4.9（2026-09-29 验收人两条拍板落地：**① 删父专题级联删子专题**（收到 `core/src/db/topics.rs::delete_topic`，安卓在 ViewModel 里手工补的那层现在成兜底）；**② 同名看板从「不新建也不合并成员」改为「不新建、成员并进去」**（§4 表与 §4.6 规则 4 改写，报告栏 `topics_skipped_name` → `topics_merged_name`，新增 `topics_covered`）。提交 `9ff57428c`）
 >
@@ -346,6 +354,21 @@ unmatched                 0
     这条和偏差 9 是连着的：**导入出来的专题 id 是从源看板 id 确定性派生的**（`md5("pixcall-board|{board_id}|0")` 前 9 位），所以删掉父专题再重导会拿回同一个 id，幸存的子专题的 `parent_id` 又正好重新指向它——查重键 `(父级, name)` 于是命中，子专题被当成「已有的同名专题」。旧规则 4「一行都不碰」在这种情况下就把空封面永久锁死了（`阿松大`/`test` 那次）。
 12. **同名看板改为并入成员（v4.9 拍板，推翻 §4.6 规则 4 原案）**：见改写后的规则 4。报告栏 `topics_skipped_name` 换名 `topics_merged_name`，新增 `topics_covered`；`has_anything_to_migrate` 现在也把「并入成员」和「补封面」算作动过库（只补一张封面也要留下迁移记录）。UI 摘要多一句「并入已有专题 N 个」，免得 `专题 0 个` 被读成没动静。
     **历史 `import_records` 里的行仍带着 `topicsSkippedName` 键**（改名前落的），摘要不读这一栏所以照旧可渲染，不必迁移旧数据。
+13. **界面形态与文案（v4.11，验收人提「美观一些、文本简化、库只显示文件夹名 + 悬停出路径」）**：
+    - 库名只取最后一段（`utils/pixcallReport.ts::libraryDisplayName`，两种分隔符与尾分隔符都算，盘符根退回整串）。完整路径挂在悬停与键盘聚焦上，形态是**整行让位、路径横贯全宽**：名字与「当前库」一起淡出。并排显示会被截断（welcome 那一列只有 ~240px），悬停浮层又会被设置面板的滚动容器裁掉，同槽交叉淡入两头都不占，且行高不随悬停变化。
+    - §4.7 的摘要由「用 · 串起来的长句」改成**数字徽章 + 短备注**：徽章是 标签/描述/来源/专题/成员（0 的不显示，`专题` 取 `topics_created + topics_merged_name`，与偏差 12 同口径），备注仍含「未覆盖已有内容 / 回收站计数 / 视频待补」三栏，视频那栏的后果（重新导入即补齐）挂到悬停提示上，不再占版面。`buildPixcallSummary` 拆为 `buildReportStats` / `buildReportNotes` / `buildReportDetails`，两个入口共用 `components/pixcall/PixcallReportView`（`dense` 给向导压成一行，`detailed` 才展开回收站名字与 warnings）。
+    - 设置那颗的文案仍与 welcome 不同（「从 PixCall 导入标注」+ 一行「只导入标注，不改变资源目录」），§6.1 第 4 条的要求保留。i18n 删了 `import.summary`/`skippedExisting`/`mergedTopics`/`unmatched`/`trashSkipped`/`videoParked`/`libraryRoot`/`switching`/`running`/`trashItem*` 与 `settings.usePixcallLibrary`，新增 `import.stat*`/`note*`/`done`/`currentLibrary`/`retry`/`trashDetail`/`trashOrigin`/`warningsDetail` 与 `welcome.or`（zh/en 结构由 `translations.spec` 兜住）。welcome 第 1 步在 pixcall 模式收掉那颗磁盘图标——卡片定高 500px，结果区加高会挤出一条滚动条。
+    - 验证：`npx tsc --noEmit` 绿、`npx vitest run` 95 条绿（含新增 `pixcallReport.spec` 与改名的 welcome 结果区断言）。界面用一次性 vite 预览台（把 `api/tauri-bridge` alias 到假桥）跑**真实组件**截图，核过 light/dark × zh/en × 单库/多库 × 悬停/进度/结果/展开报告；预览台用完即删，未入库。
+14. **设置入口改折叠卡 + 用 PixCall 官方标记（v4.12，验收人第二轮）**：
+    - 设置-存储里那颗「从 PixCall 导入标注」**默认折叠成一行**：卡头 = 标记 + 标题 + 一行状态（`已导入 · 日期` / `发现 N 个库`，不点开也能判断这台机器导过没有）+ 展开箭头；点开才出提示行、库列表、进度/结果，「上次导入」是里面的二级展开。§6.1 第 4 条那颗的语义没变，只换形态。
+    - **宽度：整宽，与存储页其它元素齐平**（v4.13 改，推翻本条第一轮定的 `max-w-md`——收窄后这张卡比同页的按钮对不齐，反而更怪）。为此「数据备份」那一节统一成条目行：`导出元数据`/`导入元数据` 从两颗小按钮改成**并排一行的整宽条目行**（各占半宽，`grid grid-cols-2 gap-3`，标题 + 一行副标题「标签、人物、专题 → JSON」/「从 JSON 合并到当前库」），导入那颗的文件选择框仍铺在整行上（点哪都能选、Tab 到它有焦点环）。条目行的壳在 `settings/constants.ts` 的 `ROW_CLASS`/`ROW_ICON_CLASS`，与 `PixcallImportSection` 折叠卡的卡头同一套 `border-subtle / bg-surface / px-4 py-3`。**后续 Eagle 等来源排进这同一条列表**（§6.4 的多来源抽象在界面上的落点），接新来源时并一张同构的折叠卡即可，不要再各自定宽。
+    - 品牌位用 `src/assets/pixcall_logo.svg`（`components/pixcall/PixcallLogo`，`<img>` 走 vite 的资源导入，不内联进 JSX）：welcome 第二颗按钮、welcome 卡片里的库行（`PixcallLibraryRow sourceIcon`）、设置折叠卡的卡头。设置里的**库行仍是文件夹图标**——卡头已带来源标记，行里再放一次是重复；welcome 那张卡没有别的品牌位，所以那一行换成标记。
+    - welcome 第 1 步定高 500px，加图标后溢出 15px 出了滚动条：「或」分隔与卡片内边距各收一档（`my-3`→`my-2`、`p-3.5`→`p-3`、`mt-4`→`mt-3`）实测归零。**往那张卡里加内容前先量 `welcome-step-content-1` 的 `scrollHeight - clientHeight`**，这是硬约束。
+    - 新增 `src/components/__tests__/PixcallImportSection.spec.tsx` 4 条（默认折叠 / 点开出库行与悬停路径 / 折叠行副标题两态 / 点行 = probe→import 同一个根，以及发现不到库整块不渲染）。门禁：`tsc` 绿、`vitest` 99 条绿。
+15. **行首图标去底 + 标记内联（v4.14，验收人第四轮）**：
+    - 条目行行首**不再铺 `rounded-md bg-blue-50` 那颗图标砖**，图标本身放大到填满砖的 28×28 位（标题行 `size={28}`，卡内的库行 `size={22}`，层级靠尺寸而不是靠底色）。壳仍在 `settings/constants.ts::ROW_ICON_CLASS`，导出/导入元数据与 PixCall 折叠卡共用，后续来源照抄即可。
+    - `PixcallLogo` 从 `<img src={url}>` 改成 `import markup from '*.svg?raw'` + 内联渲染（外层 `span` 定尺寸，`[&>svg]:h-full w-full` 把 926×926 的 viewBox 收进来）。**原因**：验收人在真应用里看到那颗标记是破图，而同一份代码在浏览器预览里正常——`<img>` 要走一次资源请求，CSP / `.vite` 缓存 / dev 与打包后的 origin 差异都可能是它；内联之后 SVG 文本进 JS bundle，运行时零请求，这些变量一次全消。`.svg` 文件仍是唯一来源，改 logo 只改它。
+    - 门禁：`tsc` 绿、`vitest` 99 条绿（`WelcomeModal.spec` 会渲染到这颗标记，`?raw` 若挂不了会在用例里红）。
 
 **首跑环境实测（2026-09-29 22:10，验收人清空全部应用数据后走 welcome 那颗）**：`import_records` 全新库只落 1 行，报告**逐栏命中 §9 末段的首跑预期**——`excluded_trash 1`、`skipped_unsupported_type 52`（其中带标注 1）、`matched 13`、`tags_unioned 8`、**`tags_words_added 10`**、**`descriptions_written 10` / `skipped_existing 0`**、`source_urls_written 5` / `0`、`topics_created 2`、`topic_files_added 1461`、`topics_materialized 1`、`topics_merged_name 0`、`topics_covered 0`、`unmatched 0`；库侧 `file_index` 5350 图 + 26 夹，`file_metadata` 8 行带标签 / 10 行带描述 / 5 行带链接。与并用机器的差值正好是那三处（词 +1、描述全写不让位、没有同名冲突），§9 的两套预期至此都验完。welcome 那条接管链（设根 → 扫盘 → probe → import）也在真应用里跑通了——此前它只有 jsdom 用例。
 

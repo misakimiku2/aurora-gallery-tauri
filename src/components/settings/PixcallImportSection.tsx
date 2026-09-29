@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Import, AlertCircle } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   MigrationReport,
   PixcallLibrary,
@@ -11,16 +11,23 @@ import {
   listenPixcallProgress,
 } from '../../api/tauri-bridge';
 import {
-  buildPixcallSummary as buildSummary,
-  fillTemplate as replace,
+  fillTemplate,
+  libraryDisplayName,
   reportHasWrites,
 } from '../../utils/pixcallReport';
+import PixcallLibraryRow from '../pixcall/PixcallLibraryRow';
+import PixcallLogo from '../pixcall/PixcallLogo';
+import PixcallProgress from '../pixcall/PixcallProgress';
+import PixcallReportView from '../pixcall/PixcallReportView';
 
 /**
- * 设置 → 存储面板的「使用 PixCall 库」（设计方案 §6.1 第 4 条）。
+ * 设置 → 存储面板的「从 PixCall 导入标注」（设计方案 §6.1 第 4 条）。
  *
- * 这颗按钮的语义与 welcome 那颗**不同**：根目录已经定好了，只往当前打开的库里叠标注，
+ * 这颗入口的语义与 welcome 那颗**不同**：根目录已经定好了，只往当前打开的库里叠标注，
  * 不重设根目录，所以文案也不该一样。
+ *
+ * **默认折叠成一行**：后续还要接 Eagle 等来源，它们会排成同一列卡片，所以这里既不能摊开、
+ * 也不能占宽（宽度由 StoragePanel 那一层收）。点开才出库列表、进度与报告。
  *
  * 不设事前确认弹窗：合并是纯增量的（并集 / 仅为空时填 / 同名不新建 / position 续排），
  * 重跑安全，报告作为**结果**展示。probe 发现 0 条可迁标注时不写迁移记录。
@@ -35,11 +42,20 @@ interface Props {
 
 type Stage = 'idle' | 'probing' | 'importing' | 'done' | 'error';
 
-/* §4.7 各栏的文案口径与 welcome 卡片共用一处实现（utils/pixcallReport），两处不许各写一遍 */
+/** `import_records.report_json` 是历史数据，坏一行不该让整块入口消失（§6.5） */
+const parseReport = (json: string): MigrationReport | null => {
+  try {
+    return JSON.parse(json) as MigrationReport;
+  } catch {
+    return null;
+  }
+};
 
 const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) => {
   const [libraries, setLibraries] = useState<PixcallLibrary[]>([]);
+  const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>('idle');
+  const [activeRoot, setActiveRoot] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ processed: number; total: number } | null>(null);
   const [report, setReport] = useState<MigrationReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,14 +67,14 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
     let cancelled = false;
     // 发现不到 PixCall 库就整块不渲染——不留一颗点了报错的按钮
     pixcallDiscover(currentRoot ?? null)
-      .then((libs) => {
+      .then(libs => {
         if (!cancelled) setLibraries(libs);
       })
       .catch(() => {
         if (!cancelled) setLibraries([]);
       });
     pixcallImportRecords()
-      .then((rows) => {
+      .then(rows => {
         if (!cancelled) setLastRecord(rows.length > 0 ? rows[0] : null);
       })
       .catch(() => {});
@@ -69,11 +85,11 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listenPixcallProgress((event) => {
+    listenPixcallProgress(event => {
       if (event.stage === 'done') setProgress(null);
       else setProgress({ processed: event.processed, total: event.total });
     })
-      .then((fn) => {
+      .then(fn => {
         unlisten = fn;
       })
       .catch(() => {});
@@ -86,6 +102,7 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
     async (root: string) => {
       if (busyRef.current) return;
       busyRef.current = true;
+      setActiveRoot(root);
       setError(null);
       setReport(null);
       try {
@@ -96,7 +113,7 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
         setReport(result);
         setStage('done');
         setProgress(null);
-        setLastRecord(await pixcallImportRecords().then((rows) => (rows.length > 0 ? rows[0] : null)));
+        setLastRecord(await pixcallImportRecords().then(rows => (rows.length > 0 ? rows[0] : null)));
         if (!result) return;
         onShowToast?.(t('import.doneToast'));
       } catch (e) {
@@ -115,122 +132,117 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
   const busy = stage === 'probing' || stage === 'importing';
   const percent =
     progress && progress.total > 0 ? Math.min(100, Math.round((progress.processed / progress.total) * 100)) : null;
+  // 折叠那一行也要能判断「这台机器导过没有」，不用点开
+  const subtitle = lastRecord
+    ? fillTemplate(t('import.lastImported'), {
+        time: new Date(lastRecord.importedAt * 1000).toLocaleDateString(),
+      })
+    : fillTemplate(t('import.foundLibraries'), { count: libraries.length });
+  // 展开时才解报告；解不出来留一句提示，不整块消失。
+  // 这里不能用 hook：上面有一句提前 return，hook 数量会随渲染次数变（React 直接炸）
+  const lastReport = lastRecord ? parseReport(lastRecord.reportJson) : null;
 
   return (
-    <div className="mt-4">
-      <div className="flex items-center space-x-4">
-        {/* 多于一个库时先选（§6.1 第 3 条：多库给选择列表） */}
-        {libraries.length === 1 ? (
-          <button
-            onClick={() => run(libraries[0].root)}
-            disabled={busy}
-            className="flex items-center px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle disabled:opacity-50"
-          >
-            <Import size={16} className="mr-2" />
-            {busy ? t('import.running') : t('settings.usePixcallLibrary')}
-          </button>
+    <div className="overflow-hidden rounded-xl border border-subtle bg-surface">
+      <button
+        type="button"
+        aria-expanded={open}
+        data-testid="pixcall-source-header"
+        onClick={() => setOpen(value => !value)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/50 dark:hover:bg-white/5"
+      >
+        <PixcallLogo size={28} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-bold text-gray-800 dark:text-white">
+            {t('settings.importFromPixcall')}
+          </span>
+          <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">{subtitle}</span>
+        </span>
+        {open ? (
+          <ChevronUp size={15} className="shrink-0 text-gray-400 dark:text-gray-500" />
         ) : (
-          <div className="flex flex-col gap-2">
-            <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.pickLibrary')}</div>
-            <div className="flex flex-wrap gap-2">
-              {libraries.map((lib) => (
-                <button
-                  key={lib.root}
-                  onClick={() => run(lib.root)}
-                  disabled={busy}
-                  className="flex items-center px-3 py-1.5 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle disabled:opacity-50 text-sm"
-                >
-                  <Import size={14} className="mr-2" />
-                  {lib.root}
-                  {lib.isCurrent ? ' ★' : ''}
-                </button>
-              ))}
+          <ChevronDown size={15} className="shrink-0 text-gray-400 dark:text-gray-500" />
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-subtle px-4 pb-4 pt-3">
+          <p className="mb-2.5 text-[11px] text-gray-500 dark:text-gray-400">
+            {t('settings.importFromPixcallHint')}
+          </p>
+
+          {/* 点一行就从该库导入；多库时这里就是 §6.1 的选择列表 */}
+          <div className="space-y-1.5">
+            {libraries.map(lib => (
+              <PixcallLibraryRow
+                key={lib.root}
+                root={lib.root}
+                isCurrent={lib.isCurrent}
+                onClick={() => run(lib.root)}
+                busy={busy && activeRoot === lib.root}
+                disabled={busy}
+                t={t}
+              />
+            ))}
+          </div>
+
+          {busy && (
+            <div className="mt-4">
+              <PixcallProgress
+                label={stage === 'probing' ? t('import.probing') : t('import.importing')}
+                percent={percent}
+              />
             </div>
-          </div>
-        )}
-        {lastRecord && (
-          <button
-            onClick={() => setShowLastReport((v) => !v)}
-            className="flex items-center text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-          >
-            {showLastReport ? <ChevronUp size={14} className="mr-1" /> : <ChevronDown size={14} className="mr-1" />}
-            {t('import.lastReport')}
-          </button>
-        )}
-      </div>
+          )}
 
-      {busy && (
-        <div className="mt-3 max-w-md">
-          <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-            {stage === 'probing' ? t('import.probing') : t('import.importing')}
-            {percent !== null ? ` ${percent}%` : ''}
-          </div>
-          <div className="h-1.5 w-full bg-gray-200 dark:bg-neutral-700 rounded-full overflow-hidden">
-            <div
-              className={`h-full bg-blue-500 transition-all ${percent === null ? 'animate-pulse w-1/3' : ''}`}
-              style={percent !== null ? { width: `${percent}%` } : undefined}
-            />
-          </div>
-        </div>
-      )}
+          {stage === 'error' && error && (
+            <div className="mt-4 flex items-start gap-1.5 rounded-lg bg-white px-3 py-2.5 text-xs text-red-600 dark:bg-black/20 dark:text-red-400">
+              <AlertCircle size={13} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 break-words">{fillTemplate(t('import.failed'), { message: error })}</span>
+            </div>
+          )}
 
-      {stage === 'error' && error && (
-        <div className="mt-3 flex items-start text-sm text-red-600 dark:text-red-400 max-w-2xl">
-          <AlertCircle size={16} className="mr-2 mt-0.5 flex-shrink-0" />
-          <span>{replace(t('import.failed'), { message: error })}</span>
-        </div>
-      )}
+          {stage === 'done' && report && (
+            <div className="mt-4">
+              {reportHasWrites(report) ? (
+                <PixcallReportView report={report} t={t} />
+              ) : (
+                <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.nothingFound')}</div>
+              )}
+            </div>
+          )}
 
-      {stage === 'done' && report && (
-        <div className="mt-3 text-sm text-gray-700 dark:text-gray-200 max-w-3xl leading-relaxed">
-          {reportHasWrites(report) ? buildSummary(report, t) : t('import.nothingFound')}
-        </div>
-      )}
+          {lastRecord && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowLastReport(value => !value)}
+                className="mt-3.5 flex items-center gap-1 rounded-lg px-1.5 py-1 text-[11px] font-medium text-gray-500 transition-colors hover:bg-white hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 dark:text-gray-400 dark:hover:bg-black/20 dark:hover:text-gray-200"
+              >
+                {showLastReport ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                {t('import.lastReport')}
+              </button>
 
-      {showLastReport && lastRecord && (
-        <div className="mt-3 p-3 rounded-lg bg-surface/60 border border-subtle max-w-3xl">
-          <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-            {replace(t('import.reportAt'), {
-              time: new Date(lastRecord.importedAt * 1000).toLocaleString(),
-              root: lastRecord.sourceRoot,
-            })}
-          </div>
-          <div className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
-            {(() => {
-              try {
-                const parsed = JSON.parse(lastRecord.reportJson) as MigrationReport;
-                return (
-                  <div className="space-y-1">
-                    <div>{buildSummary(parsed, t)}</div>
-                    {/* welcome 卡片只给计数，名字明细在这一层（v4.5 拍板 A） */}
-                    {parsed.excludedTrashNames.length > 0 && (
-                      <ul className="list-disc list-inside text-xs text-gray-500 dark:text-gray-400">
-                        {parsed.excludedTrashNames.map((item) => (
-                          <li key={item.name}>
-                            {item.originFolder
-                              ? replace(t('import.trashItemWithOrigin'), {
-                                  name: item.name,
-                                  folder: item.originFolder,
-                                })
-                              : replace(t('import.trashItem'), { name: item.name })}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {parsed.warnings.length > 0 && (
-                      <ul className="list-disc list-inside text-xs text-gray-500 dark:text-gray-400">
-                        {parsed.warnings.map((warning, index) => (
-                          <li key={index}>{warning}</li>
-                        ))}
-                      </ul>
+              {showLastReport && (
+                <div className="mt-2 rounded-lg bg-white p-3.5 dark:bg-black/20">
+                  <div className="text-[11px] font-medium text-gray-400 dark:text-gray-500" title={lastRecord.sourceRoot}>
+                    {fillTemplate(t('import.reportAt'), {
+                      time: new Date(lastRecord.importedAt * 1000).toLocaleString(),
+                      root: libraryDisplayName(lastRecord.sourceRoot),
+                    })}
+                  </div>
+                  <div className="mt-2.5">
+                    {lastReport ? (
+                      // welcome 只给计数，回收站名字与 warnings 明细在这一层（v4.5 拍板 A）
+                      <PixcallReportView report={lastReport} t={t} detailed />
+                    ) : (
+                      <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.reportUnreadable')}</div>
                     )}
                   </div>
-                );
-              } catch {
-                return <span>{t('import.reportUnreadable')}</span>;
-              }
-            })()}
-          </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

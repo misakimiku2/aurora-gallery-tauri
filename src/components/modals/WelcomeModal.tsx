@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, Import, type LucideIcon } from 'lucide-react';
+import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, type LucideIcon } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
 import WelcomePixcallCard from './WelcomePixcallCard';
+import PixcallLogo from '../pixcall/PixcallLogo';
 import { AppSettings, AIConfig } from '../../types';
 import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
@@ -298,9 +299,13 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                         <div className="m-auto w-full space-y-6">
                         {step === 1 && (
                             <div className="text-center">
-                                <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
-                                    <HardDrive size={32} />
-                                </div>
+                                {/* pixcall 模式收掉这颗磁盘图标：卡片自带库图标，而第 1 步是定高的，
+                                    图标留着会把结果区挤出一条滚动条 */}
+                                {sourceMode !== 'pixcall' && (
+                                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
+                                        <HardDrive size={32} />
+                                    </div>
+                                )}
                                 <button
                                     onClick={() => { setSourceMode('folder'); onSelectFolder(); }}
                                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center justify-center w-full"
@@ -309,14 +314,21 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                 </button>
                                 {/* 第二颗按钮：语义是「接管 PixCall 库」，与选择文件夹互斥（§6.1 第 3 条） */}
                                 {onTakeoverPixcall && (
-                                    <button
-                                        data-testid="welcome-use-pixcall"
-                                        onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
-                                        className="mt-3 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
-                                    >
-                                        <Import size={18} className="mr-2" />
-                                        {t('welcome.usePixcallLibrary')}
-                                    </button>
+                                    <>
+                                        <div className="my-2 flex items-center gap-3 text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
+                                            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
+                                            <span>{t('welcome.or')}</span>
+                                            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
+                                        </div>
+                                        <button
+                                            data-testid="welcome-use-pixcall"
+                                            onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
+                                            className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
+                                        >
+                                            <PixcallLogo size={18} className="mr-2" />
+                                            {t('welcome.usePixcallLibrary')}
+                                        </button>
+                                    </>
                                 )}
                                 {sourceMode === 'pixcall' && onTakeoverPixcall && (
                                     <WelcomePixcallCard

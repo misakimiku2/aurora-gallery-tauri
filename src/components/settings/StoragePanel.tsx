@@ -29,6 +29,7 @@ import {
 } from '../../api/tauri-bridge';
 import { getGlobalCache, getThumbnailPathCache } from '../../utils/thumbnailCache';
 import { formatFileSize, formatEstimatedTimeMs } from './utils';
+import { ROW_CLASS, ROW_ICON_CLASS } from './constants';
 import PixcallImportSection from './PixcallImportSection';
 
 // 存储设置 + 主色调数据库管理面板组件
@@ -671,39 +672,58 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
 
       <section className="mt-10 pt-2">
         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Download size={20} className="mr-2 text-blue-500" /> {t('settings.dataBackup')}</h3>
-        <div className="flex space-x-4">
-          <button
-            onClick={handleExportData}
-            className="flex items-center px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle"
-          >
-            <Download size={16} className="mr-2" />
-            {t('settings.exportTags')}
-          </button>
-          <div className="relative">
-            <input
-              type="file"
-              id="import-file"
-              name="import-file"
-              accept=".json"
-              onChange={handleImportData}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <button
-              className="flex items-center px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle pointer-events-none"
-            >
-              <Upload size={16} className="mr-2" />
-              {t('settings.importTags')}
+        {/* 这一节的条目统一成整宽行（与下面的「导入来源」折叠卡同形同宽）：
+            导出/导入元数据原来是两颗小按钮，撑不满也接不住后续排进来的 Eagle 等来源。
+            这两颗并排一行、各占半宽，整行仍与下面的卡片对齐。 */}
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={handleExportData} className={ROW_CLASS}>
+              <span className={ROW_ICON_CLASS}>
+                <Download size={28} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold text-gray-800 dark:text-white">
+                  {t('settings.exportTags')}
+                </span>
+                <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+                  {t('settings.exportTagsHint')}
+                </span>
+              </span>
             </button>
-          </div>
-        </div>
 
-        {/* PixCall 标注迁移：存量/换库用户的入口（设计方案 §6.1 第 4 条）。
-            语义与 welcome 那颗不同——根目录已定，只往当前打开的库里导标注。 */}
-        <PixcallImportSection
-          t={t}
-          currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
-          onShowToast={onShowToast}
-        />
+            {/* 文件选择框铺在整行上：点这一行任何位置都能选文件，键盘 Tab 到它也有焦点环 */}
+            <div className="relative rounded-xl focus-within:ring-2 focus-within:ring-inset focus-within:ring-blue-500/50">
+              <input
+                type="file"
+                id="import-file"
+                name="import-file"
+                accept=".json"
+                onChange={handleImportData}
+                className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+              />
+              <div className={`${ROW_CLASS} pointer-events-none`}>
+                <span className={ROW_ICON_CLASS}>
+                  <Upload size={28} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold text-gray-800 dark:text-white">
+                    {t('settings.importTags')}
+                  </span>
+                  <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+                    {t('settings.importTagsHint')}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* 导入来源（设计方案 §6.1 第 4 条）：PixCall 是第一张，后续来源排在这同一条列表里 */}
+          <PixcallImportSection
+            t={t}
+            currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
+            onShowToast={onShowToast}
+          />
+        </div>
       </section>
 
       {/* 主色调数据库管理 */}

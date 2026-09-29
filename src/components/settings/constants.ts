@@ -93,3 +93,16 @@ export const globalEmbeddingState = {
   isPaused: false, // 是否暂停
   isCancelling: false, // 是否正在取消
 };
+
+/**
+ * 存储面板里「整宽条目行」的壳：导出/导入元数据与「导入来源」折叠卡（PixcallImportSection）
+ * 共用同一套 border-subtle / bg-surface / px-4 py-3，后续 Eagle 等来源排进来才接得上。
+ */
+export const ROW_CLASS =
+  'flex w-full items-center gap-3 rounded-xl border border-subtle bg-surface px-4 py-3 text-left transition-colors hover:bg-white/60 dark:hover:bg-white/5';
+
+/**
+ * 条目行左端的图标位：不铺圆角方块底，图标直接画到行里。
+ * 盒子仍是 28×28（与原来那颗图标砖、与 PixCall 标记占位同宽），图标本身放大到填满它。
+ */
+export const ROW_ICON_CLASS = 'flex h-7 w-7 shrink-0 items-center justify-center text-blue-600 dark:text-blue-300';

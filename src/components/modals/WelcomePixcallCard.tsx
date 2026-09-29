@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 import {
   MigrationReport,
   PixcallLibrary,
@@ -8,18 +8,23 @@ import {
   pixcallImport,
   pixcallProbe,
 } from '../../api/tauri-bridge';
-import { buildPixcallSummary, reportHasWrites } from '../../utils/pixcallReport';
+import { reportHasWrites } from '../../utils/pixcallReport';
+import PixcallLibraryRow from '../pixcall/PixcallLibraryRow';
+import PixcallProgress from '../pixcall/PixcallProgress';
+import PixcallReportView from '../pixcall/PixcallReportView';
 
 /**
  * welcome 第 1 步的 PixCall 卡片（设计方案 §6.1 第 3 条）。
  *
  * 语义是**「接管 PixCall 库」**：读注册表拿库根 → 复用现成的切根 + 扫描链
- * （`onTakeover`，await 到扫描结束）→ 自动 probe → import → 结果行。
+ * （`onTakeover`，await 到扫描结束）→ 自动 probe → import → 结果。
  * 这正好绕开「第 1 步还没选目录、`file_index` 为空、没东西可匹配」的死结（§6.3 前置条件）。
  *
  * 进度条语义随阶段切换：`switch`（瞬时）→ `scan`（复用现有 scanProgress）→
- * `probe`（读快照解码）→ `import`（迁移进度）→ `done`（结果行）。
+ * `probe`（读快照解码）→ `import`（迁移进度）→ `done`（结果）。
  * **不设独立的事前确认弹窗**：合并是纯增量的，重跑安全，报告作为结果展示。
+ *
+ * 库只印文件夹名，完整路径悬停才出（PixcallLibraryRow）。
  */
 
 interface Props {
@@ -89,6 +94,7 @@ const WelcomePixcallCard: React.FC<Props> = ({ t, onTakeover, scanProgress, isSc
     startedRef.current = true;
     setActive(library);
     setError(null);
+    setReport(null);
     try {
       setStage('switch');
       setStage('scan');
@@ -111,78 +117,88 @@ const WelcomePixcallCard: React.FC<Props> = ({ t, onTakeover, scanProgress, isSc
     }
   };
 
-  const running = stage === 'switch' || stage === 'scan' || stage === 'probe' || stage === 'import';
-  const scanning = stage === 'scan' && isScanning;
-  const shown = scanning ? scanProgress ?? null : progress;
+  // `switch` 与 `scan` 是同一次接管的前后两拍，合并成一个「扫描中」的标签
+  const scanning = stage === 'switch' || stage === 'scan';
+  const running = scanning || stage === 'probe' || stage === 'import';
+  const shown = scanning && isScanning ? scanProgress ?? null : progress;
   const percent = shown && shown.total > 0 ? Math.min(100, Math.round((shown.processed / shown.total) * 100)) : null;
 
-  const stageLabel =
-    stage === 'scan'
-      ? scanning
-        ? t('welcome.scanning')
-        : t('welcome.scanComplete')
-      : stage === 'probe'
-      ? t('import.probing')
-      : stage === 'import'
-      ? t('import.importing')
-      : stage === 'switch'
-      ? t('import.switching')
-      : '';
+  const stageLabel = scanning
+    ? isScanning
+      ? t('welcome.scanning')
+      : t('welcome.scanComplete')
+    : stage === 'probe'
+    ? t('import.probing')
+    : t('import.importing');
+
+  const displayLibrary = active ?? (libraries.length === 1 ? libraries[0] : null);
 
   return (
     <div
       data-testid="welcome-pixcall-card"
-      className="mt-6 bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center"
+      className="mt-3 rounded-xl border border-gray-200 bg-gray-100 p-3 text-left dark:border-gray-700 dark:bg-gray-800"
     >
-      <div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('import.libraryRoot')}</div>
-      {stage === 'picking' && libraries.length > 1 && (
-        <div className="mt-2 space-y-2">
-          <div className="text-xs text-gray-500">{t('import.pickLibrary')}</div>
+      {stage === 'picking' && libraries.length > 1 ? (
+        <div className="space-y-1.5">
+          <div className="text-xs font-medium text-gray-500 dark:text-gray-400">{t('import.pickLibrary')}</div>
           {libraries.map(lib => (
-            <button
+            <PixcallLibraryRow
               key={lib.root}
+              root={lib.root}
+              isCurrent={lib.isCurrent}
               onClick={() => run(lib)}
-              className="block w-full text-sm font-mono truncate px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-white dark:hover:bg-gray-700"
-            >
-              {lib.root}
-            </button>
+              sourceIcon
+              t={t}
+            />
           ))}
         </div>
-      )}
-      {active && <div className="text-sm font-mono truncate px-2">{active.root}</div>}
-      {!active && stage !== 'picking' && libraries.length === 1 && (
-        <div className="text-sm font-mono truncate px-2">{libraries[0].root}</div>
+      ) : (
+        displayLibrary && (
+          // 转圈交给下面的进度行，这一行不再重复一个 spinner
+          <PixcallLibraryRow root={displayLibrary.root} isCurrent={displayLibrary.isCurrent} sourceIcon t={t} />
+        )
       )}
 
       {running && (
-        <div className="mt-2">
-          {percent !== null ? (
-            <div>
-              <div className="text-xs text-gray-500 mb-1">{`${shown?.processed ?? 0} / ${shown?.total ?? 0}`}</div>
-              <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
-                <div className="h-2 bg-blue-600 transition-all" style={{ width: `${percent}%` }}></div>
-              </div>
-            </div>
-          ) : (
-            <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
-              <div className="h-2 bg-blue-600 animate-pulse w-1/3"></div>
-            </div>
-          )}
-          <div className="mt-2 flex items-center justify-center text-blue-600 dark:text-blue-400">
-            <Loader2 size={16} className="animate-spin mr-2" />
-            <span className="text-xs font-medium">{stageLabel}</span>
-          </div>
+        <div className="mt-3.5">
+          <PixcallProgress label={stageLabel} percent={percent} />
         </div>
       )}
 
       {stage === 'done' && report && (
-        <div data-testid="welcome-pixcall-result" className="mt-2 text-xs leading-relaxed text-green-700 dark:text-green-400">
-          {reportHasWrites(report) ? buildPixcallSummary(report, t) : t('import.nothingFound')}
+        <div data-testid="welcome-pixcall-result" className="mt-3">
+          {reportHasWrites(report) ? (
+            <>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-green-600 dark:text-green-400">
+                <CheckCircle2 size={14} />
+                {t('import.done')}
+              </div>
+              <div className="mt-2">
+                <PixcallReportView report={report} t={t} dense />
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.nothingFound')}</div>
+          )}
         </div>
       )}
 
       {stage === 'error' && error && (
-        <div className="mt-2 text-xs leading-relaxed text-red-600 dark:text-red-400">{error}</div>
+        <div className="mt-3.5 rounded-lg bg-white px-3 py-2.5 text-xs text-red-600 dark:bg-black/20 dark:text-red-400">
+          <div className="flex items-start gap-1.5">
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 break-words">{error}</span>
+          </div>
+          {libraries.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void run(active ?? libraries[0])}
+              className="mt-2 font-medium text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+            >
+              {t('import.retry')}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
