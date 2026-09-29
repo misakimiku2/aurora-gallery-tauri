@@ -8,6 +8,7 @@ pub mod file_metadata;
 pub mod file_index;
 pub mod topics;
 pub mod tags;
+pub mod import_records;
 
 #[derive(Clone)]
 pub struct AppDbPool {
@@ -159,6 +160,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Create tags / file_tags (M4a D10=②：安卓侧标签的存储从 file_metadata.tags 升级成表)
     tags::create_table(conn)?;
+
+    // Create import_records（§6.5 多来源标注迁移的「上次导入」记录，跟着库走）
+    import_records::create_table(conn)?;
 
     // Create topic_files / topic_people association tables (Phase 0: replace file_ids/people_ids TEXT)
     conn.execute(

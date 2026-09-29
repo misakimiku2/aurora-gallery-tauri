@@ -14,5 +14,6 @@ pub mod color_search;
 pub mod db;
 pub mod file_types;
 pub mod ffi;
+pub mod import;
 
 uniffi::setup_scaffolding!();
