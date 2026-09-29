@@ -44,6 +44,18 @@ export const buildReportStats = (report: MigrationReport, t: (key: string) => st
 };
 
 /**
+ * 「一条标注都没落上，却有路径没命中」——这基本就是资源根没覆盖到那些文件（§6.3）。
+ * 光报一个「未匹配 N 条」不指出出路，用户会以为迁移坏了。
+ */
+export const isRootMismatch = (report: MigrationReport): boolean => report.matched === 0 && report.unmatched > 0;
+
+/** 结果区那句「这次什么都没落」到底怎么说：根不对时不能说成「没有可迁移的标注」 */
+export const buildEmptyResult = (report: MigrationReport, t: (key: string) => string): string =>
+  isRootMismatch(report)
+    ? fillTemplate(t('import.unmatchedRootHint'), { count: report.unmatched })
+    : t('import.nothingFound');
+
+/**
  * 徽章之下的短备注。
  *
  * 「已有内容 N 项未覆盖」这一栏不能省：本机 PixCall 有 5 条夹子备注、实际只写进 4 条
@@ -53,6 +65,8 @@ export const buildReportStats = (report: MigrationReport, t: (key: string) => st
 export interface ReportNote {
   text: string;
   hint?: string;
+  /** 需要人动手纠正的（根不对那类），底色从灰提到琥珀，别混在说明文字里 */
+  danger?: boolean;
 }
 
 export const buildReportNotes = (report: MigrationReport, t: (key: string) => string): ReportNote[] => {
@@ -61,8 +75,16 @@ export const buildReportNotes = (report: MigrationReport, t: (key: string) => st
   if (yielded > 0) notes.push({ text: fillTemplate(t('import.noteExisting'), { count: yielded }) });
   if (report.topicsMergedName > 0)
     notes.push({ text: fillTemplate(t('import.noteMerged'), { count: report.topicsMergedName }) });
-  if (report.unmatched > 0)
-    notes.push({ text: fillTemplate(t('import.noteUnmatched'), { count: report.unmatched }) });
+  if (report.unmatched > 0) {
+    notes.push(
+      isRootMismatch(report)
+        ? { text: fillTemplate(t('import.unmatchedRootHint'), { count: report.unmatched }), danger: true }
+        : {
+            text: fillTemplate(t('import.noteUnmatched'), { count: report.unmatched }),
+            hint: t('import.noteUnmatchedHint'),
+          }
+    );
+  }
   // v4.5 拍板 A：welcome 只给计数，名字明细在设置面板的展开区
   if (report.excludedTrash > 0)
     notes.push({ text: fillTemplate(t('import.noteTrash'), { count: report.excludedTrash }) });

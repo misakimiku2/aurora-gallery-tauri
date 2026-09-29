@@ -1,6 +1,8 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.14（2026-09-30 界面第四轮：条目行行首图标**去掉圆角方块底**、图标放大到填满那颗砖（标题行 28px、库行 22px）；PixCall 标记从 `<img src>` 改成 `?raw` **内联进 bundle**（验收人真应用里 `<img>` 版出破图，浏览器里却正常——内联后运行时零请求，CSP/缓存/资源协议都不再是变量）。见 §10 偏差 15）
+> 版本： v4.15（2026-09-30 补上 §6.3 那条一直没实现的「未命中率高时要指路」：一条标注都没落上、却有路径没命中时，结果区不再说「没有可迁移的标注」，改成琥珀色一行说清**这些文件不在当前资源根下 + 怎么修**；只中一部分时仍是一行计数，细节挂悬停。见 §10 偏差 16）
+>
+> v4.14（2026-09-30 界面第四轮：条目行行首图标**去掉圆角方块底**、图标放大到填满那颗砖（标题行 28px、库行 22px）；PixCall 标记从 `<img src>` 改成 `?raw` **内联进 bundle**（验收人真应用里 `<img>` 版出破图，浏览器里却正常——内联后运行时零请求，CSP/缓存/资源协议都不再是变量）。见 §10 偏差 15）
 >
 > v4.13（2026-09-30 界面第三轮：撤销 v4.12 的 `max-w-md` 收窄——**导入来源卡与存储页其它元素同宽（整宽）**，「导出元数据 / 导入元数据」两颗从窄按钮改成并排一行的整宽条目行，条目行的壳收进 `settings/constants.ts` 的 `ROW_CLASS`/`ROW_ICON_CLASS` 供两处共用。见 §10 偏差 14 第二条）
 >
@@ -369,6 +371,12 @@ unmatched                 0
     - 条目行行首**不再铺 `rounded-md bg-blue-50` 那颗图标砖**，图标本身放大到填满砖的 28×28 位（标题行 `size={28}`，卡内的库行 `size={22}`，层级靠尺寸而不是靠底色）。壳仍在 `settings/constants.ts::ROW_ICON_CLASS`，导出/导入元数据与 PixCall 折叠卡共用，后续来源照抄即可。
     - `PixcallLogo` 从 `<img src={url}>` 改成 `import markup from '*.svg?raw'` + 内联渲染（外层 `span` 定尺寸，`[&>svg]:h-full w-full` 把 926×926 的 viewBox 收进来）。**原因**：验收人在真应用里看到那颗标记是破图，而同一份代码在浏览器预览里正常——`<img>` 要走一次资源请求，CSP / `.vite` 缓存 / dev 与打包后的 origin 差异都可能是它；内联之后 SVG 文本进 JS bundle，运行时零请求，这些变量一次全消。`.svg` 文件仍是唯一来源，改 logo 只改它。
     - 门禁：`tsc` 绿、`vitest` 99 条绿（`WelcomeModal.spec` 会渲染到这颗标记，`?raw` 若挂不了会在用例里红）。
+16. **根不对时给出可执行提示（v4.15，补 §6.3 那条一直漏实现的「未命中率高时提示先重新扫描再导入」）**：
+    - 判据是 `isRootMismatch = matched === 0 && unmatched > 0`——**一条标注都没落上、却有路径没命中**。不用比率：`unmatched` 这个集合里既有带标注的条目也有合集成员（快照专题一次能塞进上千条），拿 `unmatched / (matched + unmatched)` 当阈值会被成员数带跑，而「全落空」这个信号恰好就是根不相交的样子。
+    - 两种呈现：命中了一部分 → 仍是灰字一行「未匹配 N 条路径」，把「可能没扫描、或在根之外」挂到悬停提示；一条都没落上 → 换成琥珀色 + `AlertCircle` 的「未匹配 N 条：这些文件不在当前资源根下，把根设到它们的目录、重新扫描后再点一次导入」。同一句话也用在**空结果**那一支（`PixcallEmptyResult`）——原来那里只会说「没有可迁移的标注」，在根不对时是误导：PixCall 里明明有东西，是我们没扫到。
+    - 出口只有这一个，不拦停：合并纯增量，改对根重扫后再点一次就是补齐。专题在不相交时仍会被建出来（`topics_created` 与成员命中无关，见偏差 14 那条链），删掉重导即可（专题 id 确定性派生 → 走同名并入）。
+    - 仍未做：`unmatchedPaths`（具体哪些路径）只存在 `import_records.report_json` 里，界面上不列。
+    - 门禁：`tsc` 绿、`vitest` 103 条绿（`pixcallReport.spec` 补 4 条：判据、danger 那条、只中一部分走悬停、空结果不再说「没有可迁移的标注」）。
 
 **首跑环境实测（2026-09-29 22:10，验收人清空全部应用数据后走 welcome 那颗）**：`import_records` 全新库只落 1 行，报告**逐栏命中 §9 末段的首跑预期**——`excluded_trash 1`、`skipped_unsupported_type 52`（其中带标注 1）、`matched 13`、`tags_unioned 8`、**`tags_words_added 10`**、**`descriptions_written 10` / `skipped_existing 0`**、`source_urls_written 5` / `0`、`topics_created 2`、`topic_files_added 1461`、`topics_materialized 1`、`topics_merged_name 0`、`topics_covered 0`、`unmatched 0`；库侧 `file_index` 5350 图 + 26 夹，`file_metadata` 8 行带标签 / 10 行带描述 / 5 行带链接。与并用机器的差值正好是那三处（词 +1、描述全写不让位、没有同名冲突），§9 的两套预期至此都验完。welcome 那条接管链（设根 → 扫盘 → probe → import）也在真应用里跑通了——此前它只有 jsdom 用例。
 

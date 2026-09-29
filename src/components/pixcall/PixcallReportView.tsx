@@ -1,11 +1,13 @@
 import React from 'react';
-import { AlertTriangle, Info } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Info } from 'lucide-react';
 import { MigrationReport } from '../../api/tauri-bridge';
 import {
+  buildEmptyResult,
   buildReportDetails,
   buildReportNotes,
   buildReportStats,
   fillTemplate,
+  isRootMismatch,
 } from '../../utils/pixcallReport';
 
 /**
@@ -28,10 +30,13 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
   const stats = buildReportStats(report, t);
   const details = detailed ? buildReportDetails(report, t) : [];
   // 备注与「只在展开区多给的几行」同属一句话级别的补充，合成一列读，不分两层
-  const lines: Array<{ text: string; hint?: string }> = [
+  const lines: Array<{ text: string; hint?: string; danger?: boolean }> = [
     ...buildReportNotes(report, t),
     ...details.map(detail => ({ text: detail })),
   ];
+  // 说明性的走同一列；要人动手纠正的（根不对）单独提一行琥珀色，别混在灰字里读过去
+  const plain = lines.filter(line => !line.danger);
+  const alerts = lines.filter(line => line.danger);
   const chip = dense
     ? 'rounded-md px-1.5 py-0.5 text-[11px]'
     : 'rounded-lg px-2 py-1 text-xs';
@@ -50,10 +55,10 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
         ))}
       </div>
 
-      {lines.length > 0 &&
+      {plain.length > 0 &&
         (dense ? (
           <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-            {lines.map((line, index) => (
+            {plain.map((line, index) => (
               <span key={line.text} title={line.hint}>
                 {index > 0 && <span className="mx-1 opacity-50">·</span>}
                 {line.text}
@@ -62,7 +67,7 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
           </p>
         ) : (
           <ul className="mt-2.5 space-y-1">
-            {lines.map(line => (
+            {plain.map(line => (
               <li
                 key={line.text}
                 title={line.hint}
@@ -74,6 +79,16 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
             ))}
           </ul>
         ))}
+
+      {alerts.map(alert => (
+        <p
+          key={alert.text}
+          className="mt-2 flex items-start gap-1.5 text-xs leading-relaxed text-amber-700 dark:text-amber-400"
+        >
+          <AlertCircle size={12} className="mt-0.5 shrink-0" />
+          <span>{alert.text}</span>
+        </p>
+      ))}
 
       {detailed && report.excludedTrashNames.length > 0 && (
         <div className="mt-3 rounded-lg border border-subtle bg-white px-3 py-2 dark:bg-black/20">
@@ -111,6 +126,27 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
         </div>
       )}
     </div>
+  );
+};
+
+/**
+ * 「这次什么都没落」那一行。根不对的情况不能说成「没有可迁移的标注」——
+ * 那会让人以为 PixCall 里没有东西，而实际是我们没扫到那些文件。
+ */
+export const PixcallEmptyResult: React.FC<{ report: MigrationReport; t: (key: string) => string }> = ({
+  report,
+  t,
+}) => {
+  const mismatch = isRootMismatch(report);
+  return (
+    <p
+      className={`flex items-start gap-1.5 text-xs leading-relaxed ${
+        mismatch ? 'text-amber-700 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'
+      }`}
+    >
+      {mismatch && <AlertCircle size={12} className="mt-0.5 shrink-0" />}
+      <span>{buildEmptyResult(report, t)}</span>
+    </p>
   );
 };
 

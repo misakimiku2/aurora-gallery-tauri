@@ -18,7 +18,7 @@ import {
 import PixcallLibraryRow from '../pixcall/PixcallLibraryRow';
 import PixcallLogo from '../pixcall/PixcallLogo';
 import PixcallProgress from '../pixcall/PixcallProgress';
-import PixcallReportView from '../pixcall/PixcallReportView';
+import PixcallReportView, { PixcallEmptyResult } from '../pixcall/PixcallReportView';
 
 /**
  * 设置 → 存储面板的「从 PixCall 导入标注」（设计方案 §6.1 第 4 条）。
@@ -207,7 +207,7 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
               {reportHasWrites(report) ? (
                 <PixcallReportView report={report} t={t} />
               ) : (
-                <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.nothingFound')}</div>
+                <PixcallEmptyResult report={report} t={t} />
               )}
             </div>
           )}

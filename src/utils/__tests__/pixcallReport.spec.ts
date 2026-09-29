@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildEmptyResult,
   buildReportNotes,
   buildReportStats,
+  isRootMismatch,
   libraryDisplayName,
   reportHasWrites,
 } from '../pixcallReport';
@@ -15,6 +17,10 @@ const templates: Record<string, string> = {
   'import.noteTrash': '回收站 {count} 条未迁（仍在 PixCall 中）',
   'import.noteVideo': '视频标注 {count} 条未导入',
   'import.noteVideoHint': '支持视频后重新导入即可补齐',
+  'import.noteUnmatched': '未匹配 {count} 条路径',
+  'import.noteUnmatchedHint': '这些路径在当前资源根里没找到',
+  'import.unmatchedRootHint': '未匹配 {count} 条：改根重扫后再点一次导入',
+  'import.nothingFound': '没有可迁移的标注',
 };
 const t = (key: string) => templates[key] ?? key;
 
@@ -106,5 +112,34 @@ describe('reportHasWrites', () => {
   it('只并入了成员、或只补了一张封面，也算动过库', () => {
     expect(reportHasWrites(makeReport({ topicsMergedName: 1 }))).toBe(true);
     expect(reportHasWrites(makeReport({ topicsCovered: 1 }))).toBe(true);
+  });
+});
+
+describe('根不对那条提示（§6.3「未命中率高时要指路」）', () => {
+  it('一条标注都没落上、却有路径没命中 → 判成根不对', () => {
+    expect(isRootMismatch(makeReport({ matched: 0, unmatched: 5 }))).toBe(true);
+    expect(isRootMismatch(makeReport({ matched: 13, unmatched: 5 }))).toBe(false);
+    expect(isRootMismatch(makeReport({ matched: 0, unmatched: 0 }))).toBe(false);
+  });
+
+  it('根不对时那条备注换成可执行的句子，并标成 danger', () => {
+    const notes = buildReportNotes(makeReport({ matched: 0, unmatched: 5 }), t);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toBe('未匹配 5 条：改根重扫后再点一次导入');
+    expect(notes[0].danger).toBe(true);
+  });
+
+  it('只中一部分时仍是一行计数，细节挂悬停', () => {
+    const notes = buildReportNotes(makeReport({ matched: 13, unmatched: 5 }), t);
+    expect(notes[0].text).toBe('未匹配 5 条路径');
+    expect(notes[0].hint).toBe('这些路径在当前资源根里没找到');
+    expect(notes[0].danger).toBeUndefined();
+  });
+
+  it('什么都没落上时，空结果那行不能再说「没有可迁移的标注」', () => {
+    expect(buildEmptyResult(makeReport({ matched: 0, unmatched: 5 }), t)).toBe(
+      '未匹配 5 条：改根重扫后再点一次导入'
+    );
+    expect(buildEmptyResult(makeReport(), t)).toBe('没有可迁移的标注');
   });
 });

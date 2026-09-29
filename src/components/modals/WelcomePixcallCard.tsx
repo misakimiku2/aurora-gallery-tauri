@@ -11,7 +11,7 @@ import {
 import { reportHasWrites } from '../../utils/pixcallReport';
 import PixcallLibraryRow from '../pixcall/PixcallLibraryRow';
 import PixcallProgress from '../pixcall/PixcallProgress';
-import PixcallReportView from '../pixcall/PixcallReportView';
+import PixcallReportView, { PixcallEmptyResult } from '../pixcall/PixcallReportView';
 
 /**
  * welcome 第 1 步的 PixCall 卡片（设计方案 §6.1 第 3 条）。
@@ -178,7 +178,7 @@ const WelcomePixcallCard: React.FC<Props> = ({ t, onTakeover, scanProgress, isSc
               </div>
             </>
           ) : (
-            <div className="text-xs text-gray-500 dark:text-gray-400">{t('import.nothingFound')}</div>
+            <PixcallEmptyResult report={report} t={t} />
           )}
         </div>
       )}
