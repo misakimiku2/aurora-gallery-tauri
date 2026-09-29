@@ -13,6 +13,15 @@ use tauri::{Emitter, Manager};
 static HDD_CACHE: Mutex<Option<HashMap<String, (bool, Instant)>>> = Mutex::new(None);
 const CACHE_TTL: Duration = Duration::from_secs(300);
 
+/// 扫描时一律跳过以 `.` 开头的条目（`.Aurora_Cache` 与自然存在的各类点目录）。
+///
+/// 原先这条规则带着一个 `name != ".pixcall"` 的例外，会把 PixCall 的库目录
+/// 当图库内容索引进来——里面只有 SQLite 与一个空 trash，索引到的全是
+/// Unknown 节点。2026-09-29 去掉该例外，三处判定收敛到这一个函数。
+fn is_ignored_entry_name(name: &str) -> bool {
+    name.starts_with('.')
+}
+
 fn is_likely_hdd(path: &str) -> bool {
     let cache_key = normalize_path(path);
     
@@ -157,7 +166,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         let fs_root_count = if let Ok(rd) = root_path_os.read_dir() {
             rd.filter_map(|e| e.ok()).filter(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                if name == ".Aurora_Cache" || (name.starts_with('.') && name != ".pixcall") {
+                if is_ignored_entry_name(&name) {
                     return false;
                 }
                 
@@ -333,7 +342,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 dir_entry_results.retain(|result| {
                     result.as_ref().map(|entry| {
                         let name = entry.file_name().to_str().unwrap_or("");
-                        name != ".Aurora_Cache" && !(name.starts_with('.') && name != ".pixcall")
+                        !is_ignored_entry_name(name)
                     }).unwrap_or(true)
                 });
             })
@@ -374,7 +383,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 dir_entry_results.retain(|result| {
                     result.as_ref().map(|entry| {
                         let name = entry.file_name().to_str().unwrap_or("");
-                        name != ".Aurora_Cache" && !(name.starts_with('.') && name != ".pixcall")
+                        !is_ignored_entry_name(name)
                     }).unwrap_or(true)
                 });
             })
