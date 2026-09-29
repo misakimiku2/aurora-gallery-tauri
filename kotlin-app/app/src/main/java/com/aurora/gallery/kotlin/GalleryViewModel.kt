@@ -1871,10 +1871,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
-     * 删除专题（M4a 4.3 长按菜单；桌面右键「删除」同位）。`delete_topic` 只删该专题的
-     * topics / topic_files / topic_people 三表行、**不级联子专题**，这里先把子专题
-     * （两层模型下只此一层）递归删掉再删自己；图片本身不受影响。删的是当前详情正打开
-     * 的专题时，宿主负责把 activeTopicId 清掉回列表。
+     * 删除专题（M4a 4.3 长按菜单；桌面右键「删除」同位）。core 的 `delete_topic` 现在
+     * 自己会**级联删整棵子树**（2026-09-29 起，桌面那边漏了这一步所以收进公共层），
+     * 这里这段按 parentId 的预删因此变成兜底——重复删一个已不存在的 id 是 no-op，
+     * 保留着不影响正确性。图片本身不受影响。删的是当前详情正打开的专题时，
+     * 宿主负责把 activeTopicId 清掉回列表。
      */
     fun deleteTopic(topic: FfiTopic, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {

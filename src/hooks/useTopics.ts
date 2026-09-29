@@ -219,8 +219,23 @@ export const useTopics = ({
 
   const handleDeleteTopic = useCallback((topicId: string) => {
     setState(prev => {
+      // 级联：core 的 `delete_topic` 现在连同整棵子树一起删（2026-09-29 拍板
+      // 「删除父专题自然要关联到子专题」），内存里也必须把子专题一并摘掉——
+      // 否则库里那几行没了，内存还挂着，变成看不见又删不掉的孤儿。
+      const doomed = new Set<string>([topicId]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const [id, topic] of Object.entries(prev.topics)) {
+          const parentId = (topic as { parentId?: string | null }).parentId;
+          if (!doomed.has(id) && parentId && doomed.has(parentId)) {
+            doomed.add(id);
+            grew = true;
+          }
+        }
+      }
       const newTopics = { ...prev.topics };
-      delete newTopics[topicId];
+      doomed.forEach(id => delete newTopics[id]);
       return { ...prev, topics: newTopics };
     });
 

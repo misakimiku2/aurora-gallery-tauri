@@ -1041,6 +1041,7 @@ export const translations = {
     import: {
       summary: '标签 {tags}（新词 {words}）· 描述 {desc} · 来源链接 {links} · 专题 {topics}（成员 {files}）',
       skippedExisting: '跳过 {count} 项已有内容',
+      mergedTopics: '并入已有专题 {count} 个',
       unmatched: '未匹配 {count} 条路径',
       trashSkipped: '跳过 {count} 条回收站项，仍在 PixCall 废纸篓中',
       videoParked: '{count} 条视频标注将在支持视频后自动补齐',
@@ -2103,6 +2104,7 @@ export const translations = {
     import: {
       summary: 'Tags {tags} (+{words} new) · Descriptions {desc} · Source links {links} · Topics {topics} ({files} items)',
       skippedExisting: 'Skipped {count} already filled',
+      mergedTopics: 'Merged into {count} existing topic(s)',
       unmatched: '{count} paths unmatched',
       trashSkipped: 'Skipped {count} trash items, still in PixCall trash',
       videoParked: '{count} video annotations will land once video is supported',

@@ -273,6 +273,7 @@ fn apply_creates_topics_with_sequenced_members() {
             parent_id: Some("t1".to_string()),
             file_ids: vec!["f1".to_string(), "f2".to_string()],
             materialized: true,
+            merge_into_existing: false,
         }],
         source_schema_version: "22".to_string(),
     };
@@ -321,4 +322,100 @@ fn is_indexable_is_the_single_support_gate() {
     assert!(!is_indexable("video/mp4"));
     assert!(!is_indexable("application/folder"));
     assert!(!is_indexable("unknown"));
+}
+
+/// v4.9 拍板：同名命中已有专题时**并成员**，而不是「不新建也不并入」。
+/// 并的时候三件事必须成立：不改名字与父级、封面与描述「空着才补」、成员按 position 续排。
+#[test]
+fn merge_appends_members_and_only_fills_empty_fields() {
+    let conn = our_db();
+    add_index_row(&conn, "f1", "C:/a.png", "Image");
+    add_index_row(&conn, "f2", "C:/b.png", "Image");
+    conn.execute(
+        "INSERT INTO topics (id, name, parent_id, cover_file_id, description) VALUES ('ex1', '已有专题', NULL, NULL, NULL)",
+        [],
+    )
+    .unwrap();
+    topics::add_files_to_topic(&conn, "ex1", &["f1".to_string()]).unwrap();
+
+    let plan = MigrationPlan {
+        report: MigrationReport::default(),
+        edits: Vec::new(),
+        topics: vec![TopicCreate {
+            id: "ex1".to_string(),
+            name: "看板给的别名".to_string(),
+            description: Some("看板简介".to_string()),
+            parent_id: Some("somewhere-else".to_string()),
+            file_ids: vec!["f2".to_string()],
+            materialized: false,
+            merge_into_existing: true,
+        }],
+        source_schema_version: "22".to_string(),
+    };
+    apply_plan(&conn, &plan, 100, None).unwrap();
+
+    let members: Vec<(String, i64)> = {
+        let mut stmt = conn
+            .prepare("SELECT file_id, position FROM topic_files WHERE topic_id='ex1' ORDER BY position")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    };
+    assert_eq!(members, vec![("f1".to_string(), 0), ("f2".to_string(), 1)], "成员并进已有专题，position 续排");
+
+    let (name, parent, cover, description): (String, Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT name, parent_id, cover_file_id, description FROM topics WHERE id='ex1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(name, "已有专题", "名字不改——那是用户给专题起的");
+    assert_eq!(parent, None, "父级不改——并入的就是原来那个位置");
+    assert_eq!(cover.as_deref(), Some("f1"), "补的是按 position 的首张成员，不是这次新并的那张");
+    assert_eq!(description.as_deref(), Some("看板简介"), "简介是空着的，填上");
+
+    // 已经有封面和简介的专题：再并一次，两个字段都不许动
+    conn.execute(
+        "UPDATE topics SET cover_file_id='keepme', description='我自己写的' WHERE id='ex1'",
+        [],
+    )
+    .unwrap();
+    let second = MigrationPlan {
+        topics: vec![TopicCreate {
+            id: "ex1".to_string(),
+            name: "看板给的别名".to_string(),
+            description: Some("看板简介".to_string()),
+            parent_id: None,
+            file_ids: vec![],
+            materialized: false,
+            merge_into_existing: true,
+        }],
+        ..plan.clone()
+    };
+    apply_plan(&conn, &second, 200, None).unwrap();
+    let (cover, description): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT cover_file_id, description FROM topics WHERE id='ex1'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(cover.as_deref(), Some("keepme"), "用户钉过的封面不会被重跑打回");
+    assert_eq!(description.as_deref(), Some("我自己写的"), "用户写过的简介不会被覆盖");
+}
+
+/// 合并那一路可能一条标注都不产生、只补了一张封面——`has_anything_to_migrate` 得认它，
+/// 否则这么一次改动不会留下迁移记录。
+#[test]
+fn a_cover_only_merge_still_counts_as_a_migration() {
+    let mut report = MigrationReport::default();
+    assert!(!has_anything_to_migrate(&report));
+    report.topics_covered = 1;
+    assert!(has_anything_to_migrate(&report));
+    let mut report = MigrationReport::default();
+    report.topic_files_added = 1;
+    assert!(has_anything_to_migrate(&report));
 }

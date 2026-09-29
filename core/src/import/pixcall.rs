@@ -901,13 +901,57 @@ fn plan_topics(
         let existing_id =
             find_topic_by_name(our_conn, parent_topic_id.as_deref(), &board.name).map_err(|e| e.to_string())?;
         if let Some(existing_id) = existing_id {
-            // 规则 4：命中同名已有专题时**不新建、也不合并成员**（往别人已有的专题里
-            // 塞成员是不可逆且出乎意料的）。但该节点仍参与映射表，子节点可以继续挂进去。
-            report.topics_skipped_name += 1;
+            // 规则 4（v4.9 改）：同名命中已有专题时**不新建，但把成员并进去**。
+            // 名字/父级一律不改；封面与描述「空着才补」（见 `merge_into_existing_topic`）。
+            // 该节点仍写进映射表，所以它的子看板可以继续挂在同一个专题下。
+            let already: std::collections::HashSet<String> = {
+                let mut stmt = our_conn
+                    .prepare("SELECT file_id FROM topic_files WHERE topic_id = ?1")
+                    .map_err(|e| e.to_string())?;
+                let rows = stmt
+                    .query_map(params![&existing_id], |row| row.get::<_, String>(0))
+                    .map_err(|e| e.to_string())?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+            let new_members: Vec<String> = member_file_ids
+                .into_iter()
+                .filter(|file_id| !already.contains(file_id))
+                .collect();
+            report.topic_files_added += new_members.len() as u32;
+            report.topics_merged_name += 1;
+
+            let cover_empty: bool = our_conn
+                .query_row(
+                    "SELECT COALESCE(cover_file_id, '') = '' FROM topics WHERE id = ?1",
+                    params![&existing_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if cover_empty && !(already.is_empty() && new_members.is_empty()) {
+                report.topics_covered += 1;
+                report.warnings.push(format!(
+                    "同名专题「{}」原来没有封面，导入时补了第一张成员（已有的封面不会覆盖）",
+                    board.name
+                ));
+            }
             report.warnings.push(format!(
-                "看板「{}」在我们侧同父级下已有同名专题，未新建也未并入成员（§4.6 规则 4）",
+                "看板「{}」在我们侧同父级下已有同名专题，成员已并入它（未新建同名专题）",
                 board.name
             ));
+            created.push(TopicCreate {
+                description: board
+                    .description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|d| !d.is_empty())
+                    .map(str::to_string),
+                file_ids: new_members,
+                materialized: !is_manual,
+                merge_into_existing: true,
+                id: existing_id.clone(),
+                name: board.name.clone(),
+                parent_id: parent_topic_id,
+            });
             mapped.insert(board.id, Some(existing_id));
             continue;
         }
@@ -934,6 +978,7 @@ fn plan_topics(
             parent_id: parent_topic_id,
             file_ids: member_file_ids,
             materialized: !is_manual,
+            merge_into_existing: false,
         });
         report.topics_created += 1;
         mapped.insert(board.id, Some(id));

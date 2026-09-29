@@ -20,7 +20,10 @@ export interface MigrationReport {
   sourceUrlsSkippedExisting: number;
   topicsCreated: number;
   topicFilesAdded: number;
-  topicsSkippedName: number;
+  /** 同名命中已有专题、成员并入它的个数（v4.9：不再是「让位不并」） */
+  topicsMergedName: number;
+  /** 其中原本没有封面、导入时补了一张首图成员个数（已有封面不会被覆盖） */
+  topicsCovered: number;
   topicsMaterialized: number;
   topicsSkippedUnverifiable: number;
   topicsReparented: number;

@@ -44,11 +44,15 @@ pub struct MigrationReport {
     pub descriptions_skipped_existing: u32,
     pub source_urls_written: u32,
     pub source_urls_skipped_existing: u32,
-    /// 新建专题数（含智能固化出来的）
+    /// 新建专题数（不含并到已有专题的那些）
     pub topics_created: u32,
     pub topic_files_added: u32,
-    /// 同名已有专题而让位（不新建、也不合并成员，§4.6 规则 4）
-    pub topics_skipped_name: u32,
+    /// 同名命中已有专题、把成员**并进它**的个数（v4.9 拍板，取代原来的「让位不并」）。
+    /// 仍不新建同名专题，也不改它的名字/父级。
+    pub topics_merged_name: u32,
+    /// 其中「原来没有封面、导入时补了一张（首张成员）」的个数。只在封面为空时写，
+    /// 用户自己钉过的封面永不被覆盖。
+    pub topics_covered: u32,
     /// 智能节点复算通过计数断言、固化为快照专题的个数（§4.6 规则 6/7）
     pub topics_materialized: u32,
     /// 断言不过或筛选含未标定键而跳过的智能节点（§4.6 规则 7/8）
@@ -95,7 +99,9 @@ pub struct AnnotationEdit {
     pub source_url: Option<String>,
 }
 
-/// 一个待新建的专题（`materialized` = 由智能看板固化出来的快照专题）。
+/// 一个待落库的专题。`materialized` = 由智能看板固化出来的快照专题；
+/// `merge_into_existing` = 命中了同父级的同名已有专题，这一条是**并进去**而不是新建
+/// （`id` 就是那个已有专题的 id，`file_ids` 只装我们侧还没有的成员）。
 #[derive(Debug, Clone)]
 pub struct TopicCreate {
     pub id: String,
@@ -104,6 +110,7 @@ pub struct TopicCreate {
     pub parent_id: Option<String>,
     pub file_ids: Vec<String>,
     pub materialized: bool,
+    pub merge_into_existing: bool,
 }
 
 /// 来源无关的迁移计划：§4.7 报告的预览值 + 要落的东西。
@@ -348,33 +355,86 @@ pub fn apply_plan(
         report_progress(progress, done, total);
     }
     for topic in &plan.topics {
-        let mut created = topics::Topic {
-            id: topic.id.clone(),
-            parent_id: topic.parent_id.clone(),
-            name: topic.name.clone(),
-            description: topic.description.clone(),
-            topic_type: Some("TOPIC".to_string()),
-            ..Default::default()
-        };
-        created.created_at = Some(now);
-        created.updated_at = Some(now);
-        // 桌面在「新成员归入且专题还没有封面」时拿第一张图当封面
-        // （`useTopics.ts:89-98`：`targetFileIds.find(id => file.type === IMAGE)`）。
-        // 导入器直接落库、绕过了那条前端路径，所以这里补同一条规则。成员按 §4.9 的
-        // `is_indexable` 过滤后全是 image/*，首个成员就是首张图。
-        //
-        // 只在**新建**时给：同名让位的已有专题（§4.6 规则 4）我们一行都不碰，
-        // 用户自己钉过的封面不会被重跑打回。
-        if created.cover_file_id.is_none() {
-            created.cover_file_id = topic.file_ids.first().cloned();
+        if topic.merge_into_existing {
+            merge_into_existing_topic(conn, topic, now)?;
+        } else {
+            let mut created = topics::Topic {
+                id: topic.id.clone(),
+                parent_id: topic.parent_id.clone(),
+                name: topic.name.clone(),
+                description: topic.description.clone(),
+                topic_type: Some("TOPIC".to_string()),
+                ..Default::default()
+            };
+            created.created_at = Some(now);
+            created.updated_at = Some(now);
+            // 桌面在「新成员归入且专题还没有封面」时拿第一张图当封面
+            // （`useTopics.ts:89-98`：`targetFileIds.find(id => file.type === IMAGE)`）。
+            // 导入器直接落库、绕过了那条前端路径，所以这里补同一条规则。成员按 §4.9 的
+            // `is_indexable` 过滤后全是 image/*，首个成员就是首张图。
+            if created.cover_file_id.is_none() {
+                created.cover_file_id = topic.file_ids.first().cloned();
+            }
+            topics::upsert_topic(conn, &created)?;
+            topics::add_files_to_topic(conn, &created.id, &topic.file_ids)?;
         }
-        topics::upsert_topic(conn, &created)?;
-        topics::add_files_to_topic(conn, &created.id, &topic.file_ids)?;
         done += 1;
         report_progress(progress, done, total);
     }
 
     Ok(plan.report.clone())
+}
+
+/// 同名命中已有专题：并成员，不改它的名字与父级；封面和描述都「空着才补」。
+///
+/// 验收人 2026-09-29 拍板把 §4.6 规则 4 从「不新建也不合并成员」改成「同名就合并」。
+/// 并成员走 `add_files_to_topic`（`INSERT OR IGNORE` + position 从现有 `COUNT(*)` 续排），
+/// 计划阶段已经把在我们侧已存在的成员筛掉，所以重跑时这里是空操作。
+///
+/// 封面这条口子是为「幸存下来的子专题」开的：删父专题那阵子不级联，子专题行还在但
+/// 封面永远是空的（`阿松大`/`test` 那次就是），光靠新建时补封面治不了它。
+/// 用户钉过的封面、写过的简介一律不动。
+fn merge_into_existing_topic(conn: &Connection, topic: &TopicCreate, now: i64) -> Result<()> {
+    if !topic.file_ids.is_empty() {
+        topics::add_files_to_topic(conn, &topic.id, &topic.file_ids)?;
+    }
+
+    let cover_empty: bool = conn.query_row(
+        "SELECT COALESCE(cover_file_id, '') = '' FROM topics WHERE id = ?1",
+        params![&topic.id],
+        |row| row.get(0),
+    )?;
+    if cover_empty {
+        // 首张成员按 position 取——可能是原来就在里面的那张，不只是这次新并进来的
+        let first: Option<String> = conn
+            .query_row(
+                "SELECT file_id FROM topic_files WHERE topic_id = ?1 ORDER BY position LIMIT 1",
+                params![&topic.id],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(file_id) = first {
+            conn.execute(
+                "UPDATE topics SET cover_file_id = ?2, updated_at = ?3 WHERE id = ?1",
+                params![&topic.id, file_id, now],
+            )?;
+        }
+    }
+
+    if let Some(description) = &topic.description {
+        let description_empty: bool = conn.query_row(
+            "SELECT COALESCE(description, '') = '' FROM topics WHERE id = ?1",
+            params![&topic.id],
+            |row| row.get(0),
+        )?;
+        if description_empty {
+            conn.execute(
+                "UPDATE topics SET description = ?2, updated_at = ?3 WHERE id = ?1",
+                params![&topic.id, description, now],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn report_progress(progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>, done: usize, total: usize) {
@@ -386,10 +446,12 @@ fn report_progress(progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>, done
 /// 这一份报告里有没有实际可迁的东西。
 ///
 /// §6.1 第 3 条：probe 发现 0 条可迁标注时显示「未发现可迁移的标注」，且**不写迁移记录**。
+/// 算上并进来的成员与补上的封面——同名合并那一路可能一条标注都不产生但确实动了库。
 pub fn has_anything_to_migrate(report: &MigrationReport) -> bool {
-    report.tags_unioned + report.descriptions_written + report.source_urls_written
-        > 0
+    report.tags_unioned + report.descriptions_written + report.source_urls_written > 0
         || report.topics_created > 0
+        || report.topic_files_added > 0
+        || report.topics_covered > 0
 }
 
 /// §6.5：落一条迁移记录。写不写由调用方决定（见 `has_anything_to_migrate`）。

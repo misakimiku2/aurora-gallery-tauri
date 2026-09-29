@@ -32,6 +32,9 @@ export const buildPixcallSummary = (report: MigrationReport, t: (key: string) =>
   ];
   const yielded = report.descriptionsSkippedExisting + report.sourceUrlsSkippedExisting;
   if (yielded > 0) parts.push(fillTemplate(t('import.skippedExisting'), { count: yielded }));
+  // v4.9 拍板：同名不新建、成员并进去。这一栏要说出来，否则「专题 0 个」会被读成没动静
+  if (report.topicsMergedName > 0)
+    parts.push(fillTemplate(t('import.mergedTopics'), { count: report.topicsMergedName }));
   if (report.unmatched > 0) parts.push(fillTemplate(t('import.unmatched'), { count: report.unmatched }));
   // v4.5 拍板 A：welcome 卡片只给计数，名字明细在设置面板的导入详情里
   if (report.excludedTrash > 0) {

@@ -315,15 +315,33 @@ fn manual_child_of_a_skipped_smart_parent_is_reparented() {
     assert!(p.report.warnings.iter().any(|w| w.contains("降级挂到最近的已迁祖先")));
 }
 
-/// 规则 3/4：查重键是 `(父级, name)`；命中同名专题时不新建、也不并成员，
-/// 但该节点仍参与映射表，所以它的子看板能继续挂进去。
+/// 规则 3/4（v4.9）：查重键是 `(父级, name)`；命中同名专题时**不新建、成员并进去**，
+/// 该节点仍写进映射表，所以它的子看板能继续挂在同一个专题下。
 #[test]
-fn same_named_topic_yields_but_still_adopts_children() {
+fn same_named_topic_merges_members_and_still_adopts_children() {
     let p = plan();
-    assert_eq!(p.report.topics_skipped_name, 1);
-    assert!(!topic_names(&p).contains(&"已有专题".to_string()), "不新建同名的");
+    assert_eq!(p.report.topics_merged_name, 1);
+    assert!(
+        !p.topics
+            .iter()
+            .any(|t| !t.merge_into_existing && t.name == "已有专题"),
+        "不新建同名的（并入已有那条不算新建）"
+    );
+    let merged = p
+        .topics
+        .iter()
+        .find(|t| t.id == "exist1")
+        .expect("同名命中后要变成一条并入已有专题的计划");
+    assert!(merged.merge_into_existing);
+    assert_eq!(merged.file_ids, vec!["fb".to_string()], "看板 604 的成员并进 exist1");
+    // 新建的四个专题共 5 个成员（阿松大 2 + test 1 + manual-under-skipped 1 + child-of-existing 1），
+    // 合并那条再贡献 1 个
+    assert_eq!(p.report.topic_files_added, 6);
+    // exist1 原本没有封面，合并后有了成员 → 补一张（用户钉过的封面不会被碰）
+    assert_eq!(p.report.topics_covered, 1);
+
     let child = p.topics.iter().find(|t| t.name == "child-of-existing").unwrap();
-    assert_eq!(child.parent_id.as_deref(), Some("exist1"), "子看板挂进让位的那个已有专题");
+    assert_eq!(child.parent_id.as_deref(), Some("exist1"), "子看板挂进那个已有专题");
     assert_eq!(p.report.topics_reparented, 1, "只有 manual-under-skipped 算降级；这条不算");
 }
 
@@ -412,8 +430,12 @@ fn applied_topics_keep_the_hierarchy() {
     // 落库时必须自己补上，否则专题卡片是空封面。
     assert_eq!(song.cover_file_id.as_deref(), Some("fa"), "首个成员即封面（按重建路径排序后的第一张）");
     assert_eq!(test.cover_file_id.as_deref(), Some("fb"));
-    // 已有专题没被塞进新成员（规则 4）
-    assert_eq!(topics::get_topic_files(&our, "exist1").unwrap().len(), 0);
+    // 同名命中的那个已有专题：成员并进来了，空封面被补上（v4.9 的合并语义）
+    assert_eq!(topics::get_topic_files(&our, "exist1").unwrap(), vec!["fb".to_string()]);
+    let exist_cover: Option<String> = our
+        .query_row("SELECT cover_file_id FROM topics WHERE id='exist1'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(exist_cover.as_deref(), Some("fb"), "已有专题原本没封面，合并后补了首张成员");
     // 子看板挂进了它
     let child = all.iter().find(|t| t.name == "child-of-existing").unwrap();
     assert_eq!(topics::get_topic_files(&our, &child.id).unwrap(), vec!["fa".to_string()]);
@@ -437,7 +459,12 @@ fn second_pass_writes_nothing_new() {
     assert_eq!(second.report.source_urls_written, 0);
     assert_eq!(second.report.topics_created, 0);
     assert_eq!(second.report.topic_files_added, 0);
-    assert_eq!(second.report.topics_skipped_name, 6, "第一次让位的是夹具里已有的「已有专题」，第二次再加上自己新建的 5 个");
+    assert_eq!(second.report.topics_merged_name, 6, "第一次并入夹具里已有的「已有专题」，第二次连自己新建的 5 个也一起命中");
+    assert_eq!(second.report.topics_covered, 0, "第一次已经把空封面补齐了，第二次没什么可补");
+    assert!(
+        second.topics.iter().all(|t| t.file_ids.is_empty()),
+        "成员都在里面了，第二次不该再并任何文件"
+    );
     assert!(!has_anything_to_migrate(&second.report), "第二次不该写迁移记录（§6.1 第 3 条）");
 }
 

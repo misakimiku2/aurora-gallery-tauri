@@ -211,10 +211,40 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
     Ok(())
 }
 
+/// 删除专题，**连带整棵子树**。
+///
+/// 「删父专题就把里面的子专题一起删掉」是桌面与安卓共同的语义。此前 core 只删自己那行，
+/// 安卓在 ViewModel 里手工递归补了一层（`GalleryViewModel.deleteTopic`），桌面则漏了这一
+/// 步——结果删父之后子专题变成孤儿行（`parent_id` 指向已删除的专题），既看不见也删不掉。
+/// 收进来一次做对，两条线不必各自再补。
+///
+/// 只删专题与它的成员/人物关联，**不动任何图片文件本身**。
 pub fn delete_topic(conn: &Connection, topic_id: &str) -> Result<()> {
-    conn.execute("DELETE FROM topics WHERE id = ?1", params![topic_id])?;
-    conn.execute("DELETE FROM topic_files WHERE topic_id = ?1", params![topic_id])?;
-    conn.execute("DELETE FROM topic_people WHERE topic_id = ?1", params![topic_id])?;
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    visited.insert(topic_id.to_string());
+    let mut queue: Vec<String> = vec![topic_id.to_string()];
+    let mut subtree: Vec<String> = Vec::new();
+    let mut stmt = conn.prepare("SELECT id FROM topics WHERE parent_id = ?1")?;
+    while let Some(id) = queue.pop() {
+        subtree.push(id.clone());
+        let children: Vec<String> = stmt
+            .query_map(params![&id], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for child in children {
+            // 环（脏数据）也走不到第二次：visited 拦住
+            if visited.insert(child.clone()) {
+                queue.push(child);
+            }
+        }
+    }
+    drop(stmt);
+
+    for id in subtree {
+        conn.execute("DELETE FROM topic_files WHERE topic_id = ?1", params![&id])?;
+        conn.execute("DELETE FROM topic_people WHERE topic_id = ?1", params![&id])?;
+        conn.execute("DELETE FROM topics WHERE id = ?1", params![&id])?;
+    }
     Ok(())
 }
 
@@ -505,4 +535,110 @@ pub fn backfill_association_tables(conn: &Connection) -> Result<()> {
         update_file_count(conn, &topic_id)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+
+    fn conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        create_table(&c).unwrap();
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS topic_files (
+                topic_id TEXT NOT NULL, file_id TEXT NOT NULL, position INTEGER NOT NULL,
+                PRIMARY KEY (topic_id, file_id))",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS topic_people (
+                topic_id TEXT NOT NULL, people_id TEXT NOT NULL, position INTEGER NOT NULL,
+                PRIMARY KEY (topic_id, people_id))",
+            [],
+        )
+        .unwrap();
+        c
+    }
+
+    fn add(conn: &Connection, id: &str, parent: Option<&str>, name: &str) {
+        conn.execute(
+            "INSERT INTO topics (id, parent_id, name) VALUES (?1, ?2, ?3)",
+            params![id, parent, name],
+        )
+        .unwrap();
+    }
+
+    fn ids(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn.prepare("SELECT id FROM topics ORDER BY id").unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
+    /// 删父专题连带整棵子树；兄弟与叔叔不受影响（验收人 2026-09-29 拍板：
+    /// 「删除父专题自然要关联到子专题」）。
+    #[test]
+    fn deleting_a_parent_removes_the_whole_subtree() {
+        let c = conn();
+        add(&c, "root", None, "阿松大");
+        add(&c, "kid", Some("root"), "test");
+        add(&c, "grandkid", Some("kid"), "更深一层");
+        add(&c, "sibling", None, "另一个根专题");
+        add(&c, "nephew", Some("sibling"), "别人的子专题");
+        conn_execute(&c, "root", "f1");
+        conn_execute(&c, "kid", "f2");
+        c.execute("INSERT INTO topic_people VALUES ('kid', 'p1', 0)", []).unwrap();
+
+        delete_topic(&c, "root").unwrap();
+
+        assert_eq!(ids(&c), vec!["nephew".to_string(), "sibling".to_string()]);
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM topic_files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0, "子专题的成员关联也要一起清掉");
+        let people: i64 = c
+            .query_row("SELECT COUNT(*) FROM topic_people", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(people, 0);
+    }
+
+    fn conn_execute(conn: &Connection, topic_id: &str, file_id: &str) {
+        conn.execute(
+            "INSERT INTO topic_files (topic_id, file_id, position) VALUES (?1, ?2, 0)",
+            params![topic_id, file_id],
+        )
+        .unwrap();
+    }
+
+    /// 删叶子只动自己那一支。
+    #[test]
+    fn deleting_a_leaf_keeps_its_parent() {
+        let c = conn();
+        add(&c, "root", None, "OPK");
+        add(&c, "kid", Some("root"), "Koc");
+        delete_topic(&c, "kid").unwrap();
+        assert_eq!(ids(&c), vec!["root".to_string()]);
+    }
+
+    /// 脏数据里的父子环不能把删除变成死循环。
+    #[test]
+    fn cyclic_parent_links_do_not_loop_forever() {
+        let c = conn();
+        add(&c, "a", Some("b"), "A");
+        add(&c, "b", Some("a"), "B");
+        delete_topic(&c, "a").unwrap();
+        assert!(ids(&c).is_empty());
+    }
+
+    /// 删一个不存在的 id 是 no-op，不报错。
+    #[test]
+    fn deleting_a_missing_topic_is_a_no_op() {
+        let c = conn();
+        add(&c, "root", None, "OPK");
+        delete_topic(&c, "nope").unwrap();
+        assert_eq!(ids(&c), vec!["root".to_string()]);
+    }
 }
