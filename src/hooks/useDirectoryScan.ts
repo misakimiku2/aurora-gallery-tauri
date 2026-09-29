@@ -123,6 +123,20 @@ export const useDirectoryScan = ({
     try {
       const path = await openDirectory();
       if (path) {
+        await openKnownPath(path);
+      }
+    } catch (e) { console.error("Failed to open directory", e); }
+  };
+
+  /**
+   * 与 `handleOpenFolder` 同一条链，但目录是**已知的**（不弹系统选择框），并且可 await
+   * 到扫描结束。设计方案 §6.1 第 3 条：welcome 那颗「使用 PixCall 库」的语义是
+   * 「接管 PixCall 库」= 读库根 → 复用这条链（switchRootDatabase + scanAndMerge）→
+   * 扫完才自动 probe。第 1 步还没选目录时 `file_index` 是空的，没东西可匹配，
+   * 必须先把扫描 await 住。
+   */
+  const openKnownPath = async (path: string) => {
+    try {
         if (isTauriEnvironment()) {
           const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
           await ensureDirectory(cachePath);
@@ -180,24 +194,23 @@ export const useDirectoryScan = ({
           };
         });
 
-        (async () => {
-          // 人物/专题表整体重读自公共函数（M6a 阶段 2 抽取，供事件回拉复用）
-          try {
-            await reloadPeople(setState);
-          } catch (e) {
-            console.error('Failed to reload people after switching root:', e);
-          }
-
-          try {
-            await reloadTopics(setState);
-          } catch (e) {
-            console.error('Failed to reload topics after switching root:', e);
-          }
-
-          scanAndMerge(path, true);
-        })();
-
+      // 人物/专题表整体重读自公共函数（M6a 阶段 2 抽取，供事件回拉复用）
+      try {
+        await reloadPeople(setState);
+      } catch (e) {
+        console.error('Failed to reload people after switching root:', e);
       }
+
+      try {
+        await reloadTopics(setState);
+      } catch (e) {
+        console.error('Failed to reload topics after switching root:', e);
+      }
+
+      // 与改动前唯一的差别：这里 await 到扫描结束才 resolve。welcome 的「使用 PixCall 库」
+      // 必须在扫描完成后才 probe（第 1 步还没选目录时 file_index 是空的，没东西可匹配，
+      // 设计方案 §6.3 前置条件）。state 更新的次序没变。
+      await scanAndMerge(path, true);
     } catch (e) { console.error("Failed to open directory", e); }
   };
 
@@ -474,6 +487,7 @@ export const useDirectoryScan = ({
 
   return {
     handleOpenFolder,
+    openKnownPath,
     scanAndMerge,
     handleRefresh,
     handleRefreshTags,

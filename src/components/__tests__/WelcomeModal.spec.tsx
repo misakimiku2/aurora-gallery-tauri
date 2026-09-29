@@ -3,13 +3,47 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { WelcomeModal } from '../modals/WelcomeModal';
 import { AppSettings } from '../../types';
-import { lanShareStart } from '../../api/tauri-bridge';
+import { lanShareStart, pixcallDiscover, pixcallProbe, pixcallImport } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
+
+// vi.mock 的工厂在 hoisted import 阶段就会被调用，外层 const 还没初始化 → 用 vi.hoisted
+const { pixcallReport } = vi.hoisted(() => ({
+  pixcallReport: {
+    matched: 13,
+    tagsUnioned: 8,
+    tagsWordsAdded: 9,
+    descriptionsWritten: 9,
+    descriptionsSkippedExisting: 1,
+    sourceUrlsWritten: 5,
+    sourceUrlsSkippedExisting: 0,
+    topicsCreated: 2,
+    topicFilesAdded: 1461,
+    topicsSkippedName: 0,
+    topicsMaterialized: 1,
+    topicsSkippedUnverifiable: 0,
+    topicsReparented: 0,
+    skippedUnsupportedType: 52,
+    annotatedUnsupported: 1,
+    topicMembersSkippedType: 0,
+    excludedTrash: 1,
+    excludedTrashNames: [{ name: 'z.mp4', originFolder: 'Zenless Zone Zero' }],
+    unmatched: 0,
+    unmatchedPaths: [] as string[],
+    warnings: [] as string[],
+  },
+}));
 
 vi.mock('../../api/tauri-bridge', () => ({
   lanShareStart: vi.fn(async () => ({ port: 8765, local_ip: '192.168.1.10' })),
   lanShareStop: vi.fn(async () => {}),
+  // PixCall 迁移（welcome 第 1 步第二颗按钮）。默认「本机没有 PixCall 库」，
+  // 用到的用例各自 mockResolvedValue 覆盖。
+  pixcallDiscover: vi.fn(async () => [] as unknown[]),
+  pixcallProbe: vi.fn(async () => pixcallReport),
+  pixcallImport: vi.fn(async () => pixcallReport),
+  pixcallImportRecords: vi.fn(async () => []),
+  listenPixcallProgress: vi.fn(async () => () => {}),
 }));
 
 vi.mock('../../api/tauri-bridge/updater', () => ({
@@ -251,5 +285,53 @@ describe('WelcomeModal 四步向导', () => {
     gotoStep4();
     const row = screen.getByTestId('welcome-qr-row');
     expect(row.className).toContain('items-end');
+  });
+
+  // ---------------------------------------------------------------- 第 1 步「使用 PixCall 库」
+  // 设计方案 §6.1 第 3 条：两颗按钮互斥、卡片模式驱动、pixcall 模式的下一步门禁是 import 完成。
+
+  it('没传 onTakeoverPixcall 时不出第二颗按钮（非 Tauri 与老调用点行为不变）', () => {
+    setup();
+    expect(screen.queryByTestId('welcome-use-pixcall')).toBeNull();
+  });
+
+  it('pixcall 模式：单库自动接管 → probe → import，完成后放开下一步', async () => {
+    (pixcallDiscover as any).mockResolvedValue([{ root: 'C:/Pix', isCurrent: true }]);
+    const takeover = vi.fn(async () => {});
+    setup({ currentPath: null, onTakeoverPixcall: takeover });
+    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+
+    await waitFor(() => expect(pixcallImport).toHaveBeenCalledWith('C:/Pix'));
+    // 「接管 PixCall 库」= 复用现成的切根 + 扫描链，且必须扫完才 probe（§6.3 前置条件）
+    expect(takeover).toHaveBeenCalledWith('C:/Pix');
+    expect(pixcallProbe).toHaveBeenCalledWith('C:/Pix');
+
+    // 结果行必须带「让位」与「回收站计数」两栏，缺一栏在验收时就像丢数据（§4.7）
+    const row = await screen.findByTestId('welcome-pixcall-result');
+    expect(row.textContent).toContain('import.summary');
+    expect(row.textContent).toContain('import.skippedExisting');
+    expect(row.textContent).toContain('import.trashSkipped');
+    expect(row.textContent).toContain('import.videoParked');
+    expect(screen.getByTestId('welcome-next-button')).toBeEnabled();
+  });
+
+  it('pixcall 模式下文件夹卡片让位（模式驱动，不是两块并存）', async () => {
+    (pixcallDiscover as any).mockResolvedValue([{ root: 'C:/Pix', isCurrent: true }]);
+    setup({ onTakeoverPixcall: async () => {} });
+    expect(screen.getByText('welcome.currentPath')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+    await waitFor(() => expect(pixcallProbe).toHaveBeenCalled());
+    expect(screen.queryByText('welcome.currentPath')).toBeNull();
+    expect(screen.getByTestId('welcome-pixcall-card')).toBeInTheDocument();
+  });
+
+  it('未发现 PixCall 库时不放行下一步，但用户可以回头选文件夹', async () => {
+    (pixcallDiscover as any).mockResolvedValue([]);
+    setup({ currentPath: null, onTakeoverPixcall: async () => {} });
+    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+    await waitFor(() => expect(screen.getByText('import.noPixcallLibrary')).toBeInTheDocument());
+    expect(screen.getByTestId('welcome-next-button')).toBeDisabled();
+    // 两颗按钮互斥：回头点「选择文件夹」就回到 folder 模式的门禁
+    expect(pixcallProbe).not.toHaveBeenCalled();
   });
 });

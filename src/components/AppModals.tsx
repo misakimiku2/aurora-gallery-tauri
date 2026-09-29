@@ -76,6 +76,8 @@ interface AppModalsProps {
   showWelcome: boolean;
   handleWelcomeFinish: () => void;
   handleOpenFolder: () => void | Promise<void>;
+  /** welcome 的「使用 PixCall 库」：用已知库根走同一条切根+扫描链，且 await 到扫完（§6.1 第 3 条） */
+  handleOpenKnownPath: (path: string) => Promise<void>;
   // Scan progress passed to Welcome modal
   scanProgress?: { processed: number; total: number } | null;
   isScanning?: boolean;
@@ -142,6 +144,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   showWelcome,
   handleWelcomeFinish,
   handleOpenFolder,
+  handleOpenKnownPath,
   showCloseConfirmation,
   setShowCloseConfirmation,
   handleCloseConfirmation,
@@ -627,6 +630,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
         show={showWelcome}
         onFinish={handleWelcomeFinish}
         onSelectFolder={handleOpenFolder}
+        onTakeoverPixcall={handleOpenKnownPath}
         currentPath={state.roots.length > 0 ? state.files[state.roots[0]]?.path : ''}
         settings={state.settings}
         onUpdateSettings={(updates: Partial<AppSettings>) => setState(s => ({ ...s, settings: { ...s.settings, ...updates } }))}

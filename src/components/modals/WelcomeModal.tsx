@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, type LucideIcon } from 'lucide-react';
+import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, Import, type LucideIcon } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
+import WelcomePixcallCard from './WelcomePixcallCard';
 import { AppSettings, AIConfig } from '../../types';
 import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
@@ -13,6 +14,12 @@ interface WelcomeModalProps {
     show: boolean;
     onFinish: () => void;
     onSelectFolder: () => void;
+    /**
+     * 「接管 PixCall 库」：用已知库根走与选择文件夹同一条链（switchRootDatabase +
+     * scanAndMerge），**扫完才 resolve**。设计方案 §6.1 第 3 条。不传就不出第二颗按钮
+     * （非 Tauri 环境 / 老调用点）。
+     */
+    onTakeoverPixcall?: (root: string) => Promise<void>;
     currentPath: string | null;
     settings: AppSettings;
     onUpdateSettings: (updates: Partial<AppSettings>) => void;
@@ -42,8 +49,16 @@ const generateQRCodeUrl = (text: string, size = 400): string => {
     return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
 };
 
-export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning }) => {
+export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, onTakeoverPixcall, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning }) => {
     const [step, setStep] = useState(1);
+    /**
+     * 第 1 步的两颗按钮互斥（§6.1 第 3 条）：点哪颗，下面的卡片就切到哪个模式。
+     * `null` = 还没选（现状，不显示卡片）；`'pixcall'` 的进度条语义随阶段切换，
+     * 扫描阶段直接复用现有 `scanProgress`/`isScanning`，不另做一套。
+     */
+    const [sourceMode, setSourceMode] = useState<'folder' | 'pixcall' | null>(null);
+    // pixcall 模式的「下一步」门禁是 import 完成（folder 模式沿用 currentPath && !isScanning）
+    const [pixcallDone, setPixcallDone] = useState(false);
     // AI 步：草稿只在点「下一步」时提交（跳过不落盘）；进入该步时以当前设置重置
     const [aiDraft, setAiDraft] = useState<AIConfig>(settings.ai);
     const [aiTesting, setAiTesting] = useState(false);
@@ -103,9 +118,15 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
     const stepDescs = [t('welcome.step1Desc'), t('welcome.step2Desc'), t('welcome.step3Desc'), t('welcome.step4Desc')];
     const isLastStep = step === WELCOME_STEPS.length;
 
+    // 第 1 步门禁：folder 模式沿用现状（选了目录且扫完），pixcall 模式是 import 完成
+    const step1Ready =
+        sourceMode === 'pixcall'
+            ? pixcallDone
+            : !!currentPath && !isScanning;
+
     const goNext = () => {
         if (step === 1) {
-            if (currentPath) setStep(2);
+            if (step1Ready) setStep(2);
             return;
         }
         if (step === 3) {
@@ -281,12 +302,32 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                     <HardDrive size={32} />
                                 </div>
                                 <button
-                                    onClick={onSelectFolder}
+                                    onClick={() => { setSourceMode('folder'); onSelectFolder(); }}
                                     className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center justify-center w-full"
                                 >
                                     {t('welcome.selectFolder')}
                                 </button>
-                                {currentPath && (
+                                {/* 第二颗按钮：语义是「接管 PixCall 库」，与选择文件夹互斥（§6.1 第 3 条） */}
+                                {onTakeoverPixcall && (
+                                    <button
+                                        data-testid="welcome-use-pixcall"
+                                        onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
+                                        className="mt-3 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
+                                    >
+                                        <Import size={18} className="mr-2" />
+                                        {t('welcome.usePixcallLibrary')}
+                                    </button>
+                                )}
+                                {sourceMode === 'pixcall' && onTakeoverPixcall && (
+                                    <WelcomePixcallCard
+                                        t={t}
+                                        onTakeover={onTakeoverPixcall}
+                                        scanProgress={scanProgress}
+                                        isScanning={isScanning}
+                                        onCompleted={result => setPixcallDone(!!result)}
+                                    />
+                                )}
+                                {currentPath && sourceMode !== 'pixcall' && (
                                     <div className="mt-6 bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center">
                                         <div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div>
                                         <div className="text-sm font-mono truncate px-2">{currentPath}</div>
@@ -483,8 +524,8 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                         <button
                             data-testid="welcome-next-button"
                             onClick={() => { if (isLastStep) onFinish(); else goNext(); }}
-                            disabled={step === 1 && (!currentPath || isScanning) || (step === 4 && mobileStarting)}
-                            className={`whitespace-nowrap flex-shrink-0 px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && (!currentPath || isScanning) || (step === 4 && mobileStarting) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
+                            disabled={step === 1 && !step1Ready || (step === 4 && mobileStarting)}
+                            className={`whitespace-nowrap flex-shrink-0 px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && !step1Ready || (step === 4 && mobileStarting) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
                         >
                             {isLastStep ? t('welcome.finish') : t('welcome.next')}
                             <ChevronRight size={16} className="ml-2" />

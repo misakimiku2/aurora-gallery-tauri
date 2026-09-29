@@ -10,6 +10,11 @@ import {
   pixcallProbe,
   listenPixcallProgress,
 } from '../../api/tauri-bridge';
+import {
+  buildPixcallSummary as buildSummary,
+  fillTemplate as replace,
+  reportHasWrites,
+} from '../../utils/pixcallReport';
 
 /**
  * 设置 → 存储面板的「使用 PixCall 库」（设计方案 §6.1 第 4 条）。
@@ -30,31 +35,7 @@ interface Props {
 
 type Stage = 'idle' | 'probing' | 'importing' | 'done' | 'error';
 
-const replace = (text: string, pairs: Record<string, string | number>) =>
-  Object.entries(pairs).reduce((acc, [key, value]) => acc.split(`{${key}}`).join(String(value)), text);
-
-/** §4.7 各栏压成一句话摘要（welcome 卡片与这里共用一套口径） */
-const buildSummary = (report: MigrationReport, t: (k: string) => string): string => {
-  const parts = [
-    replace(t('import.summary'), {
-      tags: report.tagsUnioned,
-      words: report.tagsWordsAdded,
-      desc: report.descriptionsWritten,
-      links: report.sourceUrlsWritten,
-      topics: report.topicsCreated,
-      files: report.topicFilesAdded,
-    }),
-  ];
-  const yielded = report.descriptionsSkippedExisting + report.sourceUrlsSkippedExisting;
-  // 这一栏不能省：本机 PixCall 有 5 条夹子备注、实际只写进 4 条，没这栏就像丢了数据
-  if (yielded > 0) parts.push(replace(t('import.skippedExisting'), { count: yielded }));
-  if (report.unmatched > 0) parts.push(replace(t('import.unmatched'), { count: report.unmatched }));
-  if (report.excludedTrash > 0)
-    parts.push(replace(t('import.trashSkipped'), { count: report.excludedTrash }));
-  if (report.skippedUnsupportedType > 0)
-    parts.push(replace(t('import.videoParked'), { count: report.skippedUnsupportedType }));
-  return parts.join(' · ');
-};
+/* §4.7 各栏的文案口径与 welcome 卡片共用一处实现（utils/pixcallReport），两处不许各写一遍 */
 
 const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) => {
   const [libraries, setLibraries] = useState<PixcallLibrary[]>([]);
@@ -202,9 +183,7 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
 
       {stage === 'done' && report && (
         <div className="mt-3 text-sm text-gray-700 dark:text-gray-200 max-w-3xl leading-relaxed">
-          {report.tagsUnioned + report.descriptionsWritten + report.sourceUrlsWritten + report.topicsCreated === 0
-            ? t('import.nothingFound')
-            : buildSummary(report, t)}
+          {reportHasWrites(report) ? buildSummary(report, t) : t('import.nothingFound')}
         </div>
       )}
 

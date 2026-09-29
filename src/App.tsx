@@ -1449,7 +1449,7 @@ export const App: React.FC = () => {
     });
   };
 
-  const { handleOpenFolder, scanAndMerge, handleRefresh, handleRefreshTags, handleChangePath } = useDirectoryScan({
+  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshTags, handleChangePath } = useDirectoryScan({
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
@@ -2967,6 +2967,7 @@ export const App: React.FC = () => {
         showWelcome={showWelcome}
         handleWelcomeFinish={handleWelcomeFinish}
         handleOpenFolder={handleOpenFolder}
+        handleOpenKnownPath={openKnownPath}
         scanProgress={state.scanProgress}
         showCloseConfirmation={showCloseConfirmation}
         setShowCloseConfirmation={setShowCloseConfirmation}
