@@ -56,7 +56,7 @@ if ($deviceList.Count -eq 1) {
 Write-Host ""
 Write-Host "[1] Getting app PID..." -ForegroundColor Yellow
 
-$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery
+$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery.kotlin
 $appPid = $pidResult.Trim()
 
 if ($appPid -ne "" -and $appPid -notmatch "error") {
@@ -67,28 +67,28 @@ if ($appPid -ne "" -and $appPid -notmatch "error") {
     adb -s $selectedDevice logcat -c
 
     Write-Host ""
-    Write-Host "[3] Starting frontend log viewer..." -ForegroundColor Yellow
-    Write-Host "    Source: Tauri/Console (all levels)" -ForegroundColor Gray
+    Write-Host "[3] Starting UI log viewer..." -ForegroundColor Yellow
+    Write-Host "    Source: AuroraCanvas / NativeGalleryView / SlideshowView" -ForegroundColor Gray
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  Watching frontend logs..." -ForegroundColor Green
+    Write-Host "  Watching UI logs..." -ForegroundColor Green
     Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat --pid=$appPid -s "Tauri/Console:*"
+    adb -s $selectedDevice logcat --pid=$appPid -s "AuroraCanvas:V" "NativeGalleryView:V" "SlideshowView:V" "AndroidRuntime:E"
 } else {
-    Write-Host "[!] App is not running. Showing all frontend logs..." -ForegroundColor Yellow
+    Write-Host "[!] App is not running. Showing all UI logs..." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "[1] Clearing old logs..." -ForegroundColor Yellow
     adb -s $selectedDevice logcat -c
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  Watching frontend logs (app not running)..." -ForegroundColor Green
+    Write-Host "  Watching UI logs (app not running)..." -ForegroundColor Green
     Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat -s "Tauri/Console:*"
+    adb -s $selectedDevice logcat -s "AuroraCanvas:V" "NativeGalleryView:V" "SlideshowView:V" "AndroidRuntime:E"
 }

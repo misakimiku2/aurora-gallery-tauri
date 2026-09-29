@@ -56,7 +56,7 @@ if ($deviceList.Count -eq 1) {
 Write-Host ""
 Write-Host "[1] Getting app PID..." -ForegroundColor Yellow
 
-$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery
+$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery.kotlin
 $appPid = $pidResult.Trim()
 
 if ($appPid -ne "" -and $appPid -notmatch "error") {
@@ -67,28 +67,29 @@ if ($appPid -ne "" -and $appPid -notmatch "error") {
     adb -s $selectedDevice logcat -c
 
     Write-Host ""
-    Write-Host "[3] Starting Rust backend log viewer..." -ForegroundColor Yellow
-    Write-Host "    Source: aurora_gallery_lib (Verbose+)" -ForegroundColor Gray
+    Write-Host "[3] Starting data/backend log viewer..." -ForegroundColor Yellow
+    Write-Host "    Source: AuroraKotlin / AuroraLan / AuroraLanServer" -ForegroundColor Gray
+    Write-Host "    （Kotlin 侧调用 aurora-core 与 LAN 服务的日志；.so 本身不写 logcat）" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  Watching Rust backend logs..." -ForegroundColor Green
+    Write-Host "  Watching data/backend logs..." -ForegroundColor Green
     Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat --pid=$appPid -s "aurora_gallery_lib:V"
+    adb -s $selectedDevice logcat --pid=$appPid -s "AuroraKotlin:V" "AuroraLan:V" "AuroraLanServer:V" "AndroidRuntime:E"
 } else {
-    Write-Host "[!] App is not running. Showing all Rust logs..." -ForegroundColor Yellow
+    Write-Host "[!] App is not running. Showing all data/backend logs..." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "[1] Clearing old logs..." -ForegroundColor Yellow
     adb -s $selectedDevice logcat -c
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
-    Write-Host "  Watching Rust logs (app not running)..." -ForegroundColor Green
+    Write-Host "  Watching data/backend logs (app not running)..." -ForegroundColor Green
     Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat -s "aurora_gallery_lib:V" "rust:V"
+    adb -s $selectedDevice logcat -s "AuroraKotlin:V" "AuroraLan:V" "AuroraLanServer:V" "AndroidRuntime:E"
 }

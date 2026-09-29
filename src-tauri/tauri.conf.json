@@ -55,15 +55,7 @@
         "languages": ["SimpChinese", "English"],
         "displayLanguageSelector": true
       }
-    },
-    "android": {
-      "minSdkVersion": 24,
-      "versionCode": 3
     }
   },
-  "plugins": {
-    "android": {
-      "features": ["storage", "network"]
-    }
-  }
+  "plugins": {}
 }

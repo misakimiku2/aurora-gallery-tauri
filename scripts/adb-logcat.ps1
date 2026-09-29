@@ -56,7 +56,7 @@ if ($deviceList.Count -eq 1) {
 Write-Host ""
 Write-Host "[1] Getting app PID..." -ForegroundColor Yellow
 
-$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery
+$pidResult = adb -s $selectedDevice shell pidof com.aurora.gallery.kotlin
 $appPid = $pidResult.Trim()
 
 if ($appPid -ne "" -and $appPid -notmatch "error") {
@@ -68,8 +68,8 @@ if ($appPid -ne "" -and $appPid -notmatch "error") {
 
     Write-Host ""
     Write-Host "[3] Starting real-time log viewer..." -ForegroundColor Yellow
-    Write-Host "    Rust Backend: aurora_gallery_lib (Debug+)" -ForegroundColor Gray
-    Write-Host "    Frontend: Tauri/Console (all)" -ForegroundColor Gray
+    Write-Host "    App: AuroraKotlin (Verbose+)" -ForegroundColor Gray
+    Write-Host "    Crash: AndroidRuntime (Error+)" -ForegroundColor Gray
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Green
     Write-Host "  Watching real-time logs..." -ForegroundColor Green
@@ -77,9 +77,9 @@ if ($appPid -ne "" -and $appPid -notmatch "error") {
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat --pid=$appPid -s "aurora_gallery_lib:V" "Tauri/Console:*"
+    adb -s $selectedDevice logcat --pid=$appPid -s "AuroraKotlin:V" "AndroidRuntime:E"
 } else {
-    Write-Host "[!] App is not running. Showing all Tauri-related logs..." -ForegroundColor Yellow
+    Write-Host "[!] App is not running. Showing all app-related logs..." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "[1] Clearing old logs..." -ForegroundColor Yellow
     adb -s $selectedDevice logcat -c
@@ -91,5 +91,5 @@ if ($appPid -ne "" -and $appPid -notmatch "error") {
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
 
-    adb -s $selectedDevice logcat -s "aurora_gallery_lib:V" "Tauri/Console:*" "rust:V"
+    adb -s $selectedDevice logcat -s "AuroraKotlin:V" "AndroidRuntime:E"
 }
