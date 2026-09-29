@@ -916,7 +916,7 @@ fn plan_topics(
         if materialized_now {
             report.topics_materialized += 1;
             report.warnings.push(format!(
-                "看板「{}」按已标定筛选固化为**快照**专题：导入后新落入条件的文件不会自动加入（我们侧无智能专题机制，§4.6 规则 6）",
+                "看板「{}」按已标定筛选固化为快照专题：新落入条件的文件不会自动加入（我们侧无智能专题机制，§4.6 规则 6）",
                 board.name
             ));
         }
