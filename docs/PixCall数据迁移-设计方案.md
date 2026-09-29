@@ -1,9 +1,11 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.9（2026-09-29 验收人两条拍板落地：**① 删父专题级联删子专题**（收到 `core/src/db/topics.rs::delete_topic`，安卓在 ViewModel 里手工补的那层现在成兜底）；**② 同名看板从「不新建也不合并成员」改为「不新建、成员并进去」**（§4 表与 §4.6 规则 4 改写，报告栏 `topics_skipped_name` → `topics_merged_name`，新增 `topics_covered`）。提交 `9ff57428c`。v4.8 保留如下）
+> 版本： v4.10（2026-09-29 收尾：**首跑环境实测命中**，§9 的两套预期（并用机器 / 空库首跑）至此全部验完，welcome 那条接管链也在真应用里跑通了；§9 末段一处 v4.9 改名漏网的 `topics_skipped_name` 已跟着改成 `topics_merged_name`。验收人清场重验的做法与「哪几处数据必须一起清」记进 §10 待办段）
+>
+> v4.9（2026-09-29 验收人两条拍板落地：**① 删父专题级联删子专题**（收到 `core/src/db/topics.rs::delete_topic`，安卓在 ViewModel 里手工补的那层现在成兜底）；**② 同名看板从「不新建也不合并成员」改为「不新建、成员并进去」**（§4 表与 §4.6 规则 4 改写，报告栏 `topics_skipped_name` → `topics_merged_name`，新增 `topics_covered`）。提交 `9ff57428c`）
 >
 > v4.8（2026-09-29 实库首跑后补两处：§10 偏差 9——**导入出来的专题要自己补封面**（桌面那条「归入成员时取首图当封面」的规则在前端 `useTopics.ts:89-98`，导入器直接落库会绕过它，提交 `00c1cc2bb`）；偏差 10——上报文案是纯文本渲染，不许带 markdown 星号（提交 `63cd70566`））
-> 状态： **核心与两个入口已实现，并已由验收人在实库首跑**（2026-09-29 21:07，§9 全栏逐栏命中，见 §10）。解码/断言/层级/并集全部有单测覆盖（core 130 条 Rust + 前端 85 条）。首跑遗留一项：偏差 9 的封面修复晚于他的导入，`阿松大`/`test` 两行的 `cover_file_id` 仍待补
+> 状态： **v1 迁移已实现并两条路径全部实测通过**（双软并用 21:07 / 空库首跑 22:10，§9 两套预期逐栏命中）。解码/断言/层级/并集/级联/合并全部有单测覆盖（core 136 条 Rust + 前端 85 条，含 welcome 4 条）。唯一没验的是 §4.6 规则 10 那条 1457 成员专题的网格滚动性能——需要人眼在真库里点进去看
 > 范围拍板（2026-09-29 与验收人对齐，v4 扩充）：v1 只迁 **标签 + 描述 + 来源链接 + 手动合集**；评分、文件夹固定封面、近重复检测三项不进本期（§5）
 > §8 的 scanner 豁免移除已落地，`cargo check` 与运行时验证均通过
 > v4 的全部实测数字复核于 2026-09-29 18:00 前后（PixCall 未运行、Aurora 在运行），复核脚本与中间结果在会话临时目录，未入库
@@ -306,7 +308,7 @@ unmatched                 0
 
 任何一栏与上表不符，先怀疑分类顺序（§4.8）或 Trash 排除（⑫），再怀疑解码。
 
-**首跑用户（我们侧库为空）的预期与上表不同**：没有让位与同名冲突，故 `descriptions_written 10 / descriptions_skipped_existing 0`、`tags_words_added 10`、`topics_skipped_name 0`，其余栏相同。上表的 9/1 与 9 词是**双软并用机器**（验收人本机，Aurora 侧已有标注）的数字，不要拿它去对首跑环境。
+**首跑用户（我们侧库为空）的预期与上表不同**：没有让位与同名冲突，故 `descriptions_written 10 / descriptions_skipped_existing 0`、`tags_words_added 10`、`topics_merged_name 0`（v4.9 起这一栏改的名；原写 `topics_skipped_name`），其余栏相同。上表的 9/1 与 9 词是**双软并用机器**（验收人本机，Aurora 侧已有标注）的数字，不要拿它去对首跑环境。**两套预期现已都实测命中**（并用机器 21:07、首跑 22:10，见 §10）。
 
 ---
 
@@ -345,12 +347,14 @@ unmatched                 0
 12. **同名看板改为并入成员（v4.9 拍板，推翻 §4.6 规则 4 原案）**：见改写后的规则 4。报告栏 `topics_skipped_name` 换名 `topics_merged_name`，新增 `topics_covered`；`has_anything_to_migrate` 现在也把「并入成员」和「补封面」算作动过库（只补一张封面也要留下迁移记录）。UI 摘要多一句「并入已有专题 N 个」，免得 `专题 0 个` 被读成没动静。
     **历史 `import_records` 里的行仍带着 `topicsSkippedName` 键**（改名前落的），摘要不读这一栏所以照旧可渲染，不必迁移旧数据。
 
-**验收人实库首跑结果（2026-09-29 21:07，双软并用机器）**：`import_records` 落 1 行（schema 22、matched 13、unmatched 0、让位 1、52），报告全栏与更正后的 §9 **逐栏一致**；`file_metadata` 13→22 行（带标签 5→10、带描述 6→15、带链接 3→8），NTE 夹保留他自己写的长备注，`72C2…png` 为 `["test2","王权","极乐净土","CEP"]`（原序保留 + 新词追加）。偏差 9 的封面修复在克隆库上彩排过（删两专题 → 重导 → `topics_created 2`、两个封面都等于各自 position 最小的成员，且他自己的 OPK/Koc 同样符合这条规则），**实库那两行的封面仍待他用带修复的构建重导或手工补**。
+**首跑环境实测（2026-09-29 22:10，验收人清空全部应用数据后走 welcome 那颗）**：`import_records` 全新库只落 1 行，报告**逐栏命中 §9 末段的首跑预期**——`excluded_trash 1`、`skipped_unsupported_type 52`（其中带标注 1）、`matched 13`、`tags_unioned 8`、**`tags_words_added 10`**、**`descriptions_written 10` / `skipped_existing 0`**、`source_urls_written 5` / `0`、`topics_created 2`、`topic_files_added 1461`、`topics_materialized 1`、`topics_merged_name 0`、`topics_covered 0`、`unmatched 0`；库侧 `file_index` 5350 图 + 26 夹，`file_metadata` 8 行带标签 / 10 行带描述 / 5 行带链接。与并用机器的差值正好是那三处（词 +1、描述全写不让位、没有同名冲突），§9 的两套预期至此都验完。welcome 那条接管链（设根 → 扫盘 → probe → import）也在真应用里跑通了——此前它只有 jsdom 用例。
+
+**双软并用机器的首跑结果（2026-09-29 21:07）**：`import_records` 落 1 行（schema 22、matched 13、unmatched 0、让位 1、52），报告全栏与更正后的 §9 **逐栏一致**；`file_metadata` 13→22 行（带标签 5→10、带描述 6→15、带链接 3→8），NTE 夹保留他自己写的长备注，`72C2…png` 为 `["test2","王权","极乐净土","CEP"]`（原序保留 + 新词追加）。偏差 9 的封面修复在克隆库上彩排过（删两专题 → 重导 → `topics_created 2`、两个封面都等于各自 position 最小的成员，且他自己的 OPK/Koc 同样符合这条规则），**实库那两行的封面仍待他用带修复的构建重导或手工补**。
 
 **尚未做 / 待验收**：
 
 - ~~**实库首跑**~~ **已完成（2026-09-29 21:07，见上方首跑结果段）**；剩下的是偏差 9 的封面：`阿松大`/`test` 这两行是在修复之前落库的，`cover_file_id` 仍为 NULL，需要用带修复的构建重导（在应用里删掉这两个专题再点一次导入即可），或直接给这两行写 `cover_file_id = position 最小的成员`。
-- **首跑环境（我们侧库为空）那一组数字仍未验**：§9 末段的 `descriptions_written 10`/让位 0、`tags_words_added 10` 需要移开 `.aurora\metadata.db`（含 `-wal`/`-shm`）与 `%APPDATA%\Roaming\com.aurora.gallery\user_data.json` 才能对得上——注意那 13 行是他自己写的标注、2 个专题也在 `user_data.json` 里有一份，所以用**改名移开**而不是删除。
+- ~~**首跑环境（我们侧库为空）那一组数字仍未验**~~ **已验（2026-09-29 22:10，逐栏命中，见 §10 末段）**。清场做法留档，下次要重验照着来：完全退出应用 → 清 `%APPDATA%\com.aurora.gallery\`（`user_data.json` 里藏着 19 个 customTags 与 2 个专题的副本，不清就凭空多出空标签和旧专题；而且没设资源根时 `get_initial_db_paths` 会**退回用同目录那份 8 月的旧 `metadata.db`**，首跑就不干净）→ 清 `%LOCALAPPDATA%\com.aurora.gallery\EBWebView\`（前端 localStorage/IndexedDB 在这儿）→ 库侧 `.aurora\` 与 `.Aurora_Cache\`。**`.pixcall`、`.pixcall.cache`、`%APPDATA%\Pixcall`、`%LOCALAPPDATA%\Pixcall` 一个都别动**，那是源库。
 - **1457 成员专题的网格滚动性能**（§4.6 规则 10 的后果，全文唯一标过的实现期留意点）：需要在真库里点进去看。
 - **§7 的样本缺口 #1/#3/#4**（标签分组、智能父+手动子降级、AI 描述）：实现与单测已按规则覆盖（降级路径、未标定筛选、`tag_groups` 丢弃都有对应测试用例，用内存夹具造的），但**本机真实数据跑不到这几条路**。补样本时在 PixCall 里建对应看板，再点一次导入即可验。
 - **Eagle 适配器**：`core/src/import/` 的目录结构与 trait 侧共性已就位，`eagle.rs` 待真实库样本（§6.4）。
@@ -452,3 +456,9 @@ unmatched                 0
 | 删除父专题的行为 | 文档未涉及（只写了 topics 的写入侧） | **拍板「删除父专题自然要关联到子专题」**：级联收进 `core/src/db/topics.rs::delete_topic`。安卓此前在 `GalleryViewModel.deleteTopic` 手工递归补了一层，桌面漏了——删父后子专题变成看不见也删不掉的孤儿行。这是公共层行为变更，Kotlin 线一并生效，那段预删降为兜底 |
 | 导入专题的 id 形态 | 未规定 | 实现是确定性的（`md5("pixcall-board\|{board_id}\|0")` 前 9 位）。副作用记 §10 偏差 11：重导会拿回同一个 id，幸存的子专题因此重新认父并被查重命中——旧规则 4 正是这样把空封面永久锁死的（`阿松大`/`test` 那次的真因） |
 | §10 待办「实库两行封面仍为 NULL」 | 待重导或手工补 | 验收人 21:34 把两个专题都删掉重导（报告 `topicsCreated 2`/`topicFilesAdded 1461`），实库两行封面已补齐。合并路径另在克隆上彩排：清空 `test` 封面 + 删 3 个成员 → 一次导入 `merged 2 / created 0 / files_added 3 / covered 1`，再跑一次全 0 且不写新记录 |
+
+| 项 | v4.9 说法 | v4.10 结论 |
+|---|---|---|
+| §9 首跑那一组预期 | 「待验收人清库再对」，且沿用了改名前的栏名 `topics_skipped_name` | 栏名更正为 `topics_merged_name`；**22:10 实测逐栏命中**（`tags_words_added 10`、`descriptions_written 10`/让位 0、`topics_created 2`、`topic_files_added 1461`、`unmatched 0`，库侧 5350 图 + 26 夹）。至此 §9 的两套预期全部验完 |
+| welcome 那条接管链 | 只有 jsdom 用例，真应用未跑 | 验收人清空全部应用数据后走 welcome，实跑通（设根 → 扫盘 → probe → import → 结果行） |
+| 「怎么清成一个干净的首跑环境」 | 文档只说要移开 `metadata.db` + `user_data.json` | 补全清单与两个坑：`user_data.json` 里另藏着 customTags 词表与 2 个专题副本；没设资源根时 `get_initial_db_paths` 会退回用 `%APPDATA%\com.aurora.gallery\` 里那份 8 月的旧 `metadata.db`。前端 localStorage/IndexedDB 在 `%LOCALAPPDATA%\…\EBWebView\`。源库那四处（`.pixcall`/`.pixcall.cache`/`Roaming\Pixcall`/`Local\Pixcall`）一律不许动 |
