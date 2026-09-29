@@ -1,10 +1,11 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.5（2026-09-29：回收站项的处理拍板为 **A**——不复制、不建文件夹，只在报告里列名字明细（`excluded_trash_names`）；「复制成【废纸篓】文件夹」提案连同四条否决理由记档于 §5；其余同 v4.4）
-> 状态： **调研收口，无待拍板项，可进入实现**。§4 映射表全部为已定；v1 的 4 处 TBD、v2 的 1 处待拍板、v3 的回收站样本缺口全部关闭
+> 版本： v4.7（2026-09-29 实现首轮落账：新增 §10 实现落账与偏差登记；**§4.7/§9 的 `skipped_unsupported_type` 本机预期由 53 更正为 52**——本机 `video/mp4` 共 53 条，其中 1 条在 Trash 子树里，已被 `excluded_trash` 吃掉，再计一次正是 §4.8 自己明令避免的「同一条目重复计入两栏」。其余同 v4.6）
+> 状态： **核心与两个入口已实现**，§9 的验收表已在本机真实库上逐栏跑通（克隆库实测，实库未写入）。解码/断言/层级/并集全部有单测覆盖（core 130 条 Rust + 前端 85 条）
 > 范围拍板（2026-09-29 与验收人对齐，v4 扩充）：v1 只迁 **标签 + 描述 + 来源链接 + 手动合集**；评分、文件夹固定封面、近重复检测三项不进本期（§5）
 > §8 的 scanner 豁免移除已落地，`cargo check` 与运行时验证均通过
 > v4 的全部实测数字复核于 2026-09-29 18:00 前后（PixCall 未运行、Aurora 在运行），复核脚本与中间结果在会话临时目录，未入库
+> v4.7 的复测于 2026-09-29 20:20 前后（同一台机器、同一份源库快照），实现落账见 §10
 
 ## 1. Pixcall 把数据放在哪
 
@@ -148,7 +149,7 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 | `descriptions_written` / `descriptions_skipped_existing` | 写入 / 因我们侧非空而让位 | 9 / **1**（NTE 夹） |
 | `source_urls_written` / `source_urls_skipped_existing` | 同上 | 5 / 0 |
 | `topics_created` / `topic_files_added` / `topics_skipped_name` / `topics_materialized` / `topics_skipped_unverifiable` / `topics_reparented` | 合集各态：新建（含智能固化）/ 成员落表 / 同名让位 / 智能节点固化成功 / 断言不过或含未标定键而跳过 / 手动子节点降级挂祖先 | 2 / 1461 / 0 / 1 / 0 / 0 |
-| `skipped_unsupported_type` / 其中带标注者 / `topic_members_skipped_type` | `is_indexable` 为 false 的条目（今天即视频）/ 其中挂着标签、描述或来源链接的 / 合集成员里因类型被搁置的（§4.9） | 53 / **1** / 0 |
+| `skipped_unsupported_type` / 其中带标注者 / `topic_members_skipped_type` | `is_indexable` 为 false 的条目（今天即视频）/ 其中挂着标签、描述或来源链接的 / 合集成员里因类型被搁置的（§4.9） | **52**（v4.7 更正，原记 53：本机 `video/mp4` 共 53 条，其中 1 条在 Trash 子树、已计入 `excluded_trash`） / **1** / 0 |
 | `excluded_trash` / `excluded_trash_names` | Trash 子树条目数 / 其名清单（v4.5 拍板 A：不复制、只列名；名字附原夹，取自 `source_path`） | 1 / 1（`Zenless Zone Zero 2026.07.13 - 23.38.12.01.mp4`，原夹 `Zenless Zone Zero`） |
 | `unmatched` | 路径不命中清单（如实上报，不模糊猜） | 0 |
 
@@ -161,7 +162,7 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 验收人拍板：视频未来会支持，本期不迁但**不许把路堵死**。埋点四条：
 
 1. **支持性判定收敛为单一函数** `is_indexable(content_type: &str) -> bool`，放在导入模块里，全仓只此一处问「我们支不支持这类文件」。今天它对 `video/*` 返回 false、对 `image/*` 返回 true。**视频支持立项 = 改这一个函数 + scanner 收视频 + file_index 加 Video 类型**，导入器一行不改：原本被 ② 拦下的视频标注会自动走到 ④⑤ 正常落库。禁止在导入器其它地方散落 `== "image"` 或扩展名黑名单。
-2. **解码不分类型，过滤只发生在落库阶段。** probe 对全部非 Trash 条目（含视频）解码标签/描述/来源链接/合集成员进中间计划；`is_indexable` 只在 apply 时过滤。因此视频上的标注今天是「**已解码、暂不落地**」，不是「丢弃」——计数进 `skipped_unsupported_type`，并在报告与 UI 文案里明说「N 条视频标注将在视频支持后随重新导入自动生效」。本机该栏为 53，其中**带标注的 1 条**（v4.4：验收人给 `Arknights Endfield 2026.09.17 - 04.30.04.01.mp4` 补了标签「启动界面」、描述 `终末地登录界面\n`、B 站来源链接——**编码与图片完全一致**：竖线分隔 tag id、描述带尾换行、link 原样，`metadata` 键集仅少 `orientation` 多 `duration`，解码路径零特殊化，反向验证了本条设计）。搁置的代价就是这 1 条，视频支持落地后重导入自动补齐。
+2. **解码不分类型，过滤只发生在落库阶段。** probe 对全部非 Trash 条目（含视频）解码标签/描述/来源链接/合集成员进中间计划；`is_indexable` 只在 apply 时过滤。因此视频上的标注今天是「**已解码、暂不落地**」，不是「丢弃」——计数进 `skipped_unsupported_type`，并在报告与 UI 文案里明说「N 条视频标注将在视频支持后随重新导入自动生效」。本机该栏为 **52**（v4.7 更正，原记 53；53 条 `video/mp4` 里有一条躺在 Trash 子树，按 §4.8 的顺序它先被 `excluded_trash` 吃掉），其中**带标注的 1 条**（v4.4：验收人给 `Arknights Endfield 2026.09.17 - 04.30.04.01.mp4` 补了标签「启动界面」、描述 `终末地登录界面\n`、B 站来源链接——**编码与图片完全一致**：竖线分隔 tag id、描述带尾换行、link 原样，`metadata` 键集仅少 `orientation` 多 `duration`，解码路径零特殊化，反向验证了本条设计）。搁置的代价就是这 1 条，视频支持落地后重导入自动补齐。
 3. **join 永远只按 path，不许加 file_type 条件。** 视频支持落地后同一路径的 `file_type` 会从「不存在」变成 `Video`，任何带类型条件的 join 都会在那天静默失效。合集成员同理：成员 apply 用同一个 `is_indexable`，视频成员计 `topic_members_skipped_type`；视频支持后重导入会追加成员（`position` 续排，**顺序可能与 PixCall 原序不同**，接受并记录在案）。
 4. **`media.metadata` 的字段映射先记档、不启用**：`image_width/image_height`→`file_index.width/height`、`duration`→（视频立项时的新列）、`extra.creation_time`→`created_at` 候选。视频元数据的写入是 **scanner 的职责**（重扫时自算），迁移不负责补写——埋点只保证立项时知道 PixCall 侧曾经算过哪些字段、格式是什么（ffprobe 级 JSON，见 §1）。
 5. **视频取帧教训（v4.4 实测，视频立项时直接复用）**：该 mp4 的**首帧是纯黑**（fade-in，t=0 平均 RGB = 0,0,0），而 PixCall 的缩略图与 `color_palette` 都来自**早期一个非黑帧**——缩略图与 t=2~4s 帧的像素平均差仅 4.3/255，与 t=0 差 188.7/255；调色板（按 0xRRGGBBAA 解包，该解释下与缩略图颜色的最近邻距离 37.5，比 ARGB 解释的 81.8 低一倍）与 t=2~6s 帧的距离 35.1，为全场最低。**结论：我们视频支持立项时，自算缩略图/主色不得取 t=0**，需要「跳过近黑帧」或固定比例 seek 一类启发式；PixCall 的具体 seek 规则单样本定不了，也不必定——我们不迁它的主色（§5），只需避免自己踩同一个坑。顺带记档：`color_palette` 打包格式 = `R<<24 | G<<16 | B<<8 | A`。
@@ -236,6 +237,25 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 放 metadata.db 而非 `user_data.json`：**记录跟着库走**，换根目录不会误判「已迁过」，也不会把 A 库的迁移记到 B 库头上。现有 8 张表（file_index / file_metadata / file_tags / persons / tags / topic_files / topic_people / topics）中无任何 migration 类表，此表从零加。
 同 `source + source_root` 已有记录时，按钮文案变为「已导入过，可重新导入（增量）」；因为合并纯增量，重跑安全，记录的作用是**信息展示 + 阻止自动弹提示**，不是硬阻断。
 
+### 6.6 开工前提与实施顺序（v4.6 拍板）
+
+**顺序拍板：迁移先做，Android 残留清理挂账。** 理由：§9 的验收预期对着源库**此刻**的状态（5350 图 / 13 标注 / 1457 成员 / 1 回收站 / 1 让位），源库每天都在被使用、会漂移，拖得越久验收越变成「重推预期」；清理是纯卫生、价值不衰减，且其中大块（101 处 `isAndroid*`）被 D42=a 明确不做、三个触发条件（包体瘦身 / 第三平台 / 分支引发线上缺陷）皆不成立（见 `docs/Android/React安卓版退役残留清单.md` §4，v1.1）。
+
+**开工前两步（独立于迁移、先做、单独 commit）**：
+
+1. **基线门跑绿**：`npx tsc --noEmit` + `npx vitest run`（当前 81 用例）+ `cargo check` + `npm run build`。注意清单 §5 记的坑：`src-tauri/static/lan-share/` 被 `.gitignore` 排除而 `lan_share/server.rs:24-26` 用 `include_str!` 内嵌它，**干净克隆上裸 `cargo check` 必失败**——换机器先 `npm run build:lan-share`；本机产物在，可直接跑。
+2. **零风险批 + 工具修复**：清单 §2 的 3 个文件 + `src-tauri/Cargo.toml` 四条 android linker + `tauri.conf.json` 两个 `bundle.android` 字段，外加 3 个 adb 脚本的 `pidof com.aurora.gallery` → `com.aurora.gallery.kotlin`（它们今天就已经抓不到日志）。做完再跑一次门。**目的：让迁移期间任何红都只能归因于迁移**，而不是历史欠账。
+
+**迁移内部切片（先核心后像素）**：
+
+1. Rust 侧 `core/src/import/`（`mod.rs` trait + `pixcall.rs`）：快照（§6.2）、解码（⑦⑨⑭）、§4.8 分类、计数断言（§4.6 规则 7）、层级与降级（§4.6）、让位与并集（§4.5）、`is_indexable`（§4.9）。**用开发期入口（example 或 dev-only 命令）把 §4.7 报告打出来，逐栏对 §9 的表**——解码与断言的全部风险在这一层，先证明它再碰 UI。
+2. `import_records` 表（§6.5）与报告落库。
+3. Tauri 命令 + UI：welcome 第 1 步第二颗按钮与模式驱动卡片（§6.1 第 3 条）、设置-存储面板按钮与「上次导入报告」展开区（§6.1 第 4 条）。**此阶段验 1457 成员专题的网格滚动性能**（§4.6 规则 10 的后果，全文唯一标过的实现期留意点）。
+4. i18n：`translations.ts` zh（2-1039）/ en（1040-2077）两块全量补 `import.*` 与两颗按钮的键（§6.1 第 6 条）。
+5. 本机端到端验收：跑一遍对 §9；首跑环境另对 §9 末段的首跑预期。
+
+**源库漂移提示**：§9 的数字是 2026-09-29 18:00–19:00 的快照（含验收人当晚补的视频标注）。若开工距复核已久，先按 §6.2 快照法重跑测量（排除 Trash、`count(size<1048576)` 断言、13/13 与 4/4 命中）再对表，别拿旧数字判新实现的生死。
+
 ## 7. 标注复核进度
 
 已造并已解码验证（§2 ⑦–⑬）：标签（含中文标签、间隔号、全角冒号、ASCII）、手动合集、智能合集、描述、来源链接、回收站项（⑫，v4 用真实数据关闭）。
@@ -270,7 +290,7 @@ name != ".Aurora_Cache" && !(name.starts_with('.') && name != ".pixcall")
 
 ```
 excluded_trash            1     （Zenless Zone Zero 2026.07.13 - 23.38.12.01.mp4）
-skipped_unsupported_type 53     （mp4；其中带标注 1、合集成员 0——视频支持落地后重导入自动补齐，§4.9）
+skipped_unsupported_type 52     （mp4；其中带标注 1、合集成员 0——视频支持落地后重导入自动补齐，§4.9。v4.7 更正：原记 53 把回收站那条重复计了一遍，本机 `video/mp4` 共 53 条、Trash 子树占 1 条）
 topics_materialized       1     （test：断言 1457 == file_count 通过，固化为阿松大的子专题）
 topics_skipped_unverifiable 0
 topics_reparented         0     （test 固化成功，无降级）
@@ -284,6 +304,44 @@ unmatched                 0
 任何一栏与上表不符，先怀疑分类顺序（§4.8）或 Trash 排除（⑫），再怀疑解码。
 
 **首跑用户（我们侧库为空）的预期与上表不同**：没有让位与同名冲突，故 `descriptions_written 10 / descriptions_skipped_existing 0`、`tags_words_added 10`、`topics_skipped_name 0`，其余栏相同。上表的 9/1 与 9 词是**双软并用机器**（验收人本机，Aurora 侧已有标注）的数字，不要拿它去对首跑环境。
+
+---
+
+## 10. 实现落账与偏差登记（v4.7 新增，2026-09-29 首轮）
+
+**提交**：`724d224` 零风险批 → `e53bfed` 迁移核心 → `839fd31` 命令层 + 设置入口 → `addd8ee1c` welcome 流程。§6.6 的开工前两步与迁移切片 1–4 全部落地，切片 5（本机端到端实库验收）留给验收人。
+
+**落点**：
+
+| 层 | 文件 | 对应设计 |
+|---|---|---|
+| 来源无关 | `core/src/import/mod.rs`（`OurIndex` join 链、合并策略、§4.7 报告、`apply_plan`、`is_indexable`、`record_import`） | §6.4 / §4.5 / §4.8 / §4.9 |
+| PixCall 适配 | `core/src/import/pixcall.rs`（发现、快照、⑦⑨⑫⑭ 解码、§4.6 层级与固化） | §6.2 / §6.3 / §4.6 |
+| 迁移记录 | `core/src/db/import_records.rs` + `init_db` 注册 | §6.5 |
+| 命令层 | `src-tauri/src/import_commands.rs`（5 条命令 + `PixcallSnapshots` managed state + `pixcall-progress` 事件） | §6.1 第 1/2 条 |
+| UI | `WelcomeModal` + `WelcomePixcallCard`（模式驱动卡片）、`settings/PixcallImportSection`（设置-存储入口 + 上次导入报告）、`utils/pixcallReport.ts`（摘要口径共用）、`api/tauri-bridge/import.ts` | §6.1 第 3/4 条 |
+| 开发期入口 | `core/examples/pixcall_report.rs`：`probe` / `apply` / `discover` 三模式，按 §9 版式打印 | §6.6 切片 1 |
+
+**本机实测（§9 逐栏，源库为 2026-09-29 20:20 的快照）**：`excluded_trash 1`（含原夹名 Zenless Zone Zero）、`skipped_unsupported_type 52`、`annotated_unsupported 1`、`topics_materialized 1`、`topics_created 2`、`topic_files_added 1461`、`matched 13`、`tags_unioned 8` / `tags_words_added 9`、`descriptions_written 9` / `skipped_existing 1`（NTE 夹）、`source_urls_written 5` / `0`、`unmatched 0`。**与 §9 唯一的差别就是上面更正的 52/53。**
+落库验证全部在 `metadata.db` 的临时克隆上进行（实库一行未动）；克隆上第二次探测写入项全为 0，重跑安全成立。
+
+**实现偏差与补充（都记在这里，不是静默改）**：
+
+1. **报告多两栏**：`matched`（带标注且命中的条数，对 §3 的标注级口径）与 `warnings: string[]`。§4.7 的计数栏装不下「规则外状态」——`tag_groups` 真有行、标签挂在文件夹上、`entry_kind=0` 的成员、两信号不符、计数断言不过、快照专题语义——这些都曾有被静默吞掉的风险，现在全部进 `warnings` 并在设置面板的展开区逐条列出。
+2. **文件夹上的标签跳过并上报**（§4.4 只说了「本机 0 条、无影响」）：我们的 `EditSection.tsx:41` 把文件夹的 Tags Section 挡掉了，写进去就是 UI 上看不见的隐形数据。今天这条路 0 条。
+3. **`import_records.skipped_existing` = 描述让位 + 链接让位之和**（§6.5 只给了一个 `skipped_existing` 列，而 §4.7 是分两栏报的）。明细仍在 `report_json` 里。
+4. **合集成员顺序按重建路径排序**，不保留 PixCall 的 `board_entries` 原序，也不按 64 位 id 排（那样等于依赖源库的内部生成序）。§4.9 第 3 条已接受「顺序可能与 PixCall 原序不同」。
+5. **导入后的前端刷新复用 LAN 那条现成通道**：`apply` 成功后 emit `lan-share-data-changed`（`kind=metadata` 重建词表、`kind=topics` 重挂专题），没有另写一套刷新逻辑。
+6. **`apply_plan` 不开外层事务**：`topics::insert_topic_files` 内部自带 `unchecked_transaction`，外面再包就是「在事务里开事务」。中途失败留下的是半份纯增量结果，修好重跑即补齐——这与 §6.1「重跑安全」的契约一致，但要知晓失败不是一键回滚。
+7. **`useLongPress.ts` 未随零风险批删除**：残留清单 §5.4 明确建议把它单拎最后删（本表唯一归属存疑项，全文无安卓字样、桌面触屏可复用）；§6.6 第 2 步写的「§2 的 3 个文件」与此冲突，按更具体的 §5.4 执行。其余 §2 条目全部删净。
+8. **adb 三脚本除 `pidof` 外还换了 logcat 过滤标签**：原 `aurora_gallery_lib` / `Tauri/Console` 随安卓壳一起失效，只改包名仍抓不到东西。现指向现役 Kotlin 标签（`AuroraKotlin` / `AuroraLan*` / `AuroraCanvas` 等，对齐 `scripts/kotlin-dev.ps1:84`）。
+
+**尚未做 / 待验收**：
+
+- **实库首跑**：由验收人在应用里点（设置 → 存储 → 「使用 PixCall 库」，或 welcome 那颗）。§9 的 9/1 与 9 词是双软并用机器的数字，首跑环境按 §9 末段对齐。
+- **1457 成员专题的网格滚动性能**（§4.6 规则 10 的后果，全文唯一标过的实现期留意点）：需要在真库里点进去看。
+- **§7 的样本缺口 #1/#3/#4**（标签分组、智能父+手动子降级、AI 描述）：实现与单测已按规则覆盖（降级路径、未标定筛选、`tag_groups` 丢弃都有对应测试用例，用内存夹具造的），但**本机真实数据跑不到这几条路**。补样本时在 PixCall 里建对应看板，再点一次导入即可验。
+- **Eagle 适配器**：`core/src/import/` 的目录结构与 trait 侧共性已就位，`eagle.rs` 待真实库样本（§6.4）。
 
 ---
 
@@ -354,3 +412,17 @@ unmatched                 0
 | 项 | v4.4 状态 | v4.5 拍板结论 |
 |---|---|---|
 | 回收站内容的呈现 | 只有计数 `excluded_trash`；验收人曾提案「opt-in 复制成【废纸篓】文件夹 + 描述」 | **拍板 A：不复制、不建文件夹**。报告增 `excluded_trash_names`（名字 + 原夹 `source_path`）；welcome 卡片结果行只给计数，名字明细落在设置-存储面板新增的「上次导入报告」展开区（读 `import_records.report_json`）。否决复制提案的四条理由与长期归宿（Aurora 自建废纸篓时再映射）记入 §5 |
+
+| 项 | v4.5 状态 | v4.6 拍板结论 |
+|---|---|---|
+| 实施顺序 | 未涉及（文档只写「可进入实现」） | **新增 §6.6**：迁移优先于 Android 残留清理（§9 预期会随源库漂移、清理价值不衰减、D42=a 大块三触发条件皆不成立）；开工前先跑绿基线门 + 零风险批与 adb 脚本修复（单独 commit，保证迁移期的红可归因）；迁移内部「先核心后像素」——Rust 导入器先对 §9 的表，再接 UI/i18n；1457 成员专题的网格性能放在 UI 阶段验；源库漂移时先重测再对表 |
+
+| 项 | v4.6 说法 | v4.7 实测结论（2026-09-29 实现首轮，本机真实库 + 克隆库） |
+|---|---|---|
+| §4.7 / §9 的 `skipped_unsupported_type` | 本机预期 **53** | **52**。本机 `video/mp4` 共 53 条，其中 1 条（`Zenless Zone Zero 2026.07.13 - 23.38.12.01.mp4`）的 `parent_id=2` 在 Trash 子树里，按 §4.8 自己的分类顺序它先被 ① `excluded_trash` 吃掉，不该再进 ②——v4.6 的预测表正是犯了 §4.8 警告的「同一条目重复计入两栏」。§4.9 第 2 条的「本机该栏为 53」同步更正 |
+| §4.7 报告结构 | 14 个计数栏 + `excluded_trash_names` + `unmatched` | 实现补 `matched` 与 `warnings[]`：`tag_groups` 有行、文件夹上挂标签、`entry_kind=0` 成员、⑪ 两信号不符、§4.6 规则 7/8 的跳过理由都需要出口，计数栏装不下（§10 偏差 1） |
+| §4.4 文件夹标签 | 「Pixcall 侧的标签 8 条全挂在文件上，无影响」 | 补实现口径：真有文件夹标签时**跳过并上报**，因为 `EditSection.tsx:41` 的 FOLDER 门禁让它们在我们 UI 里不可见（§10 偏差 2） |
+| §6.5 `skipped_existing` | 单列 | 实现为「描述让位 + 链接让位」之和（§10 偏差 3），明细仍在 `report_json` |
+| §6.6 第 2 步「§2 的 3 个文件」 | 含 `useLongPress.ts` | 按残留清单 §5.4 的建议**未删** `useLongPress.ts`（唯一归属存疑项，留给最后一批）；其余 §2 条目删净（§10 偏差 7） |
+| §6.1 第 3 条 UI | 设计描述 | 已实现：welcome 两颗互斥按钮 + 模式驱动卡片 + 阶段进度（scan 复用现有 `scanProgress`），门禁 pixcall 模式看 import 完成；「接管」所需的 `openKnownPath` 从 `handleOpenFolder` 抽出并 await 扫描结束（提交 `addd8ee1c`） |
+| 状态 | 「可进入实现」 | 「核心与两个入口已实现」：§9 逐栏在本机跑通、克隆库上重跑写入为 0；实库首跑与 1457 成员网格性能待验收人点（§10） |
