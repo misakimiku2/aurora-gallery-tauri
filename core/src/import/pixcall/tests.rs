@@ -408,6 +408,10 @@ fn applied_topics_keep_the_hierarchy() {
     assert_eq!(test.parent_id.as_deref(), Some(song.id.as_str()));
     assert_eq!(test.file_count, 1);
     assert_eq!(song.file_count, 2);
+    // 专题封面：导入绕过了前端那条「归入成员时取首图当封面」的路径（useTopics.ts:89-98），
+    // 落库时必须自己补上，否则专题卡片是空封面。
+    assert_eq!(song.cover_file_id.as_deref(), Some("fa"), "首个成员即封面（按重建路径排序后的第一张）");
+    assert_eq!(test.cover_file_id.as_deref(), Some("fb"));
     // 已有专题没被塞进新成员（规则 4）
     assert_eq!(topics::get_topic_files(&our, "exist1").unwrap().len(), 0);
     // 子看板挂进了它

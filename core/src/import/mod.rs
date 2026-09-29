@@ -358,6 +358,16 @@ pub fn apply_plan(
         };
         created.created_at = Some(now);
         created.updated_at = Some(now);
+        // 桌面在「新成员归入且专题还没有封面」时拿第一张图当封面
+        // （`useTopics.ts:89-98`：`targetFileIds.find(id => file.type === IMAGE)`）。
+        // 导入器直接落库、绕过了那条前端路径，所以这里补同一条规则。成员按 §4.9 的
+        // `is_indexable` 过滤后全是 image/*，首个成员就是首张图。
+        //
+        // 只在**新建**时给：同名让位的已有专题（§4.6 规则 4）我们一行都不碰，
+        // 用户自己钉过的封面不会被重跑打回。
+        if created.cover_file_id.is_none() {
+            created.cover_file_id = topic.file_ids.first().cloned();
+        }
         topics::upsert_topic(conn, &created)?;
         topics::add_files_to_topic(conn, &created.id, &topic.file_ids)?;
         done += 1;

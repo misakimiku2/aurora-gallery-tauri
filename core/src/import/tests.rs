@@ -298,6 +298,13 @@ fn apply_creates_topics_with_sequenced_members() {
     assert_eq!(name, "test");
     assert_eq!(count, 2, "file_count 是 topic_files 的缓存列，必须由 add_files_to_topic 刷新");
 
+    // 桌面在归入成员时拿第一张图当封面（useTopics.ts:89-98）；导入器绕过那条路径，
+    // 所以必须在落库时补上，否则专题卡片是空封面。
+    let cover: Option<String> = conn
+        .query_row("SELECT cover_file_id FROM topics WHERE id = 't2'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(cover.as_deref(), Some("f1"), "封面 = 首个成员（position 最小的那张图）");
+
     // 重跑安全：成员已在表里，再导一次不产生第二行
     apply_plan(&conn, &plan, 200, None).unwrap();
     let rows: i64 = conn
