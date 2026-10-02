@@ -419,3 +419,26 @@ fn a_cover_only_merge_still_counts_as_a_migration() {
     report.topic_files_added = 1;
     assert!(has_anything_to_migrate(&report));
 }
+
+/// P2（2026-10-02，与上一条成对）：**只新建了一堆没有任何成员的专题，不算一次迁移。**
+///
+/// 这种报告的来源只有一个——选了一个与资源根无关的库：图一张都没进来，标签无处挂载，
+/// 但 §4.6 的先序遍历仍会照着源侧的 boards 树建出一串空壳。
+/// 把它们也算成「有东西可迁」的话，这次会照常执行、照常落 `import_records`、
+/// UI 照常报成功，用户拿到的却是「有专题、没图」——正是那条反馈的根因。
+///
+/// 注意反例：`folder-only` 那种成员全是 `entry_kind=0` 的看板**允许**建出空专题
+/// （它是源侧真实存在的节点，层级要靠它），只要本次别的地方真的加进了成员。
+#[test]
+fn empty_topics_alone_do_not_count_as_a_migration() {
+    let mut report = MigrationReport::default();
+    report.topics_created = 5;
+    assert!(
+        !has_anything_to_migrate(&report),
+        "只建了 5 个空专题，一张图都没关联 → 不该执行、不该留迁移记录"
+    );
+
+    // 只要真的动到了东西就该算：给其中一个塞进成员即可
+    report.topic_files_added = 1;
+    assert!(has_anything_to_migrate(&report));
+}

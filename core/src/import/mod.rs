@@ -1,11 +1,18 @@
 //! 多来源标注导入（设计方案 §6.4）。
 //!
 //! PixCall 是第一站，Eagle 是第二期。这里只放**与来源无关**的那一半：
-//! 快照/只读访问的管理约定、join 链（重建路径 → `normalize_path` → `file_index`）、
-//! 合并策略（并集 / 仅为空时填 / 同名不新建 / `position` 续排）、§4.7 报告结构、
-//! §6.5 迁移记录表。**来源特定的那一半**（库发现、格式解码、手动/智能判据、跳过清单）
-//! 待在各适配器里（`pixcall.rs`），快照策略也是 per-source 的——Eagle 的库是
-//! `.library/` 目录 + 每图 JSON sidecar，不是 SQLite，所以「复制 db+wal」不许进 trait 契约。
+//! 快照/只读访问的管理约定、合并策略（并集 / 仅为空时填 / 同名不新建 / `position` 续排）、
+//! §4.7 报告结构、§6.5 迁移记录表。**来源特定的那一半**（库发现、格式解码、手动/智能判据、
+//! 跳过清单，**以及下面第 2 条禁令涉及的 join 链**）在各适配器里（`pixcall.rs`）。
+//!
+//! 两条 per-source 禁令（设计方案 v4.16，来自 `docs/Eagle数据迁移-格式调研.md`）：
+//! 1. **「复制 db+wal」不许进 trait 契约**——Eagle 的库不是 SQLite，是 `.library/` 目录：
+//!    根 `metadata.json`（夹树 / 智能夹 / 标签组）+ 根 `mtime.json`（增量日志，含 `"all"` 计数键）
+//!    + `images/<ID>.info/{metadata.json, <name>.<ext>, <name>_thumbnail.png}`。
+//! 2. **「重建路径 → `normalize_path` → `file_index.path`」同样不许进契约**——这条链的前提是
+//!    源侧记下了文件在真实目录里的位置，而 Eagle **导入即把文件复制进库、不留原始路径**
+//!    （官方口径：「不是仅创建索引链接到原始文件」），左值在我们库里根本不存在。
+//!    Eagle 期开工前要先拍板「文件从哪来」（调研 §5 四条路线、§10 P1），别照 PixCall 的写法抄。
 
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
@@ -447,9 +454,21 @@ fn report_progress(progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>, done
 ///
 /// §6.1 第 3 条：probe 发现 0 条可迁标注时显示「未发现可迁移的标注」，且**不写迁移记录**。
 /// 算上并进来的成员与补上的封面——同名合并那一路可能一条标注都不产生但确实动了库。
+///
+/// **P2（2026-10-02）：这里刻意不看 `topics_created`。**
+/// 「只新建了几个没有任何成员的专题」不算真的动了库。这种情形唯一的来源是
+/// **选了一个与资源根无关的库**——图一张都没进来，label 无处挂载，
+/// 但 §4.6 的先序遍历仍会照着源侧的 boards 树建出一串空壳（它们的子看板还会挂上来，
+/// 于是 `topics_created` 是正的）。把这些也算成「有东西可迁」的话，这条路会照常执行、
+/// 照常落 `import_records`、UI 照常报成功，而用户拿到的只是「有专题、没图」，
+/// 全程不会有任何异常提示——正是「有 tag 但没图」那条反馈的根。
+///
+/// 反过来，单个看板为空是**合法**的，不能据此跳过它：
+/// 夹具里的 `folder-only` 成员全是 `entry_kind=0`（文件夹）而被 §4.9 拦下，
+/// `file_ids` 因此为空，但它本身是源侧真实存在的节点，必须照建（棋盘层级要靠它）。
+/// 所以「该不该执行」要在**整次导入**这层判断，不能在单个看板这层。
 pub fn has_anything_to_migrate(report: &MigrationReport) -> bool {
     report.tags_unioned + report.descriptions_written + report.source_urls_written > 0
-        || report.topics_created > 0
         || report.topic_files_added > 0
         || report.topics_covered > 0
 }
