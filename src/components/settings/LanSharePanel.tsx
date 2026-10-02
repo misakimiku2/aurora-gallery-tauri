@@ -530,7 +530,13 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                       )}
                     </button>
                     <button
-                      onClick={() => window.open(serverUrl, '_blank')}
+                      onClick={() => {
+                        if (!serverUrl) return;
+                        // Tauri 的 webview 里 window.open 唤不起系统浏览器
+                        import('../../api/tauri-bridge')
+                          .then(({ openExternalLink }) => openExternalLink(serverUrl))
+                          .catch((e) => console.error('[LanSharePanel] 打开外部链接失败:', e));
+                      }}
                       className="p-2 text-gray-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"
                       title={t('settings.lanShare.open') || '打开'}
                     >

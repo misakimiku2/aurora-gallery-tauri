@@ -159,7 +159,15 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                     />
                     {(isMulti ? batchSource : source) && (
                         <button
-                            onClick={() => window.open(isMulti ? batchSource : source, '_blank')}
+                            onClick={() => {
+                                const url = isMulti ? batchSource : source;
+                                if (!url) return;
+                                // Tauri 的 webview 里 window.open 唤不起系统浏览器，
+                                // 必须走封装好的 open_external_link 命令。
+                                import('../../api/tauri-bridge')
+                                    .then(({ openExternalLink }) => openExternalLink(url))
+                                    .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
+                            }}
                             className="p-2 text-gray-400 hover:text-blue-500"
                             title={t('meta.openSource')}
                         >
@@ -176,7 +184,13 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                                 <div key={id} className="flex items-center text-xs group bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
                                     <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
                                     <button
-                                        onClick={() => f.sourceUrl && window.open(f.sourceUrl, '_blank')}
+                                        onClick={() => {
+                                            const url = f.sourceUrl;
+                                            if (!url) return;
+                                            import('../../api/tauri-bridge')
+                                                .then(({ openExternalLink }) => openExternalLink(url))
+                                                .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
+                                        }}
                                         className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
                                         title={f.sourceUrl}
                                     >

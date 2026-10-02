@@ -235,7 +235,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           
           <div className="flex gap-3">
             <button
-              onClick={() => window.open(updateInfo.downloadUrl, '_blank')}
+              onClick={() => {
+                const url = updateInfo?.downloadUrl;
+                if (!url) return;
+                // Tauri 的 webview 里 window.open 唤不起系统浏览器
+                import('../../api/tauri-bridge')
+                  .then(({ openExternalLink }) => openExternalLink(url))
+                  .catch((e) => console.error('[UpdateModal] 打开下载页失败:', e));
+              }}
               className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 dark:bg-white/5 dark:hover:bg-white/10 text-gray-700 dark:text-white/80 rounded-xl text-sm font-medium transition-colors"
             >
               <ExternalLink size={14} />
