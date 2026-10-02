@@ -2084,7 +2084,10 @@ class NativeGalleryView @JvmOverloads constructor(
                 // 迟到的缩略图会把已显示的高清图覆盖回低清——就是「切页后永远停在缩略图」
                 .target(
                     onSuccess = { drawable ->
-                        if (view.boundLoadGeneration != generation) return@target
+                        if (view.boundLoadGeneration != generation) {
+                            Log.i(TAG, "discard stale thumbnail: index=$index name=${item.name}")
+                            return@target
+                        }
                         if (view.isFullResShown) {
                             Log.i(TAG, "skip late thumbnail: index=$index name=${item.name}")
                             return@target
@@ -2100,7 +2103,10 @@ class NativeGalleryView @JvmOverloads constructor(
         val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
             .target(
                 onSuccess = { drawable ->
-                    if (view.boundLoadGeneration != generation) return@target
+                    if (view.boundLoadGeneration != generation) {
+                        Log.i(TAG, "discard stale full: index=$index name=${item.name} (view now on gen ${view.boundLoadGeneration})")
+                        return@target
+                    }
                     view.isFullResShown = true
                     if (showProgress) progressBar.visibility = GONE
                     Log.i(TAG, "full ready: index=$index name=${item.name} ${drawable.intrinsicWidth}x${drawable.intrinsicHeight}")
@@ -2108,7 +2114,10 @@ class NativeGalleryView @JvmOverloads constructor(
                     view.setRotationDegrees(rotation)
                 },
                 onError = { _ ->
-                    if (view.boundLoadGeneration != generation) return@target
+                    if (view.boundLoadGeneration != generation) {
+                        Log.i(TAG, "discard stale full error: index=$index name=${item.name}")
+                        return@target
+                    }
                     if (showProgress) progressBar.visibility = GONE
                     // 失败原因由 Coil 的 logger 以堆栈形式打出（见 imageLoader 的 .logger(...)）：
                     // 这个 target 重载拿不到 throwable，只记「加载失败」在真机上等于查不了
