@@ -78,6 +78,16 @@ class ZoomableImageView @JvmOverloads constructor(
      */
     var drawerFullWidth = 0f
 
+    /**
+     * 本视图当前绑定的加载代号（NativeGalleryView.loadIntoView 写入）。迟到的过期
+     * 请求回调（lambda target 不随翻页取消）比对代号后整体作废，防止上一张图的
+     * 缩略图/高清图被画到已切到新图的视图上。
+     */
+    var boundLoadGeneration = 0
+
+    /** 高清原图是否已上屏：预加载命中内存缓存时高清图先到，迟到的缩略图不得覆盖它。 */
+    var isFullResShown = false
+
     private val scaledDrawableRect = RectF()
     private val displayRect = RectF()
 

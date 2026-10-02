@@ -188,6 +188,15 @@ class NativeGalleryView @JvmOverloads constructor(
     private var isOpen = false
 
     /**
+     * 加载代号（[loadIntoView] 每轮递增）。Coil 的 lambda target 请求不挂在视图的
+     * requestManager 上（RealImageLoader.enqueue 只登记 ViewTarget），翻页/重载不会
+     * 取消它们——快速连续翻页时上一张图的缩略图/高清图回调可能迟于本轮落地。
+     * 回调比对视图上的 [ZoomableImageView.boundLoadGeneration]，代号不符整体作废，
+     * 防止旧图被画到新图上。
+     */
+    private var loadGeneration = 0
+
+    /**
      * LAN 编辑门禁位（M6a 阶段 6，allow_edit）：直通时 LAN 项才出现删除入口（顶栏删除键
      * + 「更多」菜单项），403 门禁态两者都隐（门禁关闭时删除对远端不可用）。var + 宿主
      * 写入而非构造参：实例跟 Activity 走（Coil 缓存不随进出查看器重建），门禁位随每次
@@ -2060,12 +2069,29 @@ class NativeGalleryView @JvmOverloads constructor(
         if (showProgress) progressBar.visibility = VISIBLE
         Log.i(TAG, "loadIntoView: index=$index, name=${item.name}, isLan=${item.isLan}, path=${item.path}, thumbUrl=${item.thumbnailUrl}")
 
+        // 本轮请求代号：写进视图，迟到的过期回调（上一张图的缩略图/高清图）据此作废
+        val generation = ++loadGeneration
+        view.boundLoadGeneration = generation
+        view.isFullResShown = false
+
         // 先加载缩略图（如果有），再加载原图
         val thumbUrl = item.thumbnailUrl
         if (!thumbUrl.isNullOrEmpty()) {
             val thumbRequest = ImageRequest.Builder(context)
                 .data(thumbUrl)
-                .target(view)
+                // lambda target + 守卫，不再用 .target(view)（ImageViewTarget 会绕过守卫
+                // 直接上屏）：预加载已把高清图送进内存缓存时，高清图先到、缩略图后到，
+                // 迟到的缩略图会把已显示的高清图覆盖回低清——就是「切页后永远停在缩略图」
+                .target(
+                    onSuccess = { drawable ->
+                        if (view.boundLoadGeneration != generation) return@target
+                        if (view.isFullResShown) {
+                            Log.i(TAG, "skip late thumbnail: index=$index name=${item.name}")
+                            return@target
+                        }
+                        view.setImageDrawable(drawable)
+                    },
+                )
                 .precision(Precision.INEXACT)
                 .build()
             imageLoader.enqueue(thumbRequest)
@@ -2074,11 +2100,15 @@ class NativeGalleryView @JvmOverloads constructor(
         val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
             .target(
                 onSuccess = { drawable ->
+                    if (view.boundLoadGeneration != generation) return@target
+                    view.isFullResShown = true
                     if (showProgress) progressBar.visibility = GONE
+                    Log.i(TAG, "full ready: index=$index name=${item.name} ${drawable.intrinsicWidth}x${drawable.intrinsicHeight}")
                     view.setImageDrawable(drawable)
                     view.setRotationDegrees(rotation)
                 },
                 onError = { _ ->
+                    if (view.boundLoadGeneration != generation) return@target
                     if (showProgress) progressBar.visibility = GONE
                     // 失败原因由 Coil 的 logger 以堆栈形式打出（见 imageLoader 的 .logger(...)）：
                     // 这个 target 重载拿不到 throwable，只记「加载失败」在真机上等于查不了

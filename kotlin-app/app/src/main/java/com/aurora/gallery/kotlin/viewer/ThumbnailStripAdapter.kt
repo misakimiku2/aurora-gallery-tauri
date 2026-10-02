@@ -70,8 +70,11 @@ class ThumbnailStripAdapter(
         val item = items[position]
         holder.imageView.setImageDrawable(null)
         holder.imageView.setBackgroundColor(placeholderColor)
+        // 本地分支必须带 "strip" variant：格子是 ~72dp 的 ViewTarget，默认 variant="full"
+        // 会与查看器主图共用同一显式内存键——小图解码反复覆写主图条目（Coil 靠尺寸校验
+        // 挡住了错误命中，但代价是主图缓存被冲掉后每次都要重解码）
         val src = if (!item.thumbnailUrl.isNullOrEmpty()) CoilSource(item.thumbnailUrl!!, null, null)
-            else imageSourceFor(item, context.contentResolver)
+            else imageSourceFor(item, context.contentResolver, "strip")
         val request = coilSource(ImageRequest.Builder(context), src)
             .target(holder.imageView)
             .build()
