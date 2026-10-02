@@ -23,15 +23,43 @@ use super::session::SessionManager;
 use super::types::*;
 use crate::db::AppDbPool;
 
+/// 可热更新的共享根路径。桌面端切根（switch_root_database）后原地更新，运行中的
+/// LAN 服务器无需重启、已配对会话保持。必须与 AppDbPool 的共享切换同步进行，
+/// 否则"索引已指向新库、root 仍指旧根"会让手机端浏览只见文件夹不见图片。
+#[derive(Clone)]
+pub struct SharedRootPath(Arc<std::sync::RwLock<std::path::PathBuf>>);
+
+impl SharedRootPath {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self(Arc::new(std::sync::RwLock::new(path)))
+    }
+
+    /// 当前根路径快照：请求期取一次，处理中途切根不影响本请求。
+    pub fn get(&self) -> std::path::PathBuf {
+        self.0.read().expect("SharedRootPath 读锁已中毒").clone()
+    }
+
+    pub fn set(&self, path: std::path::PathBuf) {
+        *self.0.write().expect("SharedRootPath 写锁已中毒") = path;
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<tokio::sync::RwLock<LanShareConfig>>,
     pub sessions: Arc<SessionManager>,
     pub devices: Arc<DeviceManager>,
-    pub root_path: Arc<std::path::PathBuf>,
+    pub root_path: SharedRootPath,
     pub db_pool: Option<Arc<AppDbPool>>,
     pub color_db_pool: Option<Arc<crate::color_db::ColorDbPool>>,
     pub app_handle: AppHandle,
+}
+
+impl AppState {
+    /// 本请求使用的共享根路径快照。
+    pub fn root(&self) -> std::path::PathBuf {
+        self.root_path.get()
+    }
 }
 
 /// 设备列表发生变化时通知前端刷新。事件本身不携带数据，前端收到后
@@ -91,8 +119,9 @@ fn require_db_pools(
 /// 把 LAN 传入的不透明 path 解析到共享根下的绝对路径（与 browse/thumbnail 的
 /// root_path.join 语义一致，不解析不规范化客户端串本身）。越出共享根 → 400。
 fn resolve_under_root(state: &AppState, path: &str) -> Result<std::path::PathBuf, Response> {
-    let full = state.root_path.join(path);
-    if !full.starts_with(state.root_path.as_path()) {
+    let root = state.root();
+    let full = root.join(path);
+    if !full.starts_with(&root) {
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
     }
     Ok(full)
@@ -141,7 +170,7 @@ pub async fn handle_metadata_batch(
         .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token"))?;
     state.devices.update_activity(&session.device_id).await;
 
-    let root = state.root_path.clone();
+    let root = state.root();
     // (客户端不透明 path, Option<file_id>)；越出共享根的 path 按 None 处理（空默认，不泄漏根外元数据）
     let entries: Vec<(String, Option<String>)> = payload.paths.iter().map(|p| {
         let full = root.join(p);
@@ -429,7 +458,7 @@ pub async fn handle_topic_members_add(
         return Err(error_response(StatusCode::BAD_REQUEST, "paths or people_ids required"));
     }
 
-    let root = state.root_path.clone();
+    let root = state.root();
     let file_ids: Vec<String> = payload.paths.unwrap_or_default().iter().filter_map(|p| {
         let full = root.join(p);
         if full.starts_with(root.as_path()) {
@@ -553,7 +582,7 @@ pub async fn handle_file_move(
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
     }
     let target_dir = payload.target_dir.trim().trim_start_matches('/').to_string();
-    let root = state.root_path.clone();
+    let root = state.root();
     let dest_dir = root.join(&target_dir);
     if !dest_dir.starts_with(root.as_path()) {
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid target directory"));
@@ -630,7 +659,7 @@ pub async fn handle_file_copy(
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid path"));
     }
     let target_dir = payload.target_dir.trim().trim_start_matches('/').to_string();
-    let root = state.root_path.clone();
+    let root = state.root();
     let dest_dir = root.join(&target_dir);
     if !dest_dir.starts_with(root.as_path()) {
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid target directory"));
@@ -987,7 +1016,7 @@ pub async fn handle_palette(
         None => return Ok(Json(serde_json::json!({ "palette": [] }))),
     };
 
-    let abs_path = state.root_path.join(&query.path).to_string_lossy().replace('\\', "/");
+    let abs_path = state.root().join(&query.path).to_string_lossy().replace('\\', "/");
     let palette = tokio::task::spawn_blocking(move || {
         let mut conn = pool.get_connection();
         crate::color_db::get_colors_by_file_paths(&mut conn, &[abs_path])
@@ -1023,13 +1052,13 @@ pub async fn handle_browse(
     } else {
         raw_path.trim_start_matches('/').to_string()
     };
-    let full_path = state.root_path.join(&relative_path);
-    let root_path = state.root_path.clone();
+    let full_path = state.root().join(&relative_path);
+    let root_path = state.root();
 
     let __t_start = std::time::Instant::now();
     log::info!("[LAN Share] 浏览请求 - 设备: {}, 路径: {} (原始: {})", session.device_name, relative_path, raw_path);
 
-    if !full_path.exists() || !full_path.starts_with(state.root_path.as_path()) {
+    if !full_path.exists() || !full_path.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 浏览失败 - 路径不存在或越权访问: {}", full_path.display());
         return Err(error_response(StatusCode::NOT_FOUND, "Path not found"));
     }
@@ -1421,16 +1450,16 @@ pub async fn handle_thumbnail(
     
     state.devices.update_activity(&session.device_id).await;
 
-    let full_path = state.root_path.join(&query.path);
+    let full_path = state.root().join(&query.path);
     
     log::debug!("[LAN Share] 缩略图请求 - 设备: {}, 路径: {}", session.device_name, query.path);
 
-    if !full_path.exists() || !full_path.starts_with(state.root_path.as_path()) {
+    if !full_path.exists() || !full_path.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 缩略图失败 - 图片不存在: {}", full_path.display());
         return Err(error_response(StatusCode::NOT_FOUND, "Image not found"));
     }
 
-    let cache_root = state.root_path.join(".Aurora_Cache");
+    let cache_root = state.root().join(".Aurora_Cache");
     let path_str = full_path.to_string_lossy().to_string();
     let cache_root_str = cache_root.to_string_lossy().to_string();
 
@@ -1472,11 +1501,11 @@ pub async fn handle_image(
     
     state.devices.update_activity(&session.device_id).await;
 
-    let full_path = state.root_path.join(&query.path);
+    let full_path = state.root().join(&query.path);
     
     log::info!("[LAN Share] 图片请求 - 设备: {}, 路径: {}", session.device_name, query.path);
 
-    if !full_path.exists() || !full_path.starts_with(state.root_path.as_path()) {
+    if !full_path.exists() || !full_path.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 图片失败 - 文件不存在: {}", full_path.display());
         return Err(error_response(StatusCode::NOT_FOUND, "Image not found"));
     }
@@ -1522,11 +1551,11 @@ pub async fn handle_delete(
 
     state.devices.update_activity(&session.device_id).await;
 
-    let full_path = state.root_path.join(&query.path);
+    let full_path = state.root().join(&query.path);
     
     log::info!("[LAN Share] 删除请求 - 设备: {}, 路径: {}", session.device_name, query.path);
 
-    if !full_path.exists() || !full_path.starts_with(state.root_path.as_path()) {
+    if !full_path.exists() || !full_path.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 删除失败 - 文件不存在: {}", full_path.display());
         return Err(error_response(StatusCode::NOT_FOUND, "File not found"));
     }
@@ -1577,14 +1606,14 @@ pub async fn handle_rename(
 
     state.devices.update_activity(&session.device_id).await;
 
-    let old_path = state.root_path.join(&payload.old_path);
+    let old_path = state.root().join(&payload.old_path);
     let parent = old_path.parent().ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "Invalid path"))?;
     let new_path = parent.join(&payload.new_name);
     
     log::info!("[LAN Share] 重命名请求 - 设备: {}, {} -> {}", 
         session.device_name, payload.old_path, payload.new_name);
     
-    if !old_path.exists() || !old_path.starts_with(state.root_path.as_path()) {
+    if !old_path.exists() || !old_path.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 重命名失败 - 源文件不存在: {}", old_path.display());
         return Err(error_response(StatusCode::NOT_FOUND, "File not found"));
     }
@@ -1604,7 +1633,7 @@ pub async fn handle_rename(
         &color_db,
     ).await {
         Ok(_) => {
-            let new_relative = new_path.strip_prefix(state.root_path.as_path())
+            let new_relative = new_path.strip_prefix(state.root().as_path())
                 .unwrap_or(&new_path)
                 .to_string_lossy()
                 .replace('\\', "/");
@@ -1700,9 +1729,9 @@ pub async fn handle_upload(
     }
 
     let target_dir = target_dir.trim().trim_start_matches('/').to_string();
-    let dest_dir = state.root_path.join(&target_dir);
+    let dest_dir = state.root().join(&target_dir);
 
-    if !dest_dir.starts_with(state.root_path.as_path()) {
+    if !dest_dir.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 上传被拒绝 - 目标目录越权: {}", dest_dir.display());
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid target directory"));
     }
@@ -1717,7 +1746,7 @@ pub async fn handle_upload(
     }
 
     let dest_file = dest_dir.join(&file_name);
-    if !dest_file.starts_with(state.root_path.as_path()) {
+    if !dest_file.starts_with(state.root().as_path()) {
         log::warn!("[LAN Share] 上传被拒绝 - 目标文件越权: {}", dest_file.display());
         return Err(error_response(StatusCode::BAD_REQUEST, "Invalid file name"));
     }
@@ -1728,7 +1757,7 @@ pub async fn handle_upload(
     let app_db = require_db_pool(&state)?;
     match crate::file_operations::write_file_bytes_indexed(&dest_file.to_string_lossy(), &file_data, &app_db).await {
         Ok(_) => {
-            let relative = dest_file.strip_prefix(state.root_path.as_path())
+            let relative = dest_file.strip_prefix(state.root().as_path())
                 .unwrap_or(&dest_file)
                 .to_string_lossy()
                 .replace('\\', "/");
@@ -1806,7 +1835,7 @@ pub async fn handle_search(
     let (folders, mut images) = if let Some(pool) = state.db_pool.clone() {
         let scope_clone = scope.to_string();
         let search_term_clone = search_term.clone();
-        let root_path = state.root_path.clone();
+        let root_path = state.root();
         
         tokio::task::spawn_blocking(move || {
             let conn = pool.get_connection();
@@ -1862,7 +1891,7 @@ pub async fn handle_search(
             }
         }).await.unwrap_or((Vec::new(), Vec::new()))
     } else {
-        let root_path = state.root_path.clone();
+        let root_path = state.root();
         let search_term_clone = search_term.clone();
         let scope_clone = scope.to_string();
         
@@ -1965,7 +1994,8 @@ pub async fn handle_search(
     };
 
     log::info!("[LAN Share] 搜索完成 - 找到 {} 个文件夹, {} 张图片", folders.len(), images.len());
-    fill_image_palette(&mut images, &state.root_path, &state.color_db_pool).await;
+    let palette_root = state.root();
+    fill_image_palette(&mut images, &palette_root, &state.color_db_pool).await;
 
     Ok(Json(BrowseResponse {
         current_path: format!("search:{}", search_term),
@@ -1996,7 +2026,7 @@ pub async fn handle_all_image_folders(
         (config.allow_edit, config.allow_upload)
     };
 
-    let root_path = state.root_path.clone();
+    let root_path = state.root();
     let root_path_clone = root_path.clone();
     let db_pool = state.db_pool.clone();
 
@@ -2187,7 +2217,8 @@ pub async fn handle_all_image_folders(
         (folders, root_images)
     };
 
-    fill_image_palette(&mut root_images, &state.root_path, &state.color_db_pool).await;
+    let palette_root = state.root();
+    fill_image_palette(&mut root_images, &palette_root, &state.color_db_pool).await;
 
     Ok(Json(AllImageFoldersResponse {
         folders,

@@ -240,6 +240,14 @@ pub async fn switch_root_database(
         log::info!("CLIP embedding database switched to: {:?}", new_root_path);
     }
 
+    // LAN 互联服务器若在运行，热更新其共享根路径（服务器不重启、已配对会话保持）：
+    // root 必须与上面已切换的 metadata.db/colors.db 同步指向新根，否则手机端"网络"栏
+    // 会呈现"文件夹已切换、图片全部消失"的失配状态（索引条目按新根匹配、越权检查按旧根）。
+    #[cfg(not(target_os = "android"))]
+    if let Some(server) = app.state::<crate::LanShareState>().server.read().await.as_ref() {
+        server.update_root(root.to_path_buf());
+    }
+
     // 通知前端重置主色调提取状态（弹窗/进度清零，恢复到手动启动状态）
     let _ = app.emit("color-extraction-notification-action", serde_json::json!({"action": "cancel"}));
 

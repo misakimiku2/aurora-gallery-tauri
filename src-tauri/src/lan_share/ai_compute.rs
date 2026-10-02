@@ -317,7 +317,7 @@ async fn to_clip_response(
     let _ = min_score;
 
     // file_id → 共享根相对 path（跨根/查不到的跳过，对齐 browse 切根防线语义）。
-    let root = state.root_path.clone();
+    let root = state.root();
     let pool = require_db(&state)?;
     let ids: Vec<String> = results.iter().take(limit).map(|r| r.file_id.clone()).collect();
     let abs_paths: Vec<Option<String>> = tokio::task::spawn_blocking(move || {
@@ -376,7 +376,6 @@ pub async fn handle_topic_members_get(
     Query(q): Query<TopicMembersQuery>,
 ) -> Result<Json<TopicMembersDetailResponse>, Response> {
     let _session = require_session(&state, &headers).await?;
-    let root = state.root_path.clone();
     let pool = require_db(&state)?;
     let topic_id = q.topic_id;
 
@@ -518,7 +517,7 @@ async fn file_ids_to_relative(
     state: &AppState,
     file_ids: Vec<String>,
 ) -> Result<Vec<String>, Response> {
-    let root = state.root_path.clone();
+    let root = state.root();
     let pool = require_db(state)?;
     tokio::task::spawn_blocking(move || {
         let conn = pool.get_connection();

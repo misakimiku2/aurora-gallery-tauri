@@ -44,7 +44,7 @@ pub struct LanShareServer {
     config: Arc<tokio::sync::RwLock<LanShareConfig>>,
     sessions: Arc<SessionManager>,
     devices: Arc<DeviceManager>,
-    root_path: Arc<PathBuf>,
+    root_path: SharedRootPath,
     db_pool: Option<Arc<AppDbPool>>,
     color_db_pool: Option<Arc<crate::color_db::ColorDbPool>>,
     app_handle: Option<AppHandle>,
@@ -62,7 +62,7 @@ impl LanShareServer {
             config: Arc::new(tokio::sync::RwLock::new(LanShareConfig::default())),
             sessions: Arc::new(SessionManager::new()),
             devices: Arc::new(DeviceManager::new()),
-            root_path: Arc::new(root_path),
+            root_path: SharedRootPath::new(root_path),
             db_pool: None,
             color_db_pool: None,
             app_handle: None,
@@ -218,7 +218,7 @@ impl LanShareServer {
         log::info!("========================================");
         log::info!("[LAN Share] 服务器启动成功!");
         log::info!("[LAN Share] 访问地址: http://{}:{}", local_ip, port);
-        log::info!("[LAN Share] 根目录: {}", self.root_path.display());
+        log::info!("[LAN Share] 根目录: {}", self.root_path.get().display());
         log::info!("========================================");
 
         Ok(LanShareInfo {
@@ -251,10 +251,18 @@ impl LanShareServer {
     }
 
     pub async fn update_config(&self, config: LanShareConfig) {
-        log::info!("[LAN Share] 更新配置 - 端口: {}, 允许编辑: {}, 允许上传: {}", 
+        log::info!("[LAN Share] 更新配置 - 端口: {}, 允许编辑: {}, 允许上传: {}",
             config.port, config.allow_edit, config.allow_upload);
         let mut cfg = self.config.write().await;
         *cfg = config;
+    }
+
+    /// 热更新共享根路径（切根后由 switch_root_database 调用）：服务器不重启、
+    /// 端口与会话保持，新请求立即按新根解析。调用方须保证此时 db_pool 已切到新根。
+    pub fn update_root(&self, new_root: PathBuf) {
+        log::info!("[LAN Share] 热更新共享根目录: {} -> {}",
+            self.root_path.get().display(), new_root.display());
+        self.root_path.set(new_root);
     }
 
     pub async fn get_config(&self) -> LanShareConfig {
