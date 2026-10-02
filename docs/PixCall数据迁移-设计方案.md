@@ -1,6 +1,8 @@
 # PixCall 库数据迁移 — 设计方案
 
-> 版本： v4.15（2026-09-30 补上 §6.3 那条一直没实现的「未命中率高时要指路」：一条标注都没落上、却有路径没命中时，结果区不再说「没有可迁移的标注」，改成琥珀色一行说清**这些文件不在当前资源根下 + 怎么修**；只中一部分时仍是一行计数，细节挂悬停。见 §10 偏差 16）
+> 版本： v4.16（2026-09-30 **Eagle 格式调研完成**（本机仍无 Eagle、无 `*.library`，全部结论来自公开来源并逐条标了置信度，见 [Eagle数据迁移-格式调研](./Eagle数据迁移-格式调研.md) v1）。两件事回到本文：**①§6.4 那句 sidecar 补准确形态**（根 `metadata.json` + 根 `mtime.json` + `images/<ID>.info/{metadata.json, <name>.<ext>, <name>_thumbnail.png}`，「不是 SQLite」经代码与真实样本双向确认，`eagle_library.db` 是假线索）；**②发现一条新契约风险**：Eagle 官方口径是**导入即复制**（「将文件复制一份到资源库中，而不是仅创建索引链接到原始文件」），条目 JSON 里**没有原始路径**，所以 §6.3 的「重建路径 → `normalize_path` → `file_index.path`」**对 Eagle 不成立**——它不能待在 trait 契约里，join 策略必须和快照策略一样 per-source（§6.4 改）。另有两条与本文相反的 Eagle 事实：id 是 13 位字符串（⑥ 的精度坑不适用）、标签是名字串（无 tag id，⑦ 的解码链不适用））
+>
+> v4.15（2026-09-30 补上 §6.3 那条一直没实现的「未命中率高时要指路」：一条标注都没落上、却有路径没命中时，结果区不再说「没有可迁移的标注」，改成琥珀色一行说清**这些文件不在当前资源根下 + 怎么修**；只中一部分时仍是一行计数，细节挂悬停。见 §10 偏差 16）
 >
 > v4.14（2026-09-30 界面第四轮：条目行行首图标**去掉圆角方块底**、图标放大到填满那颗砖（标题行 28px、库行 22px）；PixCall 标记从 `<img src>` 改成 `?raw` **内联进 bundle**（验收人真应用里 `<img>` 版出破图，浏览器里却正常——内联后运行时零请求，CSP/缓存/资源协议都不再是变量）。见 §10 偏差 15）
 >
@@ -243,8 +245,8 @@ Pixcall 的 boards 是**树**：本机 `'test'.parent_id = '阿松大'.id`。我
 
 - **共享（与来源无关）**：快照/只读访问管理、join 链（重建路径 → `normalize_path` → `file_index`）、合并策略（并集 / 仅为空时填 / 同名不新建 / `position` 续排）、§4.7 报告结构、§6.5 迁移记录表、welcome 卡片与设置按钮的 UI 组件、i18n 命名空间。
 - **来源特定（每个来源一个适配器）**：库发现、格式解码、手动/智能等判据、§5 的跳过清单。
-- Rust 侧落 `core/src/import/`：`mod.rs`（trait + 注册表）+ `pixcall.rs`；第二期加 `eagle.rs`。trait 契约只含 `discover() / probe() / import()` 与报告类型，**不许把「复制 db+wal」写进契约**——Eagle 的库是 `.library/` 目录 + 每图 JSON sidecar，**不是 SQLite**，快照策略必须 per-source。
-- **Eagle 现状（v4 已查）**：本机未安装 Eagle、`%APPDATA%` 与常见盘符下均无 `*.library`，**没有真实库样本**。Eagle 适配器的格式调研等验收人给一个真实库后再做，本期只留接口与目录结构，不猜它的 schema。
+- Rust 侧落 `core/src/import/`：`mod.rs`（trait + 注册表）+ `pixcall.rs`；第二期加 `eagle.rs`。trait 契约只含 `discover() / probe() / import()` 与报告类型，**不许把「复制 db+wal」写进契约**——Eagle 的库是 `.library/` 目录 + 每图 JSON sidecar，**不是 SQLite**，快照策略必须 per-source。**v4.16 追加同一条禁令的另一半：也不许把 §6.3 的「重建路径 → `normalize_path` → `file_index.path`」写进契约**——那条链前提是「源侧记录文件在真实目录里的位置」，Eagle 恰恰不满足（见下条），join 键必须与快照策略一样 per-source。
+- **Eagle 现状（v4 记：本机未安装 Eagle、无 `*.library`、无真实库样本 → v4.16：格式调研已按公开来源完成）**：结论、字段清单、四种读取路线与待拍板项全部在 [Eagle数据迁移-格式调研](./Eagle数据迁移-格式调研.md)（v1，2026-09-30），本文不重复。四条与本文口径直接冲突的事实先记在这：**① 库里没有绝对路径可重建**——Eagle 导入即把文件复制进 `images/<ID>.info/`，官方原话「不是仅创建索引链接到原始文件」，条目 JSON 亦无原路径字段，故 §6.3 与 §3 的命中率论证不能照搬；**② sidecar 的准确名字**是根 `metadata.json`（夹树/智能夹/标签组）+ 根 `mtime.json`（增量日志，含 `"all"` 计数键）+ `images/<ID>.info/metadata.json`（条目），`metainfo.json` 与 `eagle_library.db` 都是假线索；**③ ⑥ 那条 64 位 id 精度坑不适用**（Eagle 的 id 是 13 位 `[A-Z0-9]` 字符串，可安全过 JSON）；**④ ⑦ 那条解码链也不适用**（Eagle 的 `tags` 直接是名字串，无 tag id 需 join）。**开工前提不变**：仍待验收人给真实库，且第一件事不是写解码器而是重测匹配率（调研 §10）。
 
 ### 6.5 迁移记录表
 
@@ -388,7 +390,7 @@ unmatched                 0
 - ~~**首跑环境（我们侧库为空）那一组数字仍未验**~~ **已验（2026-09-29 22:10，逐栏命中，见 §10 末段）**。清场做法留档，下次要重验照着来：完全退出应用 → 清 `%APPDATA%\com.aurora.gallery\`（`user_data.json` 里藏着 19 个 customTags 与 2 个专题的副本，不清就凭空多出空标签和旧专题；而且没设资源根时 `get_initial_db_paths` 会**退回用同目录那份 8 月的旧 `metadata.db`**，首跑就不干净）→ 清 `%LOCALAPPDATA%\com.aurora.gallery\EBWebView\`（前端 localStorage/IndexedDB 在这儿）→ 库侧 `.aurora\` 与 `.Aurora_Cache\`。**`.pixcall`、`.pixcall.cache`、`%APPDATA%\Pixcall`、`%LOCALAPPDATA%\Pixcall` 一个都别动**，那是源库。
 - **1457 成员专题的网格滚动性能**（§4.6 规则 10 的后果，全文唯一标过的实现期留意点）：需要在真库里点进去看。
 - **§7 的样本缺口 #1/#3/#4**（标签分组、智能父+手动子降级、AI 描述）：实现与单测已按规则覆盖（降级路径、未标定筛选、`tag_groups` 丢弃都有对应测试用例，用内存夹具造的），但**本机真实数据跑不到这几条路**。补样本时在 PixCall 里建对应看板，再点一次导入即可验。
-- **Eagle 适配器**：`core/src/import/` 的目录结构与 trait 侧共性已就位，`eagle.rs` 待真实库样本（§6.4）。
+- **Eagle 适配器**：`core/src/import/` 的目录结构与 trait 侧共性已就位；**格式调研已完成**（[Eagle数据迁移-格式调研](./Eagle数据迁移-格式调研.md) v1，2026-09-30，全为公开来源、**零本机实测**）。仍卡两件事：① 等真实库样本复测（该文档 §9 列了十项要造的样本）；② 等产品拍板「只挂标注」还是「连文件一起接管」——Eagle 把文件复制进库且不留原路径，§6.3 的 join 链在它身上不成立，这一条不拍板 `eagle.rs` 无法开工（该文档 §5 四条路线与 §10 P1）。
 
 ---
 
@@ -493,3 +495,12 @@ unmatched                 0
 | §9 首跑那一组预期 | 「待验收人清库再对」，且沿用了改名前的栏名 `topics_skipped_name` | 栏名更正为 `topics_merged_name`；**22:10 实测逐栏命中**（`tags_words_added 10`、`descriptions_written 10`/让位 0、`topics_created 2`、`topic_files_added 1461`、`unmatched 0`，库侧 5350 图 + 26 夹）。至此 §9 的两套预期全部验完 |
 | welcome 那条接管链 | 只有 jsdom 用例，真应用未跑 | 验收人清空全部应用数据后走 welcome，实跑通（设根 → 扫盘 → probe → import → 结果行） |
 | 「怎么清成一个干净的首跑环境」 | 文档只说要移开 `metadata.db` + `user_data.json` | 补全清单与两个坑：`user_data.json` 里另藏着 customTags 词表与 2 个专题副本；没设资源根时 `get_initial_db_paths` 会退回用 `%APPDATA%\com.aurora.gallery\` 里那份 8 月的旧 `metadata.db`。前端 localStorage/IndexedDB 在 `%LOCALAPPDATA%\…\EBWebView\`。源库那四处（`.pixcall`/`.pixcall.cache`/`Roaming\Pixcall`/`Local\Pixcall`）一律不许动 |
+
+| 项 | v4.15 说法 | v4.16 调研结论（2026-09-30，公开来源，**非本机实测**） |
+|---|---|---|
+| §6.4「Eagle 的库是 `.library/` 目录 + 每图 JSON sidecar」 | 一句话带过，形态未定 | **方向确认、形态补齐**：根 `metadata.json`（`folders`/`smartFolders`/`quickAccess`/`tagsGroups`/`applicationVersion`）+ 根 `mtime.json`（`{条目id: epochMs}` 外加一个 `"all"` 计数键）+ `images/<ID>.info/{metadata.json, <name>.<ext>, <name>_thumbnail.png}`；库有效性判据 = `metadata.json` 是文件且 `images/` 是目录。**「不是 SQLite」成立**（真实样本 + 两个独立解析器 + 官方文档全程无 `.db`），`eagle_library.db` 在 GitHub 代码搜索 0 命中、`metainfo.json` 查无实据，两条都是假线索 |
+| §6.3 的匹配主键 | 「主键：重建路径 → `normalize_path` → 精确匹配 `file_index.path`」，与快照策略并列为共享半（§6.4） | **不该是共享半**：Eagle 导入即复制文件进库、条目 JSON 不留原路径，我们 `file_index` 又没有内容指纹列（2026-09-21 已取消），所以这条 join 链在 Eagle 上没有可匹配的左值。§6.4 的禁令因此加一条（不许把路径 join 写进 trait 契约），Eagle 期的第一个决定改由「文件从哪来」担当（调研 §5 四条路线、§10 P1） |
+| ⑥「所有 id 是 64 位、过 JSON 丢精度」 | 列为解码必须在 Rust 的硬约束 | **Eagle 无此坑**：id 是 13 位 `[A-Z0-9]` 字符串（`MGMYDH18YSIS1`），标签组 id 才是 UUID。约束按 per-source 理解，别写给 Eagle 复述一遍 |
+| ⑦「标签是竖线分隔的 tag id，需 join 词表解码」 | 实测编码 | **Eagle 的 `tags` 直接是名字串**，无 tag id、无词表 join。⑧ 的 `category`/`pinyin` 同理不适用——Eagle 不存拼音（`pinyin` 在它那里是**夹**上的字段，来自 `/api/folder/list`） |
+| ⑪ 手动/智能合集判据 | 「两信号一致才敢定」 | Eagle 更干净：**手动夹在 `folders` 树、智能夹在另一棵 `smartFolders` 树**，无 `type` 判别字段也不需要；智能规则是 `conditions[{match, rules[{property, method, value}]}]`。计数断言的对应物是 `/api/folder/list` 的 `imageCount`/`descendantImageCount`（§4.6 规则 7 可平移，但标定表从零开始） |
+| §5「不迁 `tagsGroups`」 | 「本机无样本，遇到则上报条数」 | Eagle 侧同样**丢弃 + 上报**（它的标签组只是 name→标签名列表，与我们侧栏的拼音归组不等价）；`star` 我们仍无评分功能、`palettes` 我们自算主色，两条先例照旧适用。**新增一项本文没见过的字段**：`comments[]`（图上矩形标注，Eagle 4.0 build22+），我们无对应机制，PixCall 官方 Eagle 插件也明说该字段不支持 → 待拍板（调研 §10 P4） |
