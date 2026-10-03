@@ -14,6 +14,7 @@ import MarqueeText from './MarqueeText';
 import { nearestAndroidLevelIndex, getAndroidThumbnailPresets } from '../utils/androidThumbnailSizes';
 import { onMultiTouch } from '../utils/touchGestureGuard';
 import { debounce } from '../utils/debounce';
+import { buildFolderDateKeys, compareNodesBySort, FileNodeLookup } from '../utils/folderSort';
 
 // 过渡期（捏合改档 / 面板开合）的渲染窗口 buffer（与 FileGrid 同源）。
 // 窗口 = 视口 + 上下各 buffer，决定了每次换卡要卸载+挂载多少张卡片。400 是为滚动
@@ -633,12 +634,26 @@ const FoldersOverview = React.memo(({
     return nodes.filter(hasMatchingChild);
   }, [roots, getFileNode, dateFilter, isVisible]);
 
+  // 文件夹按 date 排序的 key 查表（folderId -> 内容最新时间）：
+  // key = 直接子图 MAX(createdAt)（非递归）；远程文件夹（LAN/安卓，children 未在
+  // 本地展开）用节点自身 createdAt（LAN 协议 latest_created_at）。无日期恒排最后。
+  const folderDateKeys = useMemo(() => {
+    const lookup: FileNodeLookup = getFileNode;
+    return buildFolderDateKeys(folderNodes, lookup);
+  }, [folderNodes, getFileNode]);
+
   const sortedFolderIds = useMemo(() => {
     const sorted = [...folderNodes]
       .sort((a, b) => {
         let res = 0;
         if (sortBy === 'date') {
-          res = (a.createdAt || '').localeCompare(b.createdAt || '');
+          const ka = folderDateKeys.get(a.id) || '';
+          const kb = folderDateKeys.get(b.id) || '';
+          // 无日期恒排最后，不随 asc/desc 翻转（对齐 Kotlin 端 sortFolders 规则）
+          if (!ka && !kb) res = 0;
+          else if (!ka) return 1;
+          else if (!kb) return -1;
+          else res = ka.localeCompare(kb);
         } else if (sortBy === 'size') {
           res = ((a.imageCount ?? a.size ?? 0) - (b.imageCount ?? b.size ?? 0));
         } else {
@@ -653,7 +668,7 @@ const FoldersOverview = React.memo(({
       sorted.unshift(rootImg);
     }
     return sorted.map(f => f.id);
-  }, [folderNodes, sortBy, sortDirection]);
+  }, [folderNodes, sortBy, sortDirection, folderDateKeys]);
 
   // 把当前实际展示的排序顺序上报给父组件，安卓范围选择需按此顺序计算区间，
   // 而不是按图片数重新排序（否则会选出 A-C-E 这类错乱区间）。
@@ -696,17 +711,11 @@ const FoldersOverview = React.memo(({
         .map(id => getFileNode(id))
         .filter((f): f is FileNode => !!f && f.type === FileType.IMAGE);
       if (children.length === 0) continue;
-      const sorted = [...children].sort((a, b) => {
-        let res = 0;
-        if (sortBy === 'date') {
-          res = (a.createdAt || '').localeCompare(b.createdAt || '');
-        } else if (sortBy === 'size') {
-          res = (a.size || 0) - (b.size || 0);
-        } else {
-          res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
-        }
-        return res * (sortDirection === 'asc' ? 1 : -1);
-      });
+      // 封面 = 按当前 (sortBy, sortDirection) 排序后的第一张，比较语义与
+      // useFileSearch 主管道一致（compareNodesBySort：size 用 meta.sizeKb）
+      const sorted = [...children].sort((a, b) =>
+        compareNodesBySort(a, b, sortBy, sortDirection)
+      );
       const firstImage = sorted[0];
       overrides[folder.id] = {
         path: firstImage.path,

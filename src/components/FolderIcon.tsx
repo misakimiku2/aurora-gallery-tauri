@@ -1,6 +1,7 @@
 import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
 import { Folder, Book, Film, ImageIcon } from 'lucide-react';
-import { FileNode, LayoutMode, FileType } from '../types';
+import { FileNode, LayoutMode, FileType, SortOption, SortDirection } from '../types';
+import { compareNodesBySort } from '../utils/folderSort';
 
 // Intersection Observer 单例管理�?
 class IntersectionObserverManager {
@@ -291,38 +292,43 @@ export const Folder3DIcon = memo(({
   );
 });
 
-// 性能优化的文件夹缩略图组�?
+// 性能优化的文件夹缩略图组件
 export const OptimizedFolderThumbnail = memo(({
   file,
   files,
   mode,
   resourceRoot,
   cachePath,
-  enablePreview = true
+  enablePreview = true,
+  sortBy = 'name',
+  sortDirection = 'asc'
 }: {
   file: FileNode;
   files: Record<string, FileNode>,
   mode: LayoutMode,
   resourceRoot?: string,
   cachePath?: string,
-  enablePreview?: boolean
+  enablePreview?: boolean,
+  sortBy?: SortOption,
+  sortDirection?: SortDirection
 }) => {
   // 使用useInView实现延迟加载
   const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
-  
-  // 简化的图片查找逻辑 - 使用缓存
+
+  // 封面 = 文件夹内按当前 (sortBy, sortDirection) 排序后的最优一张。
+  // 流式保留最优解（O(n) 单次比较，不收集数组），visited 防环；遍历上限放宽到
+  // 2000 —— 旧实现"截断 100 后再按 updatedAt 排序取最新"在深层文件夹里截断
+  // 范围内未必含真正最优的图。
   const imageChildren = useMemo(() => {
     if (!file.children || file.children.length === 0 || !enablePreview) return [];
-    
-    // 限制遍历深度和数量（只取1张）
-    const images: FileNode[] = [];
+
     const stack = [...(file.children || [])];
     const visited = new Set<string>();
     let traversalCount = 0;
-    const MAX_TRAVERSAL = 100; // 降低上限
-    const MAX_IMAGES = 1; // 只取1张图�?
+    const MAX_TRAVERSAL = 2000;
 
-    while (stack.length > 0 && traversalCount < MAX_TRAVERSAL && images.length < MAX_IMAGES) {
+    let best: FileNode | null = null;
+    while (stack.length > 0 && traversalCount < MAX_TRAVERSAL) {
       const id = stack.pop()!;
       if (visited.has(id)) continue;
       visited.add(id);
@@ -330,18 +336,18 @@ export const OptimizedFolderThumbnail = memo(({
 
       const node = files[id];
       if (!node) continue;
-      
+
       if (node.type === FileType.IMAGE) {
-        images.push(node);
+        if (best === null || compareNodesBySort(node, best, sortBy, sortDirection) < 0) {
+          best = node;
+        }
       } else if (node.type === FileType.FOLDER && node.children) {
         stack.push(...node.children);
       }
     }
-    
-    return images
-      .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
-      .slice(0, MAX_IMAGES);
-  }, [file, files, enablePreview]);
+
+    return best ? [best] : [];
+  }, [file, files, enablePreview, sortBy, sortDirection]);
 
   // 使用useState管理预览图片 - 初始化时尝试从全局缓存读取
   const [previewSrcs, setPreviewSrcs] = React.useState<string[]>(() => {

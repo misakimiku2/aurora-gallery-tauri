@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { FileNode, FileType, TabState, SearchScope, FileGroup, AppState } from '../types';
 import { dbGetTopicFiles } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
+import { buildFolderDateKeys, compareInMainPipeline, FileNodeLookup } from '../utils/folderSort';
 
 interface UseFileSearchProps {
   state: AppState;
@@ -163,14 +164,16 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     }
 
     // 排序
-    return [...candidates].sort((a, b) => {
-      if (a.type !== b.type) return a.type === FileType.FOLDER ? -1 : 1;
-      let res = 0;
-      if (searchCriteria.sortBy === 'date') res = (a.createdAt || '').localeCompare(b.createdAt || '');
-      else if (searchCriteria.sortBy === 'size') res = (a.meta?.sizeKb || 0) - (b.meta?.sizeKb || 0);
-      else res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
-      return res * (searchCriteria.sortDirection === 'asc' ? 1 : -1);
-    }).map(f => f.id);
+    // 文件夹按 date 排序的 key = 直接子图 MAX(createdAt)（非递归；无日期恒最后）。
+    // 预建一次查表，避免在 comparator 里反复遍历子节点；仅当候选含文件夹时才构建。
+    let folderDateKeys: Map<string, string> | null = null;
+    if (searchCriteria.sortBy === 'date' && candidates.some(f => f.type === FileType.FOLDER)) {
+      const lookup: FileNodeLookup = (id) => state.files[id];
+      folderDateKeys = buildFolderDateKeys(candidates, lookup);
+    }
+    return [...candidates].sort((a, b) =>
+      compareInMainPipeline(a, b, searchCriteria.sortBy, searchCriteria.sortDirection, folderDateKeys)
+    ).map(f => f.id);
   }, [allFiles, searchCriteria, state.files, state.topics, topicFileIds]);
 
   const pageSize = allMatchingFileIds.length;

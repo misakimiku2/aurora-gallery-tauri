@@ -64,8 +64,9 @@ pub struct Folder {
     pub image_count: i64,
     /// 封面图 content_uri（取该文件夹下最新一张图），无图时为 None。
     pub cover_uri: Option<String>,
-    /// 最早一张子图的创建时间（epoch 秒；无图 = 0）。总览的日期排序与「创建时间」
-    /// 日期筛选用（对齐 React 总览按 folder.createdAt 排序的语义）。
+    /// 直接子图最新创建时间（epoch 秒；无图 = 0）。2026-10 排序改造：从 MIN(created_at)
+    /// （最早子图）改为 **MAX(created_at)**（内容最新时间），「按时间排序 = 内容最新」；
+    /// 总览的日期排序与「创建时间」日期筛选用（对齐 React 总览按 folder.createdAt 排序）。
     pub created_at: i64,
     /// 最新一张子图的修改时间（epoch 秒；无图 = 0）。总览「修改时间」日期筛选用
     /// （该时间落在区间内 ⟺ 文件夹最近一次更新在区间内）。
@@ -405,7 +406,7 @@ pub fn list_folders() -> Vec<Folder> {
             "SELECT f.file_id, f.name,
                     (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
                     (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image' ORDER BY i.modified_at DESC LIMIT 1),
-                    (SELECT MIN(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
+                    (SELECT MAX(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
                     (SELECT MAX(i.modified_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image')
              FROM file_index f WHERE f.file_type = 'Folder' ORDER BY f.name",
         )
@@ -417,7 +418,7 @@ pub fn list_folders() -> Vec<Folder> {
                 name: row.get(1)?,
                 image_count: row.get(2)?,
                 cover_uri: row.get(3)?,
-                // 无子图的文件夹 MIN/MAX 为 NULL → 0（Kotlin 端按「无日期」处理）
+                // 无子图的文件夹 MAX 为 NULL → 0（Kotlin 端按「无日期」处理）
                 created_at: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
                 modified_at: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
             })

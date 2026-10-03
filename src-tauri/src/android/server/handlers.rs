@@ -27,6 +27,18 @@ pub struct AppState {
 #[derive(Debug, Deserialize)]
 pub struct BrowseQuery {
     pub path: Option<String>,
+    /// 可选排序口径（协议 2026-10 新增，与桌面 LAN 服务端同构）：`name` | `date` | `size`。
+    /// 带上时 folder 的 preview_images[0] = 直接子图按该口径排序的第一张；缺省 = 既有行为。
+    pub sort_by: Option<String>,
+    /// 可选排序方向：`asc` | `desc`，缺省 `desc`（仅与 sort_by 同时生效）。
+    pub sort_dir: Option<String>,
+}
+
+/// `GET /api/all_image_folders` 的可选排序参数（与 BrowseQuery 同口径）。
+#[derive(Debug, Deserialize)]
+pub struct AllImageFoldersQuery {
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,6 +260,7 @@ pub async fn handle_logout(
 pub async fn handle_all_image_folders(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<AllImageFoldersQuery>,
 ) -> Result<Json<AllImageFoldersResponse>, Response> {
     let token = extract_token(&headers)?;
     let session = state
@@ -260,7 +273,13 @@ pub async fn handle_all_image_folders(
         })?;
     state.devices.update_activity(&session.device_id).await;
 
-    let result = tokio::task::spawn_blocking(super::media_store::scan_all)
+    // 排序口径（与桌面 LAN 服务端同构）：None = 既有行为（封面取 date_modified DESC 前 3 张）
+    let preview_sort = crate::db::file_index::parse_folder_preview_sort(
+        query.sort_by.as_deref(),
+        query.sort_dir.as_deref(),
+    );
+
+    let result = tokio::task::spawn_blocking(move || super::media_store::scan_all(preview_sort))
         .await
         .map_err(|e| {
             log::error!("[LAN Share Android] scan_all join error: {:?}", e);
@@ -312,7 +331,11 @@ pub async fn handle_browse(
 
     if bucket_id.is_empty() {
         // 空路径：返回文件夹列表（与 browse 根目录语义一致）
-        let result = tokio::task::spawn_blocking(super::media_store::scan_all)
+        let preview_sort = crate::db::file_index::parse_folder_preview_sort(
+            query.sort_by.as_deref(),
+            query.sort_dir.as_deref(),
+        );
+        let result = tokio::task::spawn_blocking(move || super::media_store::scan_all(preview_sort))
             .await
             .map_err(|e| {
                 log::error!("[LAN Share Android] scan_all join error: {:?}", e);
@@ -332,8 +355,12 @@ pub async fn handle_browse(
     }
 
     let bucket_id_clone = bucket_id.clone();
+    let browse_sort = crate::db::file_index::parse_folder_preview_sort(
+        query.sort_by.as_deref(),
+        query.sort_dir.as_deref(),
+    );
     let result = tokio::task::spawn_blocking(move || {
-        super::media_store::browse_bucket(&bucket_id_clone)
+        super::media_store::browse_bucket(&bucket_id_clone, browse_sort)
     })
     .await
     .map_err(|e| {

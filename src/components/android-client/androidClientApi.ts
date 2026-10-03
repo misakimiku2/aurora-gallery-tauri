@@ -4,8 +4,10 @@ import {
   AuthResponse,
   BrowseItem,
   BrowseResponse,
+  ClientSortParams,
   ConnectedDevice,
   DevicesResponse,
+  buildSortQuery,
 } from '../../lan-share/api';
 
 /**
@@ -188,10 +190,11 @@ export class AndroidDeviceClient {
     }
   }
 
-  async browse(path: string): Promise<BrowseResponse> {
-    return this.fetchJson<BrowseResponse>(
-      `/api/browse?path=${encodeURIComponent(path)}`
-    );
+  async browse(path: string, sort?: ClientSortParams): Promise<BrowseResponse> {
+    let url = `/api/browse?path=${encodeURIComponent(path)}`;
+    const sortQuery = buildSortQuery(sort);
+    if (sortQuery) url += `&${sortQuery}`;
+    return this.fetchJson<BrowseResponse>(url);
   }
 
   async search(query: string, scope?: string): Promise<BrowseResponse> {
@@ -226,11 +229,13 @@ export class AndroidDeviceClient {
     return res.palette || [];
   }
 
-  /** 浏览安卓端文件夹（bucketId），转换为携带设备 key 的 FileNode。 */
+  /** 浏览安卓端文件夹（bucketId），转换为携带设备 key 的 FileNode。
+   *  传入当前排序（sort_by/sort_dir）让服务端按排序为每个文件夹选 preview_images[0]。 */
   async browseToFolderNodes(
-    bucketId: string
+    bucketId: string,
+    sort?: ClientSortParams
   ): Promise<{ folders: FileNode[]; images: FileNode[]; allowEdit: boolean; allowUpload: boolean }> {
-    const response = await this.browse(bucketId);
+    const response = await this.browse(bucketId, sort);
     const folders = response.folders.map((item) => this.folderItemToFileNode(item));
     const images = response.images.map((item) => this.imageItemToFileNode(item));
     return {
@@ -246,19 +251,21 @@ export class AndroidDeviceClient {
    *
    * 手机端该接口每次都会全量扫描 MediaStore（无服务端缓存），图库较大时
    * 耗时可能远超普通请求，因此单独放宽超时（默认 60s，可用参数覆盖）。
+   * 传入当前排序（sort_by/sort_dir）让服务端按排序为每个文件夹选 preview_images[0]。
    */
-  async getAllImageFolders(timeoutMs: number = SCAN_TIMEOUT_MS): Promise<{
+  async getAllImageFolders(sort?: ClientSortParams, timeoutMs: number = SCAN_TIMEOUT_MS): Promise<{
     folders: FileNode[];
     rootImages: FileNode[];
     allowEdit: boolean;
     allowUpload: boolean;
   }> {
+    const sortQuery = buildSortQuery(sort);
     const response = await this.fetchJson<{
       folders: BrowseItem[];
       root_images: BrowseItem[];
       allow_edit?: boolean;
       allow_upload?: boolean;
-    }>('/api/all_image_folders', undefined, timeoutMs);
+    }>(sortQuery ? `/api/all_image_folders?${sortQuery}` : '/api/all_image_folders', undefined, timeoutMs);
     const folders = response.folders.map((item) => this.folderItemToFileNode(item));
     const rootImages = response.root_images.map((item) => this.imageItemToFileNode(item));
     return {
@@ -272,7 +279,13 @@ export class AndroidDeviceClient {
   private folderItemToFileNode(item: BrowseItem): FileNode {
     const remotePath = item.path;
     // 服务端返回的多张预览图：保留前 3 张，供桌面端文件夹堆叠封面使用
+    // （服务端按请求的 sort_by/sort_dir 挑选 preview_images，前端不再自行选图）
     const previewRemotes = (item.preview_images || []).slice(0, 3);
+    // 文件夹 createdAt 语义 = 内容最新时间：优先协议 latest_created_at
+    // （服务端算好的直接子图 MAX(created_at)），缺省回退 modified_at（旧行为）
+    const latestSecs = typeof item.latest_created_at === 'number' && item.latest_created_at > 0
+      ? item.latest_created_at
+      : item.modified_at;
     return {
       id: generateId(`android://${this.key}/${remotePath}`),
       parentId: null,
@@ -292,7 +305,7 @@ export class AndroidDeviceClient {
       coverImageWidth: item.width || undefined,
       coverImageHeight: item.height || undefined,
       imageCount: typeof item.size === 'number' ? item.size : 0,
-      createdAt: item.modified_at ? new Date(item.modified_at * 1000).toISOString() : undefined,
+      createdAt: latestSecs ? new Date(latestSecs * 1000).toISOString() : undefined,
     };
   }
 
@@ -304,6 +317,10 @@ export class AndroidDeviceClient {
     const format = item.name.includes('.')
       ? item.name.slice(item.name.lastIndexOf('.') + 1).toLowerCase()
       : '';
+    // createdAt 优先协议 created_at（秒级），缺省回退 modified_at（旧行为）
+    const createdSecs = typeof item.created_at === 'number' && item.created_at > 0
+      ? item.created_at
+      : item.modified_at;
     return {
       id: generateId(`android://${this.key}/${remotePath}`),
       parentId: null,
@@ -315,6 +332,7 @@ export class AndroidDeviceClient {
       source: 'android',
       tags: [],
       size,
+      createdAt: createdSecs ? new Date(createdSecs * 1000).toISOString() : undefined,
       meta: {
         width: width || 0,
         height: height || 0,

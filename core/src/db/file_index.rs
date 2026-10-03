@@ -848,53 +848,261 @@ pub fn get_folder_file_count(conn: &Connection, folder_path: &str) -> Result<u64
     Ok(count)
 }
 
-pub fn get_folder_info_batch(conn: &Connection, folder_ids: &[String]) -> Result<std::collections::HashMap<String, (Vec<String>, u64)>> {
+/// 预览图排序口径（LAN browse 的 `sort_by`/`sort_dir` 参数解析结果）。
+///
+/// `None`（或参数不合法）= 维持既有行为 `modified_at DESC`，旧客户端兼容。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FolderPreviewSort {
+    pub sort_by: &'static str,
+    pub sort_dir: &'static str,
+}
+
+/// 把 LAN 协议的 `sort_by`/`sort_dir` 参数解析为排序口径；缺省/非法值返回 `None`
+/// （调用方据此维持 `modified_at DESC` 的既有 SQL，行为与旧版完全一致）。
+pub fn parse_folder_preview_sort(sort_by: Option<&str>, sort_dir: Option<&str>) -> Option<FolderPreviewSort> {
+    let by = match sort_by? {
+        "name" => "name",
+        "date" => "date",
+        "size" => "size",
+        _ => return None,
+    };
+    let dir = match sort_dir.unwrap_or("desc") {
+        "asc" => "asc",
+        "desc" => "desc",
+        _ => return None,
+    };
+    Some(FolderPreviewSort { sort_by: by, sort_dir: dir })
+}
+
+/// 预览排序口径 → SQL ORDER BY 片段（只允许白名单里的列，防注入）。
+fn preview_order_clause(sort: Option<FolderPreviewSort>) -> &'static str {
+    match sort {
+        Some(s) => match (s.sort_by, s.sort_dir) {
+            ("name", "asc") => "name COLLATE NOCASE ASC",
+            ("name", "desc") => "name COLLATE NOCASE DESC",
+            ("date", "asc") => "created_at ASC",
+            ("date", "desc") => "created_at DESC",
+            ("size", "asc") => "size ASC",
+            ("size", "desc") => "size DESC",
+            // parse 已兜住非法值，这里只是穷举兜底
+            _ => "modified_at DESC",
+        },
+        // 缺省 = 既有行为
+        None => "modified_at DESC",
+    }
+}
+
+pub fn get_folder_info_batch(
+    conn: &Connection,
+    folder_ids: &[String],
+    sort: Option<FolderPreviewSort>,
+) -> Result<std::collections::HashMap<String, (Vec<String>, u64, i64)>> {
     if folder_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    
-    let mut result: std::collections::HashMap<String, (Vec<String>, u64)> = std::collections::HashMap::new();
+
+    let mut result: std::collections::HashMap<String, (Vec<String>, u64, i64)> = std::collections::HashMap::new();
     for id in folder_ids {
-        result.insert(id.clone(), (Vec::new(), 0));
+        result.insert(id.clone(), (Vec::new(), 0, 0));
     }
-    
+
     let placeholders: Vec<String> = folder_ids.iter().map(|_| "?".to_string()).collect();
-    
+
     let count_sql = format!(
         "SELECT parent_id, COUNT(*) as cnt FROM file_index WHERE parent_id IN ({}) GROUP BY parent_id",
         placeholders.join(",")
     );
-    
+
     let params: Vec<&dyn rusqlite::ToSql> = folder_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-    
+
     let mut count_stmt = conn.prepare(&count_sql)?;
     let count_rows = count_stmt.query_map(params.as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
     })?;
-    
+
     for row in count_rows {
         let (parent_id, count) = row?;
         if let Some(entry) = result.get_mut(&parent_id) {
             entry.1 = count;
         }
     }
-    
-    let preview_sql = format!(
-        "SELECT parent_id, path FROM (SELECT parent_id, path, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY modified_at DESC) as rn FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image') WHERE rn <= 3",
+
+    // 直接子图的最新创建时间（LAN 协议 latest_created_at：不递归嵌套，仅 file_type='Image'）
+    let latest_sql = format!(
+        "SELECT parent_id, MAX(created_at) FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image' GROUP BY parent_id",
         placeholders.join(",")
     );
-    
+    let mut latest_stmt = conn.prepare(&latest_sql)?;
+    let latest_rows = latest_stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
+    })?;
+
+    for row in latest_rows {
+        let (parent_id, latest) = row?;
+        if let Some(entry) = result.get_mut(&parent_id) {
+            entry.2 = latest.unwrap_or(0);
+        }
+    }
+
+    let preview_sql = format!(
+        "SELECT parent_id, path FROM (SELECT parent_id, path, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY {}) as rn FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image') WHERE rn <= 3",
+        preview_order_clause(sort),
+        placeholders.join(",")
+    );
+
     let mut preview_stmt = conn.prepare(&preview_sql)?;
     let preview_rows = preview_stmt.query_map(params.as_slice(), |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
-    
+
     for row in preview_rows {
         let (parent_id, path) = row?;
         if let Some(entry) = result.get_mut(&parent_id) {
             entry.0.push(path);
         }
     }
-    
+
     Ok(result)
+}
+
+#[cfg(test)]
+mod folder_info_batch_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn img(id: &str, parent: &str, name: &str, size: u64, created: i64, modified: i64) -> FileIndexEntry {
+        FileIndexEntry {
+            file_id: id.into(),
+            parent_id: Some(parent.into()),
+            path: format!("uri://{}", id),
+            name: name.into(),
+            file_type: "Image".into(),
+            size,
+            created_at: created,
+            modified_at: modified,
+            width: None,
+            height: None,
+            format: None,
+        }
+    }
+
+    fn folder(id: &str, name: &str) -> FileIndexEntry {
+        FileIndexEntry {
+            file_id: id.into(),
+            parent_id: None,
+            path: format!("/storage/{}", name),
+            name: name.into(),
+            file_type: "Folder".into(),
+            size: 0,
+            created_at: 0,
+            modified_at: 0,
+            width: None,
+            height: None,
+            format: None,
+        }
+    }
+
+    /// 建库并塞入：F1 有三张子图（created: a=100, b=300, c=200；size: a=30, b=10, c=20；
+    /// modified: a=1, b=2, c=3），F2 无子图。
+    fn seed() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+        let rows = vec![
+            folder("F1", "F1"),
+            folder("F2", "F2"),
+            img("a", "F1", "a.jpg", 30, 100, 1),
+            img("b", "F1", "b.jpg", 10, 300, 2),
+            img("c", "F1", "c.jpg", 20, 200, 3),
+        ];
+        batch_upsert(&mut conn, &rows).expect("seed rows");
+        conn
+    }
+
+    fn previews(conn: &Connection, sort: Option<FolderPreviewSort>) -> std::collections::HashMap<String, (Vec<String>, u64, i64)> {
+        get_folder_info_batch(conn, &["F1".to_string(), "F2".to_string()], sort).expect("query")
+    }
+
+    fn first_preview(info: &std::collections::HashMap<String, (Vec<String>, u64, i64)>) -> &str {
+        let (paths, _, _) = info.get("F1").expect("F1 present");
+        paths.first().map(|s| s.as_str()).expect("has preview")
+    }
+
+    #[test]
+    fn default_keeps_modified_desc_and_latest_is_max_created() {
+        let conn = seed();
+        let info = previews(&conn, None);
+        // 既有行为：preview 按 modified_at DESC（c=3 最新）
+        assert_eq!(first_preview(&info), "uri://c");
+        // latest_created_at = 直接子图 MAX(created_at) = 300
+        assert_eq!(info.get("F1").unwrap().2, 300);
+        // 无直接子图的文件夹 latest = 0
+        assert_eq!(info.get("F2").unwrap().2, 0);
+    }
+
+    #[test]
+    fn date_sort_picks_first_by_created_at() {
+        let conn = seed();
+        let desc = parse_folder_preview_sort(Some("date"), Some("desc")).unwrap();
+        let asc = parse_folder_preview_sort(Some("date"), Some("asc")).unwrap();
+        assert_eq!(first_preview(&previews(&conn, Some(desc))), "uri://b", "date desc = created 300");
+        assert_eq!(first_preview(&previews(&conn, Some(asc))), "uri://a", "date asc = created 100");
+    }
+
+    #[test]
+    fn name_sort_is_case_insensitive() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+        let rows = vec![
+            folder("F1", "F1"),
+            img("x", "F1", "BRAVO.jpg", 1, 1, 1),
+            img("y", "F1", "alpha.jpg", 1, 2, 2),
+        ];
+        batch_upsert(&mut conn, &rows).expect("seed rows");
+
+        let asc = parse_folder_preview_sort(Some("name"), Some("asc")).unwrap();
+        let desc = parse_folder_preview_sort(Some("name"), Some("desc")).unwrap();
+        let info = get_folder_info_batch(&conn, &["F1".to_string()], Some(asc)).expect("asc");
+        assert_eq!(info.get("F1").unwrap().0[0], "uri://y", "NOCASE 下 alpha < BRAVO");
+        let info = get_folder_info_batch(&conn, &["F1".to_string()], Some(desc)).expect("desc");
+        assert_eq!(info.get("F1").unwrap().0[0], "uri://x");
+    }
+
+    #[test]
+    fn size_sort_picks_first_by_bytes() {
+        let conn = seed();
+        let asc = parse_folder_preview_sort(Some("size"), Some("asc")).unwrap();
+        let desc = parse_folder_preview_sort(Some("size"), Some("desc")).unwrap();
+        assert_eq!(first_preview(&previews(&conn, Some(asc))), "uri://b", "size asc = 10 bytes");
+        assert_eq!(first_preview(&previews(&conn, Some(desc))), "uri://a", "size desc = 30 bytes");
+    }
+
+    #[test]
+    fn parse_rejects_missing_or_invalid_params() {
+        assert!(parse_folder_preview_sort(None, None).is_none());
+        assert!(parse_folder_preview_sort(Some("bogus"), Some("asc")).is_none());
+        assert!(parse_folder_preview_sort(Some("name"), Some("sideways")).is_none());
+        // sort_dir 缺省 = desc（协议约定方向可缺省）
+        let s = parse_folder_preview_sort(Some("date"), None).unwrap();
+        assert_eq!((s.sort_by, s.sort_dir), ("date", "desc"));
+    }
+
+    /// 与 `list_folders` 同口径（内容最新时间语义）：MAX 只看直接子图，不递归嵌套。
+    #[test]
+    fn latest_created_at_ignores_nested_folders() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+        let rows = vec![
+            folder("P", "P"),
+            img("p1", "P", "p1.jpg", 1, 10, 1),
+            {
+                let mut nested = folder("C", "C");
+                nested.parent_id = Some("P".into());
+                nested
+            },
+            img("c1", "C", "c1.jpg", 1, 999, 9), // 嵌套子图：不计入 P 的 latest
+        ];
+        batch_upsert(&mut conn, &rows).expect("seed rows");
+        let info = get_folder_info_batch(&conn, &["P".to_string()], None).expect("query");
+        assert_eq!(info.get("P").unwrap().2, 10, "嵌套子文件夹里的图不计入");
+    }
 }

@@ -5,7 +5,7 @@
 // 集中爆发（那是滚动掉帧尖峰的主要来源）。滚动到达时 getGlobalCache 已命中，
 // 文件夹卡片挂载即可直接显示三图拼贴，无需现场生成。
 
-import { FileNode, FileType } from '../types';
+import { FileNode, FileType, SortOption, SortDirection } from '../types';
 import { isRemotePath } from './remoteSource';
 import { getGlobalCache } from './thumbnailCache';
 import { getThumbnail } from '../api/tauri-bridge/thumbnail';
@@ -46,9 +46,24 @@ interface PrefetchLayoutItem {
 class FolderThumbnailPrefetcher {
   private prefetched = new Set<string>();
   private root: string | null = null;
+  // 当前排序参数：封面 = 按排序的最优图，预热必须与组件侧 findImagesDeeply 同参
+  private sortBy: SortOption = 'name';
+  private sortDirection: SortDirection = 'asc';
 
   setRoot(root: string | null): void {
     this.root = root;
+  }
+
+  /**
+   * 同步当前排序参数。排序切换后封面选图随之变化，清空已预取集合，
+   * 让视口前方的文件夹按新排序重新预热（findImagesDeeply 的指纹含排序参数，
+   * 组件侧也会自动重算）。
+   */
+  setSortParams(sortBy: SortOption, sortDirection: SortDirection): void {
+    if (this.sortBy === sortBy && this.sortDirection === sortDirection) return;
+    this.sortBy = sortBy;
+    this.sortDirection = sortDirection;
+    this.prefetched.clear();
   }
 
   reset(): void {
@@ -125,7 +140,7 @@ class FolderThumbnailPrefetcher {
   private warmFolder(folder: FileNode, getFileNode: NodeLookup): void {
     // 与 FolderThumbnail 取封面用的是同一个函数（含模块级指纹缓存），
     // 因此预热到的 URL 必定是组件挂载后要用到的那几个。
-    const images = findImagesDeeply(folder, getFileNode, MAX_IMAGES_PER_FOLDER);
+    const images = findImagesDeeply(folder, getFileNode, MAX_IMAGES_PER_FOLDER, this.sortBy, this.sortDirection);
     for (const img of images) this.warmOne(img);
   }
 

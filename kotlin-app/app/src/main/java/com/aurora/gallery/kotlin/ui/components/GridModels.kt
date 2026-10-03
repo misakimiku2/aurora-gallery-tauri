@@ -115,6 +115,11 @@ fun filterImages(
  * size = 字节数；asc/desc 翻转。React 用 `localeCompare`（locale 感知），Kotlin 用
  * 码位比较——对 ASCII 与中文文件名的差异可忽略，避免 Collator 在 1~2 万条上的开销。
  * 排序稳定，同键保持 `list_images` 的 modified DESC 原序。
+ *
+ * date 语义（2026-10 排序改造后）：createdAt = **图片自身**的创建时间——本地模式是
+ * MediaStore `date_added`（`list_images` 直供，未变）；LAN 模式是服务端 `created_at`
+ * （`file_index.created_at`，2026-10 起随 browse 响应返回；旧服务端/缺省 0 = 无日期，
+ * 排序时沉到同方向末位，排序代码本体无需感知来源）。
  */
 fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection): List<Image> {
     if (images.size < 2) return images
@@ -134,11 +139,16 @@ fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection
  * 总览文件夹排序（2026-09-17 总览 TopBar 接入排序菜单）。
  *
  * 语义对齐 React `FoldersOverview.tsx` 的 `sortedFolderIds` memo：name = 名称小写比较、
- * size = 图片数（React 用 `imageCount ?? size`）、date = 文件夹创建时间（2026-09-17 起
- * `Folder.createdAt` = 最早子图创建时间，Rust `list_folders` 提供）。无日期（无图，
- * createdAt=0）的文件夹**恒排最后**，不随方向翻转。排序稳定，同键保持 `list_folders`
- * 的原序；「根目录图片」在排序结果之上**恒置顶**（对齐 React 把 `__lan_root_images__`
- * unshift 到顶部；与 GalleryViewModel.orderFoldersForOverview 同一条规则，双保险）。
+ * size = 图片数（React 用 `imageCount ?? size`）、date = 文件夹的**直接子图最新创建时间**
+ * （「按时间排序 = 内容最新」；2026-10 排序改造起 Rust `list_folders` 的 `Folder.createdAt`
+ * 从 MIN(created_at) 改为 **MAX(created_at)**，LAN 侧由服务端 `latest_created_at` 填入，
+ * 两端口径一致）。无日期（无图，createdAt=0）的文件夹**恒排最后**，不随方向翻转。
+ * 排序稳定，同键保持上游原序；「根目录图片」在排序结果之上**恒置顶**（对齐 React 把
+ * `__lan_root_images__` unshift 到顶部；与 GalleryViewModel.orderFoldersForOverview
+ * 同一条规则，双保险）。
+ *
+ * 本函数只吃字段值，不关心来源：本地/LAN 的字段填充侧（list_folders SQL、
+ * rebuildLanOverview）已各自改为「内容最新时间」口径，此处排序代码无需再动。
  */
 fun sortFolders(folders: List<Folder>, sortBy: SortOption, direction: SortDirection): List<Folder> {
     if (folders.size < 2) return folders
@@ -169,8 +179,9 @@ fun sortFolders(folders: List<Folder>, sortBy: SortOption, direction: SortDirect
  *
  * 搜索：文件夹名 contains、大小写不敏感（同 [filterImages] 的文件名分支）。
  * 日期：**start 与 end 同时存在才生效**（对齐 `useFileSearch:152`）。语义用文件夹的
- * 代表日期做区间命中——CREATED 用 [Folder.createdAt]（最早子图，「这段时间创建的
- * 相册」）、UPDATED 用 [Folder.modifiedAt]（最新子图修改，「这段时间有更新的相册」）。
+ * 代表日期做区间命中——CREATED 用 [Folder.createdAt]（2026-10 排序改造起 = 直接子图
+ * **最新**创建时间，「这段时间有内容创建的相册」）、UPDATED 用 [Folder.modifiedAt]
+ * （最新子图修改，「这段时间有更新的相册」）。
  * React 是「任一子图命中」（逐子图检查），代表日期是它的近似：CREATED 等价（最早命中
  * ⟺ 有命中），UPDATED 在「区间后还有更新」的文件夹上会漏选——按「最近更新过」的筛选
  * 直觉这反而是想要的行为，差异已注明。

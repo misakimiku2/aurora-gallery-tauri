@@ -144,6 +144,15 @@ pub struct BrowseItem {
     pub height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<i64>,
+    /// image 项：图片创建时间（秒级，file_index.created_at；0/缺省 = 无日期）。
+    /// FS 补扫描的视频项不带此字段（无索引日期）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<i64>,
+    /// folder 项：**直接子图** MAX(created_at)（不递归嵌套；无直接子图缺省 = 无日期）。
+    /// 语义 = 「内容最新创建时间」，供客户端「按时间排序 = 内容最新」使用；
+    /// 与既有 `modified_at`（文件夹自身 fs mtime / 子图最新修改时间）口径不同，两字段并存。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_created_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<Vec<String>>,
 }

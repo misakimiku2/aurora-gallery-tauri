@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -19,6 +20,8 @@ import com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID
 import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.SettingsStore
 import com.aurora.gallery.kotlin.state.LayoutVisibility
+import com.aurora.gallery.kotlin.state.SortDirection
+import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import com.aurora.gallery.kotlin.state.lanFolderId
 import com.aurora.gallery.kotlin.state.lanPersonFolderId
@@ -28,6 +31,7 @@ import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
 import com.aurora.gallery.kotlin.state.lanTopicFolderId
 import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
 import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
+import com.aurora.gallery.kotlin.ui.components.sortImages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -376,6 +380,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.updateActiveTab { it.copy(layoutMode = settings.value.defaultLayout) }
         // M4c：默认分组同理（GroupBy 渲染能力 M1 已有，这里只补持久化默认值）
         appState.groupBy = settings.value.defaultGroupBy
+        // 2026-10 排序改造：本地总览封面随排序重选。订阅排序与文件夹列表的变化
+        // （Compose snapshot 状态），变化即触发一次逐文件夹重算（内部有 key 守卫，
+        // 重复发射与首帧发射都幂等；本地空库/LAN 模式下 folders 为空，重算空转）。
+        viewModelScope.launch {
+            snapshotFlow { Triple(appState.sortBy, appState.sortDirection, folders.value) }
+                .collect { (by, dir, fs) -> refreshLocalOverviewCovers(by, dir, fs) }
+        }
         // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
         lan.start()
         // M6a 阶段 7：对等服务端启动恢复（持久化开关为开才自启，内部异步）+ 配对回调接线
@@ -2106,13 +2117,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         pendingMemberPathsFolderId = null
     }
 
+    /**
+     * 当前排序 → LAN 协议 `sort_by`/`sort_dir`（2026-10 扩展）：SortOption/SortDirection
+     * 枚举映射成小写字符串。服务端据此为 folder 选 preview_images[0]（封面随排序）；
+     * image 项的 created_at 字段与是否带参无关（新服务端恒回填）。
+     */
+    private fun lanSortParams(): Pair<String, String> = when (appState.sortBy) {
+        SortOption.NAME -> "name"
+        SortOption.DATE -> "date"
+        SortOption.SIZE -> "size"
+    } to when (appState.sortDirection) {
+        SortDirection.ASC -> "asc"
+        SortDirection.DESC -> "desc"
+    }
+
     /** 连接成功（或手动刷新）后的远端根拉取：all_imageFolders 一次带回目录+根散图+门禁位。 */
     private fun refreshLanRootsInternal() {
         val session = lan.currentSession() ?: return
+        val (sortBy, sortDir) = lanSortParams()
         lanFetchJob?.cancel()
         lanFetchJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { session.client.allImageFolders(session.base, session.token) }
+                runCatching { session.client.allImageFolders(session.base, session.token, sortBy, sortDir) }
             }.getOrNull() ?: run {
                 Log.w(TAG, "[Lan] all_image_folders 拉取失败（状态机重试链会跟进）")
                 return@launch
@@ -2148,14 +2174,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * 「读失败保留旧值」的纪律；断线重连会整体重跑）。
      */
     private suspend fun refreshLanLibraryInternal(session: LanManager.LanSession, folders: List<LanRemoteFolder>) {
-        // 1) 全目录 browse（并发 4；协程体在主线程汇合，列表只在主线程写，无锁安全）
+        // 1) 全目录 browse（并发 4；协程体在主线程汇合，列表只在主线程写，无锁安全）。
+        //    带当前排序口径（2026-10 协议扩展）：库缓存条目拿全 created_at，口径统一。
+        val (libSortBy, libSortDir) = lanSortParams()
         val semaphore = Semaphore(LAN_BROWSE_CONCURRENCY)
         val browsed = coroutineScope {
             folders.map { folder ->
                 async {
                     semaphore.withPermit {
                         withContext(Dispatchers.IO) {
-                            runCatching { session.client.browse(session.base, session.token, folder.path) }
+                            runCatching { session.client.browse(session.base, session.token, folder.path, libSortBy, libSortDir) }
                                 .onFailure {
                                     Log.w(TAG, "[Lan] 目录 browse 失败跳过：…${folder.path.takeLast(12)}")
                                 }
@@ -2247,6 +2275,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * LAN 总览卡片序列：`__lan_root_images__` 虚拟根置顶（**有根级散图才放**，空则不出现
      * ——React FoldersOverview 行为），其余目录按服务端原序。id 带 lan 前缀供导航分流；
      * coverUri = preview_images[0]（或根散图首张）的缩略图 URL（网格 URL 分支的识别符）。
+     *
+     * 2026-10 协议扩展：Folder.createdAt 填服务端 `latest_created_at`（直接子图最新创建
+     * 时间，DATE 排序=「内容最新」；与本地 list_folders 的 MAX 口径对齐）。旧服务端不带
+     * 该字段 → 0 = 无日期（sortFolders 恒排最后）。根虚拟目录仍为 0（散图无文件夹日期，
+     * 且 sortFolders 对它恒置顶，日期值不影响排序）。封面刷新时机 = 连接/手动刷新
+     * （refreshLanRoots），排序变化不触发重拉：排序变化时卡片**顺序**由 sortFolders
+     * 即时重排，封面候选反映的是拉取时刻的排序口径（LAN 模式的既定折衷）。
      */
     private fun rebuildLanOverview(session: LanManager.LanSession, folders: List<LanRemoteFolder>) {
         val out = ArrayList<Folder>(folders.size + 1)
@@ -2270,7 +2305,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 imageCount = f.imageCount,
                 coverUri = f.previewPath
                     ?.let { session.client.thumbnailUrl(session.base, session.token, it) },
-                createdAt = 0,
+                // 直接子图最新创建时间（latest_created_at；旧服务端 0 = 无日期兜底）
+                createdAt = f.latestCreatedAt,
                 modifiedAt = 0,
             )
         }
@@ -2286,8 +2322,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         width = null,
         height = null,
         size = item.size,
-        // browse 响应不含时间字段：置 0（查看器抽屉显示「—」，日期分组落 Unknown，React 同口径）
-        createdAt = 0,
+        // 2026-10 协议扩展：browse 响应带 created_at（file_index.created_at，秒级）。
+        // 旧服务端/缺省仍为 0（查看器抽屉显示「—」，日期分组落 Unknown，React 同口径）
+        createdAt = item.createdAt,
         modifiedAt = 0,
         format = item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() }?.lowercase(Locale.US),
     )
@@ -2411,8 +2448,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 .map { lanImageOf(session, it) }
         } else {
             val remotePath = folderId.lanRemotePathOrNull() ?: return
+            // 带当前排序口径（2026-10 协议扩展）：网格吃 image 项的 created_at，
+            // 顺序仍由 sortImages 客户端定（服务端 images 数组顺序不受 sort 参数影响）
+            val (sortBy, sortDir) = lanSortParams()
             val result = withContext(Dispatchers.IO) {
-                runCatching { session.client.browse(session.base, session.token, remotePath) }
+                runCatching { session.client.browse(session.base, session.token, remotePath, sortBy, sortDir) }
             }.getOrNull() ?: run {
                 Log.w(TAG, "[Lan] browse 失败 path 尾=${remotePath.takeLast(12)}")
                 return
@@ -3546,6 +3586,59 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (list.any { it.name == ROOT_FOLDER_DISPLAY_NAME })
             list.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
         else list
+
+    // ===== 2026-10 排序改造：本地总览封面随排序重选 =====
+    //
+    // list_folders 的 cover_uri 固定按 modified DESC 选第一张（Rust FFI 保持不动——
+    // uniffi 绑定是手工生成后入库的（kotlin-app/app/src/main/java/uniffi/aurora_core/），
+    // 改签名要手工重生成，故选 Kotlin 层重选而非改 FFI）。总览封面要随排序口径变化，
+    // 在这里逐文件夹 list_images 取直接子图，按当前 (sortBy, sortDirection) 内存排序
+    // 取第一张（比较语义与 GridModels.sortImages 一致：name 不区分大小写 / date=createdAt
+    // / size=字节；排序稳定，同键保持 modified DESC 原序）。
+
+    /**
+     * 本地总览封面重选结果（folderId → 封面 contentUri）。Compose state：宿主组合直接
+     * `.value` 读，重算落地即触发重组。无直接子图 / FFI 失败的文件夹**缺项**——消费方
+     * 回退该文件夹的原 cover_uri（「根目录图片」等虚拟目录同样走缺项回退）。
+     */
+    val localCoverOverrides = mutableStateOf<Map<String, String>>(emptyMap())
+
+    /** 上次封面重算的口径 key（排序 + 文件夹列表指纹）；不变则跳过重算。 */
+    private var localCoverKey: String? = null
+
+    /** 在跑的封面重算协程（新口径到来时取消旧的，防乱序落地）。 */
+    private var localCoverJob: Job? = null
+
+    /**
+     * 按当前排序口径重算总览封面（IO 协程；仅在排序方式或文件夹列表变化时执行一次，
+     * 不逐帧跑——[localCoverKey] 守卫 + [localCoverJob] 取消旧算）。init 里经
+     * snapshotFlow 订阅 (sortBy, sortDirection, folders) 触发。
+     */
+    private fun refreshLocalOverviewCovers(sortBy: SortOption, direction: SortDirection, foldersNow: List<Folder>) {
+        val key = "${sortBy.name}|${direction.name}|${foldersNow.size}|${foldersNow.hashCode()}"
+        if (key == localCoverKey) return
+        localCoverKey = key
+        localCoverJob?.cancel()
+        localCoverJob = viewModelScope.launch {
+            val computed = withContext(Dispatchers.IO) {
+                foldersNow.mapNotNull { f ->
+                    val imgs = try {
+                        listImages(f.id)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Covers] list_images 失败 folder=${f.name}", e)
+                        emptyList()
+                    }
+                    pickCoverBySort(imgs, sortBy, direction)?.let { f.id to it }
+                }.toMap()
+            }
+            localCoverOverrides.value = computed
+            Log.d(TAG, "[Covers] 总览封面重算 ${computed.size}/${foldersNow.size}（$sortBy $direction）")
+        }
+    }
+
+    /** 排序口径下直接子图的第一张的封面（复用 [sortImages] 的比较器，语义单一来源）。 */
+    private fun pickCoverBySort(imgs: List<Image>, sortBy: SortOption, direction: SortDirection): String? =
+        sortImages(imgs, sortBy, direction).firstOrNull()?.contentUri
 
     fun openFolder(folder: Folder) {
         // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder。

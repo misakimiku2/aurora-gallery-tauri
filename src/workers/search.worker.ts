@@ -1,5 +1,6 @@
 
-import { FileNode, FileType, TabState, SortOption, SortDirection, AiSearchFilter } from '../types';
+import { FileNode, FileType, TabState, SortOption, SortDirection } from '../types';
+import { buildFolderDateKeys, compareInMainPipeline, FileNodeLookup } from '../utils/folderSort';
 
 interface SearchWorkerInput {
   allFiles: FileNode[];
@@ -108,14 +109,17 @@ self.onmessage = (e: MessageEvent<SearchWorkerInput>) => {
   }
 
   // 4. 排序
-  const sorted = [...candidates].sort((a, b) => {
-    if (a.type !== b.type) return a.type === FileType.FOLDER ? -1 : 1;
-    let res = 0;
-    if (sortBy === 'date') res = (a.createdAt || '').localeCompare(b.createdAt || '');
-    else if (sortBy === 'size') res = (a.meta?.sizeKb || 0) - (b.meta?.sizeKb || 0);
-    else res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
-    return res * (sortDirection === 'asc' ? 1 : -1);
-  });
+  // 与 useFileSearch 保持同构：文件夹按 date 排序 key = 直接子图 MAX(createdAt)
+  // （非递归；无日期恒最后）。仅当候选含文件夹时才建 id→node 查表与日期表。
+  let folderDateKeys: Map<string, string> | null = null;
+  if (sortBy === 'date' && candidates.some(f => f.type === FileType.FOLDER)) {
+    const nodeMap = new Map<string, FileNode>(allFiles.map(f => [f.id, f]));
+    const lookup: FileNodeLookup = (id) => nodeMap.get(id);
+    folderDateKeys = buildFolderDateKeys(candidates, lookup);
+  }
+  const sorted = [...candidates].sort((a, b) =>
+    compareInMainPipeline(a, b, sortBy, sortDirection, folderDateKeys)
+  );
 
   const matchingIds = sorted.map(f => f.id);
   

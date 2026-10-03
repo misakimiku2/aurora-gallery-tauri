@@ -1324,6 +1324,7 @@ class MainActivity : ComponentActivity() {
                         darkTheme = dark,
                         canvasStore = viewModel.canvasStore,
                         folders = viewModel.folders.value,
+                        localCoverOverrides = viewModel.localCoverOverrides.value,
                         images = viewModel.images.value,
                         displayImages = displayImages,
                         imagesPending = imagesPending,
@@ -2044,6 +2045,8 @@ fun App(
     /** 画布状态（M5 1.2；实例在 GalleryViewModel，进程内保活）。 */
     canvasStore: com.aurora.gallery.kotlin.canvas.CanvasStore,
     folders: List<Folder>,
+    /** 本地总览封面重选（2026-10 排序改造）：folderId → 按当前排序口径选中的封面；缺项回退原 cover。 */
+    localCoverOverrides: Map<String, String>,
     images: List<Image>,
     /** 展示序列（过滤+排序后）由组合根算好传入：查看器的进入序列必须是同一条（M3 2.2）。 */
     displayImages: List<Image>,
@@ -2447,9 +2450,15 @@ fun App(
 
     // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
     // remember 键齐备：任一条件变化才重算，文件夹列表量级小、开销可忽略。
-    val displayFolders = remember(folders, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+    //
+    // 2026-10 排序改造：本地总览封面随排序重选——[localCoverOverrides] 是 VM 逐文件夹
+    // list_images 重选的结果（缺项 = 无直接子图/虚拟目录，回退 list_folders 的原 cover，
+    // 即 modified DESC 口径）。作为 remember 键之一：重算落地即重排显示序列。
+    val displayFolders = remember(folders, localCoverOverrides, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+        val covered = if (localCoverOverrides.isEmpty()) folders
+        else folders.map { f -> localCoverOverrides[f.id]?.let { f.copy(coverUri = it) } ?: f }
         filterFolders(
-            sortFolders(folders, state.sortBy, state.sortDirection),
+            sortFolders(covered, state.sortBy, state.sortDirection),
             tab.searchQuery,
             tab.dateFilter,
         )

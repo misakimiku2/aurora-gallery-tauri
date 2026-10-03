@@ -10,6 +10,7 @@ import { lanNavStart, lanNavStep } from '../utils/lanNavTrace';
 import { notifyRemoteChange } from '../utils/remoteSource';
 import { LAN_ROOT_IMAGES_ID } from '../constants';
 import { AppState, FileNode, FileType, TabState } from '../types';
+import { ClientSortParams } from '../lan-share/api';
 
 interface UseLanClientSyncParams {
   state: AppState;
@@ -39,6 +40,12 @@ export const useLanClientSync = ({
   const [isUploading, setIsUploading] = useState(false);
   const lanUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [lanDownloadProgress, setLanDownloadProgress] = useState<{ active: boolean; completed: number; total: number }>({ active: false, completed: 0, total: 0 });
+
+  // 当前排序参数（供 LAN 请求携带 sort_by/sort_dir，服务端据此为每个文件夹选
+  // preview_images[0]）。用 ref 读取最新值：连接/刷新 effect 不依赖排序，
+  // 避免排序切换触发整轮根目录重载。
+  const sortParamsRef = useRef<ClientSortParams>({ sortBy: state.sortBy, sortDirection: state.sortDirection });
+  sortParamsRef.current = { sortBy: state.sortBy, sortDirection: state.sortDirection };
 
   // LAN client: restore connection on mount + load roots when connected
   // 关键：token 变化（首次连接/断开后重连/重启恢复）时总是重新加载 lanRoots，
@@ -77,7 +84,7 @@ export const useLanClientSync = ({
         if (lanTokenRef.current !== ls.serverAccessToken) return;
         console.log(`[LAN loadRoots] attempt ${attempt + 1}/${backoff.length + 1}, baseUrl=${lanClientApi.getBaseUrl()}`);
         try {
-          const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders();
+          const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders(sortParamsRef.current);
           applyLanRoots(folders, rootImages, allowUpload);
           setLanConnected(true);
           // 重连后 token 可能已更换：失效缓存的远程 URL 并让缩略图重新解析
@@ -143,7 +150,7 @@ export const useLanClientSync = ({
       setLanLoading(true);
       lanClientApi.setBaseUrl(`http://${currentLs.serverHost}:${currentLs.serverPort}`);
       lanClientApi.setToken(currentLs.serverAccessToken);
-      lanClientApi.getAllImageFolders()
+      lanClientApi.getAllImageFolders(sortParamsRef.current)
         .then(({ folders, rootImages, allowUpload }) => {
           applyLanRoots(folders, rootImages, allowUpload);
           setLanConnected(true);
@@ -350,7 +357,7 @@ export const useLanClientSync = ({
     try {
       lanNavStep('FETCH START');
       const __fetchStart = performance.now();
-      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath);
+      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath, sortParamsRef.current);
       const __fetchEnd = performance.now();
       lanNavStep('FETCH END', `(${(__fetchEnd - __fetchStart).toFixed(0)}ms, folders=${folders.length} images=${images.length})`);
       const newFiles: Record<string, FileNode> = {};
@@ -397,7 +404,7 @@ export const useLanClientSync = ({
     if (!lanConnected) return;
     setLanLoading(true);
     try {
-      const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders();
+      const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders(sortParamsRef.current);
       applyLanRoots(folders, rootImages, allowUpload);
     } catch (err) {
       console.error('[LAN] Refresh failed:', err);
@@ -413,7 +420,7 @@ export const useLanClientSync = ({
     if (folder.id === LAN_ROOT_IMAGES_ID) return;
     setLanLoading(true);
     try {
-      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath);
+      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath, sortParamsRef.current);
       const newFiles: Record<string, FileNode> = {};
       const childIds: string[] = [];
       for (const f of folders) {

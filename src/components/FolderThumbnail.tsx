@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { FileNode, FolderIconStyle, LayoutMode } from '../types';
+import { FileNode, FolderIconStyle, LayoutMode, SortOption, SortDirection } from '../types';
 import { DEFAULT_FOLDER_ICON_STYLE } from '../constants';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
@@ -57,14 +57,16 @@ const count = folderItemCount(file) ?? 0;
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle = DEFAULT_FOLDER_ICON_STYLE }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: FolderIconStyle }) => {
+export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle = DEFAULT_FOLDER_ICON_STYLE, sortBy = 'name', sortDirection = 'asc' }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: FolderIconStyle, sortBy?: SortOption, sortDirection?: SortDirection }) => {
   const isAndroid = resourceRoot === 'android_media_store';
   const [ref, isInView, wasInView] = useInView({ rootMargin: '600px' });
 
+  // 封面 = 文件夹内按当前 (sortBy, sortDirection) 排序后的前 3 张（findImagesDeeply
+  // 内部流式选图，比较语义与 useFileSearch 一致），不再固定取"最近修改"。
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
-      return findImagesDeeply(file, getFileNode, 3);
-  }, [file, getFileNode]);
+      return findImagesDeeply(file, getFileNode, 3, sortBy, sortDirection);
+  }, [file, getFileNode, sortBy, sortDirection]);
 
   // 远程文件夹（安卓设备 / LAN）：封面来自设备的远程缩略图接口，
   // 本地 getThumbnail 无法生成，且子节点通常尚未展开（imageChildren 为空）。

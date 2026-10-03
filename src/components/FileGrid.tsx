@@ -115,7 +115,9 @@ const FileCard = React.memo(({
   onFileLongPress,
   onShowContextMenuForFile,
   isAndroidSelectionMode,
-  onAndroidRangeSelect
+  onAndroidRangeSelect,
+  sortBy,
+  sortDirection
 }: any) => {
   const [isDragging, setIsDragging] = useState(false);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -684,7 +686,7 @@ const FileCard = React.memo(({
             style={{ height: height ? (height - 40) : '100%' }}
         >
             {file.type === FileType.FOLDER ? (
-            <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} folderIconStyle={settings?.folderIconStyle} />
+            <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} folderIconStyle={settings?.folderIconStyle} sortBy={sortBy} sortDirection={sortDirection} />
             ) : (
             <ImageThumbnail
                 src={''}
@@ -795,7 +797,9 @@ const GroupContent = React.memo(({
   onFileLongPress,
   onShowContextMenuForFile,
   isAndroidSelectionMode,
-  onAndroidRangeSelect
+  onAndroidRangeSelect,
+  sortBy,
+  sortDirection
 }: any) => {
   const groupRef = useRef<HTMLDivElement>(null);
   const [offsetTop, setOffsetTop] = useState(0);
@@ -927,6 +931,8 @@ const GroupContent = React.memo(({
                 onShowContextMenuForFile={onShowContextMenuForFile}
                 isAndroidSelectionMode={isAndroidSelectionMode}
                 onAndroidRangeSelect={onAndroidRangeSelect}
+                sortBy={sortBy}
+                sortDirection={sortDirection}
             />
             );
           })}
@@ -1714,6 +1720,12 @@ export const FileGrid = React.memo(({
     prefetcher.reset();
     lastFolderPrefetchRef.current = 0;
   }, [effectiveResourceRoot, activeTab.id, activeTab.folderId, activeTab.viewMode]);
+
+  // 排序切换后封面选图随之变化：同步排序参数给预取器（内部会清空已预取集合，
+  // 让视口前方的文件夹按新排序重新预热）
+  useEffect(() => {
+    getFolderThumbnailPrefetcher().setSortParams(sortBy, sortDirection);
+  }, [sortBy, sortDirection]);
 
   // FLIP animation: anchor at viewport top instead of page top.
   // Only applies to non-grouped views where the top-level layout is used for rendering.
@@ -2601,6 +2613,8 @@ export const FileGrid = React.memo(({
                                   onShowContextMenuForFile={onShowContextMenuForFile}
                                   isAndroidSelectionMode={isAndroidSelectionMode}
                                   onAndroidRangeSelect={onAndroidRangeSelect}
+                                  sortBy={sortBy}
+                                  sortDirection={sortDirection}
                               />
                           )}
                       </div>
@@ -2646,6 +2660,8 @@ export const FileGrid = React.memo(({
                                       onShowContextMenuForFile={onShowContextMenuForFile}
                                       isAndroidSelectionMode={isAndroidSelectionMode}
                                       onAndroidRangeSelect={onAndroidRangeSelect}
+                                      sortBy={sortBy}
+                                      sortDirection={sortDirection}
                                   />
                               </div>
                           );
@@ -2699,6 +2715,8 @@ export const FileGrid = React.memo(({
                                       onShowContextMenuForFile={onShowContextMenuForFile}
                                       isAndroidSelectionMode={isAndroidSelectionMode}
                                       onAndroidRangeSelect={onAndroidRangeSelect}
+                                      sortBy={sortBy}
+                                      sortDirection={sortDirection}
                                   />
                               );
                           })}

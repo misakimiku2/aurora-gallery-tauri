@@ -4,8 +4,9 @@
 
 use jni::objects::{JObject, JValue};
 use jni::JNIEnv;
+use std::collections::HashMap;
 
-use crate::android::{AndroidImageInfo, AndroidScanAllResult};
+use crate::android::{AndroidImageInfo, AndroidFolderInfo, AndroidScanAllResult};
 use crate::lan_share::BrowseItem;
 
 /// 附加当前线程到 JVM 并执行闭包。适用于任意线程（包括 tokio spawn_blocking 线程）。
@@ -70,12 +71,53 @@ fn image_to_browse_item(info: &AndroidImageInfo) -> BrowseItem {
         } else {
             None
         },
+        // 协议 2026-10：image 项带创建时间（MediaStore date_added，秒级；0 = 无日期）
+        created_at: if info.date_added > 0 {
+            Some(info.date_added)
+        } else {
+            None
+        },
+        latest_created_at: None,
         palette: None,
     }
 }
 
+/// 按协议排序口径（sort_by/sort_dir）对文件夹的直接子图引用排序，供 preview 重选。
+fn sort_image_refs_by(imgs: &mut Vec<&AndroidImageInfo>, sort: crate::db::file_index::FolderPreviewSort) {
+    match (sort.sort_by, sort.sort_dir) {
+        ("name", "asc") => imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+        ("name", "desc") => imgs.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+        ("date", "asc") => imgs.sort_by_key(|i| i.date_added),
+        ("date", "desc") => imgs.sort_by_key(|i| std::cmp::Reverse(i.date_added)),
+        ("size", "asc") => imgs.sort_by_key(|i| i.size),
+        ("size", "desc") => imgs.sort_by_key(|i| std::cmp::Reverse(i.size)),
+        _ => {}
+    }
+}
+
+/// 既有封面候选（Kotlin 侧按 date_modified DESC 给出的前 3 张；无多张候选时退回单张封面）。
+fn legacy_cover_preview(f: &AndroidFolderInfo) -> Option<Vec<String>> {
+    if !f.cover_image_ids.is_empty() {
+        Some(
+            f.cover_image_ids
+                .iter()
+                .take(3)
+                .map(|id| id.to_string())
+                .collect::<Vec<String>>(),
+        )
+    } else {
+        f.cover_image_id.map(|cid| vec![cid.to_string()])
+    }
+}
+
 /// 全量扫描：所有含图文件夹（按 BUCKET_ID 分组，扁平列表）+ 根目录散落图片。
-pub fn scan_all() -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
+///
+/// `sort` = LAN 协议的可选排序口径（与桌面服务端同构）：带上时每个文件夹的
+/// preview_images[0] = 直接子图按该口径排序后的第一张；None = 既有行为
+/// （封面取 Kotlin/MediaStore 侧 date_modified DESC 的前 3 张候选）。
+pub fn scan_all(
+    sort: Option<crate::db::file_index::FolderPreviewSort>,
+) -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
     let result: AndroidScanAllResult = with_jni_env(|env, activity| {
         crate::android::scan_device_all(env, activity)
     })?;
@@ -84,8 +126,16 @@ pub fn scan_all() -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
     let mut folders: Vec<BrowseItem> = Vec::new();
     let mut root_images: Vec<BrowseItem> = Vec::new();
 
+    // 直接子图按文件夹路径分组（bucket 是扁平一层：folder.path = 图片父目录），
+    // 供 latest_created_at 与排序口径下的 preview 重选。
+    let mut imgs_by_folder: HashMap<&str, Vec<&AndroidImageInfo>> = HashMap::new();
+    for img in &images {
+        if let Some(idx) = img.path.rfind('/') {
+            imgs_by_folder.entry(&img.path[..idx]).or_default().push(img);
+        }
+    }
+
     // 文件夹封面：AndroidFolderInfo.cover_image_id 指向该文件夹最新图片
-    use std::collections::HashMap;
     let mut cover_meta: HashMap<i64, &AndroidImageInfo> = HashMap::new();
     for f in &result.folders {
         if let Some(cover_id) = f.cover_image_id {
@@ -97,17 +147,30 @@ pub fn scan_all() -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
 
     for f in &result.folders {
         let cover = cover_meta.get(&f.id).copied();
-        // 桌面端文件夹图标会堆叠最多 3 张封面；无多张候选时退回单张封面
-        let preview_images = if !f.cover_image_ids.is_empty() {
-            Some(
-                f.cover_image_ids
-                    .iter()
-                    .take(3)
-                    .map(|id| id.to_string())
-                    .collect::<Vec<String>>(),
-            )
-        } else {
-            f.cover_image_id.map(|cid| vec![cid.to_string()])
+        // 该文件夹的直接子图（按路径分组；路径缺失的图片不参与）
+        let folder_images = imgs_by_folder.get(f.path.as_str());
+        // latest_created_at = 直接子图 MAX(date_added)（不递归；无直接子图缺省）
+        let latest_created_at = folder_images
+            .and_then(|imgs| imgs.iter().map(|i| i.date_added).max())
+            .filter(|v| *v > 0);
+
+        // 带排序口径：直接子图按 (sort_by, sort_dir) 排序后取前 3 张 id 作为封面候选；
+        // 缺省：既有行为（Kotlin 侧按 date_modified DESC 给出的 cover_image_ids）。
+        let preview_images = match sort {
+            Some(s) => {
+                let mut sorted: Vec<&AndroidImageInfo> = folder_images
+                    .map(|imgs| imgs.clone())
+                    .unwrap_or_default();
+                sort_image_refs_by(&mut sorted, s);
+                let picked: Vec<String> = sorted.iter().take(3).map(|i| i.id.to_string()).collect();
+                if picked.is_empty() {
+                    // 无直接子图可排序（如路径缺失）：退回既有封面候选
+                    legacy_cover_preview(f)
+                } else {
+                    Some(picked)
+                }
+            }
+            None => legacy_cover_preview(f),
         };
         folders.push(BrowseItem {
             name: f.name.clone(),
@@ -125,6 +188,8 @@ pub fn scan_all() -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
                     None
                 }
             }),
+            created_at: None,
+            latest_created_at,
             palette: None,
         });
     }
@@ -303,6 +368,7 @@ fn parse_images_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidI
     let col_size = cursor_column_index(env, &cursor, "_size")?;
     let col_width = cursor_column_index(env, &cursor, "width")?;
     let col_height = cursor_column_index(env, &cursor, "height")?;
+    let col_date_added = cursor_column_index(env, &cursor, "date_added")?;
     let col_date = cursor_column_index(env, &cursor, "date_modified")?;
     let col_mime = cursor_column_index(env, &cursor, "mime_type")?;
 
@@ -339,6 +405,14 @@ fn parse_images_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidI
         } else {
             None
         };
+        let date_added = if col_date_added >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_date_added)])
+                .map_err(|e| format!("Failed to get date_added: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?
+        } else {
+            0
+        };
         let date_modified = env
             .call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_date)])
             .map_err(|e| format!("Failed to get date: {:?}", e))?
@@ -354,7 +428,7 @@ fn parse_images_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidI
             size,
             width,
             height,
-            date_added: 0,
+            date_added,
             date_modified,
             mime_type,
             thumbnail_path: None,
@@ -374,15 +448,34 @@ fn parse_images_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidI
     Ok(results)
 }
 
-/// 浏览指定 BUCKET_ID 文件夹下的图片（按 DATE_TAKEN/DATE_MODIFIED 倒序）。
-pub fn browse_bucket(bucket_id: &str) -> Result<Vec<BrowseItem>, String> {
+/// 浏览指定 BUCKET_ID 文件夹下的图片（缺省按 DATE_MODIFIED 倒序；带 sort 参数时
+/// 按协议口径重排：name 不区分大小写、date=date_added、size=字节）。
+pub fn browse_bucket(
+    bucket_id: &str,
+    sort: Option<crate::db::file_index::FolderPreviewSort>,
+) -> Result<Vec<BrowseItem>, String> {
     let images = query_images(Some("bucket_id = ?"), &[bucket_id.to_string()])?;
     let mut items: Vec<BrowseItem> = images.iter().map(image_to_browse_item).collect();
-    items.sort_by(|a, b| {
-        b.modified_at
-            .unwrap_or(0)
-            .cmp(&a.modified_at.unwrap_or(0))
-    });
+    match sort {
+        Some(s) => match (s.sort_by, s.sort_dir) {
+            ("name", "asc") => items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            ("name", "desc") => items.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+            ("date", "asc") => items.sort_by_key(|i| i.created_at.unwrap_or(0)),
+            ("date", "desc") => items.sort_by_key(|i| std::cmp::Reverse(i.created_at.unwrap_or(0))),
+            ("size", "asc") => items.sort_by_key(|i| i.size.unwrap_or(0)),
+            ("size", "desc") => items.sort_by_key(|i| std::cmp::Reverse(i.size.unwrap_or(0))),
+            _ => items.sort_by(|a, b| {
+                b.modified_at
+                    .unwrap_or(0)
+                    .cmp(&a.modified_at.unwrap_or(0))
+            }),
+        },
+        None => items.sort_by(|a, b| {
+            b.modified_at
+                .unwrap_or(0)
+                .cmp(&a.modified_at.unwrap_or(0))
+        }),
+    }
     Ok(items)
 }
 

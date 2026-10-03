@@ -62,8 +62,18 @@ data class LanRemoteFolder(
      * 服务端 `preview_images[0]`（契约 §1 既有字段；阶段 4 顺手解析）：LAN 总览卡片
      * 封面用（对齐 React folderItemToFileNode 的 coverImagePath = previewRemotes[0]）。
      * 服务端不带时为 null，卡片退化为占位底。
+     *
+     * 2026-10 协议扩展：browse/all_image_folders 带 `sort_by`/`sort_dir` 时，
+     * 服务端按该口径从直接子图里选第一张（卡片封面随排序变化）；缺省（旧服务端）
+     * 维持历史口径（modified DESC / 名称序，两接口历史上不同）。
      */
     val previewPath: String? = null,
+    /**
+     * 服务端 `latest_created_at`（2026-10 协议扩展）：**直接子图** MAX(created_at)
+     * （秒级，不递归嵌套；无直接子图或旧服务端 = 0 = 无日期，sortFolders 恒排最后）。
+     * 「按时间排序 = 内容最新」的数据源，对齐本地 list_folders 的 Folder.createdAt。
+     */
+    val latestCreatedAt: Long = 0,
 )
 
 /** 远端图片/视频项（BrowseItem 的 file 形态；`type`=="video" 的项阶段 4 网格过滤）。 */
@@ -72,6 +82,11 @@ data class LanRemoteImage(
     val path: String,
     val type: String,
     val size: Long,
+    /**
+     * 服务端 `created_at`（2026-10 协议扩展，秒级；缺省/旧服务端 = 0 = 无日期）。
+     * 0 语义与本地一致：查看器抽屉显示「—」、日期分组落 Unknown、DATE 排序按无日期。
+     */
+    val createdAt: Long = 0,
 )
 
 /** `GET /api/browse` / `GET /api/search` 的响应（两者同形，契约 §1）。 */
@@ -237,9 +252,22 @@ class LanClient(private val http: OkHttpClient) {
             }
         }
 
-    /** 浏览远端目录。[path] 原样进 query，不做任何加工。 */
-    suspend fun browse(base: String, token: String, path: String): LanBrowseResult =
-        parseBrowse(getJson(base, token, "/api/browse?path=${lanQueryEncode(path)}"))
+    /**
+     * 浏览远端目录。[path] 原样进 query，不做任何加工。
+     *
+     * [sortBy]/[sortDir]（2026-10 协议扩展，可省略）：服务端排序口径 `name|date|size`
+     * 与 `asc|desc`——带上时 folder 的 preview_images[0] 按该口径选（封面随排序）；
+     * 省略时与旧服务端行为完全一致。image 项的 `created_at` 无论是否带参都会返回
+     * （新服务端），旧服务端不带 → createdAt=0 无日期兜底。
+     */
+    suspend fun browse(
+        base: String,
+        token: String,
+        path: String,
+        sortBy: String? = null,
+        sortDir: String? = null,
+    ): LanBrowseResult =
+        parseBrowse(getJson(base, token, buildBrowseQuery("/api/browse", listOf("path" to lanQueryEncode(path)), sortBy, sortDir)))
 
     /** 搜索（契约 §1：`GET /api/search?q=&scope=`，响应与 browse 同形）。 */
     suspend fun search(base: String, token: String, query: String, scope: String? = null): LanBrowseResult {
@@ -248,10 +276,18 @@ class LanClient(private val http: OkHttpClient) {
         return parseBrowse(getJson(base, token, path))
     }
 
-    /** 全部含图目录 + 根级散图（侧栏网络 Section / 阶段 4 LAN 总览的数据源）。 */
-    suspend fun allImageFolders(base: String, token: String): LanAllFoldersResult =
+    /**
+     * 全部含图目录 + 根级散图（侧栏网络 Section / 阶段 4 LAN 总览的数据源）。
+     * [sortBy]/[sortDir] 语义同 [browse]（2026-10 协议扩展）。
+     */
+    suspend fun allImageFolders(
+        base: String,
+        token: String,
+        sortBy: String? = null,
+        sortDir: String? = null,
+    ): LanAllFoldersResult =
         withContext(Dispatchers.IO) {
-            val json = getJson(base, token, "/api/all_image_folders")
+            val json = getJson(base, token, buildBrowseQuery("/api/all_image_folders", emptyList(), sortBy, sortDir))
             LanAllFoldersResult(
                 folders = parseFolders(json.optJSONArray("folders")),
                 rootImages = parseItems(json.optJSONArray("root_images")),
@@ -259,6 +295,20 @@ class LanClient(private val http: OkHttpClient) {
                 allowUpload = json.optBoolean("allow_upload"),
             )
         }
+
+    /** browse/all_image_folders 的 query 串：[pairs] 基础参数 + 可选 sort_by/sort_dir。 */
+    private fun buildBrowseQuery(
+        endpoint: String,
+        pairs: List<Pair<String, String>>,
+        sortBy: String?,
+        sortDir: String?,
+    ): String {
+        var query = pairs.joinToString("&") { (k, v) -> "$k=$v" }
+        if (query.isNotEmpty()) query = "?$query"
+        if (!sortBy.isNullOrBlank()) query += "${if (query.isEmpty()) "?" else "&"}sort_by=${lanQueryEncode(sortBy)}"
+        if (!sortDir.isNullOrBlank()) query += "${if (query.isEmpty()) "?" else "&"}sort_dir=${lanQueryEncode(sortDir)}"
+        return "$endpoint$query"
+    }
 
     /** 心跳（保持服务端设备在线判定；失败/401 由 LanManager 计数处理）。 */
     suspend fun heartbeat(base: String, token: String) {
@@ -777,6 +827,8 @@ class LanClient(private val http: OkHttpClient) {
                 path = path,
                 imageCount = o.optLong("size", 0L),
                 previewPath = o.optJSONArray("preview_images")?.optString(0)?.takeIf { it.isNotEmpty() },
+                // 2026-10 协议扩展：直接子图最新创建时间（旧服务端缺省 0 = 无日期）
+                latestCreatedAt = o.optLong("latest_created_at", 0L),
             )
         }
     }
@@ -792,6 +844,8 @@ class LanClient(private val http: OkHttpClient) {
                 path = path,
                 type = o.optString("type", "image"),
                 size = o.optLong("size", 0L),
+                // 2026-10 协议扩展：图片创建时间（旧服务端缺省 0 = 无日期）
+                createdAt = o.optLong("created_at", 0L),
             )
         }
     }

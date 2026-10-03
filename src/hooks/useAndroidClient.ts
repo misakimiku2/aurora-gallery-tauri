@@ -7,6 +7,7 @@ import { AndroidDeviceInfo } from '../components/android-client/androidClientTyp
 import { ANDROID_ROOT_IMAGES_ID, ANDROID_DEVICE_ROOT_PREFIX, androidDeviceRootId } from '../constants';
 import { notifyRemoteChange } from '../utils/remoteSource';
 import { AppState, AndroidClientConnection, FileNode, FileType, TabState } from '../types';
+import { ClientSortParams } from '../lan-share/api';
 
 /**
  * 失效连接判定阈值：本次会话中从未连通的设备，连续重连失败达到该次数后
@@ -45,6 +46,12 @@ export const useAndroidClient = ({
 
   // 每台设备正在进行的加载任务（key → Promise），复用而非重复发起
   const pendingLoadsRef = useRef<Map<string, Promise<boolean>>>(new Map());
+
+  // 当前排序参数（供安卓设备请求携带 sort_by/sort_dir，服务端据此为每个文件夹选
+  // preview_images[0]）。用 ref 读取最新值：连接/加载流程不依赖排序，
+  // 避免排序切换触发整轮设备根目录重载。
+  const sortParamsRef = useRef<ClientSortParams>({ sortBy: state.sortBy, sortDirection: state.sortDirection });
+  sortParamsRef.current = { sortBy: state.sortBy, sortDirection: state.sortDirection };
   // 每台设备连续失败次数 / 本次会话是否曾成功连通
   const staleAttemptsRef = useRef<Map<string, number>>(new Map());
   const everConnectedRef = useRef<Set<string>>(new Set());
@@ -403,7 +410,7 @@ export const useAndroidClient = ({
 
       const loadRoots = async (attempt: number): Promise<boolean> => {
         try {
-          const { folders, rootImages } = await client.getAllImageFolders();
+          const { folders, rootImages } = await client.getAllImageFolders(sortParamsRef.current);
           const device = androidDevicesRef.current.find((d) => d.key === c.key);
           const wasConnected = device?.connected ?? false;
           applyDeviceRoots(c.key, folders, rootImages, device?.name);
@@ -626,7 +633,7 @@ export const useAndroidClient = ({
       setDeviceLoading(key, true);
 
       try {
-        const { folders, images } = await client.browseToFolderNodes(folder.remotePath);
+        const { folders, images } = await client.browseToFolderNodes(folder.remotePath, sortParamsRef.current);
         const newFiles: Record<string, FileNode> = {};
         const childIds: string[] = [];
         for (const f of folders) {
@@ -672,7 +679,7 @@ export const useAndroidClient = ({
       if (!client) return;
       setDeviceLoading(key, true);
       try {
-        const { folders, rootImages } = await client.getAllImageFolders();
+        const { folders, rootImages } = await client.getAllImageFolders(sortParamsRef.current);
         const device = androidDevicesRef.current.find((d) => d.key === key);
         applyDeviceRoots(key, folders, rootImages, device?.name);
       } catch (err) {
@@ -699,7 +706,7 @@ export const useAndroidClient = ({
     if (!client) return;
     setDeviceLoading(key, true);
     try {
-      const { folders, images } = await client.browseToFolderNodes(folder.remotePath);
+      const { folders, images } = await client.browseToFolderNodes(folder.remotePath, sortParamsRef.current);
       const newFiles: Record<string, FileNode> = {};
       const childIds: string[] = [];
       for (const f of folders) {

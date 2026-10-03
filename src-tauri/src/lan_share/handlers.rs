@@ -756,6 +756,26 @@ fn emit_peer_pairing(
 #[derive(Debug, Deserialize)]
 pub struct BrowseQuery {
     pub path: Option<String>,
+    /// 可选排序口径（协议 2026-10 新增）：`name` | `date` | `size`。
+    /// 带上时，folder 项的 `preview_images[0]` = 直接子图按该口径排序后的第一张；
+    /// 缺省（旧客户端）= 服务端行为与历史版本完全一致。
+    pub sort_by: Option<String>,
+    /// 可选排序方向：`asc` | `desc`，缺省 `desc`（仅与 sort_by 同时生效）。
+    pub sort_dir: Option<String>,
+}
+
+/// 把请求参数解析为 file_index 层的排序口径（None = 缺省/非法，维持既有行为）。
+fn resolve_preview_sort(sort_by: Option<&str>, sort_dir: Option<&str>) -> Option<crate::db::file_index::FolderPreviewSort> {
+    crate::db::file_index::parse_folder_preview_sort(sort_by, sort_dir)
+}
+
+/// `GET /api/all_image_folders` 的可选排序参数（与 BrowseQuery 同口径）。
+#[derive(Debug, Deserialize)]
+pub struct AllImageFoldersQuery {
+    /// 可选排序口径：`name` | `date` | `size`。缺省 = 既有行为（DB 路径 preview 按名称升序）。
+    pub sort_by: Option<String>,
+    /// 可选排序方向：`asc` | `desc`，缺省 `desc`（仅与 sort_by 同时生效）。
+    pub sort_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1064,7 +1084,8 @@ pub async fn handle_browse(
     }
 
     let normalized_parent_path = crate::db::normalize_path(&full_path.to_string_lossy());
-    
+    let preview_sort = resolve_preview_sort(query.sort_by.as_deref(), query.sort_dir.as_deref());
+
     if let Some(pool) = state.db_pool.clone() {
         let pool_clone = pool.clone();
         let normalized_parent_path_clone = normalized_parent_path.clone();
@@ -1102,7 +1123,7 @@ pub async fn handle_browse(
                             .map(|e| e.file_id.clone())
                             .collect();
 
-                        let folder_info = crate::db::file_index::get_folder_info_batch(&conn, &folder_ids)
+                        let folder_info = crate::db::file_index::get_folder_info_batch(&conn, &folder_ids, preview_sort)
                             .unwrap_or_default();
 
                         let root_path_str = root_path_clone.to_string_lossy().to_string();
@@ -1117,21 +1138,24 @@ pub async fn handle_browse(
                                 .to_string();
 
                             if entry.file_type == "Folder" {
-                                let (db_preview_paths, db_count) = folder_info.get(&entry.file_id)
-                                    .map(|(paths, c)| {
+                                let (db_preview_paths, db_count, db_latest_created) = folder_info.get(&entry.file_id)
+                                    .map(|(paths, c, latest)| {
                                         let rel_paths: Vec<String> = paths.iter()
                                             .map(|p| p.strip_prefix(&root_path_str).unwrap_or(p).to_string())
                                             .collect();
-                                        (if rel_paths.is_empty() { None } else { Some(rel_paths) }, if *c > 0 { Some(*c) } else { None })
+                                        (if rel_paths.is_empty() { None } else { Some(rel_paths) }, if *c > 0 { Some(*c) } else { None }, *latest)
                                     })
-                                    .unwrap_or((None, None));
+                                    .unwrap_or((None, None, 0));
 
                                 // 数据库无直接图片子项时，回退到文件系统递归查找子文件夹内的图片
                                 let (preview_paths, count) = if db_preview_paths.is_some() {
                                     (db_preview_paths, db_count)
                                 } else {
                                     let folder_full_path = root_path_clone.join(&relative_item_path);
-                                    let (fs_preview, fs_count) = get_folder_info_fast(&folder_full_path, root_path_clone.as_path());
+                                    // DB 判定无直接子图 → latest_created_at 走无日期兜底（协议：无直接子图 = 0/缺省），
+                                    // FS 回退的 created 元数据（_fs_latest）不采信，避免递归子图混入"直接子图"口径
+                                    let (fs_preview, fs_count, _fs_latest) =
+                                        get_folder_info_fast_sorted(&folder_full_path, root_path_clone.as_path(), preview_sort);
                                     let fs_preview_rel: Option<Vec<String>> = fs_preview.map(|paths| {
                                         paths.iter()
                                             .map(|p| p.strip_prefix(&root_path_str).unwrap_or(p).to_string())
@@ -1150,6 +1174,9 @@ pub async fn handle_browse(
                                     width: None,
                                     height: None,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
+                                    // 直接子图最新创建时间（DB 无直接子图时无此数据，走无日期兜底）
+                                    created_at: None,
+                                    latest_created_at: if db_latest_created > 0 { Some(db_latest_created) } else { None },
                                     palette: None,
                                 });
                             } else if entry.file_type == "Image" {
@@ -1165,6 +1192,8 @@ pub async fn handle_browse(
                                     width: entry.width,
                                     height: entry.height,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
+                                    created_at: if entry.created_at > 0 { Some(entry.created_at) } else { None },
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                             }
@@ -1197,6 +1226,9 @@ pub async fn handle_browse(
                                         width: None,
                                     height: None,
                                     modified_at: vid_modified,
+                                    // 视频不在索引中，无创建时间口径
+                                    created_at: None,
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                                 }
@@ -1279,7 +1311,8 @@ pub async fn handle_browse(
             use rayon::prelude::*;
             folder_paths.into_par_iter()
                 .map(|(path, name, relative_item_path)| {
-                    let (preview_images, file_count) = get_folder_info_fast(&path, root_path_clone.as_path());
+                    let (preview_images, file_count, latest_created) =
+                        get_folder_info_fast_sorted(&path, root_path_clone.as_path(), preview_sort);
 
                     let folder_modified = std::fs::metadata(&path).ok()
                         .and_then(|m| m.modified().ok())
@@ -1296,6 +1329,10 @@ pub async fn handle_browse(
                         width: None,
                         height: None,
                         modified_at: folder_modified,
+                        // 纯 FS 回退：直接子图 created_at 从 fs 元数据尽力而为
+                        // （平台不支持 created() 时为 None = 无日期兜底）
+                        created_at: None,
+                        latest_created_at: latest_created,
                         palette: None,
                     }
                 })
@@ -1374,6 +1411,9 @@ pub async fn handle_browse(
                     width: if is_video { None } else { width },
                     height: if is_video { None } else { height },
                     modified_at: None,
+                    // 纯 FS 回退：无索引 created_at（协议：0/缺省 = 无日期）
+                    created_at: None,
+                    latest_created_at: None,
                     palette: None,
                 }
             })
@@ -1434,6 +1474,90 @@ fn get_folder_info_fast(
     let file_count = if file_count > 0 { Some(file_count) } else { None };
 
     (preview_images, file_count)
+}
+
+/// 带排序口径的 FS 回退版 [get_folder_info_fast]（LAN browse 的 sort_by/sort_dir）。
+///
+/// - `sort = None`：与既有行为完全一致（递归 find_preview_images，无显式排序），
+///   latest_created_at 恒 None（无日期兜底，避免为旧客户端多付一轮元数据 IO）。
+/// - `sort = Some`：读目录收集**直接子图**的 name/size/created 元数据，内存排序后
+///   取前 3 张作 preview（preview_images[0] = 排序后的第一张，协议口径）；直接子图
+///   不足 3 张时再用既有递归逻辑补齐（补位图不参与排序，仅作堆叠候选）。
+///   latest_created_at = 直接子图 fs created() 的 MAX（平台不支持时缺省）。
+fn get_folder_info_fast_sorted(
+    folder_path: &std::path::Path,
+    root_path: &std::path::Path,
+    sort: Option<crate::db::file_index::FolderPreviewSort>,
+) -> (Option<Vec<String>>, Option<u64>, Option<i64>) {
+    let Some(sort) = sort else {
+        let (preview, count) = get_folder_info_fast(folder_path, root_path);
+        return (preview, count, None);
+    };
+
+    let mut file_count: u64 = 0;
+    // (相对路径, 名称, 字节大小, created 秒)
+    let mut direct_images: Vec<(String, String, u64, Option<i64>)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(folder_path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy().to_string();
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() || is_video_file(&name_str) {
+                file_count += 1;
+            } else if is_image_file(&name_str) {
+                let meta = entry.metadata().ok();
+                let created = meta.as_ref()
+                    .and_then(|m| m.created().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64);
+                direct_images.push((
+                    path.strip_prefix(root_path)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    name_str,
+                    meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                    created,
+                ));
+                file_count += 1;
+            }
+        }
+    }
+
+    // 内存排序（与 DB 路径同口径：name 不区分大小写、date=created、size=字节）
+    match (sort.sort_by, sort.sort_dir) {
+        ("name", "asc") => direct_images.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase())),
+        ("name", "desc") => direct_images.sort_by(|a, b| b.1.to_lowercase().cmp(&a.1.to_lowercase())),
+        ("date", "asc") => direct_images.sort_by_key(|i| i.3.unwrap_or(0)),
+        ("date", "desc") => direct_images.sort_by_key(|i| std::cmp::Reverse(i.3.unwrap_or(0))),
+        ("size", "asc") => direct_images.sort_by_key(|i| i.2),
+        ("size", "desc") => direct_images.sort_by_key(|i| std::cmp::Reverse(i.2)),
+        _ => {}
+    }
+
+    let mut preview_images: Vec<String> = direct_images.iter().take(3).map(|(p, _, _, _)| p.clone()).collect();
+    if preview_images.len() < 3 {
+        // 直接子图不足：既有递归逻辑补齐剩余候选（补位图追加在排序结果之后）
+        for p in find_preview_images(folder_path, root_path, 3) {
+            if preview_images.len() >= 3 { break; }
+            if !preview_images.contains(&p) {
+                preview_images.push(p);
+            }
+        }
+    }
+
+    let latest_created = direct_images.iter()
+        .filter_map(|(_, _, _, c)| *c)
+        .max();
+
+    let preview_images = if preview_images.is_empty() { None } else { Some(preview_images) };
+    let file_count = if file_count > 0 { Some(file_count) } else { None };
+
+    (preview_images, file_count, latest_created)
 }
 
 pub async fn handle_thumbnail(
@@ -1860,6 +1984,8 @@ pub async fn handle_search(
                                 width: None,
                                 height: None,
                                 modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
+                                created_at: None,
+                                latest_created_at: None,
                                 palette: None,
                             });
                         } else if entry.file_type == "Image" {
@@ -1874,6 +2000,8 @@ pub async fn handle_search(
                                 width: entry.width,
                                 height: entry.height,
                                 modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
+                                created_at: if entry.created_at > 0 { Some(entry.created_at) } else { None },
+                                latest_created_at: None,
                                 palette: None,
                             });
                         }
@@ -1938,6 +2066,8 @@ pub async fn handle_search(
                                     width: None,
                                     height: None,
                                     modified_at: None,
+                                    created_at: None,
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                             }
@@ -1960,6 +2090,8 @@ pub async fn handle_search(
                                     width,
                                     height,
                                     modified_at: None,
+                                    created_at: None,
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                             }
@@ -1976,6 +2108,8 @@ pub async fn handle_search(
                                     width: None,
                                     height: None,
                                     modified_at: None,
+                                    created_at: None,
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                             }
@@ -2011,6 +2145,7 @@ pub async fn handle_search(
 pub async fn handle_all_image_folders(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<AllImageFoldersQuery>,
 ) -> Result<Json<AllImageFoldersResponse>, Response> {
     let token = extract_token(&headers)?;
     let session = state.sessions.validate_token(&token).await
@@ -2029,6 +2164,7 @@ pub async fn handle_all_image_folders(
     let root_path = state.root();
     let root_path_clone = root_path.clone();
     let db_pool = state.db_pool.clone();
+    let preview_sort = resolve_preview_sort(query.sort_by.as_deref(), query.sort_dir.as_deref());
 
     let result = tokio::task::spawn_blocking(move || {
         let root_path_str = root_path_clone.to_string_lossy().to_string();
@@ -2070,6 +2206,8 @@ pub async fn handle_all_image_folders(
                                 width: img.width,
                                 height: img.height,
                                 modified_at: if img.modified_at > 0 { Some(img.modified_at) } else { None },
+                                created_at: if img.created_at > 0 { Some(img.created_at) } else { None },
+                                latest_created_at: None,
                                 palette: None,
                             });
                         }
@@ -2106,9 +2244,21 @@ pub async fn handle_all_image_folders(
 
                         let relative_folder_path = to_relative_path(&folder_full_path, &root_path_str);
 
-                        // 按名称排序取前 3 张作为预览
+                        // 预览排序：缺省 = 既有行为（名称不区分大小写升序）；
+                        // 带 sort_by/sort_dir 时 = 协议口径（preview_images[0] = 直接子图按该口径排序的第一张）
                         let mut sorted_imgs: Vec<&&crate::db::file_index::FileIndexEntry> = imgs.iter().collect();
-                        sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                        match preview_sort {
+                            Some(s) => match (s.sort_by, s.sort_dir) {
+                                ("name", "asc") => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                                ("name", "desc") => sorted_imgs.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                                ("date", "asc") => sorted_imgs.sort_by_key(|e| e.created_at),
+                                ("date", "desc") => sorted_imgs.sort_by_key(|e| std::cmp::Reverse(e.created_at)),
+                                ("size", "asc") => sorted_imgs.sort_by_key(|e| e.size),
+                                ("size", "desc") => sorted_imgs.sort_by_key(|e| std::cmp::Reverse(e.size)),
+                                _ => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                            },
+                            None => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                        }
 
                         let preview_paths: Vec<String> = sorted_imgs.iter().take(3)
                             .map(|e| to_relative_path(&e.path, &root_path_str))
@@ -2121,6 +2271,12 @@ pub async fn handle_all_image_folders(
                         // 取该文件夹下最新图片的修改时间作为排序依据
                         let latest_modified = imgs.iter()
                             .map(|e| e.modified_at)
+                            .max()
+                            .unwrap_or(0);
+
+                        // 直接子图最新创建时间（协议 latest_created_at，folder_map 按直接子图分组）
+                        let latest_created = imgs.iter()
+                            .map(|e| e.created_at)
                             .max()
                             .unwrap_or(0);
 
@@ -2147,6 +2303,8 @@ pub async fn handle_all_image_folders(
                             width: cover_width,
                             height: cover_height,
                             modified_at: if latest_modified > 0 { Some(latest_modified) } else { None },
+                            created_at: None,
+                            latest_created_at: if latest_created > 0 { Some(latest_created) } else { None },
                             palette: None,
                         });
                     }
@@ -2187,6 +2345,8 @@ pub async fn handle_all_image_folders(
                                     width: None,
                                     height: None,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
+                                    created_at: None,
+                                    latest_created_at: None,
                                     palette: None,
                                 });
                             }
@@ -2212,7 +2372,7 @@ pub async fn handle_all_image_folders(
         // 文件系统递归扫描回退
         let root_path_clone2 = root_path.clone();
         let (folders, root_images) = tokio::task::spawn_blocking(move || {
-            all_image_folders_filesystem(&root_path_clone2)
+            all_image_folders_filesystem(&root_path_clone2, preview_sort)
         }).await.unwrap_or((Vec::new(), Vec::new()));
         (folders, root_images)
     };
@@ -2252,10 +2412,23 @@ fn to_relative_path(path: &str, root_path_str: &str) -> String {
 
 fn all_image_folders_filesystem(
     root_path: &std::path::Path,
+    sort: Option<crate::db::file_index::FolderPreviewSort>,
 ) -> (Vec<BrowseItem>, Vec<BrowseItem>) {
     let mut folders: Vec<BrowseItem> = Vec::new();
     let mut root_images: Vec<BrowseItem> = Vec::new();
     let root_path_str = root_path.to_string_lossy().to_string();
+
+    /// scan_dir 的直接子图行（fs 元数据一次取齐：尺寸/修改/大小/创建）。
+    struct FsImage {
+        rel_path: String,
+        name: String,
+        width: Option<u32>,
+        height: Option<u32>,
+        modified: Option<i64>,
+        size: Option<u64>,
+        /// fs created() 尽力而为（平台不支持时 None = 无日期兜底）
+        created: Option<i64>,
+    }
 
     fn scan_dir(
         dir: &std::path::Path,
@@ -2264,8 +2437,9 @@ fn all_image_folders_filesystem(
         folders: &mut Vec<BrowseItem>,
         root_images: &mut Vec<BrowseItem>,
         is_root: bool,
+        sort: Option<crate::db::file_index::FolderPreviewSort>,
     ) {
-        let mut image_entries: Vec<(String, String, Option<u32>, Option<u32>, Option<i64>)> = Vec::new();
+        let mut image_entries: Vec<FsImage> = Vec::new();
         let mut video_count = 0u64;
         let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
 
@@ -2284,13 +2458,26 @@ fn all_image_folders_filesystem(
                 if path.is_dir() {
                     subdirs.push(path);
                 } else if is_image_file(&name_str) {
-                    let size = entry.metadata().ok().map(|m| m.len());
-                    let img_modified = entry.metadata().ok()
+                    let meta = entry.metadata().ok();
+                    let size = meta.as_ref().map(|m| m.len());
+                    let img_modified = meta.as_ref()
                         .and_then(|m| m.modified().ok())
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs() as i64);
+                    let img_created = meta.as_ref()
+                        .and_then(|m| m.created().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64);
                     let (w, h) = crate::image_utils::get_image_dimensions(&path.to_string_lossy());
-                    image_entries.push((relative_item_path.clone(), name_str.clone(), if w > 0 { Some(w) } else { None }, if h > 0 { Some(h) } else { None }, img_modified));
+                    image_entries.push(FsImage {
+                        rel_path: relative_item_path.clone(),
+                        name: name_str.clone(),
+                        width: if w > 0 { Some(w) } else { None },
+                        height: if h > 0 { Some(h) } else { None },
+                        modified: img_modified,
+                        size,
+                        created: img_created,
+                    });
 
                     if is_root {
                         let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
@@ -2304,6 +2491,8 @@ fn all_image_folders_filesystem(
                             width: if w > 0 { Some(w) } else { None },
                             height: if h > 0 { Some(h) } else { None },
                             modified_at: img_modified,
+                            created_at: img_created,
+                            latest_created_at: None,
                             palette: None,
                         });
                     }
@@ -2315,14 +2504,30 @@ fn all_image_folders_filesystem(
 
         // 如果当前文件夹直接包含图片或视频，加入 folders
         if !image_entries.is_empty() || video_count > 0 {
-            image_entries.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+            // 预览排序：缺省 = 既有行为（名称不区分大小写升序）；带 sort 参数 = 协议口径
+            match sort {
+                Some(s) => match (s.sort_by, s.sort_dir) {
+                    ("name", "asc") => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    ("name", "desc") => image_entries.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                    ("date", "asc") => image_entries.sort_by_key(|i| i.created.unwrap_or(0)),
+                    ("date", "desc") => image_entries.sort_by_key(|i| std::cmp::Reverse(i.created.unwrap_or(0))),
+                    ("size", "asc") => image_entries.sort_by_key(|i| i.size.unwrap_or(0)),
+                    ("size", "desc") => image_entries.sort_by_key(|i| std::cmp::Reverse(i.size.unwrap_or(0))),
+                    _ => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                },
+                None => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            }
 
-            let preview_paths: Vec<String> = image_entries.iter().take(3).map(|(p, _, _, _, _)| p.clone()).collect();
+            let preview_paths: Vec<String> = image_entries.iter().take(3).map(|i| i.rel_path.clone()).collect();
             let cover = image_entries.first();
-            let cover_width = cover.and_then(|(_, _, w, _, _)| *w);
-            let cover_height = cover.and_then(|(_, _, _, h, _)| *h);
+            let cover_width = cover.and_then(|i| i.width);
+            let cover_height = cover.and_then(|i| i.height);
             let latest_modified = image_entries.iter()
-                .filter_map(|(_, _, _, _, m)| *m)
+                .filter_map(|i| i.modified)
+                .max();
+            // 直接子图最新创建时间（fs created() 尽力而为）
+            let latest_created = image_entries.iter()
+                .filter_map(|i| i.created)
                 .max();
 
             let total_count = (image_entries.len() as u64) + video_count;
@@ -2346,6 +2551,8 @@ fn all_image_folders_filesystem(
                     width: cover_width,
                     height: cover_height,
                     modified_at: latest_modified,
+                    created_at: None,
+                    latest_created_at: latest_created,
                     palette: None,
                 });
             }
@@ -2353,11 +2560,11 @@ fn all_image_folders_filesystem(
 
         // 递归扫描子目录
         for subdir in subdirs {
-            scan_dir(&subdir, root_path, root_path_str, folders, root_images, false);
+            scan_dir(&subdir, root_path, root_path_str, folders, root_images, false, sort);
         }
     }
 
-    scan_dir(root_path, root_path, &root_path_str, &mut folders, &mut root_images, true);
+    scan_dir(root_path, root_path, &root_path_str, &mut folders, &mut root_images, true, sort);
     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 

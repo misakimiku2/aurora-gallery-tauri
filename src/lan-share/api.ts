@@ -1,3 +1,5 @@
+import { SortOption, SortDirection } from '../types';
+
 export interface BrowseItem {
   name: string;
   path: string;
@@ -8,8 +10,27 @@ export interface BrowseItem {
   width?: number;
   height?: number;
   modified_at?: number;
+  /** 图片内容创建时间（秒级整数，可能缺省；客户端缺省回退 modified_at） */
+  created_at?: number;
+  /** 文件夹直接子图 MAX(created_at)（秒级整数，可能缺省；客户端缺省回退 modified_at） */
+  latest_created_at?: number;
   palette?: string[];
 }
+
+/** 客户端排序参数：browse / all_image_folders 请求的可选 query 字段。
+ *  服务端据此为每个文件夹挑选 preview_images[0]；不传 = 服务端旧行为（兼容）。 */
+export interface ClientSortParams {
+  sortBy?: SortOption;
+  sortDirection?: SortDirection;
+}
+
+/** 把排序参数序列化为 query 串（不含前导 ?/&），无参数时返回空串。 */
+export const buildSortQuery = (sort?: ClientSortParams): string => {
+  const params: string[] = [];
+  if (sort?.sortBy) params.push(`sort_by=${encodeURIComponent(sort.sortBy)}`);
+  if (sort?.sortDirection) params.push(`sort_dir=${encodeURIComponent(sort.sortDirection)}`);
+  return params.join('&');
+};
 
 export interface BrowseResponse {
   current_path: string;
