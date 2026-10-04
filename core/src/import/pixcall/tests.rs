@@ -467,6 +467,62 @@ fn extra_small_boundary_is_exactly_one_mebibyte() {
     assert_eq!(bucket, vec!["b.png".to_string(), "c.mp4".to_string()]);
 }
 
+// ------------------------------------------------- §6 末：两个根的位置关系
+
+/// S6 那次唯一跑通的形态：两个根是同一个目录。
+#[test]
+fn a_library_at_our_root_is_relation_same() {
+    assert_eq!(root_relation(Some("C:/Pix"), "C:/Pix"), RootRelation::Same);
+    // 反斜杠与尾斜杠都不该影响判定（normalize_path 先跑一遍）
+    assert_eq!(root_relation(Some("C:\\Pix\\"), "C:/Pix"), RootRelation::Same);
+    // Windows 盘符大小写不敏感
+    assert_eq!(root_relation(Some("c:/pix"), "C:/Pix"), RootRelation::Same);
+}
+
+/// S4 记的子目录形态：我们根 = Videos、库 = Videos\NVIDIA，路径照样能中。
+#[test]
+fn a_library_under_our_root_is_relation_inside() {
+    assert_eq!(
+        root_relation(Some("C:/Videos"), "C:/Videos/NVIDIA"),
+        RootRelation::Inside
+    );
+    assert_eq!(
+        root_relation(Some("C:/Videos/"), "C:\\Videos\\NVIDIA"),
+        RootRelation::Inside
+    );
+    // 盘根带尾斜杠时不能拼出 C:// 这种前缀
+    assert_eq!(root_relation(Some("C:/"), "C:/Videos"), RootRelation::Inside);
+}
+
+/// 换到别的盘/别的目录：每条都会 unmatched，UI 要提前说清（§6 末那处提示的判据）。
+#[test]
+fn a_library_outside_our_root_is_relation_outside() {
+    assert_eq!(root_relation(Some("C:/Pix"), "D:/Pix"), RootRelation::Outside);
+    assert_eq!(root_relation(Some("C:/Pix"), "C:/Other"), RootRelation::Outside);
+    // 前缀相同但不是目录边界：`C:/PixcallLib` 不是 `C:/Pix` 的子目录
+    assert_eq!(
+        root_relation(Some("C:/Pix"), "C:/PixcallLib"),
+        RootRelation::Outside
+    );
+}
+
+/// 还没设根（welcome 第 1 步）→ 无从判断，不许猜成 outside 去吓人。
+#[test]
+fn without_our_root_the_relation_is_unknown() {
+    assert_eq!(root_relation(None, "C:/Pix"), RootRelation::Unknown);
+    assert_eq!(root_relation(Some(""), "C:/Pix"), RootRelation::Unknown);
+    assert_eq!(root_relation(Some("C:/Pix"), ""), RootRelation::Unknown);
+}
+
+/// 过 JSON 给前端的字符串（`as_str` 与 TS 那侧的联合类型一一对应）。
+#[test]
+fn root_relation_serializes_to_stable_strings() {
+    assert_eq!(RootRelation::Same.as_str(), "same");
+    assert_eq!(RootRelation::Inside.as_str(), "inside");
+    assert_eq!(RootRelation::Outside.as_str(), "outside");
+    assert_eq!(RootRelation::Unknown.as_str(), "unknown");
+}
+
 /// ⑥：64 位 id 不过 JSON。报告里只允许出现计数与字符串。
 #[test]
 fn report_carries_no_64bit_ids_through_json() {

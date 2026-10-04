@@ -122,6 +122,59 @@ fn push_library(
     });
 }
 
+/// 我们打开的资源根与某个 PixCall 库根的位置关系（§6 末「probe 阶段提前提示」）。
+///
+/// 命中只能是路径精确匹配：源侧每条按 `pixcall_root + rel_path` 拼绝对路径，再拿它去
+/// `file_index` 里找（见 `absolute_path` 与 `OurIndex::find`）。所以只有 **两个根是同一个
+/// 目录** 或 **库根是我们根的子目录** 才可能命中；库在别的盘、别的目录时每条都会落进
+/// `unmatched`，UI 要在**点之前**就说明，而不是等用户点完才发现什么都没进来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootRelation {
+    /// 两个根是同一个目录（本机与 S6 那次成功导入都是这个形态）
+    Same,
+    /// 库根是我们根的子目录（S4 记的「我们根 = Videos、库 = Videos\NVIDIA」）
+    Inside,
+    /// 库在我们的根之外 —— 导入必然全部 `unmatched`
+    Outside,
+    /// 还没有我们的根（welcome 第 1 步）→ 无从判断，UI 不提示
+    Unknown,
+}
+
+impl RootRelation {
+    /// 过 JSON 给前端的形态（与 `isCurrent` 同层，前端按字符串分支）
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RootRelation::Same => "same",
+            RootRelation::Inside => "inside",
+            RootRelation::Outside => "outside",
+            RootRelation::Unknown => "unknown",
+        }
+    }
+}
+
+/// 判两个根的包含关系。`our_root` 为空（还没设根）时返回 `Unknown`，**不猜**。
+pub fn root_relation(our_root: Option<&str>, pixcall_root: &str) -> RootRelation {
+    let Some(our) = our_root.map(normalize_path).filter(|s| !s.is_empty()) else {
+        return RootRelation::Unknown;
+    };
+    let lib = normalize_path(pixcall_root);
+    if lib.is_empty() {
+        return RootRelation::Unknown;
+    }
+    // 只用来提示、不参与写库；Windows 路径大小写不敏感，所以统一小写再比。
+    // 尾斜杠先去掉（`C:/` 这种盘根 normalize 后会留着），否则拼前缀会多出一个 `/`。
+    let our_key = our.to_lowercase();
+    let our_key = our_key.trim_end_matches('/');
+    let lib_key = lib.to_lowercase();
+    if our_key == lib_key.trim_end_matches('/') {
+        return RootRelation::Same;
+    }
+    match lib_key.strip_prefix(our_key) {
+        Some(rest) if rest.starts_with('/') => RootRelation::Inside,
+        _ => RootRelation::Outside,
+    }
+}
+
 /// `%APPDATA%\Pixcall\config.json`：`libraries: string[]`（各库绝对路径）+ `library_path`（当前库）。
 fn read_registry() -> Option<(Vec<String>, Option<String>)> {
     let appdata = std::env::var("APPDATA").ok()?;

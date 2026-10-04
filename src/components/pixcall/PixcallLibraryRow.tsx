@@ -1,5 +1,6 @@
 import React from 'react';
-import { ArrowRight, FolderOpen, Loader2 } from 'lucide-react';
+import { AlertTriangle, ArrowRight, FolderOpen, Loader2 } from 'lucide-react';
+import type { PixcallRootRelation } from '../../api/tauri-bridge';
 import { libraryDisplayName } from '../../utils/pixcallReport';
 import PixcallLogo from './PixcallLogo';
 
@@ -24,10 +25,24 @@ interface Props {
   disabled?: boolean;
   /** 图标位换 PixCall 标记（welcome 那张卡片没有别的品牌位）；默认是文件夹图标 */
   sourceIcon?: boolean;
+  /**
+   * 与资源根的位置关系（§6 末）。`outside` = 库的图不在 `file_index` 里、导入不会命中
+   * 任何文件，行下加一句提前说明，别等用户点完才发现什么都没进来。
+   */
+  relation?: PixcallRootRelation;
   t: (key: string) => string;
 }
 
-const PixcallLibraryRow: React.FC<Props> = ({ root, isCurrent, onClick, busy, disabled, sourceIcon, t }) => {
+const PixcallLibraryRow: React.FC<Props> = ({
+  root,
+  isCurrent,
+  onClick,
+  busy,
+  disabled,
+  sourceIcon,
+  relation,
+  t,
+}) => {
   const name = libraryDisplayName(root);
   const boxed = !!onClick;
   // 悬停时整行让位给路径：向导那一列只有 ~240px，图标留着就把路径挤断了
@@ -71,15 +86,11 @@ const PixcallLibraryRow: React.FC<Props> = ({ root, isCurrent, onClick, busy, di
     </>
   );
 
-  if (!onClick) {
-    return (
-      <div data-testid="pixcall-library-row" className="group relative flex items-center gap-2.5">
-        {content}
-      </div>
-    );
-  }
-
-  return (
+  const row = !onClick ? (
+    <div data-testid="pixcall-library-row" className="group relative flex items-center gap-2.5">
+      {content}
+    </div>
+  ) : (
     <button
       data-testid="pixcall-library-row"
       type="button"
@@ -89,6 +100,22 @@ const PixcallLibraryRow: React.FC<Props> = ({ root, isCurrent, onClick, busy, di
     >
       {content}
     </button>
+  );
+
+  if (relation !== 'outside') return row;
+
+  // 提前告知而不是禁用：用户可能就是想先看一眼报告，或对得上根之后再来
+  return (
+    <div className="space-y-1">
+      {row}
+      <p
+        data-testid="pixcall-library-outside-hint"
+        className="flex items-start gap-1 px-1 text-[11px] leading-snug text-amber-600 dark:text-amber-400"
+      >
+        <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">{t('import.libraryOutsideRoot')}</span>
+      </p>
+    </div>
   );
 };
 

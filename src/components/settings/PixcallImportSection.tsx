@@ -186,6 +186,7 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast, on
                 key={lib.root}
                 root={lib.root}
                 isCurrent={lib.isCurrent}
+                relation={lib.rootRelation}
                 onClick={() => run(lib.root)}
                 busy={busy && activeRoot === lib.root}
                 disabled={busy}

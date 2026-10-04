@@ -40,6 +40,10 @@ pub struct PixcallLibrary {
     /// PixCall 库根（`.pixcall` 所在目录），**不是**我们当前打开的库根（§6.3 要求分开建模）
     pub root: String,
     pub is_current: bool,
+    /// 与我们的资源根的位置关系：`same` / `inside` / `outside` / `unknown`
+    /// （§6 末那处「点之前就知道」的提示）。`outside` 时这个库的图不在 `file_index`
+    /// 里，导入必然全部 unmatched，前端要说清而不是等用户点完才发现什么都没进来。
+    pub root_relation: String,
 }
 
 fn emit_progress(app: &AppHandle, stage: &str, source_root: &str, processed: usize, total: usize) {
@@ -74,9 +78,11 @@ fn to_library(source_root: &str) -> Result<pixcall::DiscoveredLibrary, String> {
 pub async fn pixcall_discover(
     our_root: Option<String>,
 ) -> Result<Vec<PixcallLibrary>, String> {
-    Ok(pixcall::discover(our_root.as_deref())
+    let our = our_root.as_deref();
+    Ok(pixcall::discover(our)
         .into_iter()
         .map(|lib| PixcallLibrary {
+            root_relation: pixcall::root_relation(our, &lib.root).as_str().to_string(),
             root: lib.root,
             is_current: lib.is_current,
         })

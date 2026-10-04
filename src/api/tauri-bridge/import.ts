@@ -52,10 +52,18 @@ export interface ImportRecord {
   topicMembersSkippedType: number;
 }
 
+/** 库根与我们当前资源根的位置关系（§6 末「点之前就知道」的提示） */
+export type PixcallRootRelation = 'same' | 'inside' | 'outside' | 'unknown';
+
 export interface PixcallLibrary {
   /** PixCall 库根（`.pixcall` 所在目录），与我们当前打开的库根分开建模（§6.3） */
   root: string;
   isCurrent: boolean;
+  /**
+   * 与资源根的位置关系。`outside` = 这个库的图不在 `file_index` 里，导入不会命中任何文件。
+   * 缺省按 `unknown` 处理（welcome 第 1 步还没有根，不该提示）。
+   */
+  rootRelation?: PixcallRootRelation;
 }
 
 export interface PixcallProgress {

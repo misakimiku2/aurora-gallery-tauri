@@ -108,4 +108,24 @@ describe('设置 → 从 PixCall 导入标注', () => {
 
     await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
   });
+
+  // §6 末：库不在资源根下时**点之前**就说清，别等跑完才发现一条都没进来
+  it('库在资源根之外时行下提前提示：导入不会命中任何文件', async () => {
+    vi.mocked(pixcallDiscover).mockResolvedValueOnce([
+      { root: 'D:/Pix', isCurrent: false, rootRelation: 'outside' },
+    ] as never);
+    render(<PixcallImportSection t={t} currentRoot="C:/Videos" onShowToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    expect(screen.getByText('import.libraryOutsideRoot')).toBeInTheDocument();
+  });
+
+  // 子目录形态（我们根 = Videos、库 = Videos\NVIDIA）路径照样能中，不该被警告
+  it('库就在资源根下（或在其子目录）时不提示', async () => {
+    vi.mocked(pixcallDiscover).mockResolvedValueOnce([
+      { root: 'C:/Videos/NVIDIA', isCurrent: true, rootRelation: 'inside' },
+    ] as never);
+    render(<PixcallImportSection t={t} currentRoot="C:/Videos" onShowToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    expect(screen.queryByTestId('pixcall-library-outside-hint')).toBeNull();
+  });
 });
