@@ -1,4 +1,4 @@
-import { useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Tag, X, Check, FileText, Save, Globe, ExternalLink, Pencil } from 'lucide-react';
 import { FileNode, FileType } from '../../types';
 import { getSourceUrls } from '../../utils/sourceUrls';
@@ -57,6 +57,18 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
     const [editing, setEditing] = useState<{ key: string; value: string } | null>(null);
     const urlKey = (url: string, fileId?: string) => (fileId ? `${fileId}::${url}` : url);
 
+    // 两个输入区都「跟着内容长高」：先归零量一次 scrollHeight，再写回行内高度。
+    // 上限由 CSS 的 max-h 管住，超了就自己滚，不会把面板撑开。
+    const addAreaRef = useRef<HTMLTextAreaElement | null>(null);
+    const editAreaRef = useRef<HTMLTextAreaElement | null>(null);
+    const autoGrow = (el: HTMLTextAreaElement | null) => {
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+    };
+    useEffect(() => { autoGrow(addAreaRef.current); }, [source, batchSource, isMulti]);
+    useEffect(() => { autoGrow(editAreaRef.current); }, [editing?.key, editing?.value]);
+
     const commitEdit = (fileId?: string) => {
         if (!editing) return;
         const trimmed = editing.value.trim();
@@ -81,8 +93,9 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
             return (
                 <div key={key} className="bg-surface px-2 py-1.5 rounded border border-subtle">
                     <textarea
+                        ref={editAreaRef}
                         autoFocus
-                        rows={2}
+                        rows={1}
                         value={editing!.value}
                         onChange={(e) => setEditing({ key, value: e.target.value })}
                         onKeyDown={(e) => {
@@ -96,7 +109,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                         // 失焦 = 放弃：保存是立即写库、没有撤销，误存一次比多按一次回车贵
                         onBlur={() => setEditing(null)}
                         placeholder="https://..."
-                        className="w-full bg-transparent border-none resize-none text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
+                        className="w-full bg-transparent border-none resize-none overflow-y-auto min-h-[3.25rem] max-h-40 py-1.5 px-1 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
                     />
                     <div className="flex items-center gap-1 mt-1">
                         <div className="flex-1 min-w-0 truncate">
@@ -270,7 +283,8 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                 ) : null}
                 <div className="flex items-start bg-surface rounded-lg border border-subtle focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
                     <textarea
-                        rows={2}
+                        ref={addAreaRef}
+                        rows={1}
                         value={isMulti ? batchSource : source}
                         onChange={(e) => isMulti ? onBatchSourceChange(e.target.value) : onSourceChange(e.target.value)}
                         onKeyDown={(e) => {
@@ -281,7 +295,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                         }}
                         onBlur={onUpdateMeta}
                         placeholder="https://..."
-                        className="flex-1 bg-transparent border-none resize-none py-2 px-3 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none min-w-0"
+                        className="flex-1 bg-transparent border-none resize-none overflow-y-auto min-h-[3.25rem] max-h-40 py-2 px-3 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none min-w-0"
                     />
                     {(isMulti ? batchSource : source) && (
                         <button
