@@ -47,9 +47,11 @@ interface StoragePanelProps {
   onShowToast?: (msg: string, duration?: number) => void;
   onRefresh?: () => void;
   onNavigateToFile?: (filePath: string) => void;
+  /** PixCall 导入写库成功后回读一次元数据（见 PixcallImportSection 的 onImported） */
+  onPixcallImported?: () => void;
 }
 
-const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onSwitchRoot, onClose, onShowToast, onRefresh, onNavigateToFile }) => {
+const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onSwitchRoot, onClose, onShowToast, onRefresh, onNavigateToFile, onPixcallImported }) => {
   // Color database management state
   const [colorDbStats, setColorDbStats] = useState<ColorDbStats | null>(null);
   const [errorFiles, setErrorFiles] = useState<ColorDbErrorFile[]>([]);
@@ -760,6 +762,7 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             t={t}
             currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
             onShowToast={onShowToast}
+            onImported={onPixcallImported}
           />
         </div>
       </section>

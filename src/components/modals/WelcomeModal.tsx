@@ -27,6 +27,8 @@ interface WelcomeModalProps {
     t: (key: string) => string;
     scanProgress?: { processed: number; total: number } | null;
     isScanning: boolean;
+    /** PixCall 导入写库成功后回读一次元数据（导入绕过前端直接写库，界面否则停在扫描时的值） */
+    onPixcallImported?: () => void;
 }
 
 const WELCOME_STEPS = [1, 2, 3, 4] as const;
@@ -50,7 +52,7 @@ const generateQRCodeUrl = (text: string, size = 400): string => {
     return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}`;
 };
 
-export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, onTakeoverPixcall, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning }) => {
+export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, onTakeoverPixcall, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning, onPixcallImported }) => {
     const [step, setStep] = useState(1);
     /**
      * 第 1 步的两颗按钮互斥（§6.1 第 3 条）：点哪颗，下面的卡片就切到哪个模式。
@@ -336,7 +338,10 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                         onTakeover={onTakeoverPixcall}
                                         scanProgress={scanProgress}
                                         isScanning={isScanning}
-                                        onCompleted={result => setPixcallDone(!!result)}
+                                        onCompleted={result => {
+                                            setPixcallDone(!!result);
+                                            if (result) onPixcallImported?.();
+                                        }}
                                     />
                                 )}
                                 {currentPath && sourceMode !== 'pixcall' && (

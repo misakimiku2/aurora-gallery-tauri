@@ -97,4 +97,15 @@ describe('设置 → 从 PixCall 导入标注', () => {
     await waitFor(() => expect(pixcallDiscover).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
   });
+
+  // 导入是 Rust 侧直接写库，不回读一次 state.files 就还停在旧值
+  // （2026-10-05 实测：库里已经是 3 条来源网址，详情页仍显示导入前的 2 条）
+  it('导入成功后回调 onImported，让上层回读元数据', async () => {
+    const onImported = vi.fn();
+    render(<PixcallImportSection t={t} currentRoot={null} onShowToast={() => {}} onImported={onImported} />);
+    fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    fireEvent.click(screen.getByTestId('pixcall-library-row'));
+
+    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
+  });
 });

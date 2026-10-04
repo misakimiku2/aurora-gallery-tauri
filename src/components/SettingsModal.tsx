@@ -35,9 +35,11 @@ interface SettingsModalProps {
   onClipSearchDisabled?: () => void;
   onRefresh?: () => void;
   onNavigateToFile?: (filePath: string) => void;
+  /** PixCall 导入写库成功后回读一次元数据 */
+  onPixcallImported?: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onSwitchRoot, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onSwitchRoot, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile, onPixcallImported }) => {
   const [isAndroid, setIsAndroid] = useState(false);
   // 设置面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   const settingsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -152,6 +154,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               onShowToast={onShowToast}
               onRefresh={onRefresh}
               onNavigateToFile={onNavigateToFile}
+              onPixcallImported={onPixcallImported}
             />
           )}
           {state.settingsCategory === 'ai' && (

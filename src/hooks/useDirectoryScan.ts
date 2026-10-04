@@ -7,7 +7,7 @@ import { reloadPeople, reloadTopics } from '../utils/peopleTopics';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { pushRootHistory } from '../utils/rootHistory';
-import { getSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
+import { getSourceUrls, normalizeSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 import {
   scanDirectory,
   openDirectory,
@@ -296,19 +296,42 @@ export const useDirectoryScan = ({
     }
   };
 
-  const handleRefreshTags = async () => {
+  /**
+   * 全表重读 `file_metadata` 回写内存：**标签 + 描述 + 来源网址**，并重建词表。
+   *
+   * 凡是「绕过前端直接写库」的路径（PixCall 导入、LAN/安卓在线写入）之后都必须调一次，
+   * 否则 `state.files` 还停在旧值上。2026-10-05 实测：PixCall 导入确实把第 3 条来源网址
+   * 写进了库（sqlite 里能看到 3 条），但详情页仍只显示 2 条——就是缺这一步。
+   *
+   * 只覆盖「库里有值」的列：内存里那些库里没有的（`aiData` 之类）不动。
+   */
+  const handleRefreshMetadata = async () => {
     try {
       const allMetadata = await dbGetAllFileMetadata();
 
       setState(prev => {
         const newFiles = { ...prev.files };
-        const newCustomTags = new Set<string>();
+        // 以现词表为底做并集：以前是空 Set 重建，会把「加了词但还没贴到任何文件上」的词冲掉
+        const newCustomTags = new Set<string>(prev.customTags);
 
         allMetadata.forEach(meta => {
           const file = newFiles[meta.fileId];
-          if (file && meta.tags && meta.tags.length > 0) {
-            newFiles[meta.fileId] = { ...file, tags: meta.tags };
+          if (!file) return;
+
+          const patch: Partial<FileNode> = {};
+          if (meta.tags && meta.tags.length > 0) {
+            patch.tags = meta.tags;
             meta.tags.forEach(tag => newCustomTags.add(tag));
+          }
+          if (meta.description) patch.description = meta.description;
+          const urls = normalizeSourceUrls(meta.sourceUrls, meta.sourceUrl);
+          if (urls) {
+            patch.sourceUrls = urls;
+            patch.sourceUrl = urls[0];
+          }
+
+          if (Object.keys(patch).length > 0) {
+            newFiles[meta.fileId] = { ...file, ...patch };
           }
         });
 
@@ -319,9 +342,12 @@ export const useDirectoryScan = ({
         };
       });
     } catch (error) {
-      console.error('Failed to refresh tags:', error);
+      console.error('Failed to refresh file metadata:', error);
     }
   };
+
+  /** 旧名：语义已经是「刷新元数据」，调用点还没跟着改名，指向同一个实现。 */
+  const handleRefreshTags = handleRefreshMetadata;
 
   const switchToRoot = async (selectedPath: string) => {
     try {
@@ -518,6 +544,7 @@ export const useDirectoryScan = ({
     openKnownPath,
     scanAndMerge,
     handleRefresh,
+    handleRefreshMetadata,
     handleRefreshTags,
     handleChangePath,
     handleSwitchRoot,

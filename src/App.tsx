@@ -1452,7 +1452,7 @@ export const App: React.FC = () => {
     });
   };
 
-  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshTags, handleChangePath, handleSwitchRoot } = useDirectoryScan({
+  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshMetadata, handleRefreshTags, handleChangePath, handleSwitchRoot } = useDirectoryScan({
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
@@ -1480,9 +1480,9 @@ export const App: React.FC = () => {
     try {
       switch (kind) {
         case 'metadata':
-          // 标签/描述等元数据：全表重读 file_metadata 回写 files 并重建词表，
+          // 标签/描述/来源网址：全表重读 file_metadata 回写 files 并重建词表，
           // 同时清 lan:// 缩略图缓存并广播重解析
-          await handleRefreshTags();
+          await handleRefreshMetadata();
           remoteSourceUtil.notifyRemoteChange();
           break;
         case 'people':
@@ -2989,6 +2989,7 @@ export const App: React.FC = () => {
         onCheckUpdate={() => checkUpdate(true)}
         isCheckingUpdate={isCheckingUpdate}
         onRefreshTags={handleRefreshTags}
+        onRefreshMetadata={handleRefreshMetadata}
         onNavigateToFile={handleNavigateToFile}
         handleSmartCreatePerson={handleSmartCreatePerson}
         handleSmartAddToPerson={handleSmartAddToPerson}

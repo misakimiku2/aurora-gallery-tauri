@@ -102,6 +102,8 @@ interface AppModalsProps {
   onCheckUpdate: () => void;
   isCheckingUpdate: boolean;
   onRefreshTags?: () => void;
+  /** PixCall 导入写库成功后回读一次元数据（导入绕过前端直接写库，不回读界面就停在旧值） */
+  onRefreshMetadata?: () => void;
   onNavigateToFile?: (filePath: string) => void;
   handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
   handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
@@ -165,6 +167,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onCheckUpdate,
   isCheckingUpdate,
   onRefreshTags,
+  onRefreshMetadata,
   onNavigateToFile,
   handleSmartCreatePerson,
   handleSmartAddToPerson,
@@ -603,6 +606,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           }}
           onUpdatePath={handleChangePath}
           onSwitchRoot={handleSwitchRoot}
+          onPixcallImported={onRefreshMetadata}
           onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))}
           onClipEnabledChange={handleClipEnabledChange}
           clipLoading={clipLoading}
@@ -641,6 +645,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
         t={t}
         scanProgress={state.scanProgress || null}
         isScanning={state.isScanning}
+        onPixcallImported={onRefreshMetadata}
       />
 
       {/* Update Modal */}

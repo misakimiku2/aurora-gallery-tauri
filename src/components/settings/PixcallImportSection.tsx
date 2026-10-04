@@ -38,6 +38,12 @@ interface Props {
   /** 我们当前打开的库根，用于优先匹配同一目录下的 .pixcall（§6.3） */
   currentRoot?: string | null;
   onShowToast?: (msg: string, duration?: number) => void;
+  /**
+   * 导入**写库成功之后**回调。导入是 Rust 侧直接写 `file_metadata`，不经过前端 state，
+   * 不回读一次的话详情页还停在旧值（2026-10-05 实测：库里已有 3 条来源网址，
+   * 界面仍只显示导入前的 2 条）。
+   */
+  onImported?: () => void;
 }
 
 type Stage = 'idle' | 'probing' | 'importing' | 'done' | 'error';
@@ -51,7 +57,7 @@ const parseReport = (json: string): MigrationReport | null => {
   }
 };
 
-const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) => {
+const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast, onImported }) => {
   const [libraries, setLibraries] = useState<PixcallLibrary[]>([]);
   const [open, setOpen] = useState(false);
   const [stage, setStage] = useState<Stage>('idle');
@@ -115,6 +121,8 @@ const PixcallImportSection: React.FC<Props> = ({ t, currentRoot, onShowToast }) 
         setProgress(null);
         setLastRecord(await pixcallImportRecords().then(rows => (rows.length > 0 ? rows[0] : null)));
         if (!result) return;
+        // 库已经写完了，把内存里的 files 拉回一致（否则详情页看到的还是导入前的值）
+        onImported?.();
         onShowToast?.(t('import.doneToast'));
       } catch (e) {
         setStage('error');
