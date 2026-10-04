@@ -109,7 +109,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                         // 失焦 = 放弃：保存是立即写库、没有撤销，误存一次比多按一次回车贵
                         onBlur={() => setEditing(null)}
                         placeholder="https://..."
-                        className="w-full bg-transparent border-none resize-none overflow-y-auto min-h-[3.25rem] max-h-40 py-1.5 px-1 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
+                        className="w-full bg-transparent border-none resize-none overflow-y-auto min-h-[2.25rem] max-h-40 py-1.5 px-1 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
                     />
                     <div className="flex items-center gap-1 mt-1">
                         <div className="flex-1 min-w-0 truncate">
@@ -295,7 +295,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                         }}
                         onBlur={onUpdateMeta}
                         placeholder="https://..."
-                        className="flex-1 bg-transparent border-none resize-none overflow-y-auto min-h-[3.25rem] max-h-40 py-2 px-3 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none min-w-0"
+                        className="flex-1 bg-transparent border-none resize-none overflow-y-auto min-h-[2.25rem] max-h-40 py-2 px-3 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none min-w-0"
                     />
                     {(isMulti ? batchSource : source) && (
                         <button
