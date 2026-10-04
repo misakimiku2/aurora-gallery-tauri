@@ -7,6 +7,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.Window
+import android.util.Log
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -56,19 +57,51 @@ class SourceUrlEditDialog(
             setPadding(0, 0, 0, (density * 16).toInt())
         })
 
-        // 条数不定，列表区可滚；弹窗总高封顶（见底部 setLayout），滚的是这块内容
+        // 条数不定，列表区可滚。
+        // ⚠️ 高度**不能**写 `0 + weight=1`：父容器是 wrap_content，weight 分不到剩余空间，
+        // 实测 ScrollView 拿到 0 高度（logcat 里 boundsInScreen 高度为 0），第二行起就被裁掉看不见。
+        // 先给 WRAP_CONTENT，show() 之后按内容实测高度封顶（见文件末尾）。
         val rowsLayout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         val scrollView = ScrollView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             isFillViewport = false
             addView(rowsLayout)
         }
         dialogView.addView(scrollView)
 
+        val widthPx = (380 * density).toInt()
+        val maxHeightPx = (360 * density).toInt()
+
+        /**
+         * 行数变了就重算列表高度与弹窗高度。
+         *
+         * 列表高度必须**显式设成实测值**（不能只靠 WRAP_CONTENT）：弹窗窗口在 show() 之后
+         * 被 `setLayout` 固定成测量高度，之后新增的行不会把窗口顶高，列表区不跟着变的话
+         * 第二行起就被裁掉（实测：加了行、日志打了「行数 2」，界面仍只有一行）。
+         * 列表封顶 = 弹窗上限 - 标题/添加按钮/按钮行，多出来的条数由 ScrollView 自己滚。
+         */
+        fun syncListHeight() {
+            val listWidthPx = widthPx - (2 * (density * 24)).toInt()
+            rowsLayout.measure(
+                View.MeasureSpec.makeMeasureSpec(listWidthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val capPx = (maxHeightPx - (density * 190).toInt()).coerceAtLeast((density * 96).toInt())
+            val listHeightPx = minOf(rowsLayout.measuredHeight, capPx)
+            scrollView.layoutParams =
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, listHeightPx)
+            dialogView.measure(
+                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
+            )
+            dialog.window?.setLayout(widthPx, minOf(dialogView.measuredHeight, maxHeightPx))
+        }
+
         fun addRow(url: String, focus: Boolean = false) {
+            Log.i("SourceUrlEditDialog", "addRow「$url」→ 行数 ${rowsLayout.childCount + 1}")
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
@@ -105,6 +138,7 @@ class SourceUrlEditDialog(
                     } else {
                         input.setText("")
                     }
+                    syncListHeight()
                 }
             }
             row.addView(remove)
@@ -123,6 +157,8 @@ class SourceUrlEditDialog(
 
         dialogView.addView(DialogUtils.createDialogButton(context, theme, "+ 添加一条", isPrimary = false) {
             addRow("", focus = true)
+            // 新行要露出来：列表高度 + 弹窗高度都得跟着重算（见 syncListHeight）
+            syncListHeight()
         }.apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = (density * 12).toInt()
@@ -153,12 +189,7 @@ class SourceUrlEditDialog(
 
         dialog.setContentView(dialogView)
         dialog.show()
-        val widthPx = (380 * density).toInt()
-        val maxHeightPx = (360 * density).toInt()
-        dialogView.measure(
-            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
-        )
-        dialog.window?.setLayout(widthPx, minOf(dialogView.measuredHeight, maxHeightPx))
+        // 首次按内容定高；之后每次增删行都会再调一次（syncListHeight）
+        syncListHeight()
     }
 }
