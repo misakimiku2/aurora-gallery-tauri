@@ -77,35 +77,58 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
         const isEditing = editing?.key === key;
 
         if (isEditing) {
+            const changed = editing!.value.trim() !== url;
             return (
-                <div key={key} className="flex items-center gap-1 text-xs bg-surface px-1.5 py-1 rounded border border-subtle">
-                    <input
+                <div key={key} className="bg-surface px-2 py-1.5 rounded border border-subtle">
+                    <textarea
                         autoFocus
+                        rows={2}
                         value={editing!.value}
                         onChange={(e) => setEditing({ key, value: e.target.value })}
                         onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitEdit(fileId);
-                            else if (e.key === 'Escape') setEditing(null);
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                commitEdit(fileId);
+                            } else if (e.key === 'Escape') {
+                                setEditing(null);
+                            }
                         }}
-                        onBlur={() => commitEdit(fileId)}
+                        // 失焦 = 放弃：保存是立即写库、没有撤销，误存一次比多按一次回车贵
+                        onBlur={() => setEditing(null)}
                         placeholder="https://..."
-                        className="flex-1 bg-transparent border-none text-xs text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
+                        className="w-full bg-transparent border-none resize-none text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
                     />
-                    {/* mousedown + preventDefault：先于 blur 处理，避免 blur 把取消也存了 */}
-                    <button
-                        onMouseDown={(e) => { e.preventDefault(); commitEdit(fileId); }}
-                        className="shrink-0 text-gray-400 hover:text-green-500"
-                        title={t('meta.save')}
-                    >
-                        <Check size={10} />
-                    </button>
-                    <button
-                        onMouseDown={(e) => { e.preventDefault(); setEditing(null); }}
-                        className="shrink-0 text-gray-400 hover:text-red-500"
-                        title={t('meta.cancelSource')}
-                    >
-                        <X size={10} />
-                    </button>
+                    <div className="flex items-center gap-1 mt-1">
+                        <div className="flex-1 min-w-0 truncate">
+                            {/* 没改过：说清怎么存、怎么反悔；改过了：给一键还原 */}
+                            {changed ? (
+                                <button
+                                    onMouseDown={(e) => { e.preventDefault(); setEditing({ key, value: url }); }}
+                                    className="w-full text-left text-[10px] text-gray-400 hover:text-blue-500 truncate"
+                                    title={t('meta.revertSource')}
+                                >
+                                    ↺ {url}
+                                </button>
+                            ) : (
+                                <span className="text-[10px] text-gray-400">{t('meta.editSourceHint')}</span>
+                            )}
+                        </div>
+                        {/* mousedown + preventDefault：先于 blur 处理，否则 blur 会先把编辑取消掉 */}
+                        <button
+                            onMouseDown={(e) => { e.preventDefault(); commitEdit(fileId); }}
+                            className="shrink-0 text-gray-400 hover:text-green-500"
+                            title={t('meta.save')}
+                        >
+                            <Check size={12} />
+                        </button>
+                        <button
+                            onMouseDown={(e) => { e.preventDefault(); setEditing(null); }}
+                            className="shrink-0 text-gray-400 hover:text-red-500"
+                            title={t('meta.cancelSource')}
+                        >
+                            <X size={12} />
+                        </button>
+                    </div>
                 </div>
             );
         }
@@ -245,24 +268,25 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                 {isMulti && isSourceMixed ? (
                     <div className="text-xs text-orange-500 italic mb-2 bg-orange-50 dark:bg-orange-900/20 px-2 py-1 rounded">{t('meta.mixedValues')}</div>
                 ) : null}
-                <div className="flex items-center bg-surface rounded-lg border border-subtle focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
-                    <input
-                        type="text"
+                <div className="flex items-start bg-surface rounded-lg border border-subtle focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
+                    <textarea
+                        rows={2}
                         value={isMulti ? batchSource : source}
                         onChange={(e) => isMulti ? onBatchSourceChange(e.target.value) : onSourceChange(e.target.value)}
-                        onBlur={onUpdateMeta}
                         onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
                                 onUpdateMeta();
                             }
                         }}
+                        onBlur={onUpdateMeta}
                         placeholder="https://..."
-                        className="flex-1 bg-transparent border-none py-2 px-3 text-sm text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
+                        className="flex-1 bg-transparent border-none resize-none py-2 px-3 text-sm leading-relaxed text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none min-w-0"
                     />
                     {(isMulti ? batchSource : source) && (
                         <button
                             onClick={() => openUrl(isMulti ? batchSource : source)}
-                            className="p-2 text-gray-400 hover:text-blue-500"
+                            className="p-2 mt-0.5 text-gray-400 hover:text-blue-500"
                             title={t('meta.openSource')}
                         >
                             <ExternalLink size={14} />
