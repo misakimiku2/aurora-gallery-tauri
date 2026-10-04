@@ -20,7 +20,7 @@ import AIAnalysisSection from './metadata/AIAnalysisSection';
 import EditSection from './metadata/EditSection';
 import { findImagesDeeply } from '../utils/fileTree';
 import { getGlobalCache } from '../utils/thumbnailCache';
-import { getSourceUrls, appendSourceUrl, removeSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
+import { getSourceUrls, appendSourceUrl, removeSourceUrl, replaceSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
 
 
@@ -770,6 +770,19 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         const f = files[fileId];
         if (!f) return;
         onUpdate(fileId, toSourceUrlFields(removeSourceUrl(getSourceUrls(f), url)));
+    };
+
+    /** 就地改当前文件的一条来源网址（清空由 EditSection 判为放弃，这里收到的已是有效值）。 */
+    const handleEditSourceUrl = (oldUrl: string, newUrl: string) => {
+        if (!file) return;
+        onUpdate(file.id, toSourceUrlFields(replaceSourceUrl(getSourceUrls(file), oldUrl, newUrl)));
+    };
+
+    /** 多选时改某个文件的一条来源网址。 */
+    const handleEditSourceUrlOfFile = (fileId: string, oldUrl: string, newUrl: string) => {
+        const f = files[fileId];
+        if (!f) return;
+        onUpdate(fileId, toSourceUrlFields(replaceSourceUrl(getSourceUrls(f), oldUrl, newUrl)));
     };
 
     const handleUpdatePersonMeta = () => {
@@ -1682,7 +1695,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     onSourceChange={setSource}
                     sourceUrls={getSourceUrls(file)}
                     onRemoveSourceUrl={handleRemoveSourceUrl}
+                    onEditSourceUrl={handleEditSourceUrl}
                     onRemoveSourceUrlOfFile={handleRemoveSourceUrlOfFile}
+                    onEditSourceUrlOfFile={handleEditSourceUrlOfFile}
                     batchSource={batchSource}
                     onBatchSourceChange={setBatchSource}
                     isSourceMixed={isSourceMixed}

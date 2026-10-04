@@ -55,3 +55,18 @@ export function appendSourceUrl(urls: string[] | undefined, url: string): string
 export function removeSourceUrl(urls: string[] | undefined, url: string): string[] {
   return (urls || []).filter(u => u !== url);
 }
+
+/**
+ * 就地改一条。
+ *
+ * 新值为空 = **取消这次编辑**（要删请走 `removeSourceUrl` 的 ×），免得手滑清空把网址弄丢；
+ * 与其它条撞了就并成一条。
+ */
+export function replaceSourceUrl(urls: string[] | undefined, oldUrl: string, newUrl: string): string[] {
+  const current = urls || [];
+  const trimmed = (newUrl || '').trim();
+  if (!trimmed) return current;
+  const idx = current.indexOf(oldUrl);
+  if (idx < 0) return current;
+  return dedupeSourceUrls(current.map((u, i) => (i === idx ? trimmed : u)));
+}

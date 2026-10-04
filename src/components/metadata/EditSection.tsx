@@ -1,5 +1,5 @@
-import type { RefObject } from 'react';
-import { Tag, X, Check, FileText, Save, Globe, ExternalLink } from 'lucide-react';
+import { useState, type RefObject } from 'react';
+import { Tag, X, Check, FileText, Save, Globe, ExternalLink, Pencil } from 'lucide-react';
 import { FileNode, FileType } from '../../types';
 import { getSourceUrls } from '../../utils/sourceUrls';
 
@@ -29,8 +29,12 @@ interface EditSectionProps {
     /** 已保存的来源网址（P1(b)：可以有多条）。输入框里的 `source` 只是**新增用的草稿** */
     sourceUrls: string[];
     onRemoveSourceUrl: (url: string) => void;
+    /** 就地改一条（旧值 → 新值） */
+    onEditSourceUrl: (oldUrl: string, newUrl: string) => void;
     /** 多选时按文件删一条 */
     onRemoveSourceUrlOfFile: (fileId: string, url: string) => void;
+    /** 多选时按文件改一条 */
+    onEditSourceUrlOfFile: (fileId: string, oldUrl: string, newUrl: string) => void;
     batchSource: string;
     onBatchSourceChange: (value: string) => void;
     isSourceMixed: boolean;
@@ -40,13 +44,97 @@ interface EditSectionProps {
     t: (key: string) => string;
 }
 
-const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNewTagInputChange, systemTags, onAddTag, onRemoveTag, onNavigateToTag, desc, onDescChange, batchDesc, onBatchDescChange, isDescMixed, showSavedDesc, textareaRef, source, onSourceChange, sourceUrls, onRemoveSourceUrl, onRemoveSourceUrlOfFile, batchSource, onBatchSourceChange, isSourceMixed, showSavedSource, onUpdateMeta, t }: EditSectionProps) => {
+const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNewTagInputChange, systemTags, onAddTag, onRemoveTag, onNavigateToTag, desc, onDescChange, batchDesc, onBatchDescChange, isDescMixed, showSavedDesc, textareaRef, source, onSourceChange, sourceUrls, onRemoveSourceUrl, onEditSourceUrl, onRemoveSourceUrlOfFile, onEditSourceUrlOfFile, batchSource, onBatchSourceChange, isSourceMixed, showSavedSource, onUpdateMeta, t }: EditSectionProps) => {
     // Tauri 的 webview 里 window.open 唤不起系统浏览器，必须走封装好的 open_external_link 命令。
     const openUrl = (url: string) => {
         if (!url) return;
         import('../../api/tauri-bridge')
             .then(({ openExternalLink }) => openExternalLink(url))
             .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
+    };
+
+    // 就地编辑某一条来源网址。`key` 带上 fileId，多选时同名网址不会一起进编辑态。
+    const [editing, setEditing] = useState<{ key: string; value: string } | null>(null);
+    const urlKey = (url: string, fileId?: string) => (fileId ? `${fileId}::${url}` : url);
+
+    const commitEdit = (fileId?: string) => {
+        if (!editing) return;
+        const trimmed = editing.value.trim();
+        // 清空 = 放弃这次编辑（要删走 ×），原值不变
+        if (trimmed) {
+            const oldUrl = editing.key.includes('::') ? editing.key.slice(editing.key.indexOf('::') + 2) : editing.key;
+            if (trimmed !== oldUrl) {
+                if (fileId) onEditSourceUrlOfFile(fileId, oldUrl, trimmed);
+                else onEditSourceUrl(oldUrl, trimmed);
+            }
+        }
+        setEditing(null);
+    };
+
+    /** 一条来源网址：常态是「打开 + 编辑 + 删除」，编辑态是输入框 + 保存/取消 */
+    const renderUrlRow = (url: string, fileId?: string) => {
+        const key = urlKey(url, fileId);
+        const isEditing = editing?.key === key;
+
+        if (isEditing) {
+            return (
+                <div key={key} className="flex items-center gap-1 text-xs bg-surface px-1.5 py-1 rounded border border-subtle">
+                    <input
+                        autoFocus
+                        value={editing!.value}
+                        onChange={(e) => setEditing({ key, value: e.target.value })}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitEdit(fileId);
+                            else if (e.key === 'Escape') setEditing(null);
+                        }}
+                        onBlur={() => commitEdit(fileId)}
+                        placeholder="https://..."
+                        className="flex-1 bg-transparent border-none text-xs text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
+                    />
+                    {/* mousedown + preventDefault：先于 blur 处理，避免 blur 把取消也存了 */}
+                    <button
+                        onMouseDown={(e) => { e.preventDefault(); commitEdit(fileId); }}
+                        className="shrink-0 text-gray-400 hover:text-green-500"
+                        title={t('meta.save')}
+                    >
+                        <Check size={10} />
+                    </button>
+                    <button
+                        onMouseDown={(e) => { e.preventDefault(); setEditing(null); }}
+                        className="shrink-0 text-gray-400 hover:text-red-500"
+                        title={t('meta.cancelSource')}
+                    >
+                        <X size={10} />
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div key={key} className="flex items-center gap-1 text-xs bg-surface/50 px-1.5 py-1 rounded group">
+                <button
+                    onClick={() => openUrl(url)}
+                    className="truncate flex-1 text-left p-0 bg-transparent border-none text-blue-600 dark:text-blue-400 hover:underline"
+                    title={url}
+                >
+                    {url}
+                </button>
+                <button
+                    onClick={() => setEditing({ key, value: url })}
+                    className="shrink-0 text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title={t('meta.editSource')}
+                >
+                    <Pencil size={10} />
+                </button>
+                <button
+                    onClick={() => (fileId ? onRemoveSourceUrlOfFile(fileId, url) : onRemoveSourceUrl(url))}
+                    className="shrink-0 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title={t('meta.removeSource')}
+                >
+                    <X size={10} />
+                </button>
+            </div>
+        );
     };
 
     return (
@@ -182,28 +270,11 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                     )}
                 </div>
 
-                {/* 已保存的来源网址：一张图可以有多条（P1(b)），逐条可打开、可删除。
+                {/* 已保存的来源网址：一张图可以有多条（P1(b)），逐条可打开、可编辑、可删除。
                     输入框里那条只是草稿，回车/失焦才是「加进来」。 */}
                 {!isMulti && sourceUrls.length > 0 && (
                     <div className="mt-2 space-y-1">
-                        {sourceUrls.map(url => (
-                            <div key={url} className="flex items-center gap-1 text-xs bg-surface/50 px-1.5 py-1 rounded group">
-                                <button
-                                    onClick={() => openUrl(url)}
-                                    className="truncate flex-1 text-left p-0 bg-transparent border-none text-blue-600 dark:text-blue-400 hover:underline"
-                                    title={url}
-                                >
-                                    {url}
-                                </button>
-                                <button
-                                    onClick={() => onRemoveSourceUrl(url)}
-                                    className="shrink-0 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title={t('meta.removeSource')}
-                                >
-                                    <X size={10} />
-                                </button>
-                            </div>
-                        ))}
+                        {sourceUrls.map(url => renderUrlRow(url))}
                     </div>
                 )}
 
@@ -216,24 +287,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                             return (
                                 <div key={id} className="bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
                                     <div className="text-gray-500 dark:text-gray-400 text-xs truncate mb-1 font-medium" title={f.name}>{f.name}</div>
-                                    {urls.map(url => (
-                                        <div key={url} className="flex items-center gap-1 text-xs group">
-                                            <button
-                                                onClick={() => openUrl(url)}
-                                                className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
-                                                title={url}
-                                            >
-                                                {url}
-                                            </button>
-                                            <button
-                                                onClick={() => onRemoveSourceUrlOfFile(id, url)}
-                                                className="shrink-0 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                title={t('meta.removeSource')}
-                                            >
-                                                <X size={10} />
-                                            </button>
-                                        </div>
-                                    ))}
+                                    {urls.map(url => renderUrlRow(url, id))}
                                 </div>
                             );
                         })}

@@ -5,6 +5,7 @@ import {
   toSourceUrlFields,
   appendSourceUrl,
   removeSourceUrl,
+  replaceSourceUrl,
   dedupeSourceUrls,
 } from '../sourceUrls';
 
@@ -44,6 +45,22 @@ describe('sourceUrls', () => {
   it('removeSourceUrl 只删命中的那条', () => {
     expect(removeSourceUrl(['a', 'b', 'c'], 'b')).toEqual(['a', 'c']);
     expect(removeSourceUrl(undefined, 'b')).toEqual([]);
+  });
+
+  it('replaceSourceUrl 原地替换，顺序不变', () => {
+    expect(replaceSourceUrl(['a', 'b', 'c'], 'b', 'B')).toEqual(['a', 'B', 'c']);
+  });
+
+  it('replaceSourceUrl 清空 = 放弃编辑（原值不动）', () => {
+    expect(replaceSourceUrl(['a', 'b'], 'b', '   ')).toEqual(['a', 'b']);
+  });
+
+  it('replaceSourceUrl 与其它条撞了就并成一条', () => {
+    expect(replaceSourceUrl(['a', 'b'], 'b', 'a')).toEqual(['a']);
+  });
+
+  it('replaceSourceUrl 对不存在的旧值不动手', () => {
+    expect(replaceSourceUrl(['a'], 'zzz', 'x')).toEqual(['a']);
   });
 
   it('dedupeSourceUrls 去空去重保序', () => {
