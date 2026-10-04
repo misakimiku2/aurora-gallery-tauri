@@ -1059,6 +1059,7 @@ export const translations = {
       noteExisting: '已有内容 {count} 项未覆盖',
       // P1(b)：来源网址不再「让位」，是「我们已有的不动 + 已有这条就不重复加」
       noteLinksExisting: '来源网址 {count} 条我们已有，未重复添加',
+      noteLinksAdded: '来源网址新增 {added} 条，另有 {existing} 条我们已有、未重复添加',
       noteMerged: '并入已有专题 {count} 个',
       noteUnmatched: '未匹配 {count} 条路径',
       noteUnmatchedHint: '这些路径在当前资源根里没找到：可能还没扫描，或文件不在这个根下面',
@@ -2149,6 +2150,7 @@ export const translations = {
       noteExisting: 'Kept {count} existing values',
       // P1(b): source links are appended, not yielded — an existing one is simply not added twice
       noteLinksExisting: '{count} source links already present, not added twice',
+      noteLinksAdded: 'Added {added} source link(s); {existing} already present, not added twice',
       noteMerged: 'Merged into {count} existing topics',
       noteUnmatched: '{count} paths unmatched',
       noteUnmatchedHint: 'Not found in the current root — maybe not scanned yet, or outside this library',

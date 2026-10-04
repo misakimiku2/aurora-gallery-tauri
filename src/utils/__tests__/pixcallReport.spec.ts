@@ -15,6 +15,7 @@ const templates: Record<string, string> = {
   'import.statDescriptions': '描述',
   'import.noteExisting': '已有内容 {count} 项未覆盖',
   'import.noteLinksExisting': '来源网址 {count} 条我们已有，未重复添加',
+  'import.noteLinksAdded': '来源网址新增 {added} 条，另有 {existing} 条我们已有、未重复添加',
   'import.noteTrash': '回收站 {count} 条未迁（仍在 PixCall 中）',
   'import.noteVideo': '视频标注 {count} 条未导入',
   'import.noteVideoHint': '支持视频后重新导入即可补齐',
@@ -95,6 +96,20 @@ describe('buildReportNotes', () => {
   it('来源网址已有的是追加语义，不与描述的让位并成一栏', () => {
     const notes = buildReportNotes(makeReport({ sourceUrlsSkippedExisting: 2 }), t);
     expect(notes[0].text).toBe('来源网址 2 条我们已有，未重复添加');
+  });
+
+  // 本机实测：2 条已有 + 源侧 1 条新 → 备注只说「7 条已有」会被读成「什么都没加」
+  it('有新增时把「新增」写进同一句，不再只报已有', () => {
+    const notes = buildReportNotes(
+      makeReport({ sourceUrlsWritten: 1, sourceUrlsSkippedExisting: 7 }),
+      t
+    );
+    expect(notes[0].text).toBe('来源网址新增 1 条，另有 7 条我们已有、未重复添加');
+  });
+
+  it('只有新增、没有已有时不给备注（徽章里那栏已经说了）', () => {
+    const notes = buildReportNotes(makeReport({ sourceUrlsWritten: 1 }), t);
+    expect(notes).toEqual([]);
   });
 
   it('两栏同时有值时各记一条', () => {

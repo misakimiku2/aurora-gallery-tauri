@@ -76,7 +76,17 @@ export const buildReportNotes = (report: MigrationReport, t: (key: string) => st
   const notes: ReportNote[] = [];
   if (report.descriptionsSkippedExisting > 0)
     notes.push({ text: fillTemplate(t('import.noteExisting'), { count: report.descriptionsSkippedExisting }) });
-  if (report.sourceUrlsSkippedExisting > 0)
+  // 来源网址：新增优先。徽章里那个「来源 N」是新增数，但备注如果只说「N 条已有」，
+  // 用户读到的是「什么都没加」——本机实测（2 条已有 + 源侧 1 条新）就是这么被误读的。
+  // 所以有新值时把「新增」写进同一句；没有新增时才单说「已有」。
+  if (report.sourceUrlsWritten > 0 && report.sourceUrlsSkippedExisting > 0)
+    notes.push({
+      text: fillTemplate(t('import.noteLinksAdded'), {
+        added: report.sourceUrlsWritten,
+        existing: report.sourceUrlsSkippedExisting,
+      }),
+    });
+  else if (report.sourceUrlsWritten === 0 && report.sourceUrlsSkippedExisting > 0)
     notes.push({ text: fillTemplate(t('import.noteLinksExisting'), { count: report.sourceUrlsSkippedExisting }) });
   if (report.topicsMergedName > 0)
     notes.push({ text: fillTemplate(t('import.noteMerged'), { count: report.topicsMergedName }) });
