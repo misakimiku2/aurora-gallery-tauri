@@ -335,6 +335,7 @@ fn write_analysis_result(
         path: path.to_string(),
         description: None,
         source_url: None,
+        source_urls: Vec::new(),
         ai_data: None,
         category: None,
         updated_at: None,
@@ -353,6 +354,8 @@ fn write_analysis_result(
         path: old.path.clone(),
         description,
         source_url: old.source_url.clone(),
+        // 整行写回，来源网址要带全量（只回填首条会把其余几条压没）
+        source_urls: old.source_urls.clone(),
         ai_data: Some(ai::build_ai_data_json(&effective).to_string()),
         category: old.category.clone(),
         updated_at: Some(chrono::Utc::now().timestamp()),

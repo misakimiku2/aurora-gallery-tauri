@@ -262,7 +262,14 @@ pub struct FfiFileMetadata {
     pub file_id: String,
     pub path: String,
     pub description: Option<String>,
+    /// 第一条来源网址。留给老读者（与 `source_urls` 的首项恒等，不会分叉）。
     pub source_url: Option<String>,
+    /// 全部来源网址（P1(b) 多值），顺序即 UI 显示顺序。
+    ///
+    /// **读向必须带全量**：安卓侧是「整行读 → 整行写」（`GalleryViewModel` 的
+    /// `saveFileUpdates`、AI 人物那条写回也是），只给首条的话写回去时第 2..N 条
+    /// 就被压没了 —— 这是 2026-10-05 查出来的实际丢数据路径，不是假想风险。
+    pub source_urls: Vec<String>,
     pub ai_data: Option<String>,
     pub category: Option<String>,
     pub updated_at: Option<i64>,
@@ -277,13 +284,15 @@ pub struct FileTags {
 
 impl From<db::file_metadata::FileMetadata> for FfiFileMetadata {
     fn from(m: db::file_metadata::FileMetadata) -> Self {
-        // FFI 契约仍是单值（安卓侧本轮不动）：取第一条
-        let source_url = m.source_urls().first().cloned();
+        let urls = m.source_urls();
+        // 多值带全量（见 `source_urls` 字段的注释：只给首条会在整行写回时丢数据）
+        let source_url = urls.first().cloned();
         FfiFileMetadata {
             file_id: m.file_id,
             path: m.path,
             description: m.description,
             source_url,
+            source_urls: urls,
             ai_data: m.ai_data.map(|v| v.to_string()),
             category: m.category,
             updated_at: m.updated_at,
@@ -293,6 +302,18 @@ impl From<db::file_metadata::FileMetadata> for FfiFileMetadata {
 
 impl From<FfiFileMetadata> for db::file_metadata::FileMetadata {
     fn from(m: FfiFileMetadata) -> Self {
+        // 多值优先：给了数组就以它为准（空数组 = 清空）；只给单值（老调用方）
+        // 时落成「只有一个元素的数组」；两个都空 = 这一列写 NULL。
+        let source_urls = if !m.source_urls.is_empty() {
+            Some(m.source_urls)
+        } else {
+            m.source_url.as_ref().map(|s| vec![s.clone()])
+        };
+        // 首条始终与数组首项一致，免得两侧读者看到两个不同的值
+        let source_url = match &source_urls {
+            Some(urls) => urls.first().cloned(),
+            None => m.source_url,
+        };
         db::file_metadata::FileMetadata {
             file_id: m.file_id,
             path: m.path,
@@ -300,9 +321,8 @@ impl From<FfiFileMetadata> for db::file_metadata::FileMetadata {
             // 整行 upsert 把别处写过的 JSON 值带回来当第二份数据。
             tags: None,
             description: m.description,
-            // 安卓侧写进来的单条网址，按新约定落成「只有一个元素的数组」
-            source_url: m.source_url.clone(),
-            source_urls: m.source_url.map(|s| vec![s]),
+            source_url,
+            source_urls,
             ai_data: m.ai_data.as_deref().and_then(|s| serde_json::from_str(s).ok()),
             category: m.category,
             updated_at: m.updated_at,
@@ -859,6 +879,60 @@ mod tests {
         assert_eq!(back.ai_data, original.ai_data);
         assert_eq!(back.category, original.category);
         assert_eq!(back.updated_at, original.updated_at);
+    }
+
+    /// 安卓侧是「整行读 → 整行写」：库里有多条时，FFI 读出来必须条条都在，
+    /// 否则写回去就把第 2..N 条压没了（2026-10-05 查出来的丢数据路径）。
+    #[test]
+    fn file_metadata_ffi_round_trip_keeps_every_source_url() {
+        let mut original = row(None);
+        original.set_source_urls(vec![
+            "https://a.example/1".into(),
+            "https://b.example/2".into(),
+            "https://c.example/3".into(),
+        ]);
+        let ffi = FfiFileMetadata::from(original.clone());
+        assert_eq!(ffi.source_urls.len(), 3, "读向要给全量，不是只给首条");
+        assert_eq!(ffi.source_url.as_deref(), Some("https://a.example/1"));
+
+        let back: db::file_metadata::FileMetadata = ffi.into();
+        assert_eq!(back.source_urls(), original.source_urls());
+    }
+
+    /// 老调用方只给单值（`source_urls` 空）时仍是「只有一个元素的数组」语义。
+    #[test]
+    fn a_single_source_url_still_round_trips_when_the_list_is_empty() {
+        let ffi = FfiFileMetadata {
+            file_id: "f1".into(),
+            path: "p".into(),
+            description: None,
+            source_url: Some("https://only.example".into()),
+            source_urls: Vec::new(),
+            ai_data: None,
+            category: None,
+            updated_at: None,
+        };
+        let back: db::file_metadata::FileMetadata = ffi.into();
+        assert_eq!(back.source_urls(), vec!["https://only.example"]);
+        assert_eq!(back.source_url.as_deref(), Some("https://only.example"));
+    }
+
+    /// 数组与单值都空 = 清空（写 NULL），与旧行为一致。
+    #[test]
+    fn an_empty_list_and_empty_single_value_clear_the_column() {
+        let ffi = FfiFileMetadata {
+            file_id: "f1".into(),
+            path: "p".into(),
+            description: None,
+            source_url: None,
+            source_urls: Vec::new(),
+            ai_data: None,
+            category: None,
+            updated_at: None,
+        };
+        let back: db::file_metadata::FileMetadata = ffi.into();
+        assert!(back.source_urls().is_empty());
+        assert_eq!(back.source_url_text(), None);
     }
 
     /// 标签的真源已搬到 `file_tags`。旧的 `file_metadata.tags` 列既不读出也不写回，

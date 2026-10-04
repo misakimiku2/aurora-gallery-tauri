@@ -130,6 +130,8 @@ data class LanMetadataItem(
     val tags: List<String>,
     val description: String,
     val sourceUrl: String,
+    /** 全量来源网址（P1(b) 多值）。服务端旧版不返回该字段时按 [sourceUrl] 兜成一条。 */
+    val sourceUrls: List<String> = emptyList(),
 )
 
 /**
@@ -141,6 +143,12 @@ data class LanMetadataPatch(
     val tags: List<String>? = null,
     val description: String? = null,
     val sourceUrl: String? = null,
+    /**
+     * 多值来源网址（整体覆盖语义）。**给了它就以它为准**：只发 `source_urls`，
+     * 不再发 `source_url`（服务端同时收到时以多值为准，两个都发是废话）。
+     * 空列表 = 显式清空——与 `null`（不改）是两回事。
+     */
+    val sourceUrls: List<String>? = null,
 )
 
 /**
@@ -385,7 +393,13 @@ class LanClient(private val http: OkHttpClient) {
         val patchJson = JSONObject()
             .putOpt("tags", patch.tags?.let { org.json.JSONArray(it) })
             .putOpt("description", patch.description)
-            .putOpt("source_url", patch.sourceUrl)
+        // 多值优先：给了 source_urls 就只发它（服务端以多值为准）；只给单值时发旧的
+        // source_url（服务端按「覆盖成只有这一条」处理）。putOpt 遇 null 不写该键。
+        if (patch.sourceUrls != null) {
+            patchJson.putOpt("source_urls", org.json.JSONArray(patch.sourceUrls))
+        } else {
+            patchJson.putOpt("source_url", patch.sourceUrl)
+        }
         val body = JSONObject().put("path", path).put("patch", patchJson)
         return parseMetadataItem(sendJson(base, token, "PUT", "/api/metadata", body))
     }
@@ -755,6 +769,10 @@ class LanClient(private val http: OkHttpClient) {
         tags = o.optJSONArray("tags")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList(),
         description = o.optString("description"),
         sourceUrl = o.optString("source_url"),
+        sourceUrls = o.optJSONArray("source_urls")
+            ?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }
+            ?: o.optString("source_url").takeIf { it.isNotBlank() }?.let(::listOf)
+            ?: emptyList(),
     )
 
     private fun parsePeople(arr: org.json.JSONArray?): List<LanPerson> {

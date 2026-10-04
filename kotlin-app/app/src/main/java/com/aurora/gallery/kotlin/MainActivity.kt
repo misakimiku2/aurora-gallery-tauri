@@ -891,7 +891,12 @@ class MainActivity : ComponentActivity() {
             }
             val description = if (updates.has("description")) updates.getString("description") else null
             val sourceUrl = if (updates.has("sourceUrl")) updates.getString("sourceUrl") else null
-            if (tags == null && description == null && sourceUrl == null) {
+            // P1(b) 多值：查看器现在只发 sourceUrls（整体覆盖，空数组 = 清空）；
+            // sourceUrl 单值键仍认，供旧调用点/后续手动构造的 JSON。
+            val sourceUrls = updates.optJSONArray("sourceUrls")?.let { arr ->
+                List(arr.length()) { arr.getString(it) }
+            }
+            if (tags == null && description == null && sourceUrl == null && sourceUrls == null) {
                 // 走到这里的实际只有 `{"name": …}`（查看器的重命名弹窗）：重命名改的是
                 // MediaStore 的 DISPLAY_NAME（M4b 1.5 接通写原语，直写、被拦才要授权），
                 // 元数据行挂在同一 file_id 上不动（规划五要点②）。查看器已就地更新了
@@ -926,7 +931,7 @@ class MainActivity : ComponentActivity() {
             if (isLan) {
                 // D31 守门员分支：LAN 项的标签/描述/来源回写远端桌面库（allow_edit 关闭
                 // 时数据层回 false →「保存失败」），不碰本地词表/本地过滤。
-                viewModel.saveLanFileUpdates(fileId, tags, description, sourceUrl) { ok ->
+                viewModel.saveLanFileUpdates(fileId, tags, description, sourceUrl, sourceUrls) { ok ->
                     Toast.makeText(
                         this@MainActivity,
                         if (ok) "已保存" else "保存失败",
@@ -935,7 +940,7 @@ class MainActivity : ComponentActivity() {
                 }
                 return
             }
-            viewModel.saveFileUpdates(fileId, tags, description, sourceUrl) { ok ->
+            viewModel.saveFileUpdates(fileId, tags, description, sourceUrl, sourceUrls) { ok ->
                 if (!ok) Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
             }
         }

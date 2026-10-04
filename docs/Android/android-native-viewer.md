@@ -122,7 +122,8 @@ Activity.onDestroy()
 | `createdAt` / `updatedAt` | String | 创建/修改时间 |
 | `tags` | List<String> | 标签 |
 | `description` | String | 描述 |
-| `sourceUrl` | String | 来源网址 |
+| `sourceUrl` | String | 来源网址（第一条；老字段，与 `sourceUrls` 首项一致） |
+| `sourceUrls` | List<String> | 来源网址**全集**（P1(b) 多值；抽屉逐条显示，编辑弹窗整体覆盖） |
 | `palette` | List<String> | 主色调 |
 | `aiTags` | List<String> | AI 标签 |
 | `aiDescription` | String | AI 描述 |
@@ -200,10 +201,11 @@ Activity.onDestroy()
 - `minLines=4`, `maxLines=8`, `TYPE_TEXT_FLAG_MULTI_LINE | TYPE_TEXT_FLAG_CAP_SENTENCES`
 - hint "添加描述..." 斜体 + 淡色
 
-**`showSourceUrlEditDialog`**：
-- 380dp 宽，最大 300dp 高（动态自适应，仅包裹标题+输入框+按钮）
-- 单行 EditText，`TYPE_TEXT_VARIATION_URI`
-- hint "https://..." 斜体 + 淡色
+**`showSourceUrlEditDialog`**（2026-10-05 改多值，与桌面端同口径）：
+- 380dp 宽，最大 360dp 高；条目区可滚（条数不定）
+- **每条一行**：EditText（`TYPE_TEXT_VARIATION_URI`，hint "https://..." 斜体 + 淡色）+ 右侧 × 删该行
+  （最后一行按 × 只清空不移除，免得没处再添加）
+- 「+ 添加一条」追加空行；保存时**整体覆盖**（空行与重复不计，全删空 = 清空）
 
 **hint 文本样式**：
 - 使用 `setItalicHint(editText, hintText)` 辅助方法
@@ -302,7 +304,7 @@ WebView 端的 FolderPickerModal 弹窗无法覆盖原生查看器（WindowManag
 | `RenameDialog.kt` | `RenameDialog` | 重命名（系统 AlertDialog + EditText） |
 | `TagEditDialog.kt` | `TagEditDialog` | 标签编辑（chips + 输入框） |
 | `DescriptionEditDialog.kt` | `DescriptionEditDialog` | 描述编辑（多行 EditText） |
-| `SourceUrlEditDialog.kt` | `SourceUrlEditDialog` | 来源网址编辑（单行 EditText） |
+| `SourceUrlEditDialog.kt` | `SourceUrlEditDialog` | 来源网址编辑（多条 EditText + 增删，整体覆盖） |
 | `SlideshowSettingsDialog.kt` | `SlideshowSettingsDialog`（含 `SlideshowConfig`） | 幻灯片设置（SeekBar+RadioGroup+Switch） |
 | `MoreMenuPopup.kt` | `MoreMenuPopup`（含 `MoreMenuItem`） | 更多菜单（PopupWindow 风格） |
 
@@ -1536,7 +1538,7 @@ radioGroup.setOnCheckedChangeListener { _, checkedId ->
 | [dialogs/RenameDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/RenameDialog.kt) | **新增文件（2026-07-19）** — 重命名弹窗（系统 AlertDialog + EditText） |
 | [dialogs/TagEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/TagEditDialog.kt) | **新增文件（2026-07-19）** — 标签编辑弹窗（chips + 输入框，动态高度） |
 | [dialogs/DescriptionEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DescriptionEditDialog.kt) | **新增文件（2026-07-19）** — 描述编辑弹窗（多行 EditText） |
-| [dialogs/SourceUrlEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SourceUrlEditDialog.kt) | **新增文件（2026-07-19）** — 来源网址编辑弹窗（单行 EditText） |
+| [dialogs/SourceUrlEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/kotlin-app/app/src/main/java/com/aurora/gallery/kotlin/viewer/dialogs/SourceUrlEditDialog.kt) | **新增文件（2026-07-19）** — 来源网址编辑弹窗；**2026-10-05 改多值**（每条一行 + × 删除 + 「+ 添加一条」，保存整体覆盖）。⚠️ 上文 2.3/2.9 里 `src-tauri/gen/android/...` 那批链接在 React 安卓版退役后已失效，现文件在 `kotlin-app/app/src/main/java/com/aurora/gallery/kotlin/viewer/dialogs/` |
 | [dialogs/SlideshowSettingsDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SlideshowSettingsDialog.kt) | **新增文件（2026-07-19）** — 幻灯片设置弹窗，含 SlideshowConfig data class；构造参数：context, theme, initialConfig, onConfirm |
 | [dialogs/MoreMenuPopup.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/MoreMenuPopup.kt) | **新增文件（2026-07-19）** — 更多菜单弹窗（PopupWindow 风格，锚点定位），含 MoreMenuItem data class |
 

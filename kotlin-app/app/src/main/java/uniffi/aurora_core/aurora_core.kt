@@ -2259,7 +2259,19 @@ data class FfiFileMetadata (
     , 
     var `description`: kotlin.String?
     , 
+    /**
+     * 第一条来源网址。留给老读者（与 `source_urls` 的首项恒等，不会分叉）。
+     */
     var `sourceUrl`: kotlin.String?
+    , 
+    /**
+     * 全部来源网址（P1(b) 多值），顺序即 UI 显示顺序。
+     *
+     * **读向必须带全量**：安卓侧是「整行读 → 整行写」（`GalleryViewModel` 的
+     * `saveFileUpdates`、AI 人物那条写回也是），只给首条的话写回去时第 2..N 条
+     * 就被压没了 —— 这是 2026-10-05 查出来的实际丢数据路径，不是假想风险。
+     */
+    var `sourceUrls`: List<kotlin.String>
     , 
     var `aiData`: kotlin.String?
     , 
@@ -2286,6 +2298,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalLong.read(buf),
@@ -2297,6 +2310,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.allocationSize(value.`path`) +
             FfiConverterOptionalString.allocationSize(value.`description`) +
             FfiConverterOptionalString.allocationSize(value.`sourceUrl`) +
+            FfiConverterSequenceString.allocationSize(value.`sourceUrls`) +
             FfiConverterOptionalString.allocationSize(value.`aiData`) +
             FfiConverterOptionalString.allocationSize(value.`category`) +
             FfiConverterOptionalLong.allocationSize(value.`updatedAt`)
@@ -2307,6 +2321,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.write(value.`path`, buf)
             FfiConverterOptionalString.write(value.`description`, buf)
             FfiConverterOptionalString.write(value.`sourceUrl`, buf)
+            FfiConverterSequenceString.write(value.`sourceUrls`, buf)
             FfiConverterOptionalString.write(value.`aiData`, buf)
             FfiConverterOptionalString.write(value.`category`, buf)
             FfiConverterOptionalLong.write(value.`updatedAt`, buf)
@@ -2619,8 +2634,9 @@ data class Folder (
     var `coverUri`: kotlin.String?
     , 
     /**
-     * 最早一张子图的创建时间（epoch 秒；无图 = 0）。总览的日期排序与「创建时间」
-     * 日期筛选用（对齐 React 总览按 folder.createdAt 排序的语义）。
+     * 直接子图最新创建时间（epoch 秒；无图 = 0）。2026-10 排序改造：从 MIN(created_at)
+     * （最早子图）改为 **MAX(created_at)**（内容最新时间），「按时间排序 = 内容最新」；
+     * 总览的日期排序与「创建时间」日期筛选用（对齐 React 总览按 folder.createdAt 排序）。
      */
     var `createdAt`: kotlin.Long
     , 

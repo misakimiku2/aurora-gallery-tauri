@@ -91,7 +91,9 @@ class NativeGalleryView @JvmOverloads constructor(
          * 键集合（M4a 2.1 定死，改弹窗时同步改这里）：
          *  - `tags`: `string[]`，该文件的标签**全集**（整体替换语义，宿主走 `setFileTags`）；
          *  - `description`: `string`，可为空串（=清空描述）；
-         *  - `sourceUrl`: `string`，同上；
+         *  - `sourceUrl`: `string`，同上（**旧单值，现已不单独发**）；
+         *  - `sourceUrls`: `string[]`，来源网址**全集**（P1(b) 多值，整体覆盖语义，
+         *    空数组 = 清空）。**只看这一键**：同时给两个键时以数组为准，本类只发数组；
          *  - `name`: `string`，查看器重命名弹窗。宿主**不写元数据行**（重命名改的是
          *    MediaStore 的 `DISPLAY_NAME`，归 M4b），只给可见占位。
          *
@@ -148,7 +150,10 @@ class NativeGalleryView @JvmOverloads constructor(
         val updatedAt: String = "",
         val tags: List<String> = emptyList(),
         val description: String = "",
+        /** 首条来源网址（老读者用，与 [sourceUrls] 首项一致） */
         val sourceUrl: String = "",
+        /** 全部来源网址（P1(b) 多值），抽屉逐条显示、编辑弹窗整体覆盖 */
+        val sourceUrls: List<String> = emptyList(),
         val palette: List<String> = emptyList(),
         val aiTags: List<String> = emptyList(),
         val aiDescription: String = "",
@@ -268,7 +273,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private val drawerDetailsGrid: GridLayout
     private val drawerTagsLayout: LinearLayout
     private val drawerDescView: TextView
-    private val drawerSourceUrlView: TextView
+    /** Section 8 的容器：来源网址可以有多条（P1(b)），每条一行，空时显示一行斜体 hint。 */
+    private val drawerSourceUrlLayout: LinearLayout
     /** M6b 阶段 2：AI 分析节（标题+内容整体隐藏/显示；无 AI 数据时整节不占位）。 */
     private lateinit var drawerAiSection: LinearLayout
     private lateinit var drawerAiLayout: LinearLayout
@@ -569,36 +575,15 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         drawerContainer.addView(drawerDescView)
 
-        // Section 8: 来源网址（点击可编辑）
+        // Section 8: 来源网址（可多条，每条一行；点任意一行进编辑弹窗）
         drawerContainer.addView(buildSectionTitle("来源网址", iconRes = R.drawable.ic_lucide_globe))
-        drawerSourceUrlView = TextView(context).apply {
-            setTextColor(colorAccent())
-            setHintTextColor(colorHint())
-            textSize = 13f
-            setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt())
-            // 斜体 hint（占位提示）
-            val hintSpan = android.text.SpannableString("https://...")
-            hintSpan.setSpan(
-                android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
-                0, hintSpan.length,
-                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            setHint(hintSpan)
-            minimumHeight = (resources.displayMetrics.density * 44).toInt()
-            background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = resources.displayMetrics.density * 8
-                setColor(colorTextBoxBg())
-                setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
-            }
-            setSingleLine(true)
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            isClickable = true
-            setOnClickListener { showSourceUrlEditDialog() }
+        drawerSourceUrlLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
             }
         }
-        drawerContainer.addView(drawerSourceUrlView)
+        drawerContainer.addView(drawerSourceUrlLayout)
 
         // Section 9: AI 分析（M6b 阶段 2；无 AI 数据整节 GONE）。标题+内容包一层便于整节隐藏
         drawerAiSection = LinearLayout(context).apply {
@@ -1394,8 +1379,10 @@ class NativeGalleryView @JvmOverloads constructor(
         // Section 7: 描述（空时显示 hint）
         drawerDescView.text = item.description
 
-        // Section 8: 来源网址（空时显示 hint）
-        drawerSourceUrlView.text = item.sourceUrl
+        // Section 8: 来源网址（可多条，逐行；一条都没有时留一行斜体 hint 占位）
+        drawerSourceUrlLayout.removeAllViews()
+        val urls = item.sourceUrls.ifEmpty { listOf("") }
+        urls.forEach { url -> drawerSourceUrlLayout.addView(buildSourceUrlRow(url)) }
 
         // Section 9: AI 分析（M6b 阶段 2）：场景分类小字 + AI 描述 + AI 标签胶囊。
         // 只读展示（无编辑按钮）——AI 字段的权威源在 aiData，编辑入口归 AI 任务重跑；
@@ -1916,12 +1903,16 @@ class NativeGalleryView @JvmOverloads constructor(
             setColor(colorTextBoxBg())
             setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
         }
-        drawerSourceUrlView.setTextColor(colorAccent())
-        drawerSourceUrlView.setHintTextColor(colorHint())
-        drawerSourceUrlView.background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = resources.displayMetrics.density * 8
-            setColor(colorTextBoxBg())
-            setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+        // 来源网址是动态行数，逐行重涂（条数随图片变，不能只涂写死的那一行的引用）
+        repeat(drawerSourceUrlLayout.childCount) { i ->
+            val row = drawerSourceUrlLayout.getChildAt(i) as? TextView ?: return@repeat
+            row.setTextColor(colorAccent())
+            row.setHintTextColor(colorHint())
+            row.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = resources.displayMetrics.density * 8
+                setColor(colorTextBoxBg())
+                setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+            }
         }
         // 重新刷新当前图片的抽屉内容（标题色块等会用到主题色）
         images.getOrNull(currentIndex)?.let { updateDrawer(it) }
@@ -2241,18 +2232,56 @@ class NativeGalleryView @JvmOverloads constructor(
         ).show()
     }
 
+    /** 来源网址的一行（空串 = 占位 hint 行）。点它进编辑弹窗，与单条时代一致。 */
+    private fun buildSourceUrlRow(url: String): TextView = TextView(context).apply {
+        setTextColor(colorAccent())
+        setHintTextColor(colorHint())
+        textSize = 13f
+        val pad = (resources.displayMetrics.density * 12).toInt()
+        setPadding(pad, pad, pad, pad)
+        // 斜体 hint（占位提示）
+        val hintSpan = android.text.SpannableString("https://...")
+        hintSpan.setSpan(
+            android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
+            0, hintSpan.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        setHint(hintSpan)
+        text = url
+        minimumHeight = (resources.displayMetrics.density * 44).toInt()
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = resources.displayMetrics.density * 8
+            setColor(colorTextBoxBg())
+            setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+        }
+        setSingleLine(true)
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        isClickable = true
+        setOnClickListener { showSourceUrlEditDialog() }
+        layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = (resources.displayMetrics.density * 6).toInt()
+        }
+    }
+
     private fun showSourceUrlEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
         SourceUrlEditDialog(
             context = context,
             theme = this,
-            initialUrl = item.sourceUrl,
-            onSave = { newUrl ->
+            initialUrls = item.sourceUrls,
+            onSave = { newUrls ->
                 val idx = images.indexOfFirst { it.fileId == item.fileId }
                 if (idx >= 0) {
-                    images[idx] = images[idx].copy(sourceUrl = newUrl)
+                    // 首条跟着数组走，老读者（sourceUrl）与列表不会分叉
+                    images[idx] = images[idx].copy(
+                        sourceUrls = newUrls,
+                        sourceUrl = newUrls.firstOrNull().orEmpty(),
+                    )
                 }
-                val json = JSONObject().apply { put("sourceUrl", newUrl) }
+                // 多值是权威：只带数组（空数组 = 清空），宿主侧据此整体覆盖
+                val json = JSONObject().apply {
+                    put("sourceUrls", JSONArray(newUrls))
+                }
                 listener?.onUpdateFile(item.fileId, json.toString(), item.isLan)
                 images.getOrNull(idx)?.let { updateDrawer(it) }
             }

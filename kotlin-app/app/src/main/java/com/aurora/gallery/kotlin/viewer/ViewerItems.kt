@@ -66,6 +66,8 @@ internal fun Image.toViewerItem(
         tags = if (isLan) lanMetadata?.tags.orEmpty() else tags,
         description = if (isLan) lanMetadata?.description.orEmpty() else metadata?.description.orEmpty(),
         sourceUrl = if (isLan) lanMetadata?.sourceUrl.orEmpty() else metadata?.sourceUrl.orEmpty(),
+        // P1(b) 多值：抽屉要条条都显示，只带首条的话编辑一次就把其余几条写没了
+        sourceUrls = if (isLan) lanMetadata?.sourceUrls.orEmpty() else metadata?.sourceUrls.orEmpty(),
         // M6b 阶段 2：AI 字段从本地 metadata.aiData 解析（TS 写入形状见 core ai.rs——
         // tags/sceneCategory/objects/description；LAN 项无远端 aiData，恒空=抽屉整节隐藏）
         aiTags = if (isLan) emptyList() else aiDataStrings(metadata, "tags"),

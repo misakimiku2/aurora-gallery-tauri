@@ -1793,6 +1793,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         tags: List<String>? = null,
         description: String? = null,
         sourceUrl: String? = null,
+        /**
+         * 来源网址**全集**（P1(b) 多值，整体覆盖语义；空列表 = 清空）。
+         * 给了它就以它为准（[sourceUrl] 只在没给数组时用作老单值路径）；两者都不给 = 不改。
+         */
+        sourceUrls: List<String>? = null,
         onDone: (Boolean) -> Unit = {},
     ) {
         // path 在新建元数据行时才用得上（库里已有行则整行读回来了）。在主线程读
@@ -1802,20 +1807,29 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     if (tags != null) setFileTags(fileId, tags)
-                    if (description != null || sourceUrl != null) {
+                    if (description != null || sourceUrl != null || sourceUrls != null) {
                         val row = getFileMetadata(fileId) ?: FfiFileMetadata(
                             fileId = fileId,
                             path = contentUri,
                             description = null,
                             sourceUrl = null,
+                            sourceUrls = emptyList(),
                             aiData = null,
                             category = null,
                             updatedAt = null,
                         )
+                        // 多值优先：给了数组就整体覆盖，首条跟着数组走（老读者那一列不会分叉）；
+                        // 空数组 → 首条也为空，Rust 侧据此把这一列写 NULL（= 清空）
+                        val nextUrls = sourceUrls
                         upsertFileMetadata(
                             row.copy(
                                 description = description ?: row.description,
-                                sourceUrl = sourceUrl ?: row.sourceUrl,
+                                sourceUrls = nextUrls ?: row.sourceUrls,
+                                sourceUrl = when {
+                                    nextUrls != null -> nextUrls.firstOrNull()
+                                    sourceUrl != null -> sourceUrl
+                                    else -> row.sourceUrl
+                                },
                             )
                         )
                     }
@@ -2638,7 +2652,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /**
      * 保存远端文件元数据（标签/描述/来源网址；契约 §2.2 整行读改写）。[tags] null =
      * 不改、空列表 = 显式清空（[LanMetadataPatch] 同义）；[description]/[sourceUrl]
-     * null = 不改。成功：响应条目整行覆盖 [lanMetaByPath] 并重算 [lanRemoteTagGroups]
+     * null = 不改；[sourceUrls] 是来源网址**全集**（多值，整体覆盖，空列表 = 清空），
+     * 给了它就以它为准。成功：响应条目整行覆盖 [lanMetaByPath] 并重算 [lanRemoteTagGroups]
      * （乐观更新，不重拉全量）；失败（含 401/403/网络）：Log.w + onDone(false)，缓存不动。
      */
     fun saveLanFileUpdates(
@@ -2646,6 +2661,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         tags: List<String>? = null,
         description: String? = null,
         sourceUrl: String? = null,
+        sourceUrls: List<String>? = null,
         onDone: (Boolean) -> Unit = {},
     ) {
         val session = lan.currentSession()
@@ -2658,7 +2674,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 runCatching {
                     session.client.putMetadata(
                         session.base, session.token, path,
-                        LanMetadataPatch(tags = tags, description = description, sourceUrl = sourceUrl),
+                        LanMetadataPatch(
+                            tags = tags,
+                            description = description,
+                            sourceUrl = sourceUrl,
+                            sourceUrls = sourceUrls,
+                        ),
                     )
                 }
             }
@@ -3226,6 +3247,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                                     path = img.contentUri, // 新建行 path 装 contentUri（saveFileUpdates 先例）
                                     description = null,
                                     sourceUrl = null,
+                                    sourceUrls = emptyList(),
                                     aiData = null,
                                     category = null,
                                     updatedAt = null,
