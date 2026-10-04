@@ -2,6 +2,51 @@ use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
+/// `file_metadata.source_url` 列的解释规则（P1(b)，设计方案 §4 W2）：
+/// - **新写法**：JSON 数组文本，如 `["https://a","https://b"]` —— 一张图可以有多个来源网址；
+/// - **旧写法**：裸网址文本（改之前写的那 5 行就是这种）。
+///
+/// 因为旧写法解析不成数组时按「单条」处理，**不需要任何数据迁移**：
+/// 旧行读出来自然等于「只有一个元素的数组」。
+pub fn parse_source_urls(raw: Option<&str>) -> Vec<String> {
+    let Some(raw) = raw else { return Vec::new() };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if let Ok(list) = serde_json::from_str::<Vec<String>>(trimmed) {
+        return list.into_iter().filter(|s| !s.trim().is_empty()).collect();
+    }
+    // 数组里混了非字符串（历史脏数据）：能转成字符串的留下，其余整条丢弃
+    if let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+        return list
+            .into_iter()
+            .filter_map(|v| match v {
+                serde_json::Value::String(s) => Some(s),
+                serde_json::Value::Null => None,
+                other => Some(other.to_string()),
+            })
+            .filter(|s| !s.trim().is_empty())
+            .collect();
+    }
+    // 历史遗留：整列就是一个裸网址（不是合法 JSON）
+    vec![trimmed.to_string()]
+}
+
+/// `parse_source_urls` 的反向：写回列文本。空列表 = 没有来源网址（写 NULL）。
+pub fn serialize_source_urls(urls: &[String]) -> Option<String> {
+    let cleaned: Vec<String> = urls
+        .iter()
+        .map(|u| u.trim())
+        .filter(|u| !u.is_empty())
+        .map(|u| u.to_string())
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&cleaned).ok()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileMetadata {
@@ -9,10 +54,64 @@ pub struct FileMetadata {
     pub path: String,
     pub tags: Option<serde_json::Value>,
     pub description: Option<String>,
+    /// 列的原始文本。**不要直接读写它**——见 `parse_source_urls` 的两种写法。
+    /// 为了不破坏既有读者（FFI / 前端），对外仍序列化成「第一条网址」。
+    #[serde(default)]
     pub source_url: Option<String>,
+    /// 来源网址（可多条，顺序即 UI 显示顺序）。**这是多值的对外入口**：
+    /// 缺省（None）时按 `source_url` 列的文本解释，向后兼容单值写入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_urls: Option<Vec<String>>,
     pub ai_data: Option<serde_json::Value>,
     pub category: Option<String>,
     pub updated_at: Option<i64>,
+}
+
+impl FileMetadata {
+    /// 这张图的所有来源网址（旧的单值行读出来就是长度 1 的数组）。
+    pub fn source_urls(&self) -> Vec<String> {
+        if let Some(urls) = &self.source_urls {
+            return urls.clone();
+        }
+        parse_source_urls(self.source_url.as_deref())
+    }
+
+    /// 覆盖写入来源网址。`[]` = 清空。
+    ///
+    /// `source_url` 同步成第一条，既是为了老读者（FFI / 前端的 `sourceUrl`），
+    /// 也是为了让「读出来又整行写回」不把列的格式带偏。
+    pub fn set_source_urls(&mut self, urls: Vec<String>) {
+        let cleaned: Vec<String> = urls
+            .into_iter()
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty())
+            .collect();
+        self.source_url = cleaned.first().cloned();
+        self.source_urls = Some(cleaned);
+    }
+
+    /// 追加一条来源网址（去重）。返回是否真的新增了。
+    pub fn push_source_url(&mut self, url: &str) -> bool {
+        let url = url.trim();
+        if url.is_empty() {
+            return false;
+        }
+        let mut urls = self.source_urls();
+        if urls.iter().any(|u| u == url) {
+            return false;
+        }
+        urls.push(url.to_string());
+        self.set_source_urls(urls);
+        true
+    }
+
+    /// 写库用的列文本：`source_urls` 优先（显式多值），否则沿用 `source_url` 原样。
+    pub fn source_url_text(&self) -> Option<String> {
+        match &self.source_urls {
+            Some(urls) => serialize_source_urls(urls),
+            None => self.source_url.clone(),
+        }
+    }
 }
 
 pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Result<()> {
@@ -32,7 +131,7 @@ pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Resul
             metadata.path,
             metadata.tags,
             metadata.description,
-            metadata.source_url,
+            metadata.source_url_text(),
             metadata.ai_data,
             metadata.category,
             metadata.updated_at
@@ -41,22 +140,33 @@ pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Resul
     Ok(())
 }
 
+/// 行 → `FileMetadata`。四处查询共用（列序一致）。
+///
+/// `source_url` 列在这里被解释成多条：新写法是 JSON 数组、旧写法是裸网址，
+/// 读出来都归一到 `source_urls`，同时把第一条留在 `source_url` 上给老读者。
+fn row_to_metadata(row: &rusqlite::Row<'_>) -> Result<FileMetadata> {
+    let raw: Option<String> = row.get(4)?;
+    let urls = parse_source_urls(raw.as_deref());
+    Ok(FileMetadata {
+        file_id: row.get(0)?,
+        path: row.get(1)?,
+        tags: row.get(2)?,
+        description: row.get(3)?,
+        source_url: urls.first().cloned(),
+        source_urls: if urls.is_empty() { None } else { Some(urls) },
+        ai_data: row.get(5)?,
+        category: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
 pub fn get_metadata_by_id(conn: &Connection, file_id: &str) -> Result<Option<FileMetadata>> {
     let mut stmt = conn.prepare(
         "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at FROM file_metadata WHERE file_id = ?1"
     )?;
     
     let mut rows = stmt.query_map(params![file_id], |row| {
-        Ok(FileMetadata {
-            file_id: row.get(0)?,
-            path: row.get(1)?,
-            tags: row.get(2)?,
-            description: row.get(3)?,
-            source_url: row.get(4)?,
-            ai_data: row.get(5)?,
-            category: row.get(6)?,
-            updated_at: row.get(7)?,
-        })
+        row_to_metadata(row)
     })?;
 
     if let Some(result) = rows.next() {
@@ -89,16 +199,7 @@ pub fn get_metadata_by_ids(
         let mut stmt = conn.prepare(&sql)?;
         let params: Vec<&dyn rusqlite::ToSql> = chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         let rows = stmt.query_map(params.as_slice(), |row| {
-            Ok(FileMetadata {
-                file_id: row.get(0)?,
-                path: row.get(1)?,
-                tags: row.get(2)?,
-                description: row.get(3)?,
-                source_url: row.get(4)?,
-                ai_data: row.get(5)?,
-                category: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
+            row_to_metadata(row)
         })?;
         for r in rows {
             let m = r?;
@@ -114,16 +215,7 @@ pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
     )?;
     
     let metadata_iter = stmt.query_map([], |row| {
-        Ok(FileMetadata {
-            file_id: row.get(0)?,
-            path: row.get(1)?,
-            tags: row.get(2)?,
-            description: row.get(3)?,
-            source_url: row.get(4)?,
-            ai_data: row.get(5)?,
-            category: row.get(6)?,
-            updated_at: row.get(7)?,
-        })
+        row_to_metadata(row)
     })?;
 
     let mut results = Vec::new();
@@ -140,16 +232,7 @@ pub fn get_metadata_under_path(conn: &Connection, root_path: &str) -> Result<Vec
     )?;
     
     let metadata_iter = stmt.query_map(params![pattern], |row| {
-        Ok(FileMetadata {
-            file_id: row.get(0)?,
-            path: row.get(1)?,
-            tags: row.get(2)?,
-            description: row.get(3)?,
-            source_url: row.get(4)?,
-            ai_data: row.get(5)?,
-            category: row.get(6)?,
-            updated_at: row.get(7)?,
-        })
+        row_to_metadata(row)
     })?;
 
     let mut results = Vec::new();
@@ -368,6 +451,7 @@ mod tests {
                     tags: Some(serde_json::json!(["t1"])),
                     description: Some("d".into()),
                     source_url: None,
+                    source_urls: None,
                     ai_data: None,
                     category: None,
                     updated_at: Some(1),

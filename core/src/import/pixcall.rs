@@ -620,7 +620,7 @@ pub fn build_plan(
             path: row.path.clone(),
             tags: None,
             description: None,
-            source_url: None,
+            source_urls: None,
         };
 
         // —— 标签（⑦ 解码 → normalize → 与我们已有的并集，保留我们已有顺序）——
@@ -687,22 +687,23 @@ pub fn build_plan(
             }
         }
 
-        // —— 来源链接（§4：仅当我们该行为空时填；**不做 URL 合法性校验**，
-        // 本机有一条误存的 x.com/home，原样搬）——
+        // —— 来源链接（P1(b)：一张图可以有多个来源网址。我们已有的**一个不动**，
+        // 源侧那条若不在我们的列表里就追加到后面；已经有了就不重复添加。
+        // **不做 URL 合法性校验**——本机有一条误存的 x.com/home，原样搬）——
         if !blank(entry.link.as_deref()) {
-            let (value, yielded) = fill_if_empty(
-                existing.as_ref().and_then(|m| m.source_url.as_deref()),
-                entry.link.as_deref(),
-            );
-            if let Some(v) = value {
-                edit.source_url = Some(v);
-                report.source_urls_written += 1;
-            } else if yielded {
+            let current = existing.as_ref().map(|m| m.source_urls()).unwrap_or_default();
+            let link = entry.link.as_deref().unwrap_or_default().trim().to_string();
+            if current.iter().any(|u| u == &link) {
                 report.source_urls_skipped_existing += 1;
+            } else {
+                let mut merged = current;
+                merged.push(link);
+                edit.source_urls = Some(merged);
+                report.source_urls_written += 1;
             }
         }
 
-        if edit.tags.is_some() || edit.description.is_some() || edit.source_url.is_some() {
+        if edit.tags.is_some() || edit.description.is_some() || edit.source_urls.is_some() {
             edits.push(edit);
         }
     }

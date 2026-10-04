@@ -216,7 +216,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                     size: Some(entry.size),
                     children: if entry.file_type == "Folder" { Some(Vec::new()) } else { None },
                     tags: Vec::new(),
-                    url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
+                    url: None, meta: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
                     created_at: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()),
                     updated_at: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()),
                 };
@@ -226,7 +226,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { node.tags = tags_vec; }
                     }
                     node.description = meta.description.clone();
-                    node.source_url = meta.source_url.clone();
+                    let urls = meta.source_urls();
+                    node.source_url = urls.first().cloned();
+                    node.source_urls = if urls.is_empty() { None } else { Some(urls) };
                     node.category = meta.category.clone();
                     node.ai_data = meta.ai_data.clone();
                 }
@@ -252,7 +254,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                  let mut root_node = FileNode {
                     id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
                     r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
-                    url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
+                    url: None, meta: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
                     created_at: root_metadata.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                     updated_at: root_metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                 };
@@ -263,7 +265,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { root_node.tags = tags_vec; }
                     }
                     root_node.description = meta.description.clone();
-                    root_node.source_url = meta.source_url.clone();
+                    let urls = meta.source_urls();
+                    root_node.source_url = urls.first().cloned();
+                    root_node.source_urls = if urls.is_empty() { None } else { Some(urls) };
                     root_node.category = meta.category.clone();
                     root_node.ai_data = meta.ai_data.clone();
                 }
@@ -314,7 +318,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
     let mut root_node = FileNode {
         id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
         r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
-        url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
+        url: None, meta: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
         created_at: root_metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
         updated_at: root_metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
     };
@@ -324,7 +328,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { root_node.tags = tags_vec; }
         }
         root_node.description = meta.description.clone();
-        root_node.source_url = meta.source_url.clone();
+        let urls = meta.source_urls();
+        root_node.source_url = urls.first().cloned();
+        root_node.source_urls = if urls.is_empty() { None } else { Some(urls) };
         root_node.category = meta.category.clone();
         root_node.ai_data = meta.ai_data.clone();
     }
@@ -425,7 +431,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 if is_directory {
                     let folder_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name, r#type: FileType::Folder, path: full_path.clone(),
-                        size: None, children: Some(Vec::new()), tags: Vec::new(), url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
+                        size: None, children: Some(Vec::new()), tags: Vec::new(), url: None, meta: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
                         created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                     };
@@ -439,7 +445,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
 
                     let image_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Image, path: full_path.clone(),
-                        size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, category: None, ai_data: None,
+                        size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
                         created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                         meta: Some(ImageMeta {
@@ -487,7 +493,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { node.tags = tags_vec; }
             }
             node.description = meta.description.clone();
-            node.source_url = meta.source_url.clone();
+            let urls = meta.source_urls();
+            node.source_url = urls.first().cloned();
+            node.source_urls = if urls.is_empty() { None } else { Some(urls) };
             node.category = meta.category.clone();
             node.ai_data = meta.ai_data.clone();
         }

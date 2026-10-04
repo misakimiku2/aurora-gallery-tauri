@@ -59,6 +59,7 @@ import { MainContentArea } from './components/app/MainContentArea';
 import { RightPanel } from './components/app/RightPanel';
 import { isTauriEnvironment } from './utils/environment';
 import { getInitialLayout } from './utils/layoutSettings';
+import { getSourceUrls, toSourceUrlFields } from './utils/sourceUrls';
 
 // 扩展 Window 接口：声明全局颜色更新函数
 declare global {
@@ -1428,7 +1429,8 @@ export const App: React.FC = () => {
       }
 
       // 持久化到数据库
-      if (updates.tags || updates.description || updates.sourceUrl || updates.aiData || updates.category !== undefined) {
+      const sourceUrlsTouched = updates.sourceUrls !== undefined || updates.sourceUrl !== undefined;
+      if (updates.tags || updates.description || sourceUrlsTouched || updates.aiData || updates.category !== undefined) {
         const file = prev.files[id];
         if (file) {
           const mergedFile = { ...file, ...updates };
@@ -1437,7 +1439,8 @@ export const App: React.FC = () => {
             path: mergedFile.path,
             tags: mergedFile.tags,
             description: mergedFile.description,
-            sourceUrl: mergedFile.sourceUrl,
+            // 来源网址是多值（P1(b)）：动过就整列覆盖（数组 + 首项），没动过就按旧字段原样带上
+            ...(sourceUrlsTouched ? toSourceUrlFields(getSourceUrls(mergedFile)) : { sourceUrl: mergedFile.sourceUrl }),
             category: mergedFile.category,
             aiData: mergedFile.aiData,
             updatedAt: Date.now()
@@ -1449,7 +1452,7 @@ export const App: React.FC = () => {
     });
   };
 
-  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshTags, handleChangePath } = useDirectoryScan({
+  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshTags, handleChangePath, handleSwitchRoot } = useDirectoryScan({
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
@@ -2964,6 +2967,7 @@ export const App: React.FC = () => {
         rememberExitChoice={rememberExitChoice}
         setRememberExitChoice={setRememberExitChoice}
         handleChangePath={handleChangePath}
+        handleSwitchRoot={handleSwitchRoot}
         showWelcome={showWelcome}
         handleWelcomeFinish={handleWelcomeFinish}
         handleOpenFolder={handleOpenFolder}

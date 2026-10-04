@@ -6,6 +6,8 @@ import { normalizePath, generateId } from '../utils/pathUtils';
 import { reloadPeople, reloadTopics } from '../utils/peopleTopics';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { pushRootHistory } from '../utils/rootHistory';
+import { getSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 import {
   scanDirectory,
   openDirectory,
@@ -187,7 +189,9 @@ export const useDirectoryScan = ({
                 ...prev.settings.paths,
                 resourceRoot: path,
                 // 同步缓存目录：统一放到资源根目录下的 .Aurora_Cache
-                cacheRoot: `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`
+                cacheRoot: `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`,
+                // 这条链同样是切根（welcome 的「使用 PixCall 库」走的就是它），一并记进历史
+                rootHistory: pushRootHistory(prev.settings.paths.rootHistory, path)
               }
             },
             isScanning: true
@@ -261,7 +265,7 @@ export const useDirectoryScan = ({
                 description: existingFile.description,
                 url: existingFile.url,
                 aiData: existingFile.aiData,
-                sourceUrl: existingFile.sourceUrl,
+                ...toSourceUrlFields(getSourceUrls(existingFile)),
                 author: existingFile.author,
                 category: existingFile.category,
                 meta: existingFile.meta || newFile.meta,
@@ -319,9 +323,8 @@ export const useDirectoryScan = ({
     }
   };
 
-  const handleChangePath = async (type: 'resource' | 'cache') => {
+  const switchToRoot = async (selectedPath: string) => {
     try {
-      const selectedPath = await openDirectory();
       if (!selectedPath) {
         return;
       }
@@ -336,12 +339,15 @@ export const useDirectoryScan = ({
         resetDirectoryPerformanceStats();
       }
 
+      // 切根即换库（S1）：旧库的标注/专题留在旧库那份 metadata.db 里。把这次的根记进
+      // 历史，用户随时可以从「历史」弹窗切回去（设计方案 §5 X1 → P3）。
       const newSettings = {
         ...state.settings,
         paths: {
           ...state.settings.paths,
           resourceRoot: selectedPath,
-          cacheRoot: ''
+          cacheRoot: '',
+          rootHistory: pushRootHistory(state.settings.paths.rootHistory, selectedPath)
         }
       };
 
@@ -485,6 +491,28 @@ export const useDirectoryScan = ({
     }
   };
 
+  /** 弹系统目录选择框，选完交给 `switchToRoot`。 */
+  const handleChangePath = async (type: 'resource' | 'cache') => {
+    try {
+      const selectedPath = await openDirectory();
+      if (!selectedPath) {
+        return;
+      }
+      await switchToRoot(selectedPath);
+    } catch (e) {
+      console.error("Change path failed", e);
+      showToast("Error changing path");
+    }
+  };
+
+  /**
+   * 从「历史资源根」弹窗里选一个以前用过的根。语义与现选一个目录完全一致
+   * （同一条切库链路），只是目录已知、不再弹系统选择框。
+   */
+  const handleSwitchRoot = async (path: string) => {
+    await switchToRoot(path);
+  };
+
   return {
     handleOpenFolder,
     openKnownPath,
@@ -492,5 +520,6 @@ export const useDirectoryScan = ({
     handleRefresh,
     handleRefreshTags,
     handleChangePath,
+    handleSwitchRoot,
   };
 };

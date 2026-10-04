@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 import { Tag, X, Check, FileText, Save, Globe, ExternalLink } from 'lucide-react';
 import { FileNode, FileType } from '../../types';
+import { getSourceUrls } from '../../utils/sourceUrls';
 
 interface EditSectionProps {
     isMulti: boolean;
@@ -25,6 +26,11 @@ interface EditSectionProps {
     // Source URL
     source: string;
     onSourceChange: (value: string) => void;
+    /** 已保存的来源网址（P1(b)：可以有多条）。输入框里的 `source` 只是**新增用的草稿** */
+    sourceUrls: string[];
+    onRemoveSourceUrl: (url: string) => void;
+    /** 多选时按文件删一条 */
+    onRemoveSourceUrlOfFile: (fileId: string, url: string) => void;
     batchSource: string;
     onBatchSourceChange: (value: string) => void;
     isSourceMixed: boolean;
@@ -34,7 +40,15 @@ interface EditSectionProps {
     t: (key: string) => string;
 }
 
-const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNewTagInputChange, systemTags, onAddTag, onRemoveTag, onNavigateToTag, desc, onDescChange, batchDesc, onBatchDescChange, isDescMixed, showSavedDesc, textareaRef, source, onSourceChange, batchSource, onBatchSourceChange, isSourceMixed, showSavedSource, onUpdateMeta, t }: EditSectionProps) => {
+const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNewTagInputChange, systemTags, onAddTag, onRemoveTag, onNavigateToTag, desc, onDescChange, batchDesc, onBatchDescChange, isDescMixed, showSavedDesc, textareaRef, source, onSourceChange, sourceUrls, onRemoveSourceUrl, onRemoveSourceUrlOfFile, batchSource, onBatchSourceChange, isSourceMixed, showSavedSource, onUpdateMeta, t }: EditSectionProps) => {
+    // Tauri 的 webview 里 window.open 唤不起系统浏览器，必须走封装好的 open_external_link 命令。
+    const openUrl = (url: string) => {
+        if (!url) return;
+        import('../../api/tauri-bridge')
+            .then(({ openExternalLink }) => openExternalLink(url))
+            .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
+    };
+
     return (
         <>
             {/* Tags Section */}
@@ -159,15 +173,7 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                     />
                     {(isMulti ? batchSource : source) && (
                         <button
-                            onClick={() => {
-                                const url = isMulti ? batchSource : source;
-                                if (!url) return;
-                                // Tauri 的 webview 里 window.open 唤不起系统浏览器，
-                                // 必须走封装好的 open_external_link 命令。
-                                import('../../api/tauri-bridge')
-                                    .then(({ openExternalLink }) => openExternalLink(url))
-                                    .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
-                            }}
+                            onClick={() => openUrl(isMulti ? batchSource : source)}
                             className="p-2 text-gray-400 hover:text-blue-500"
                             title={t('meta.openSource')}
                         >
@@ -175,27 +181,59 @@ const EditSection = ({ isMulti, file, files, selectedFileIds, newTagInput, onNew
                         </button>
                     )}
                 </div>
+
+                {/* 已保存的来源网址：一张图可以有多条（P1(b)），逐条可打开、可删除。
+                    输入框里那条只是草稿，回车/失焦才是「加进来」。 */}
+                {!isMulti && sourceUrls.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                        {sourceUrls.map(url => (
+                            <div key={url} className="flex items-center gap-1 text-xs bg-surface/50 px-1.5 py-1 rounded group">
+                                <button
+                                    onClick={() => openUrl(url)}
+                                    className="truncate flex-1 text-left p-0 bg-transparent border-none text-blue-600 dark:text-blue-400 hover:underline"
+                                    title={url}
+                                >
+                                    {url}
+                                </button>
+                                <button
+                                    onClick={() => onRemoveSourceUrl(url)}
+                                    className="shrink-0 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title={t('meta.removeSource')}
+                                >
+                                    <X size={10} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 {isMulti && (
                     <div className="mt-3 space-y-2 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700 pr-1">
                         {selectedFileIds.map(id => {
                             const f = files[id];
-                            if (!f || !f.sourceUrl) return null;
+                            const urls = getSourceUrls(f);
+                            if (!f || urls.length === 0) return null;
                             return (
-                                <div key={id} className="flex items-center text-xs group bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
-                                    <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
-                                    <button
-                                        onClick={() => {
-                                            const url = f.sourceUrl;
-                                            if (!url) return;
-                                            import('../../api/tauri-bridge')
-                                                .then(({ openExternalLink }) => openExternalLink(url))
-                                                .catch((e) => console.error('[EditSection] 打开来源网址失败:', e));
-                                        }}
-                                        className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
-                                        title={f.sourceUrl}
-                                    >
-                                        {f.sourceUrl}
-                                    </button>
+                                <div key={id} className="bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
+                                    <div className="text-gray-500 dark:text-gray-400 text-xs truncate mb-1 font-medium" title={f.name}>{f.name}</div>
+                                    {urls.map(url => (
+                                        <div key={url} className="flex items-center gap-1 text-xs group">
+                                            <button
+                                                onClick={() => openUrl(url)}
+                                                className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
+                                                title={url}
+                                            >
+                                                {url}
+                                            </button>
+                                            <button
+                                                onClick={() => onRemoveSourceUrlOfFile(id, url)}
+                                                className="shrink-0 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                title={t('meta.removeSource')}
+                                            >
+                                                <X size={10} />
+                                            </button>
+                                        </div>
+                                    ))}
                                 </div>
                             );
                         })}

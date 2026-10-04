@@ -61,6 +61,9 @@ export const buildEmptyResult = (report: MigrationReport, t: (key: string) => st
  * 「已有内容 N 项未覆盖」这一栏不能省：本机 PixCall 有 5 条夹子备注、实际只写进 4 条
  * （NTE 夹我们侧已有内容必须让位），没有它就像丢了数据。
  * `hint` 挂到悬停提示上——要交代的后果留着，但不占版面。
+ *
+ * 来源网址单列一栏（P1(b)）：它现在是**追加**，命中「已有」的意思是
+ * 「这条我们本来就有，不重复加」，跟描述那种「让位不覆盖」不是一回事，不能并成一句。
  */
 export interface ReportNote {
   text: string;
@@ -71,8 +74,10 @@ export interface ReportNote {
 
 export const buildReportNotes = (report: MigrationReport, t: (key: string) => string): ReportNote[] => {
   const notes: ReportNote[] = [];
-  const yielded = report.descriptionsSkippedExisting + report.sourceUrlsSkippedExisting;
-  if (yielded > 0) notes.push({ text: fillTemplate(t('import.noteExisting'), { count: yielded }) });
+  if (report.descriptionsSkippedExisting > 0)
+    notes.push({ text: fillTemplate(t('import.noteExisting'), { count: report.descriptionsSkippedExisting }) });
+  if (report.sourceUrlsSkippedExisting > 0)
+    notes.push({ text: fillTemplate(t('import.noteLinksExisting'), { count: report.sourceUrlsSkippedExisting }) });
   if (report.topicsMergedName > 0)
     notes.push({ text: fillTemplate(t('import.noteMerged'), { count: report.topicsMergedName }) });
   if (report.unmatched > 0) {

@@ -23,7 +23,11 @@ pub struct MetadataItem {
     pub path: String,
     pub tags: Vec<String>,
     pub description: String,
+    /// 第一条来源网址（旧客户端读这个字段）。多值在 `source_urls`。
     pub source_url: String,
+    /// 全部来源网址（P1(b)）。旧客户端忽略这个字段即可，不受影响。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_urls: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,15 +41,19 @@ pub struct MetadataPatchRequest {
     pub patch: MetadataPatch,
 }
 
-/// patch 三字段全可选，缺省（或 null）= 不改。tags: [] 是显式清空。
+/// patch 字段全可选，缺省（或 null）= 不改。tags: [] 是显式清空。
 #[derive(Debug, Default, Deserialize)]
 pub struct MetadataPatch {
     #[serde(default)]
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub description: Option<String>,
+    /// 旧的单值写法：写了就当「覆盖成只有这一条」（与改之前的语义一致）。
     #[serde(default)]
     pub source_url: Option<String>,
+    /// 新的多值写法（P1(b)）：整体覆盖。`[]` = 清空。与 `source_url` 同时给时以它为准。
+    #[serde(default)]
+    pub source_urls: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +124,7 @@ pub fn merge_metadata_patch(
         tags: None,
         description: None,
         source_url: None,
+        source_urls: None,
         ai_data: None,
         category: None,
         updated_at: None,
@@ -127,8 +136,11 @@ pub fn merge_metadata_patch(
     if let Some(description) = &patch.description {
         row.description = Some(description.clone());
     }
-    if let Some(source_url) = &patch.source_url {
-        row.source_url = Some(source_url.clone());
+    // 多值优先；只有旧的单值字段时按「覆盖成只有这一条」处理（与改之前的语义一致）
+    if let Some(urls) = &patch.source_urls {
+        row.set_source_urls(urls.clone());
+    } else if let Some(source_url) = &patch.source_url {
+        row.set_source_urls(vec![source_url.clone()]);
     }
     row.updated_at = Some(now);
     row
@@ -142,11 +154,13 @@ pub fn metadata_to_item(path: &str, m: &FileMetadata) -> MetadataItem {
         .as_ref()
         .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
         .unwrap_or_default();
+    let source_urls = m.source_urls();
     MetadataItem {
         path: path.to_string(),
         tags,
         description: m.description.clone().unwrap_or_default(),
-        source_url: m.source_url.clone().unwrap_or_default(),
+        source_url: source_urls.first().cloned().unwrap_or_default(),
+        source_urls,
     }
 }
 
@@ -189,6 +203,7 @@ mod tests {
             tags: Some(serde_json::json!(["fps", "四人"])),
             description: Some("旧描述".into()),
             source_url: Some("https://old".into()),
+            source_urls: None,
             ai_data: Some(serde_json::json!({"wd14": ["fps"]})),
             category: Some("game".into()),
             updated_at: Some(1000),
@@ -202,6 +217,7 @@ mod tests {
             tags: None,
             description: Some("新描述".into()),
             source_url: None,
+            source_urls: None,
         };
         let merged = merge_metadata_patch(Some(existing_row()), "abc123456", "N:/shots/a.png", &patch);
 
@@ -223,6 +239,7 @@ mod tests {
             tags: Some(vec!["新词".into()]),
             description: None,
             source_url: None,
+            source_urls: None,
         };
         let merged = merge_metadata_patch(Some(existing_row()), "abc123456", "N:/shots/a.png", &patch);
 
@@ -241,6 +258,7 @@ mod tests {
             tags: Some(vec![]),
             description: None,
             source_url: None,
+            source_urls: None,
         };
         let merged = merge_metadata_patch(Some(existing_row()), "abc123456", "N:/shots/a.png", &patch);
         assert_eq!(merged.tags, Some(serde_json::json!([])));
@@ -254,6 +272,7 @@ mod tests {
             tags: None,
             description: Some("d".into()),
             source_url: None,
+            source_urls: None,
         };
         let merged = merge_metadata_patch(None, "fff000111", "N:/shots/b.png", &patch);
 
@@ -279,6 +298,29 @@ mod tests {
         assert_eq!(patch.source_url.as_deref(), Some("https://x"));
     }
 
+    /// P1(b)：LAN patch 的 `source_urls` 整体覆盖来源网址，旧字段 `source_url` 同步成第一条。
+    #[test]
+    fn patch_source_urls_replaces_the_whole_list() {
+        let patch: MetadataPatch =
+            serde_json::from_str(r#"{"source_urls": ["https://a", "https://b"]}"#).unwrap();
+        let merged = merge_metadata_patch(Some(existing_row()), "abc123456", "N:/shots/a.png", &patch);
+
+        assert_eq!(merged.source_urls(), vec!["https://a", "https://b"], "旧的 https://old 被整体覆盖");
+        assert_eq!(merged.source_url.as_deref(), Some("https://a"), "老客户端读的 source_url = 第一条");
+
+        let item = metadata_to_item("Apex/a.png", &merged);
+        assert_eq!(item.source_url, "https://a");
+        assert_eq!(item.source_urls, vec!["https://a".to_string(), "https://b".to_string()]);
+    }
+
+    /// 旧客户端只给单值 `source_url`：语义与改之前一致（覆盖成只有这一条），不报错。
+    #[test]
+    fn patch_legacy_single_source_url_overwrites_the_list() {
+        let patch: MetadataPatch = serde_json::from_str(r#"{"source_url": "https://new"}"#).unwrap();
+        let merged = merge_metadata_patch(Some(existing_row()), "abc123456", "N:/shots/a.png", &patch);
+        assert_eq!(merged.source_urls(), vec!["https://new"]);
+    }
+
     /// metadata_to_item：查不到的行给空默认；非数组 tags 兜底空数组。
     #[test]
     fn item_defaults_for_missing_values() {
@@ -288,6 +330,7 @@ mod tests {
             tags: None,
             description: None,
             source_url: None,
+            source_urls: None,
             ai_data: None,
             category: None,
             updated_at: None,

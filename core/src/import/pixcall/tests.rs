@@ -143,6 +143,7 @@ fn our_conn() -> Connection {
             tags: Some(serde_json::json!(["test2"])),
             description: Some("我自己写的描述".into()),
             source_url: None,
+            source_urls: None,
             ai_data: None,
             category: None,
             updated_at: Some(1),
@@ -241,9 +242,78 @@ fn descriptions_are_trimmed_and_existing_content_wins() {
 fn source_links_are_copied_verbatim() {
     let p = plan();
     let a = p.edits.iter().find(|e| e.file_id == "fa").unwrap();
-    assert_eq!(a.source_url.as_deref(), Some("https://x.com/a"));
+    assert_eq!(a.source_urls.as_deref(), Some(["https://x.com/a".to_string()].as_slice()));
     assert_eq!(p.report.source_urls_written, 1);
     assert_eq!(p.report.source_urls_skipped_existing, 0);
+}
+
+/// 在 fa 上预置一条我们自己的来源网址，再对同一份源库夹具做计划。
+fn plan_with_existing_source_urls(urls: Vec<String>) -> (Connection, MigrationPlan) {
+    let our = our_conn();
+    file_metadata::upsert_file_metadata(
+        &our,
+        &FileMetadata {
+            file_id: "fa".into(),
+            path: "C:/Pix/Games/a.png".into(),
+            tags: None,
+            description: None,
+            source_url: None,
+            source_urls: Some(urls),
+            ai_data: None,
+            category: None,
+            updated_at: Some(1),
+        },
+    )
+    .unwrap();
+    let src = source_conn();
+    let source = read_from(&src, None).unwrap();
+    let index = OurIndex::load(&our).unwrap();
+    let plan = build_plan(&source, ROOT, &index, &our, "22").unwrap();
+    (our, plan)
+}
+
+/// P1(b)：我们已有来源网址时**不是让位**，而是把源侧那条追加到后面。
+#[test]
+fn source_links_append_to_what_we_already_have() {
+    let (our, p) = plan_with_existing_source_urls(vec!["https://ours.example/1".into()]);
+    let a = p.edits.iter().find(|e| e.file_id == "fa").unwrap();
+    assert_eq!(
+        a.source_urls.as_deref(),
+        Some(["https://ours.example/1".to_string(), "https://x.com/a".to_string()].as_slice())
+    );
+    assert_eq!(p.report.source_urls_written, 1, "我们已有的不动，源侧那条算新增");
+    assert_eq!(p.report.source_urls_skipped_existing, 0);
+
+    // 落库后读回来是两条
+    apply_plan(&our, &p, 100, None).unwrap();
+    let after = file_metadata::get_metadata_by_id(&our, "fa").unwrap().unwrap();
+    assert_eq!(after.source_urls(), vec!["https://ours.example/1", "https://x.com/a"]);
+}
+
+/// P1(b)：源侧那条我们已经有了 → 不重复添加，计 skipped。
+#[test]
+fn a_source_link_we_already_have_is_not_added_twice() {
+    let (_our, p) = plan_with_existing_source_urls(vec!["https://x.com/a".into()]);
+    assert_eq!(p.report.source_urls_written, 0);
+    assert_eq!(p.report.source_urls_skipped_existing, 1);
+    assert!(
+        p.edits.iter().all(|e| e.file_id != "fa" || e.source_urls.is_none()),
+        "源侧那条已存在，fa 上不该有来源网址的变更"
+    );
+}
+
+/// 旧行是裸网址（改之前写的），读出来必须等价成「只有一个元素的数组」——零迁移的依据。
+#[test]
+fn a_legacy_plain_source_url_reads_as_a_one_element_list() {
+    let c = our_conn();
+    c.execute(
+        "INSERT INTO file_metadata (file_id, path, source_url) VALUES ('f1', 'C:/a.png', 'https://legacy.example/x')",
+        [],
+    )
+    .unwrap();
+    let row = file_metadata::get_metadata_by_id(&c, "f1").unwrap().unwrap();
+    assert_eq!(row.source_urls(), vec!["https://legacy.example/x"]);
+    assert_eq!(row.source_url.as_deref(), Some("https://legacy.example/x"));
 }
 
 /// §4.9 第 2 条：视频标注今天「已解码、暂不落地」，代价要在报告里可见。

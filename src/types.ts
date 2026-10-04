@@ -60,7 +60,10 @@ export interface FileNode {
   previewUrl?: string;
   tags: string[];
   description?: string;
+  /** 第一条来源网址（= `sourceUrls[0]`），给只读场景与老代码用 */
   sourceUrl?: string;
+  /** 全部来源网址（P1(b)：一张图可以有多个）。顺序即 UI 显示顺序 */
+  sourceUrls?: string[];
   meta?: ImageMeta;
   aiData?: AiData;
 
@@ -417,6 +420,8 @@ export interface AppSettings {
   paths: {
     resourceRoot: string;
     cacheRoot: string;
+    /** 历史资源根（最近的在前）。切根即换库，留一份列表让用户可以切回去。 */
+    rootHistory?: string[];
   };
   search: SearchSettings;
   ai: AIConfig;

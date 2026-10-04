@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { FileNode, FileType } from '../../types';
+import { normalizeSourceUrls } from '../../utils/sourceUrls';
 
 /**
  * Tauri API Bridge
@@ -31,6 +32,8 @@ interface RustFileNode {
   } | null;
   description?: string | null;
   sourceUrl?: string | null;
+  /** 全部来源网址（P1(b)）。缺省或空 = 没有来源网址 */
+  sourceUrls?: string[] | null;
   category?: string | null;     // <--- ADDED THIS FIELD
   aiData?: any | null;
 }
@@ -80,6 +83,7 @@ export const scanDirectory = async (
         // Map persistent fields from backend
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
+        sourceUrls: normalizeSourceUrls(node.sourceUrls, node.sourceUrl),
         category: (node.category === 'general' || node.category === 'book' || node.category === 'sequence') ? node.category : undefined,
         aiData: node.aiData || undefined,
 
@@ -158,6 +162,7 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
+        sourceUrls: normalizeSourceUrls(node.sourceUrls, node.sourceUrl),
         aiData: node.aiData || undefined,
       };
 
@@ -478,6 +483,7 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
       } : undefined,
       description: rustFile.description || undefined,
       sourceUrl: rustFile.sourceUrl || undefined,
+      sourceUrls: normalizeSourceUrls(rustFile.sourceUrls, rustFile.sourceUrl),
       aiData: rustFile.aiData || undefined,
     };
   } catch (error) {

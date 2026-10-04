@@ -20,6 +20,7 @@ import AIAnalysisSection from './metadata/AIAnalysisSection';
 import EditSection from './metadata/EditSection';
 import { findImagesDeeply } from '../utils/fileTree';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { getSourceUrls, appendSourceUrl, removeSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
 
 
@@ -245,7 +246,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         if (file) {
             setName(file.name);
             setDesc(file.description || '');
-            setSource(file.sourceUrl || '');
+            // 来源网址是多值（P1(b)）：输入框只负责「再加一条」，已保存的那些在列表里，
+            // 所以草稿一律从空开始，不再把第一条灌进输入框当编辑对象。
+            setSource('');
 
             // 当文件选中时，如果元数据缺失（如尺寸为 0），尝试重新扫描单个文件以获取最新信息
             if (!isMulti && file.type === FileType.IMAGE && file.path) {
@@ -268,15 +271,16 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             /* ... (existing multi-select logic) ... */
             const selectedNodes = selectedFileIds.map(id => files[id]).filter(Boolean);
             const firstDesc = selectedNodes[0]?.description || '';
-            const firstSource = selectedNodes[0]?.sourceUrl || '';
+            const firstSourceKey = getSourceUrls(selectedNodes[0]).join('\n');
 
             const descMixed = selectedNodes.some(n => (n.description || '') !== firstDesc);
-            const sourceMixed = selectedNodes.some(n => (n.sourceUrl || '') !== firstSource);
+            const sourceMixed = selectedNodes.some(n => getSourceUrls(n).join('\n') !== firstSourceKey);
 
             setIsDescMixed(descMixed);
             setIsSourceMixed(sourceMixed);
             setBatchDesc(descMixed ? '' : firstDesc);
-            setBatchSource(sourceMixed ? '' : firstSource);
+            // 多选时输入框同样是「给每个选中文件再加一条」，默认空着
+            setBatchSource('');
         } else {
             setName('');
             setDesc('');
@@ -725,18 +729,24 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     updates.description = batchDesc;
                     descChanged = true;
                 }
-                if (!isSourceMixed && batchSource && batchSource !== (f.sourceUrl || '')) {
-                    updates.sourceUrl = batchSource;
+                // 多选时的来源网址是**追加**：每个文件自己那份都不动，只把输入框这条加进去
+                const draft = (batchSource || '').trim();
+                if (!isSourceMixed && draft && !getSourceUrls(f).includes(draft)) {
+                    Object.assign(updates, toSourceUrlFields(appendSourceUrl(getSourceUrls(f), draft)));
                     sourceChanged = true;
                 }
                 if (Object.keys(updates).length > 0) onUpdate(id, updates);
             });
+            if (sourceChanged) setBatchSource('');
         } else if (file) {
+            const draft = (source || '').trim();
             if (desc !== (file.description || '')) descChanged = true;
-            if (source !== (file.sourceUrl || '')) sourceChanged = true;
+            if (draft && !getSourceUrls(file).includes(draft)) sourceChanged = true;
             if (descChanged || sourceChanged) {
-                onUpdate(file.id, { name, description: desc, sourceUrl: source });
+                const nextUrls = sourceChanged ? appendSourceUrl(getSourceUrls(file), draft) : getSourceUrls(file);
+                onUpdate(file.id, { name, description: desc, ...toSourceUrlFields(nextUrls) });
             }
+            if (sourceChanged) setSource('');
         }
 
         if (descChanged) setShowSavedDesc(true);
@@ -747,6 +757,19 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 setShowSavedSource(false);
             }, 2000);
         }
+    };
+
+    /** 删掉当前文件的一条来源网址。 */
+    const handleRemoveSourceUrl = (url: string) => {
+        if (!file) return;
+        onUpdate(file.id, toSourceUrlFields(removeSourceUrl(getSourceUrls(file), url)));
+    };
+
+    /** 多选时删掉某个文件的一条来源网址。 */
+    const handleRemoveSourceUrlOfFile = (fileId: string, url: string) => {
+        const f = files[fileId];
+        if (!f) return;
+        onUpdate(fileId, toSourceUrlFields(removeSourceUrl(getSourceUrls(f), url)));
     };
 
     const handleUpdatePersonMeta = () => {
@@ -1657,6 +1680,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     textareaRef={textareaRef}
                     source={source}
                     onSourceChange={setSource}
+                    sourceUrls={getSourceUrls(file)}
+                    onRemoveSourceUrl={handleRemoveSourceUrl}
+                    onRemoveSourceUrlOfFile={handleRemoveSourceUrlOfFile}
                     batchSource={batchSource}
                     onBatchSourceChange={setBatchSource}
                     isSourceMixed={isSourceMixed}

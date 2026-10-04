@@ -186,6 +186,7 @@ pub async fn handle_metadata_batch(
         tags: Vec::new(),
         description: String::new(),
         source_url: String::new(),
+        source_urls: Vec::new(),
     };
 
     let items = if let Some(pool) = state.db_pool.clone() {

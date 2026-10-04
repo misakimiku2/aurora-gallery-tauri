@@ -10,6 +10,7 @@ import { info as logInfo, debug as logDebug } from '../utils/logger';
 import { asyncPool } from '../utils/async';
 import { FileNode, FileType, TabState, DeletionTask, AppState } from '../types';
 import { isTauriEnvironment } from '../utils/environment';
+import { getSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 import md5 from 'md5';
 
 interface UseFileOperationsProps {
@@ -200,7 +201,7 @@ export const useFileOperations = ({
                 description: existingFile.description,
                 url: existingFile.url,
                 aiData: existingFile.aiData,
-                sourceUrl: existingFile.sourceUrl,
+                ...toSourceUrlFields(getSourceUrls(existingFile)),
                 author: existingFile.author,
                 category: existingFile.category
               };

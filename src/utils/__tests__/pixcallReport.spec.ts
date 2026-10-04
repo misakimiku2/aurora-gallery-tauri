@@ -14,6 +14,7 @@ const templates: Record<string, string> = {
   'import.statTags': '标签',
   'import.statDescriptions': '描述',
   'import.noteExisting': '已有内容 {count} 项未覆盖',
+  'import.noteLinksExisting': '来源网址 {count} 条我们已有，未重复添加',
   'import.noteTrash': '回收站 {count} 条未迁（仍在 PixCall 中）',
   'import.noteVideo': '视频标注 {count} 条未导入',
   'import.noteVideoHint': '支持视频后重新导入即可补齐',
@@ -85,12 +86,26 @@ describe('buildReportStats', () => {
 });
 
 describe('buildReportNotes', () => {
-  it('让位是描述与来源链接两栏之和（§10 偏差 3）', () => {
+  it('描述让位单独一栏（§10 偏差 3）', () => {
+    const notes = buildReportNotes(makeReport({ descriptionsSkippedExisting: 1 }), t);
+    expect(notes[0].text).toBe('已有内容 1 项未覆盖');
+  });
+
+  // P1(b)：来源网址改成追加，命中「已有」不再等于「让位未覆盖」，两栏分开记
+  it('来源网址已有的是追加语义，不与描述的让位并成一栏', () => {
+    const notes = buildReportNotes(makeReport({ sourceUrlsSkippedExisting: 2 }), t);
+    expect(notes[0].text).toBe('来源网址 2 条我们已有，未重复添加');
+  });
+
+  it('两栏同时有值时各记一条', () => {
     const notes = buildReportNotes(
       makeReport({ descriptionsSkippedExisting: 1, sourceUrlsSkippedExisting: 2 }),
       t
     );
-    expect(notes[0].text).toBe('已有内容 3 项未覆盖');
+    expect(notes.map(n => n.text)).toEqual([
+      '已有内容 1 项未覆盖',
+      '来源网址 2 条我们已有，未重复添加',
+    ]);
   });
 
   it('回收站与视频各一栏，视频的后果挂在悬停提示上（§4.9 第 2 条不许静默丢弃）', () => {

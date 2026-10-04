@@ -8,6 +8,8 @@ import { performanceMonitor } from '../utils/performanceMonitor';
 import { setScrollProfilerEnabled } from '../utils/scrollProfiler';
 import { memoryPressureMonitor } from '../utils/memoryPressureMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { pushRootHistory } from '../utils/rootHistory';
+import { getSourceUrls } from '../utils/sourceUrls';
 import { aiService } from '../services/aiService';
 import { setGlobalCacheRoot, setAndroidPlatform } from '../api/tauri-bridge';
 import {
@@ -165,6 +167,15 @@ export const useAppInit = ({
               if (!isAndroidNow && finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
                 const sep = finalSettings.paths.resourceRoot.includes('\\') ? '\\' : '/';
                 finalSettings.paths.cacheRoot = `${finalSettings.paths.resourceRoot}${sep}.Aurora_Cache`;
+              }
+
+              // 历史资源根（P3）：把本次启动用的这个根也并进历史，用户切走之后还能切回来。
+              // 只有桌面端有「切根」这回事（安卓是 MediaStore 单根），故限定非安卓。
+              if (!isAndroidNow && finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
+                finalSettings.paths.rootHistory = pushRootHistory(
+                  finalSettings.paths.rootHistory,
+                  finalSettings.paths.resourceRoot
+                );
               }
 
               let peopleData = savedData.people || {};
@@ -565,7 +576,15 @@ export const useAppInit = ({
 
                     if ((!f.tags || f.tags.length === 0) && saved.tags) f.tags = saved.tags;
                     if (!f.description && saved.description) f.description = saved.description;
-                    if (!f.sourceUrl && saved.sourceUrl) f.sourceUrl = saved.sourceUrl;
+                    // 来源网址是多值（P1(b)）：一份旧的快照里可能只有首项，
+                    // 只在「这条一条都没有」时补，已有的不动。
+                    if (getSourceUrls(f).length === 0) {
+                      const savedUrls = getSourceUrls(saved);
+                      if (savedUrls.length > 0) {
+                        f.sourceUrls = savedUrls;
+                        f.sourceUrl = savedUrls[0];
+                      }
+                    }
                     if (!f.aiData && saved.aiData) f.aiData = saved.aiData;
                     if (!f.category && saved.category) f.category = saved.category;
 

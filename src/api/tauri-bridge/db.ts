@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from '../../utils/environment';
+import { normalizeSourceUrls } from '../../utils/sourceUrls';
 
 /**
  * 更新或插入文件元数据到数据库
@@ -10,7 +11,10 @@ export const dbUpsertFileMetadata = async (metadata: {
   path: string;
   tags?: string[];
   description?: string;
+  /** 第一条来源网址（= `sourceUrls[0]`）；同时给了 `sourceUrls` 时以后者为准 */
   sourceUrl?: string;
+  /** 全部来源网址（P1(b)）。给 `[]` = 清空 */
+  sourceUrls?: string[];
   category?: string;
   aiData?: any;
   updatedAt?: number;
@@ -33,6 +37,7 @@ export const dbGetAllFileMetadata = async (): Promise<Array<{
   tags?: string[];
   description?: string;
   sourceUrl?: string;
+  sourceUrls?: string[];
   category?: string;
   aiData?: any;
   updatedAt?: number;
@@ -44,6 +49,7 @@ export const dbGetAllFileMetadata = async (): Promise<Array<{
       tags?: any;
       description?: string;
       sourceUrl?: string;
+      sourceUrls?: string[];
       category?: string;
       aiData?: any;
       updatedAt?: number;
@@ -55,6 +61,8 @@ export const dbGetAllFileMetadata = async (): Promise<Array<{
       tags: item.tags ? (typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags) : undefined,
       description: item.description,
       sourceUrl: item.sourceUrl,
+      // Rust 侧读库时已经把列解释成数组；`sourceUrl` 只是它的首项（给老读者）
+      sourceUrls: normalizeSourceUrls(item.sourceUrls, item.sourceUrl),
       category: item.category,
       aiData: item.aiData,
       updatedAt: item.updatedAt,

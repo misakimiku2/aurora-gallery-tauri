@@ -49,7 +49,9 @@ pub struct MigrationReport {
     pub descriptions_written: u32,
     /// 因我们侧已非空而让位的条数（§3 的 NTE 夹就是这个用例）
     pub descriptions_skipped_existing: u32,
+    /// 追加进来的来源网址条数（P1(b)：我们已有的不动，只把源侧多出来的那条加到后面）
     pub source_urls_written: u32,
+    /// 源侧那条网址我们已经有了、不重复添加的条数
     pub source_urls_skipped_existing: u32,
     /// 新建专题数（不含并到已有专题的那些）
     pub topics_created: u32,
@@ -94,7 +96,7 @@ pub struct TrashItem {
 
 /// 一条待写入的 `file_metadata` 变更。
 ///
-/// `tags` / `description` / `source_url` 都是**合并后的最终值**，None 表示这一列不动。
+/// `tags` / `description` / `source_urls` 都是**合并后的最终值**，None 表示这一列不动。
 /// 之所以在计划阶段就把最终值算好，是为了让 probe 的预览计数与 import 的实际写入
 /// 出自同一次计算（§6.2 末：两次读取之间源库被写，预览条数就会和实际导入条数对不上）。
 #[derive(Debug, Clone)]
@@ -103,7 +105,8 @@ pub struct AnnotationEdit {
     pub path: String,
     pub tags: Option<Vec<String>>,
     pub description: Option<String>,
-    pub source_url: Option<String>,
+    /// 合并后的**完整**来源网址列表（P1(b)：我们已有的保留，PixCall 的那条追加在后面）。
+    pub source_urls: Option<Vec<String>>,
 }
 
 /// 一个待落库的专题。`materialized` = 由智能看板固化出来的快照专题；
@@ -316,6 +319,7 @@ fn apply_edit(conn: &Connection, edit: &AnnotationEdit, now: i64) -> Result<()> 
             tags: None,
             description: None,
             source_url: None,
+            source_urls: None,
             ai_data: None,
             category: None,
             updated_at: None,
@@ -329,8 +333,8 @@ fn apply_edit(conn: &Connection, edit: &AnnotationEdit, now: i64) -> Result<()> 
     if edit.description.is_some() {
         row.description = edit.description.clone();
     }
-    if edit.source_url.is_some() {
-        row.source_url = edit.source_url.clone();
+    if let Some(urls) = &edit.source_urls {
+        row.set_source_urls(urls.clone());
     }
     row.path = edit.path.clone();
     row.updated_at = Some(now);

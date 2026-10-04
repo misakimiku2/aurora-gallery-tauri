@@ -118,6 +118,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     )?;
 
     // Create file_metadata table
+    // 约定（P1(b)，设计方案 §4 W2）：`source_url` 存的是 **JSON 数组文本**（一张图可有多个
+    // 来源网址），与 `tags` 同形态；改之前写的裸网址仍能被 `parse_source_urls` 读成单元素
+    // 数组，所以不需要数据迁移。多值读写一律走 `FileMetadata::source_urls/set_source_urls`。
     conn.execute(
         "CREATE TABLE IF NOT EXISTS file_metadata (
             file_id TEXT PRIMARY KEY,

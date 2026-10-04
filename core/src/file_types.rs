@@ -52,7 +52,11 @@ pub struct FileNode {
     pub url: Option<String>,
     pub meta: Option<ImageMeta>,
     pub description: Option<String>,
+    /// 第一条来源网址（给老读者用，= `source_urls[0]`）。
     pub source_url: Option<String>,
+    /// 全部来源网址（P1(b)：一张图可以有多个）。与 `source_url` 同源，后者是它的首项。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_urls: Option<Vec<String>>,
     pub category: Option<String>,
     pub ai_data: Option<serde_json::Value>,
 }

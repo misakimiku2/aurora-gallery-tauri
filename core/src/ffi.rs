@@ -277,11 +277,13 @@ pub struct FileTags {
 
 impl From<db::file_metadata::FileMetadata> for FfiFileMetadata {
     fn from(m: db::file_metadata::FileMetadata) -> Self {
+        // FFI 契约仍是单值（安卓侧本轮不动）：取第一条
+        let source_url = m.source_urls().first().cloned();
         FfiFileMetadata {
             file_id: m.file_id,
             path: m.path,
             description: m.description,
-            source_url: m.source_url,
+            source_url,
             ai_data: m.ai_data.map(|v| v.to_string()),
             category: m.category,
             updated_at: m.updated_at,
@@ -298,7 +300,9 @@ impl From<FfiFileMetadata> for db::file_metadata::FileMetadata {
             // 整行 upsert 把别处写过的 JSON 值带回来当第二份数据。
             tags: None,
             description: m.description,
-            source_url: m.source_url,
+            // 安卓侧写进来的单条网址，按新约定落成「只有一个元素的数组」
+            source_url: m.source_url.clone(),
+            source_urls: m.source_url.map(|s| vec![s]),
             ai_data: m.ai_data.as_deref().and_then(|s| serde_json::from_str(s).ok()),
             category: m.category,
             updated_at: m.updated_at,
@@ -832,6 +836,7 @@ mod tests {
             tags,
             description: Some("一句描述".into()),
             source_url: Some("https://example.com".into()),
+            source_urls: None,
             ai_data: Some(serde_json::json!({"wd14": ["a", 1], "嵌套": {"k": [1, 2]}})),
             category: Some("插画".into()),
             updated_at: Some(1_700_000_000),
@@ -849,6 +854,8 @@ mod tests {
         assert_eq!(back.path, original.path);
         assert_eq!(back.description, original.description);
         assert_eq!(back.source_url, original.source_url);
+        // 多值那一层也要原样回来（P1(b)：单值行等价于「只有一个元素的数组」）
+        assert_eq!(back.source_urls(), original.source_urls());
         assert_eq!(back.ai_data, original.ai_data);
         assert_eq!(back.category, original.category);
         assert_eq!(back.updated_at, original.updated_at);

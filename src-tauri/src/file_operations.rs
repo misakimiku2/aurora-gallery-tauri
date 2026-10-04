@@ -94,6 +94,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             meta: None,
             description: None,
             source_url: None,
+            source_urls: None,
             category: None,
             ai_data: None,
         }
@@ -154,6 +155,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             }),
             description: None,
             source_url: None,
+            source_urls: None,
             category: None,
             ai_data: None,
         };
@@ -201,6 +203,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             meta: None,
             description: None,
             source_url: None,
+            source_urls: None,
             category: None,
             ai_data: None,
         }
@@ -216,7 +219,9 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 }
             }
             result_node.description = meta.description.clone();
-            result_node.source_url = meta.source_url.clone();
+            let urls = meta.source_urls();
+            result_node.source_url = urls.first().cloned();
+            result_node.source_urls = if urls.is_empty() { None } else { Some(urls) };
             result_node.category = meta.category.clone();
             result_node.ai_data = meta.ai_data.clone();
         }

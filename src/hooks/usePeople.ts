@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { AppState, Person, AiFace, FileType, TabState, PersonSortOption, SortDirection } from '../types';
 import { dbUpsertPerson, dbDeletePerson, dbUpsertFileMetadata } from '../api/tauri-bridge';
+import { getSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 
 interface UsePeopleProps {
   state: AppState;
@@ -239,7 +240,8 @@ export const usePeople = ({
             path: file.path,
             tags: file.tags,
             description: file.description,
-            sourceUrl: file.sourceUrl,
+            // 来源网址是多值（P1(b)）：整行写回必须带上数组，只给首项会把其余几条写没
+            ...toSourceUrlFields(getSourceUrls(file)),
             category: file.category,
             aiData: file.aiData,
             updatedAt: Date.now()

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { AppState, TabState } from '../types';
 import { dbUpsertFileMetadata } from '../api/tauri-bridge';
 import { info as logInfo } from '../utils/logger';
+import { getSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 
 interface UseTagsProps {
   state: AppState;
@@ -57,7 +58,8 @@ export const useTags = ({
             path: file.path,
             tags: file.tags,
             description: file.description,
-            sourceUrl: file.sourceUrl,
+            // 来源网址是多值（P1(b)）：整行写回必须带上数组，只给首项会把其余几条写没
+            ...toSourceUrlFields(getSourceUrls(file)),
             category: file.category,
             aiData: file.aiData,
             updatedAt: Date.now()
@@ -103,7 +105,8 @@ export const useTags = ({
             path: file.path,
             tags: file.tags,
             description: file.description,
-            sourceUrl: file.sourceUrl,
+            // 来源网址是多值（P1(b)）：整行写回必须带上数组，只给首项会把其余几条写没
+            ...toSourceUrlFields(getSourceUrls(file)),
             category: file.category,
             aiData: file.aiData,
             updatedAt: Date.now()
@@ -204,7 +207,8 @@ export const useTags = ({
             path: file.path,
             tags: file.tags,
             description: file.description,
-            sourceUrl: file.sourceUrl,
+            // 来源网址是多值（P1(b)）：整行写回必须带上数组，只给首项会把其余几条写没
+            ...toSourceUrlFields(getSourceUrls(file)),
             category: file.category,
             aiData: file.aiData,
             updatedAt: Date.now()
