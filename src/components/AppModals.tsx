@@ -72,6 +72,8 @@ interface AppModalsProps {
   setRememberExitChoice: (val: boolean) => void;
   // Settings specific
   handleChangePath: (type: 'resource' | 'cache') => void | Promise<void>;
+  /** 历史资源根：选中以前用过的根后切过去（P3） */
+  handleSwitchRoot?: (path: string) => void | Promise<void>;
   // Welcome specific
   showWelcome: boolean;
   handleWelcomeFinish: () => void;
@@ -141,6 +143,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   rememberExitChoice,
   setRememberExitChoice,
   handleChangePath,
+  handleSwitchRoot,
   showWelcome,
   handleWelcomeFinish,
   handleOpenFolder,
@@ -599,6 +602,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
             });
           }}
           onUpdatePath={handleChangePath}
+          onSwitchRoot={handleSwitchRoot}
           onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))}
           onClipEnabledChange={handleClipEnabledChange}
           clipLoading={clipLoading}

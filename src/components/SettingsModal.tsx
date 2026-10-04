@@ -19,6 +19,8 @@ interface SettingsModalProps {
   onUpdateSettings: (updates: Partial<AppState>) => void;
   onUpdateSettingsData: (updates: Partial<AppSettings>) => void;
   onUpdatePath: (type: 'resource') => void;
+  /** 历史资源根：选中以前用过的根后切过去（P3） */
+  onSwitchRoot?: (path: string) => void;
   t: (key: string) => string;
   onUpdateAIConnectionStatus: (status: 'checking' | 'connected' | 'disconnected') => void;
   onClipEnabledChange?: (enabled: boolean) => void;
@@ -35,7 +37,7 @@ interface SettingsModalProps {
   onNavigateToFile?: (filePath: string) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onSwitchRoot, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile }) => {
   const [isAndroid, setIsAndroid] = useState(false);
   // 设置面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   const settingsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -145,6 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               isAndroid={isAndroid}
               onUpdateSettings={onUpdateSettings}
               onUpdatePath={onUpdatePath}
+              onSwitchRoot={onSwitchRoot}
               onClose={onClose}
               onShowToast={onShowToast}
               onRefresh={onRefresh}

@@ -28,6 +28,7 @@ import {
   writeFileFromBytes,
 } from '../../api/tauri-bridge';
 import { getGlobalCache, getThumbnailPathCache } from '../../utils/thumbnailCache';
+import { isSameRootPath, rootDisplayName } from '../../utils/rootHistory';
 import { formatFileSize, formatEstimatedTimeMs } from './utils';
 import { ROW_CLASS, ROW_ICON_CLASS } from './constants';
 import PixcallImportSection from './PixcallImportSection';
@@ -40,13 +41,15 @@ interface StoragePanelProps {
   isAndroid: boolean;
   onUpdateSettings: (updates: Partial<AppState>) => void;
   onUpdatePath: (type: 'resource') => void;
+  /** 从「历史资源根」弹窗里选中一个根后调用（P3）。与现选一个目录走同一条切库链路。 */
+  onSwitchRoot?: (path: string) => void;
   onClose: () => void;
   onShowToast?: (msg: string, duration?: number) => void;
   onRefresh?: () => void;
   onNavigateToFile?: (filePath: string) => void;
 }
 
-const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onClose, onShowToast, onRefresh, onNavigateToFile }) => {
+const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onSwitchRoot, onClose, onShowToast, onRefresh, onNavigateToFile }) => {
   // Color database management state
   const [colorDbStats, setColorDbStats] = useState<ColorDbStats | null>(null);
   const [errorFiles, setErrorFiles] = useState<ColorDbErrorFile[]>([]);
@@ -58,6 +61,31 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
   // Corrupted files management state
   const [previewFile, setPreviewFile] = useState<ColorDbErrorFile | null>(null);
   const [previewError, setPreviewError] = useState(false);
+
+  // 历史资源根弹窗（P3）：切根即换库，把以前用过的根列出来供切回
+  const [showRootHistory, setShowRootHistory] = useState(false);
+  const [selectedHistoryRoot, setSelectedHistoryRoot] = useState<string | null>(null);
+  const [isSwitchingRoot, setIsSwitchingRoot] = useState(false);
+
+  const rootHistory = settings.paths.rootHistory || [];
+
+  const closeRootHistory = () => {
+    if (isSwitchingRoot) return;
+    setShowRootHistory(false);
+    setSelectedHistoryRoot(null);
+  };
+
+  const confirmSwitchRoot = async () => {
+    if (!selectedHistoryRoot || !onSwitchRoot) return;
+    setIsSwitchingRoot(true);
+    try {
+      await onSwitchRoot(selectedHistoryRoot);
+      setShowRootHistory(false);
+      setSelectedHistoryRoot(null);
+    } finally {
+      setIsSwitchingRoot(false);
+    }
+  };
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
@@ -604,6 +632,16 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
               >
                 {t('settings.change')}
               </button>
+              <button
+                  onClick={() => {
+                    setSelectedHistoryRoot(settings.paths.resourceRoot || null);
+                    setShowRootHistory(true);
+                  }}
+                  className="ml-2 rounded border border-subtle bg-surface px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors hover:bg-white/60 dark:hover:bg-white/5"
+                  title={t('settings.rootHistoryTitle')}
+                >
+                  {t('settings.rootHistory')}
+                </button>
             </div>
           </div>
           )}
@@ -1279,6 +1317,82 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             <p className="text-xs text-gray-500 dark:text-gray-400 break-all">
               {t('settings.filePath')}: {previewFile.path}
             </p>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+
+    {/* 历史资源根弹窗（P3）：与图片预览同法，用 Portal 渲染到 body 脱离设置弹窗的限制 */}
+    {showRootHistory && createPortal(
+      <div
+        className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-4"
+        onClick={closeRootHistory}
+      >
+        <div
+          className="bg-content rounded-xl w-[560px] max-w-full max-h-[80vh] flex flex-col overflow-hidden shadow-2xl"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-subtle">
+            <h4 className="text-sm font-bold text-gray-800 dark:text-white">{t('settings.rootHistoryTitle')}</h4>
+            <button
+              onClick={closeRootHistory}
+              className="p-1 text-gray-500 dark:text-gray-400 hover:bg-surface rounded transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {rootHistory.length === 0 ? (
+              <div className="px-3 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                {t('settings.rootHistoryEmpty')}
+              </div>
+            ) : (
+              rootHistory.map(path => {
+                const isCurrent = isSameRootPath(path, settings.paths.resourceRoot);
+                const isSelected = selectedHistoryRoot ? isSameRootPath(path, selectedHistoryRoot) : false;
+                return (
+                  <button
+                    key={path}
+                    onClick={() => setSelectedHistoryRoot(path)}
+                    className={`flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors ${isSelected ? 'bg-blue-500/15 ring-1 ring-blue-500/40' : 'hover:bg-surface'}`}
+                  >
+                    <FolderOpen size={16} className="mt-0.5 shrink-0 text-blue-500" />
+                    <div className="min-w-0 flex-1">
+                      {/* 文件夹名在上、完整路径在下 */}
+                      <div className="flex items-center gap-2 text-sm font-medium text-gray-800 dark:text-white">
+                        <span className="truncate">{rootDisplayName(path)}</span>
+                        {isCurrent && (
+                          <span className="shrink-0 rounded bg-blue-500/15 px-1.5 py-0.5 text-[11px] font-normal text-blue-600 dark:text-blue-400">
+                            {t('settings.rootHistoryCurrent')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate font-mono text-xs text-gray-500 dark:text-gray-400">{path}</div>
+                    </div>
+                    {isSelected && <Check size={16} className="mt-0.5 shrink-0 text-blue-500" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-subtle bg-surface">
+            <button
+              onClick={closeRootHistory}
+              disabled={isSwitchingRoot}
+              className="px-3 py-1.5 text-sm rounded border border-subtle text-gray-700 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-white/5 disabled:opacity-50"
+            >
+              {t('settings.rootHistoryCancel')}
+            </button>
+            <button
+              onClick={confirmSwitchRoot}
+              disabled={isSwitchingRoot || !selectedHistoryRoot || isSameRootPath(selectedHistoryRoot || '', settings.paths.resourceRoot)}
+              className="px-3 py-1.5 text-sm font-medium rounded bg-blue-600 hover:bg-blue-500 text-white disabled:bg-blue-400"
+            >
+              {isSwitchingRoot ? t('settings.switchingRoot') : t('settings.switchRoot')}
+            </button>
           </div>
         </div>
       </div>,
