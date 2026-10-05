@@ -40,7 +40,11 @@ export default defineConfig({
       port: 14422,
     },
     watch: {
-      ignored: ['**/src-tauri/**'],
+      ignored: ['**/src-tauri/**', '**/node_modules/**', '**/target/**'],
+      // SMB 网络盘上 chokidar 的 fs.watch 会抛 UNKNOWN（errno -4094）直接崩掉 dev server，
+      // 必须轮询监听；本地盘上代价可忽略（node_modules/target 已被排除在轮询外）
+      usePolling: true,
+      interval: 1000,
     },
     headers: {
       'Cache-Control': 'no-store',

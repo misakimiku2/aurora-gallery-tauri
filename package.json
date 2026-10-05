@@ -20,7 +20,7 @@
     "clean:build": "npm run clean && npm run build",
     "clean:dev": "npm run clean && npm run tauri:dev",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "tauri dev --no-watch",
     "kotlin:dev": "powershell -ExecutionPolicy Bypass -File scripts/kotlin-dev.ps1",
     "kotlin:dev:so": "powershell -ExecutionPolicy Bypass -File scripts/kotlin-dev.ps1 -So",
     "tauri:build": "tauri build",

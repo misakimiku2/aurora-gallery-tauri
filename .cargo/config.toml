@@ -1,0 +1,11 @@
+# 两台开发机（.174 本机 + .87 主电脑）共用这份 SMB 工作副本：target 留在共享盘时，
+# 一台机器创建的产物另一台的 SMB 身份无权覆写/删除，链接固定文件名（aurora_core.dll.lib、
+# aurora_gallery.exe）必炸 LNK1104「无法打开文件」，且 SMB 上编译链接本来就慢一个量级。
+# 这里把所有 cargo 构建产物重定向到【各机器自己的本地盘】——C: 在每台机器上各自解析。
+# 覆盖范围：tauri dev/build、core 的 cargo test、cargo-ndk（.so 经 kotlin-dev.ps1 的
+# -o 参数直拷 jniLibs，中转路径无关紧要）、vitest 里现编 Rust 的 groupedTags 用例。
+# 注意：非 Windows 环境会把 "C:/cargo-target" 当作相对路径在仓库里建出怪目录；
+# CI 目前只有不编译 Rust 的前端 job，若恢复 ci.yml 里注释的 rust job（ubuntu）需先改写本文件。
+# 环境变量 CARGO_TARGET_DIR 的优先级高于本文件，机器上若设了它以它为准。
+[build]
+target-dir = "C:/cargo-target"
