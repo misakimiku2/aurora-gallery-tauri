@@ -275,6 +275,7 @@ fn apply_creates_topics_with_sequenced_members() {
             file_ids: vec!["f1".to_string(), "f2".to_string()],
             materialized: true,
             merge_into_existing: false,
+            reparent_existing: false,
         }],
         source_schema_version: "22".to_string(),
     };
@@ -350,6 +351,7 @@ fn merge_appends_members_and_only_fills_empty_fields() {
             file_ids: vec!["f2".to_string()],
             materialized: false,
             merge_into_existing: true,
+            reparent_existing: false,
         }],
         source_schema_version: "22".to_string(),
     };
@@ -393,6 +395,7 @@ fn merge_appends_members_and_only_fills_empty_fields() {
             file_ids: vec![],
             materialized: false,
             merge_into_existing: true,
+            reparent_existing: false,
         }],
         ..plan.clone()
     };

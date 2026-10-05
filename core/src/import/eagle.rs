@@ -20,8 +20,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::{
-    existing_vocabulary, fill_if_empty, find_topic_by_name, is_indexable, merge_tag_lists,
-    new_topic_id, AnnotationEdit, MigrationPlan, MigrationReport, OurIndex, TopicCreate, TrashItem,
+    existing_vocabulary, fill_if_empty, find_topic_by_import_seed, find_topic_by_name, is_indexable,
+    merge_tag_lists, new_topic_id, AnnotationEdit, MigrationPlan, MigrationReport, OurIndex,
+    TopicCreate, TrashItem,
 };
 use crate::db::file_index::FileIndexEntry;
 use crate::db::file_metadata;
@@ -1271,8 +1272,39 @@ fn plan_topic_node(
         .map(str::to_string);
 
     // 规则 3：查重键是 `(映射后的我们父级, name)`，不是裸名字
-    let existing_id =
+    let by_name =
         find_topic_by_name(our_conn, parent_topic_id.as_deref(), name).map_err(|e| e.to_string())?;
+    // 兜底认领（2026-10-06）：同一枚源节点**以前**铸过的专题 id 还在，但父级变了。
+    // 典型就是「改版后重跑」——早先的映射把子专题建在了根上，修好层级后该把它挪下去，
+    // 而不是再建一枚重复的（父级一变，上面的 (父级, name) 查重就查不到了）。
+    // 只在「它当前挂在根上、这次有父级」时认领：已经有父级的多半是用户自己整理的。
+    let mut reparent_existing = false;
+    let existing_id = match by_name {
+        Some(id) => Some(id),
+        None => match find_topic_by_import_seed(our_conn, eagle_key) {
+            Some(id) if parent_topic_id.is_some() => {
+                let current_parent: Option<String> = our_conn
+                    .query_row(
+                        "SELECT parent_id FROM topics WHERE id = ?1",
+                        params![&id],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(None);
+                if current_parent.is_none() {
+                    reparent_existing = true;
+                    report.topics_reparented += 1;
+                    report.warnings.push(format!(
+                        "专题「{}」上次导入时是顶层（当时的父级没落库），这次按源树挪到父专题下面（不新建重复专题）",
+                        name
+                    ));
+                    Some(id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
+    };
     if let Some(existing_id) = existing_id {
         // 规则 4（v4.9）：同名命中已有专题 → 不新建，成员并进去；名字/父级不改；
         // 封面与描述「空着才补」（落库侧的 merge_into_existing_topic）
@@ -1315,6 +1347,7 @@ fn plan_topic_node(
             file_ids: new_members,
             materialized,
             merge_into_existing: true,
+            reparent_existing,
             id: existing_id,
             name: name.to_string(),
             parent_id: parent_topic_id,
@@ -1337,6 +1370,7 @@ fn plan_topic_node(
         file_ids: member_file_ids,
         materialized,
         merge_into_existing: false,
+        reparent_existing: false,
         id,
         name: name.to_string(),
         parent_id: parent_topic_id,

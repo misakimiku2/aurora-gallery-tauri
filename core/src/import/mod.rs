@@ -151,6 +151,12 @@ pub struct TopicCreate {
     pub file_ids: Vec<String>,
     pub materialized: bool,
     pub merge_into_existing: bool,
+    /// 认领到的那枚已有专题**当前挂在根上**、而这次该挂到 `parent_id` 下面 → 落库时把父级改过去。
+    ///
+    /// 只有「**改版后重跑**」这一条路会置它（`find_topic_by_import_seed` 认领的场景，见那里的
+    /// 注释）：早先的映射把子专题建在了根上，修好层级后重跑要把它挪下去，而不是再多建一枚。
+    /// 已经有父级的专题一律不挪——那可能是用户自己整理的，别跟人抢方向盘。
+    pub reparent_existing: bool,
 }
 
 /// 来源无关的迁移计划：§4.7 报告的预览值 + 要落的东西。
@@ -360,11 +366,7 @@ pub fn find_topic_by_name(
 /// 导入器在 Rust 里造同形态的 id：md5(种子) 取前 9 个 hex 字符，撞已有行就加盐重算。
 pub fn new_topic_id(conn: &Connection, seed: &str) -> String {
     for salt in 0..64u32 {
-        let candidate = format!(
-            "{:x}",
-            md5::compute(format!("{}|{}", seed, salt))
-        )[..9]
-            .to_string();
+        let candidate = topic_id_for_salt(seed, salt);
         let taken: bool = conn
             .query_row(
                 "SELECT 1 FROM topics WHERE id = ?1",
@@ -378,6 +380,34 @@ pub fn new_topic_id(conn: &Connection, seed: &str) -> String {
     }
     // 64 次都撞上在真实库里不可能发生；兜个可辨识的名字而不是 panic。
     "import000".to_string()
+}
+
+fn topic_id_for_salt(seed: &str, salt: u32) -> String {
+    format!("{:x}", md5::compute(format!("{}|{}", seed, salt)))[..9].to_string()
+}
+
+/// 这个源节点**以前**铸过的专题 id 还在不在？
+///
+/// `new_topic_id` 的 id 是 `md5(seed|salt)` 逐个试出来的，salt 从 0 开始——所以只要把 0..64
+/// 全算一遍去查表，就能认出「同一枚专题」。用途只有一个：**改版后重跑**。同名查重是按
+/// `(父级, name)`，父级一变就查不到，`new_topic_id` 又会铸一个新 id，结果同一枚专题在库里
+/// 变成两枚（实测场景：早先的映射把子智能夹 `HEA` 建在了根上，修好层级后重跑，`HEA` 本该被
+/// 挪到 `TESTV2` 下面，而不是再多出一枚）。调用方负责决定认领后要不要改父级。
+pub fn find_topic_by_import_seed(conn: &Connection, seed: &str) -> Option<String> {
+    for salt in 0..64u32 {
+        let candidate = topic_id_for_salt(seed, salt);
+        let hit: bool = conn
+            .query_row(
+                "SELECT 1 FROM topics WHERE id = ?1",
+                params![&candidate],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if hit {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// §4.5 硬约束 1：`upsert_file_metadata` 是**全行覆盖**，漏传字段就是把已有数据清空。
@@ -480,6 +510,13 @@ pub fn apply_plan(
 /// 封面永远是空的（`阿松大`/`test` 那次就是），光靠新建时补封面治不了它。
 /// 用户钉过的封面、写过的简介一律不动。
 fn merge_into_existing_topic(conn: &Connection, topic: &TopicCreate, now: i64) -> Result<()> {
+    if topic.reparent_existing {
+        // 只会在「这次该挂 `parent_id`、它当前还在根上」时置位（见字段注释）
+        conn.execute(
+            "UPDATE topics SET parent_id = ?2, updated_at = ?3 WHERE id = ?1",
+            params![&topic.id, topic.parent_id, now],
+        )?;
+    }
     if !topic.file_ids.is_empty() {
         topics::add_files_to_topic(conn, &topic.id, &topic.file_ids)?;
     }

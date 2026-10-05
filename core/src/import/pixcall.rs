@@ -1002,6 +1002,8 @@ fn plan_topics(
                 file_ids: new_members,
                 materialized: !is_manual,
                 merge_into_existing: true,
+                // PixCall 侧不做「改版后认领」：那条只为 Eagle 改版重跑准备（见 TopicCreate 注释）
+                reparent_existing: false,
                 id: existing_id.clone(),
                 name: board.name.clone(),
                 parent_id: parent_topic_id,
@@ -1033,6 +1035,7 @@ fn plan_topics(
             file_ids: member_file_ids,
             materialized: !is_manual,
             merge_into_existing: false,
+            reparent_existing: false,
         });
         report.topics_created += 1;
         mapped.insert(board.id, Some(id));

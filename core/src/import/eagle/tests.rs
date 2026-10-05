@@ -1127,6 +1127,48 @@ fn takeover_renames_when_the_name_would_become_ambiguous() {
     let _ = std::fs::remove_dir_all(&target);
 }
 
+/// **改版后重跑**：上次导入（层级还没修）把 `HEA` 建成了顶层专题；这次重跑要把它认领回来、
+/// 挪到 `TESTV2` 下面，而不是再多建一枚同名的。
+#[test]
+fn rerun_claims_the_orphan_topic_instead_of_duplicating_it() {
+    let lib = Lib::new("rerun");
+    lib.header(json!({"smartFolders": [
+        {"id": "P1", "name": "TESTV2", "description": "测试用的主专题",
+         "conditions": [group("OR", vec![rule("type", "equal", json!("jpg"))])],
+         "children": [
+            {"id": "C1", "name": "HEA", "parent": "P1", "description": "测试用的子专题",
+             "conditions": [group("OR", vec![rule("name", "contain", json!("HEAD"))])], "imageCount": 1}
+        ]}
+    ]}));
+    lib.item("M1", item_meta("M1", "head1", "jpg"), &["head1.jpg"]);
+    let our = our_db();
+    add_row(&our, "f1", "C:/L/head1.jpg", "head1.jpg", 1000, Some(100), Some(50));
+
+    // 复刻「上次导入」的残留：同一枚源节点铸过的 id，挂在根上（当时父级没落库）
+    let orphan_id = new_topic_id(&our, "eagle-smart|C1");
+    our.execute(
+        "INSERT INTO topics (id, parent_id, name, description) VALUES (?1, NULL, 'HEA', '旧描述')",
+        rusqlite::params![&orphan_id],
+    )
+    .unwrap();
+
+    let p = plan_for(&lib, &our);
+    let parent = p.topics.iter().find(|t| t.name == "TESTV2").expect("父这次要落库");
+    let child = p.topics.iter().find(|t| t.name == "HEA").unwrap();
+    assert!(child.merge_into_existing, "认领已有专题，不新建");
+    assert_eq!(child.id, orphan_id, "就是上次那枚");
+    assert!(child.reparent_existing, "要把它从根上挪到父专题下面");
+    assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+    assert!(!p.topics.iter().any(|t| t.name == "HEA" && !t.merge_into_existing), "不许出现第二枚 HEA");
+
+    apply_plan(&our, &p, 200, None).unwrap();
+    let all = topics::get_all_topics(&our).unwrap();
+    assert_eq!(all.iter().filter(|t| t.name == "HEA").count(), 1, "库里只有一枚 HEA");
+    let hea = all.iter().find(|t| t.name == "HEA").unwrap();
+    let testv2 = all.iter().find(|t| t.name == "TESTV2").unwrap();
+    assert_eq!(hea.parent_id.as_deref(), Some(testv2.id.as_str()), "已经挪到父专题下面");
+}
+
 #[test]
 fn takeover_is_idempotent_when_run_twice() {
     let lib = lib_with_item("take-twice");
