@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { WelcomeModal } from '../modals/WelcomeModal';
 import { AppSettings } from '../../types';
-import { lanShareStart, pixcallDiscover, pixcallProbe, pixcallImport } from '../../api/tauri-bridge';
+import { lanShareStart, pixcallDiscover, pixcallProbe, pixcallImport, eagleDiscover, eagleProbe, eagleImport } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
 
@@ -38,13 +38,18 @@ const { pixcallReport } = vi.hoisted(() => ({
 vi.mock('../../api/tauri-bridge', () => ({
   lanShareStart: vi.fn(async () => ({ port: 8765, local_ip: '192.168.1.10' })),
   lanShareStop: vi.fn(async () => {}),
-  // PixCall 迁移（welcome 第 1 步第二颗按钮）。默认「本机没有 PixCall 库」，
-  // 用到的用例各自 mockResolvedValue 覆盖。
-  pixcallDiscover: vi.fn(async () => [] as unknown[]),
+  // PixCall 迁移（welcome 第 1 步来源按钮）。默认「发现 1 个库」：welcome 的来源按钮
+  // 按「发现 ≥1 库」才渲染，返回空会让按钮整颗消失、原流程用例点不到按钮。
+  pixcallDiscover: vi.fn(async () => [{ root: 'C:/Pix', isCurrent: true }]),
   pixcallProbe: vi.fn(async () => pixcallReport),
   pixcallImport: vi.fn(async () => pixcallReport),
   pixcallImportRecords: vi.fn(async () => []),
   listenPixcallProgress: vi.fn(async () => () => {}),
+  // Eagle 第二来源（welcome-eagle-card 用）。默认「本机没有 Eagle 库」，Eagle 相关用例各自覆盖。
+  eagleDiscover: vi.fn(async () => [] as unknown[]),
+  eagleProbe: vi.fn(async () => pixcallReport),
+  eagleImport: vi.fn(async () => pixcallReport),
+  listenEagleProgress: vi.fn(async () => () => {}),
 }));
 
 vi.mock('../../api/tauri-bridge/updater', () => ({
@@ -137,6 +142,10 @@ const gotoStep4 = (overrides?: Partial<Parameters<typeof WelcomeModal>[0]>) => {
 describe('WelcomeModal 四步向导', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks 不恢复 mockResolvedValue 的实现（只在用例间清调用记录），
+    // 逐例重设发现 mock 的默认值，防止上个用例的覆盖串到下个用例。
+    vi.mocked(pixcallDiscover).mockResolvedValue([{ root: 'C:/Pix', isCurrent: true }]);
+    vi.mocked(eagleDiscover).mockResolvedValue([]);
   });
 
   it('第 1 步未选文件夹时下一步禁用', () => {
@@ -291,16 +300,17 @@ describe('WelcomeModal 四步向导', () => {
   // ---------------------------------------------------------------- 第 1 步「使用 PixCall 库」
   // 设计方案 §6.1 第 3 条：两颗按钮互斥、卡片模式驱动、pixcall 模式的下一步门禁是 import 完成。
 
-  it('没传 onTakeoverPixcall 时不出第二颗按钮（非 Tauri 与老调用点行为不变）', () => {
+  it('没传 onTakeoverPixcall 时不出任何来源按钮（非 Tauri 与老调用点行为不变）', () => {
     setup();
     expect(screen.queryByTestId('welcome-use-pixcall')).toBeNull();
+    expect(screen.queryByTestId('welcome-use-eagle')).toBeNull();
   });
 
   it('pixcall 模式：单库自动接管 → probe → import，完成后放开下一步', async () => {
-    (pixcallDiscover as any).mockResolvedValue([{ root: 'C:/Pix', isCurrent: true }]);
     const takeover = vi.fn(async () => {});
     setup({ currentPath: null, onTakeoverPixcall: takeover });
-    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+    // 门禁按发现结果显示：按钮要等第 1 步的发现 promise 回来才渲染
+    fireEvent.click(await screen.findByTestId('welcome-use-pixcall'));
 
     await waitFor(() => expect(pixcallImport).toHaveBeenCalledWith('C:/Pix'));
     // 「接管 PixCall 库」= 复用现成的切根 + 扫描链，且必须扫完才 probe（§6.3 前置条件）
@@ -322,22 +332,87 @@ describe('WelcomeModal 四步向导', () => {
   });
 
   it('pixcall 模式下文件夹卡片让位（模式驱动，不是两块并存）', async () => {
-    (pixcallDiscover as any).mockResolvedValue([{ root: 'C:/Pix', isCurrent: true }]);
     setup({ onTakeoverPixcall: async () => {} });
     expect(screen.getByText('welcome.currentPath')).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+    fireEvent.click(await screen.findByTestId('welcome-use-pixcall'));
     await waitFor(() => expect(pixcallProbe).toHaveBeenCalled());
     expect(screen.queryByText('welcome.currentPath')).toBeNull();
     expect(screen.getByTestId('welcome-pixcall-card')).toBeInTheDocument();
   });
 
   it('未发现 PixCall 库时不放行下一步，但用户可以回头选文件夹', async () => {
-    (pixcallDiscover as any).mockResolvedValue([]);
+    // 门禁按发现结果显示：第 1 步的发现要回 1 库按钮才出；卡内会再发现一次
+    // （注册表可能在两次之间变化），第二次回空走卡内「没有找到库」的错误态——
+    // 这是门禁之后「未发现库」语义的保留路径。
+    vi.mocked(pixcallDiscover)
+      .mockResolvedValueOnce([{ root: 'C:/Pix', isCurrent: true }])
+      .mockResolvedValue([]);
     setup({ currentPath: null, onTakeoverPixcall: async () => {} });
-    fireEvent.click(screen.getByTestId('welcome-use-pixcall'));
+    fireEvent.click(await screen.findByTestId('welcome-use-pixcall'));
     await waitFor(() => expect(screen.getByText('import.noPixcallLibrary')).toBeInTheDocument());
     expect(screen.getByTestId('welcome-next-button')).toBeDisabled();
     // 两颗按钮互斥：回头点「选择文件夹」就回到 folder 模式的门禁
     expect(pixcallProbe).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------- 第 1 步来源按钮门禁
+  // 显示口径与设置页一致：按发现结果显示——发现进行中不出（避免闪现点了报错的按钮）、
+  // 发现为空不出、发现 ≥1 库才出；「或」分隔线只画在第一颗可见来源按钮之前。
+
+  it('PixCall 发现为空时不渲染 PixCall 按钮，Eagle 接管第二入口位（分隔线移到 Eagle 前）', async () => {
+    vi.mocked(pixcallDiscover).mockResolvedValue([]);
+    vi.mocked(eagleDiscover).mockResolvedValue([{ root: 'C:/Libs/Test.library', isCurrent: true }]);
+    setup({ onTakeoverPixcall: async () => {} });
+    expect(await screen.findByTestId('welcome-use-eagle')).toBeInTheDocument();
+    expect(screen.queryByTestId('welcome-use-pixcall')).toBeNull();
+    expect(screen.getAllByText('welcome.or')).toHaveLength(1);
+  });
+
+  it('eagle 模式：发现 1 库 → Eagle 按钮渲染，点击后自动接管 → probe → import，完成后放开下一步', async () => {
+    vi.mocked(eagleDiscover).mockResolvedValue([{ root: 'C:/Libs/Test.library', isCurrent: true }]);
+    const takeover = vi.fn(async () => {});
+    setup({ currentPath: null, onTakeoverPixcall: takeover });
+    fireEvent.click(await screen.findByTestId('welcome-use-eagle'));
+
+    // 与 PixCall 同一条来源无关的接管链：先切根 + 扫描（扫完才 resolve），再 probe、import
+    await waitFor(() => expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library'));
+    expect(takeover).toHaveBeenCalledWith('C:/Libs/Test.library');
+    expect(eagleProbe).toHaveBeenCalledWith('C:/Libs/Test.library');
+
+    const row = await screen.findByTestId('welcome-eagle-result');
+    expect(row.textContent).toContain('eagle.done');
+    expect(row.textContent).toContain('eagle.statTags');
+    // 库只印文件夹名，整串路径留给悬停（DOM 常驻、CSS 控制可见）
+    expect(screen.getByTestId('eagle-library-path').textContent).toBe('C:/Libs/Test.library');
+    expect(screen.getByTestId('welcome-next-button')).toBeEnabled();
+  });
+
+  it('两边都发现不到库时只剩「选择文件夹」，连分隔线都不出', async () => {
+    vi.mocked(pixcallDiscover).mockResolvedValue([]);
+    vi.mocked(eagleDiscover).mockResolvedValue([]);
+    setup({ onTakeoverPixcall: async () => {} });
+    await waitFor(() => expect(pixcallDiscover).toHaveBeenCalled());
+    expect(screen.queryByTestId('welcome-use-pixcall')).toBeNull();
+    expect(screen.queryByTestId('welcome-use-eagle')).toBeNull();
+    expect(screen.queryByText('welcome.or')).toBeNull();
+    expect(screen.getByText('welcome.selectFolder')).toBeInTheDocument();
+  });
+
+  it('两路库都发现时两颗按钮连排，且「或」分隔线只出现一条', async () => {
+    vi.mocked(eagleDiscover).mockResolvedValue([{ root: 'C:/Libs/Test.library', isCurrent: true }]);
+    setup({ onTakeoverPixcall: async () => {} });
+    expect(await screen.findByTestId('welcome-use-pixcall')).toBeInTheDocument();
+    expect(await screen.findByTestId('welcome-use-eagle')).toBeInTheDocument();
+    expect(screen.getAllByText('welcome.or')).toHaveLength(1);
+  });
+
+  it('发现进行中两颗来源按钮都不渲染（不留点了只能报错的按钮）', () => {
+    vi.mocked(pixcallDiscover).mockImplementation(() => new Promise<never[]>(() => {}));
+    vi.mocked(eagleDiscover).mockImplementation(() => new Promise<never[]>(() => {}));
+    setup({ onTakeoverPixcall: async () => {} });
+    expect(screen.queryByTestId('welcome-use-pixcall')).toBeNull();
+    expect(screen.queryByTestId('welcome-use-eagle')).toBeNull();
+    expect(screen.queryByText('welcome.or')).toBeNull();
+    expect(screen.getByText('welcome.selectFolder')).toBeInTheDocument();
   });
 });

@@ -110,6 +110,23 @@ const PixcallReportView: React.FC<Props> = ({ report, t, dense, detailed }) => {
         </div>
       )}
 
+      {/* Eagle 期新增栏（调研 §13.7 H2）：未命中的源条目名明细。PixCall 期的报告没有
+          unmatchedItems 这栏（undefined）→ 整块不渲染，展示行为对 PixCall 零变化。 */}
+      {detailed && report.unmatchedItems && report.unmatchedItems.length > 0 && (
+        <div className="mt-3 rounded-lg border border-subtle bg-white px-3 py-2 dark:bg-black/20">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
+            {t('import.unmatchedItems')}
+          </div>
+          <ul className="mt-1 space-y-0.5">
+            {report.unmatchedItems.map((item, index) => (
+              <li key={index} className="truncate text-xs text-gray-500 dark:text-gray-400" title={item}>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {detailed && report.warnings.length > 0 && (
         <div className="mt-3 rounded-lg border border-subtle bg-white px-3 py-2 dark:bg-black/20">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">

@@ -2043,6 +2043,12 @@ pub fn run() {
         import_commands::pixcall_import,
         import_commands::pixcall_last_import_report,
         import_commands::pixcall_import_records,
+        // Eagle 标注迁移（第二期，调研 §13；命令形状与 pixcall 系一一对应）
+        import_commands::eagle_discover,
+        import_commands::eagle_probe,
+        import_commands::eagle_import,
+        import_commands::eagle_last_import_report,
+        import_commands::eagle_import_records,
         update_commands::check_for_updates_command,
         system_commands::open_external_link,
         update_commands::start_update_download,
@@ -2318,6 +2324,9 @@ pub fn run() {
             // PixCall 迁移：probe 与 import 共用同一份只读快照（设计方案 §6.2 末），
             // 快照按库根存这里，跨两次命令调用活着。
             app.manage(import_commands::PixcallSnapshots::default());
+            // Eagle 迁移（第二期）：「快照」= 一次性解码出的内存 SourceData（Eagle 的库
+            // 不是 SQLite，没有 db+wal 可复制），probe 存这里、import 取同一条。
+            app.manage(import_commands::EagleSnapshots::default());
             
             #[cfg(not(target_os = "android"))]
             app.manage(LanShareState::new());

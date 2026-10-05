@@ -9,6 +9,16 @@ import { isTauriEnvironment } from '../../utils/environment';
  * ⑥：PixCall 的 64 位 id 从不过 JSON，所以这里的类型只有计数与字符串。
  */
 
+/**
+ * Eagle 标注迁移的前端桥（第二期，Eagle 数据迁移调研 §13.7 拍板记录）。
+ *
+ * 与 PixCall 完全同构：命令层只做「调用 + 进度事件」，命令名 snake_case 与 Rust 侧
+ * `eagle_discover` / `eagle_probe` / `eagle_import` / `eagle_last_import_report` /
+ * `eagle_import_records` 一一对应。报告与迁移记录**直接复用** PixCall 期的类型
+ * （同一份 `MigrationReport`、同一张 `import_records` 表，`source = 'eagle'`），
+ * 唯一新栏是 `unmatchedItems`（H2，serde default，旧 report_json 反序列化不受影响）。
+ */
+
 /** §4.7 的 MigrationReport，Rust 侧 `#[serde(rename_all = "camelCase")]` */
 export interface MigrationReport {
   matched: number;
@@ -34,6 +44,12 @@ export interface MigrationReport {
   excludedTrashNames: Array<{ name: string; originFolder?: string }>;
   unmatched: number;
   unmatchedPaths: string[];
+  /**
+   * Eagle 期新增（调研 §13.7 H2）：未能匹配到我们库里的源**条目名**列表。
+   * Rust 侧 `unmatched_items` 带 serde default——PixCall 期的旧 report_json 没有这栏，
+   * 反序列化后是 undefined，UI 按缺省跳过（`unmatchedPaths` 保留给 PixCall）。
+   */
+  unmatchedItems?: string[];
   warnings: string[];
 }
 
@@ -123,4 +139,78 @@ export const listenPixcallProgress = async (
 ): Promise<UnlistenFn> => {
   if (!isTauriEnvironment()) return () => {};
   return listen<PixcallProgress>('pixcall-progress', (event) => onProgress(event.payload));
+};
+
+/** Eagle 的进度事件与 PixCall 同构（stage / sourceRoot / processed / total），载荷直接复用同一类型 */
+export type EagleProgress = PixcallProgress;
+
+/** Eagle 库（`*.library` 目录本身，如 `C:\...\Test.library`）。字段与 PixcallLibrary 同构（调研 §13.7：同一套卡片、同一套关系语义）。 */
+export interface EagleLibrary {
+  /** Eagle 库根（`.library` 目录），与我们当前打开的库根分开建模（同 PixCall §6.3） */
+  root: string;
+  isCurrent: boolean;
+  /** 与资源根的位置关系，取值与 PixCall 同一套（`same` / `inside` / `outside` / `unknown`） */
+  rootRelation?: PixcallRootRelation;
+}
+
+/** Eagle 库发现（调研 §1）：找本机的 `*.library` 目录，我们根下的优先；发现不到时 UI 整块不渲染 */
+export const eagleDiscover = async (ourRoot?: string | null): Promise<EagleLibrary[]> => {
+  if (!isTauriEnvironment()) return [];
+  try {
+    return await invoke('eagle_discover', { ourRoot: ourRoot ?? null });
+  } catch (e) {
+    console.error('Failed to discover Eagle libraries:', e);
+    throw e;
+  }
+};
+
+/** Eagle 只读探测：零写入，返回报告；快照留在 Rust 侧供 import 复用（同 PixCall §6.2 末） */
+export const eagleProbe = async (sourceRoot: string): Promise<MigrationReport> => {
+  if (!isTauriEnvironment()) throw new Error('not in tauri');
+  try {
+    return await invoke('eagle_probe', { sourceRoot });
+  } catch (e) {
+    console.error('Failed to probe Eagle library:', e);
+    throw e;
+  }
+};
+
+/** Eagle 执行导入：纯增量、重跑安全（同 PixCall §6.1 第 2/3 条） */
+export const eagleImport = async (sourceRoot: string): Promise<MigrationReport> => {
+  if (!isTauriEnvironment()) throw new Error('not in tauri');
+  try {
+    return await invoke('eagle_import', { sourceRoot });
+  } catch (e) {
+    console.error('Failed to import from Eagle:', e);
+    throw e;
+  }
+};
+
+/** 某个 Eagle 库根的最近一条导入记录（Rust `eagle_last_import_report`；「上次导入报告」的数据源） */
+export const eagleLastImportReport = async (sourceRoot: string): Promise<ImportRecord | null> => {
+  if (!isTauriEnvironment()) return null;
+  try {
+    return await invoke('eagle_last_import_report', { sourceRoot });
+  } catch (e) {
+    console.error('Failed to read last Eagle import report:', e);
+    return null;
+  }
+};
+
+/** Eagle 的全部导入记录（`import_records.source = 'eagle'`），按时间倒序；第一条就是「上次导入报告」 */
+export const eagleImportRecords = async (): Promise<ImportRecord[]> => {
+  if (!isTauriEnvironment()) return [];
+  try {
+    return await invoke('eagle_import_records');
+  } catch (e) {
+    console.error('Failed to read Eagle import records:', e);
+    return [];
+  }
+};
+
+export const listenEagleProgress = async (
+  onProgress: (progress: EagleProgress) => void
+): Promise<UnlistenFn> => {
+  if (!isTauriEnvironment()) return () => {};
+  return listen<EagleProgress>('eagle-progress', (event) => onProgress(event.payload));
 };

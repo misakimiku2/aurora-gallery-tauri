@@ -4,6 +4,7 @@
 > 目的：为 `core/src/import/eagle.rs`（设计方案 §6.4 预留的第二期来源）把 Eagle 的数据落在哪、长什么样、有几种读法查清楚，并给出字段映射草案与待拍板清单。
 > **方法诚实声明**：本机**没有 Eagle**（`%APPDATA%`、`%LOCALAPPDATA%` 无 Eagle 目录；C/D/E 盘 depth≤4 内无任何 `*.library`），所以本文没有一条是**本机实测**。每条结论带来源与置信度，标注体系见 §0 末。**下一步是拿真实库复测，不是照本文开工。**
 > 上游文档：`docs/PixCall数据迁移-设计方案.md`（下称「设计方案」，本文的 §N 引用除非注明皆指该文）。
+> **v2（2026-10-05）**：本机实测已完成（Eagle 4.0.0 build20260401 + `Test.library` 49 条目，全程开着 Eagle），新增 §13。上文的「方法诚实声明」（无本机实测）**仅对 v1 有效**；§13 全部为【实测】，与 v1 结论冲突处**以 §13 为准**。
 
 ---
 
@@ -380,6 +381,82 @@ D1 摆平之后才谈得上解码。四条路线，代价各不相同：
 - §6 的 Changelog 停更日期（见 M4②）。
 - §8 清单中除 `naamiru/eagle-webui` 与 PixCall 插件外，其余参照实现未逐条重拉，按本文置信度标注采信即可。
 
+## 13. 实测记录（v2，2026-10-05，Test.library）
+
+**样本**：`C:\Users\misakimiku\Pictures\AuroraGallery\Test.library`，Eagle 4.0.0（`/api/application/info` 的 `buildVersion = 20260401`，win32），49 个条目（jpg 12 / png 36 / gif 1），`folders` 树为空（未建手动夹）、2 棵智能夹树、`tagsGroups`/`quickAccess` 空。**Eagle 全程开着**。
+**方法**：Node 脚本全量聚合 49 个条目 JSON（`%TEMP%\eagle-audit.mjs`）；我们侧 `metadata.db` 以 `mode=ro` 只读查 `file_index`；`curl` 裸调官方 API。本节全部结论 **【实测】**，与 v1 冲突处**以本节为准**；样本补齐后脚本可复跑。
+
+**目录来历（验收人口述，防误读）**：`Pictures\AuroraGallery\test` 是验收人**一开始为建 Eagle 库准备的普通文件夹**（当时以为选定文件夹就能建库，后来才知道要把文件拖进 Eagle 才触发建库）——它**不是 Eagle 库资源**，也尚未被我们应用重扫。应用的 `file_index` 停留在「这些图还在 `AuroraGallery\` 根」的时期（36 行全部指向根，0 行在 `test/` 下）。
+
+### 13.1 §9 待补清单清账
+
+| §9 | 结果 |
+|---|---|
+| 1 本机实测 | ✅ 本节 |
+| 2 2.x/3.x 差异 | ⏳ 仍未知（样本 4.0.0） |
+| 3 可选根文件 | `tags.json` ✓ 在（`historyTags` 6 词含中文 + `starredTags`）；`saved-filters.json` ✓ 在（`[]`）；`backup/` ✓ 在（`backup-*.json`）；`actions.json` 本库无（未用过批处理，仍属可选） |
+| 4 智能夹枚举 | ◐ 新增两个实测对：`(type, equal, value=扩展名串"jpg")`、`(name, contain, value=子串)`；全量枚举仍待补 |
+| 5 改名是否改文件名 | ◐ 49/49 精确 `<name>.<ext>`，库内无改名样本 → 仍无结论（在 Eagle 里改一次名即可复跑验证） |
+| 6 CSV 导出 | 未测（需手动操作） |
+| 7 deletedTime | ⏳ 0 个软删条目（`isDeleted` 全 false），仍未验证 |
+| 8 Eagle 运行时直读 | ✅ **Eagle 开着时**：直读全部 JSON 成功（无锁；根 `metadata.json` 在会话期间被 Eagle 写过，并发读无碍）、同时 curl 三个 API 端点成功、**全部无鉴权** |
+| 9 云占位文件 | 本地盘 N/A |
+
+### 13.2 结构与字段（§2/§3 的实测与更正）
+
+- 根文件清点与 §2 结构图一致：`metadata.json / mtime.json / tags.json / saved-filters.json / backup/`；无 `actions.json`、无 `recyclebin/`。
+- `mtime.json`：`"all":49` 与 49 个 `.info` 目录完全对齐（本次未观察到落后；「条目集合以 readdir 为准」守则保留）。
+- 条目级：**49/49 键集逐条目完全一致**（17 键：`id/name/size/btime/mtime/ext/tags/folders/isDeleted/url/annotation/modificationTime/height/width/lastModified/palettes` + 2 条有 `noThumbnail`），类型全部与 §3.1 吻合；`tags` 全字符串；`palettes` 49/49 存在但**仅 4 条带 `$$hashKey`**（Angular 残留是可选的，别假设必有）；id 全部 13 位 `[A-Z0-9]` 且**目录名 == `id`（49/49）**。
+- 智能夹节点实测补充（§3.2 没记的）：子节点带 `parent` 回指；带 `depth/size/vstype/guidelines/styles/isVisible/index/isExpand` 等 UI 状态键（解析一律忽略）；`$$hashKey` 在 `conditions.rules` 里也出现；父夹 `conditions` 可为 `[]`；**`imageCount` 直接落在子智能夹节点上**（`HEA: 4` 与按条件实算一致）→ 计数断言可离线做，但**父节点没有 `imageCount`**，断言以自算成员为准、`imageCount` 只当旁证。
+- ★ **更正 §3.1：`btime` 不是「加入库的时间」**。49 条全部同批导入（`modificationTime` 全等于导入时刻 2026-10-05 18:30），而 `btime` 分布 2022-05-25 ~ 2026-09-27、与 `modificationTime` 重合 0 条 → **`btime` = 源文件的文件系统创建时间（birth time）、`mtime` = 源文件修改时间，都是导入时从文件带过来的；`modificationTime` 才是入库时刻**。对迁移无影响（本就不迁这两列），但别再拿 `btime` 当「加入时间」用。
+- 验收人观察：直接拖文件/文件夹进 Eagle **不会创建普通夹**（本库 `folders` 树为空、49/49 条目 `folders:[]`）→ 「未分类」是 Eagle 的**主流真实形态**，M5 的「空 `folders[]` 怎么办」要按主流 case 设计，不是边缘 case。
+
+### 13.3 ★ 匹配率测量（§10 首轮数字）
+
+| 项 | 数 |
+|---|---|
+| Eagle 条目 | 49（全非软删） |
+| 我们 `file_index` | 36 行（35 Image + 1 Folder），全部指向 `AuroraGallery\` 根；实体文件现已在 `test/`、`test/CDPR/`、`test/wuwa/`（见本节开头「目录来历」）→ **索引整体陈旧** |
+| 按**现状索引** | 唯一命中 34 / 多义 0 / 不命中 15（69.4%） |
+| 15 个不命中的归因 | **全部**是索引陈旧：6 个在 `test/` 根、9 个在 `test/wuwa/`；49/49 在盘上找到实体，且 **size 与 Eagle `size` 49/49 一致** |
+| 按**现势磁盘**重算 | **49/49 唯一命中（100%），0 多义** |
+| 34 个命中的复核 | size 与宽高 **0 矛盾** → `name+ext` 主键 + size/宽高复核的键构造**零误报** |
+| 反向覆盖 | 索引 35 张图里 34 张被 Eagle 引用；唯一没被引用的 `desktop_test_1.jpg` 是「我们有、Eagle 没导入」 |
+
+- **M6 落定**：`file_index.name` **含扩展名**（`name` == 文件名；`path` 正斜杠）→ Eagle 侧 join 键 = `${name}.${ext}`（建议小写化），`foo.jpg.jpg` 风险不存在。
+- 结论：键构造成立且在本样本零误报——只要「同一批图两边都有」（无论目录形态怎么变），`name+ext` + size/宽高 就能认亲。真实瓶颈回到 H3 第二问：**用户的这批图在不在我们库里**，不是键。
+- ⚠️ 顺带发现：文件挪位后我们侧不自动重扫，陈旧索引会直接吃掉命中率 → Eagle 导入流程要在入口提示「先重扫 / 确认索引新鲜」。
+
+### 13.4 官方 API 实测（§1/§6 更新）
+
+- `library/info`、`library/history`、`application/info` 三个端点**裸 curl 成功，无鉴权、无 token**（Settings 里的 `developer.apiToken` 实测**非必需**）。
+- `/api/library/info` 的 `data` 里带 **`library.path` + `library.name`**（§1/§6 未记）→ 库根交叉校验直接用它，比从 thumbnail 路径反推干净。
+- `Settings` 实测：`libraryHistory` ✓；另有 **`rootDir`** 键（当前库路径）→ §1 的发现顺序可把它加进去。
+- `application/info`：`version 4.0.0`、`buildVersion 20260401`、`platform win32`。
+
+### 13.5 代码侧核对（H1/M2 复核 + import_records）
+
+- **H1 属实**：`OurIndex`（`core/src/import/mod.rs:141-193`）只有 path 双索引，`load()` 只 `SELECT file_id, path, file_type`，`find()` 只按 path → Eagle 期匹配层要新造（`name+ext` 索引；load 带 name/size/width/height）。
+- **M2 属实**：`mod.rs:8-15` 两条 per-source 禁令已落地且引用本文。
+- 本机**已安装版**的 `metadata.db` 里**还没有 `import_records` 表**（旧构建）；建表在 `core/src/db/mod.rs:168`、随应用启动迁移执行，当前代码会补上 → §7「无需改 schema」仍成立（指代码侧）。
+
+### 13.6 样本缺口（请验收人在 Eagle 里补，完成后复跑脚本）
+
+本库还盖不住 §9 样本清单的：① 嵌套两层普通夹 + 夹描述（⑩）；② 的 `tags`/`color` 两种 property；③ 一个标签组（`tagsGroups`）；④ 的**评分**（star；标签/备注/链接已覆盖）；⑤ 一条同时属两夹；⑥ 密码夹；⑦ 图上矩形标注（`comments`）；⑧ 回收站条目（`deletedTime`/`isDeleted`）；⑨ 视频/字体。另：一个**网页书签**（无实体文件条目，§8.3）、在 Eagle 里**改一次显示名**（验 13.1-5）。
+
+### 13.7 拍板记录（2026-10-05，验收人拍板）
+
+| # | 决定 |
+|---|---|
+| **P1** | **A+C 两档**：A（只挂标注）为本期主切片；C（连文件接管，同盘符硬链接/move 优先、免空间翻倍）作为显式 opt-in 第二档，单独切片后续做 |
+| **P2** | **b：断言通过才固化**。只实现已标定的 `property`+`method`（今天实测：`type=equal`、`name=contain`），自算成员数与 Eagle 侧 `imageCount` 精确一致才固化成快照专题；断言不过或含未标定键 → 跳过+上报。实测补充三条标定事实：`contain` 是**大小写不敏感**（条件值 "HEAD" 命中 `head1(1)` 等小写名、`imageCount=4`）；条件值为**空串按「不命中 any」处理**（OCR 夹 `value:""` 且 `imageCount:0`）；子智能夹**按独立条件求值**、断言不过即跳过（本样本父子条件不可分辨——两解都=4，按严的来） |
+| **P3** | 标签组 `tagsGroups`：**丢弃+上报**（PixCall 先例） |
+| **P4** | 图上矩形标注 `comments[]`：**丢弃+上报**（PixCall 官方插件同样丢） |
+| **P5** | 评分 `star`：**不迁**（我们无评分功能，同 PixCall 期） |
+| **P6** | 读取路径：**直读磁盘为主**；Eagle 开着时可选做 API 交叉校验（实测无鉴权、成本为零） |
+| **H2** | 报告**加新栏** `unmatched_items`（Eagle 填条目名），`unmatched_paths` 保留给 PixCall；新增字段带 serde default，旧 `report_json` 反序列化不受影响 |
+| 范围 | **桌面单端**：不做移动端（与 §11.4 口径一致，三端功能矩阵不登记） |
+
 ## 更正记录
 
 | 版本 | 内容 |
@@ -387,6 +464,9 @@ D1 摆平之后才谈得上解码。四条路线，代价各不相同：
 | v1（2026-09-30） | 首版。无本机实测，全部结论带来源与置信度，见页首「方法诚实声明」 |
 | v1.1（2026-10-01） | 可行性复核：新增 §12。重拉外部原文 + 核对本地 schema，确认 D1/§3.1/§6/§8/D2 站得住；**新增三条硬伤 H1–H3（匹配层须重写、`unmatched_paths` 语义空缺、§10 测量证明不了 A）**；六条中等风险 M1–M6（含 A/B 字母撞车、§11 已过时、`star` 措辞、两条孤证、空 `folders[]` 未定义、`name` 是否含扩展名） |
 | v1.2（2026-10-01） | 社区做法调研：新增 §8.1–8.5。按「解决什么问题」重分四类，补 6 个本文漏掉的项目；**§8.2 回答两个硬问题**：多归属落物理树只有三种粗糙解（复制多份/只放一处/不落树）→ 反倒证明 A/B 更对；「空间翻倍」非必然（同盘符硬链接、move、符号链接、官方导出）→ **修正 §5-C 的代价描述**；§8.3 补两类漏掉的条目（Bookmark 无实体文件、未分类条目）；§8.4 三条可直抄的解析策略（按内容分类 JSON、资产三级回退、ZIP 不整体解压）；§8.5 新增假线索（SQLite 说法） |
+| v2（2026-10-05） | **本机实测**（Eagle 4.0.0 build20260401 + `Test.library` 49 条目，全程开着 Eagle）：新增 §13。§9 清单落定 5 项；**更正 §3.1 `btime` 语义**（是文件系统创建时间，非「加入库的时间」）；**M6 落定**（`file_index.name` 含扩展名 → join 键 `${name}.${ext}`）；H1/M2 复核属实；API 无鉴权实测 + 新发现 `/api/library/info` 带 `library.path`、Settings 带 `rootDir`；智能夹 `imageCount` 落磁盘子节点 + 条件枚举新增 2 个实测对；**匹配率首轮：键构造零误报，按现势磁盘 49/49 唯一命中**（按陈旧索引 69.4%，15 个不命中全部归因索引陈旧）；样本缺口清单见 §13.6 |
+| v2.1（2026-10-05） | **A 档实现落地**（桌面单端，按 §13.7 拍板）：`core/src/import/eagle.rs`（发现→解码→分类→匹配→计划）+ 匹配层 `by_name_ext`（H1）+ 报告新栏 `unmatched_items`（H2，serde default 兼容旧记录）+ `eagle_*` 五命令 + 设置-存储 Eagle 卡（v4.13 整宽同构，报告视图复用 PixcallReportView 薄包装）+ i18n zh/en；`file_types.rs` 补 `mime_for_extension`（仓内本无现成 ext→mime 映射）。**真实库 smoke：matched 49 / unmatched 0；HEA 断言过固化 4 成员、TESTV2/「阿萨的」无 imageCount 跳过、OCR 空串过断言不落空专题**。门禁：cargo test 178✓（pixcall 81 例未破）、`npm run build` ✓、vitest 本次改动相关全绿；vitest 仅有的两个失败文件均为既有环境问题（colorUtils 的 `localStorage.clear` 缺陷、groupedTags 触发 cargo 链接撞 Y 盘 LNK1104 文件锁——本地 `CARGO_TARGET_DIR` 重跑 9/9 过，均与本工作无关）。**C 档（连文件接管）未实现，留作独立切片** |
+| v2.2（2026-10-06） | **Welcome 接入 Eagle 来源**（§10 ④ 的「welcome 那颗另议」落定）：WelcomeModal 第 1 步按发现结果显示来源按钮——step 1 挂载时并发 `pixcallDiscover(null)`+`eagleDiscover(null)`，各有库才渲染各自按钮、发现中都不渲染、都空则只剩「选择文件夹」（与设置页「发现不到整块不渲染」同口径，修掉「无条件渲染、点了才报错」的反模式）；新增 `WelcomeEagleCard`（镜像 PixcallCard 的接管链：切根→扫描→probe→import，复用来源无关的 `openKnownPath`）；i18n 仅新增 `welcome.useEagleLibrary`（其余全走既有 `eagle.*` 镜像键）；welcome 测试 20→25 例全绿、`npm run build` ✓ |
 
 ## 来源清单
 

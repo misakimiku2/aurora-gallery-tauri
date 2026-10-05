@@ -3,7 +3,7 @@
 //! PixCall 是第一站，Eagle 是第二期。这里只放**与来源无关**的那一半：
 //! 快照/只读访问的管理约定、合并策略（并集 / 仅为空时填 / 同名不新建 / `position` 续排）、
 //! §4.7 报告结构、§6.5 迁移记录表。**来源特定的那一半**（库发现、格式解码、手动/智能判据、
-//! 跳过清单，**以及下面第 2 条禁令涉及的 join 链**）在各适配器里（`pixcall.rs`）。
+//! 跳过清单，**以及下面第 2 条禁令涉及的 join 链**）在各适配器里（`pixcall.rs`、`eagle.rs`）。
 //!
 //! 两条 per-source 禁令（设计方案 v4.16，来自 `docs/Eagle数据迁移-格式调研.md`）：
 //! 1. **「复制 db+wal」不许进 trait 契约**——Eagle 的库不是 SQLite，是 `.library/` 目录：
@@ -18,6 +18,7 @@ use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+pub mod eagle;
 pub mod pixcall;
 
 use crate::db::file_metadata::{self, FileMetadata};
@@ -80,7 +81,13 @@ pub struct MigrationReport {
     pub excluded_trash_names: Vec<TrashItem>,
     /// ④ 路径不命中条数（不模糊猜，如实上报）
     pub unmatched: u32,
+    /// 不命中明细，**保留给 PixCall**（它有路径可列；H2 拍板，调研 §13.7）
     pub unmatched_paths: Vec<String>,
+    /// 不命中/多义明细，**保留给 Eagle**（Eagle 不记原始路径，明细是「显示名.ext」；
+    /// PixCall 侧恒为空数组。H2 拍板：加新栏而不是改 `unmatched_paths` 的语义，
+    /// 旧 `report_json` 的反序列化靠 `#[serde(default)]` 不破）
+    #[serde(default)]
+    pub unmatched_items: Vec<String>,
     /// 规则外状态的说明（`tag_groups` 有行、标签挂在文件夹上、智能判据两信号不一致等）。
     /// 这些都不进计数栏，但不能静默吞掉。
     pub warnings: Vec<String>,
@@ -137,11 +144,18 @@ pub struct MigrationPlan {
 ///
 /// §6.3 的前置条件是「导入前我们这边必须已经扫过一次」，所以 `file_index` 为空时
 /// 调用方要给出口，而不是让它去匹配出满屏 unmatched。
+///
+/// PixCall 期只有 path 双索引；Eagle 期（H1，调研 §12.2）补第三张表 `by_name_ext`：
+/// Eagle 不记原始路径，join 键是「显示名.扩展名」（M6 实测：`file_index.name` 含扩展名，
+/// 所以 Eagle 侧键 = `format!("{}.{}", item.name, item.ext).to_lowercase()`，本表键就是
+/// `name.to_lowercase()`）。
 #[derive(Debug, Clone, Default)]
 pub struct OurIndex {
     exact: HashMap<String, IndexedRow>,
     /// 大小写不敏感回退（§6.3：各轮实测 0 条需要，但用户后改过名时会出现）
     by_lower: HashMap<String, IndexedRow>,
+    /// Eagle 期的 `name+ext` 索引（键 = `name.to_lowercase()`，同键多行 = 同名多义）
+    by_name_ext: HashMap<String, Vec<IndexedRow>>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,17 +163,28 @@ pub struct IndexedRow {
     pub file_id: String,
     pub path: String,
     pub file_type: String,
+    /// 文件名（**含扩展名**，M6 实测；Eagle 期 join 键的左值）
+    pub name: String,
+    pub size: i64,
+    /// scanner 拿不到尺寸时为 NULL（Eagle 期匹配复核用；NULL 按不命中处理）
+    pub width: Option<i64>,
+    pub height: Option<i64>,
 }
 
 impl OurIndex {
     pub fn load(conn: &Connection) -> Result<Self> {
-        let mut stmt =
-            conn.prepare("SELECT file_id, path, file_type FROM file_index")?;
+        let mut stmt = conn.prepare(
+            "SELECT file_id, path, file_type, name, size, width, height FROM file_index",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok(IndexedRow {
                 file_id: row.get(0)?,
                 path: row.get(1)?,
                 file_type: row.get(2)?,
+                name: row.get(3)?,
+                size: row.get(4)?,
+                width: row.get(5)?,
+                height: row.get(6)?,
             })
         })?;
         let mut out = Self::default();
@@ -167,7 +192,11 @@ impl OurIndex {
             let r = row?;
             let lower = r.path.to_lowercase();
             out.exact.insert(r.path.clone(), r.clone());
-            out.by_lower.insert(lower, r);
+            out.by_lower.insert(lower, r.clone());
+            out.by_name_ext
+                .entry(r.name.to_lowercase())
+                .or_default()
+                .push(r);
         }
         Ok(out)
     }
@@ -189,6 +218,20 @@ impl OurIndex {
         self.exact
             .get(&normalized)
             .or_else(|| self.by_lower.get(&normalized.to_lowercase()))
+    }
+
+    /// Eagle 期的 join 键：`name+ext`（小写）的**全部**候选行，按 path 排序保证可复现。
+    ///
+    /// 返回 0 行 = 不命中；>1 行 = 同名多义（Eagle 适配器要按不命中处理，不猜）。
+    /// 与 `find` 同一条禁令：**不许在这里加 `file_type` 条件**（§4.9 第 3 条）。
+    pub fn find_by_name_ext(&self, name_ext_lower: &str) -> Vec<&IndexedRow> {
+        let mut rows: Vec<&IndexedRow> = self
+            .by_name_ext
+            .get(name_ext_lower)
+            .map(|v| v.iter().collect())
+            .unwrap_or_default();
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
+        rows
     }
 }
 

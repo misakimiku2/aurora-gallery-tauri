@@ -74,3 +74,25 @@ pub const SUPPORTED_EXTENSIONS: &[&str] = &[
 pub fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
 }
+
+/// 扩展名 → MIME（Eagle 导入期新增；`ai.rs` 的 `guess_mime` 是给 AI 接口兜底的——
+/// 未知扩展名回 `image/jpeg`，拿来做支持判定会把一切放行，两套语义不能混）。
+///
+/// Eagle 侧只有扩展名，要先映射成 content_type 才能过 `import::is_indexable` 这道
+/// 全仓唯一的支持门禁（调研 §7 明令不许在适配器里散落扩展名黑名单）。支持列表与
+/// `SUPPORTED_EXTENSIONS` 保持同一份口径：不在表里的扩展名返回 None → 不支持。
+pub fn mime_for_extension(extension: &str) -> Option<&'static str> {
+    match extension.to_lowercase().as_str() {
+        "jpg" | "jpeg" | "jfif" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "tiff" | "tif" => Some("image/tiff"),
+        "ico" => Some("image/x-icon"),
+        "svg" => Some("image/svg+xml"),
+        "avif" => Some("image/avif"),
+        "jxl" => Some("image/jxl"),
+        _ => None,
+    }
+}

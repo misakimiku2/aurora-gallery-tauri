@@ -2,9 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2, Globe, Zap, Server, Smartphone, type LucideIcon } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
 import WelcomePixcallCard from './WelcomePixcallCard';
+import WelcomeEagleCard from './WelcomeEagleCard';
 import PixcallLogo from '../pixcall/PixcallLogo';
+import EagleLogo from '../eagle/EagleLogo';
 import { AppSettings, AIConfig } from '../../types';
-import { lanShareStart, lanShareStop } from '../../api/tauri-bridge';
+import { eagleDiscover, lanShareStart, lanShareStop, pixcallDiscover, type EagleLibrary, type PixcallLibrary } from '../../api/tauri-bridge';
 import { androidApkDownloadUrl } from '../../api/tauri-bridge/updater';
 import { aiService } from '../../services/aiService';
 
@@ -16,9 +18,9 @@ interface WelcomeModalProps {
     onFinish: () => void;
     onSelectFolder: () => void;
     /**
-     * 「接管 PixCall 库」：用已知库根走与选择文件夹同一条链（switchRootDatabase +
+     * 「接管 PixCall / Eagle 库」：用已知库根走与选择文件夹同一条链（switchRootDatabase +
      * scanAndMerge），**扫完才 resolve**。设计方案 §6.1 第 3 条。不传就不出第二颗按钮
-     * （非 Tauri 环境 / 老调用点）。
+     * （非 Tauri 环境 / 老调用点）。这是来源无关的「设根 + 扫描」函数，两个来源直接复用。
      */
     onTakeoverPixcall?: (root: string) => Promise<void>;
     currentPath: string | null;
@@ -27,7 +29,7 @@ interface WelcomeModalProps {
     t: (key: string) => string;
     scanProgress?: { processed: number; total: number } | null;
     isScanning: boolean;
-    /** PixCall 导入写库成功后回读一次元数据（导入绕过前端直接写库，界面否则停在扫描时的值） */
+    /** PixCall / Eagle 导入写库成功后回读一次元数据（导入绕过前端直接写库，界面否则停在扫描时的值；来源无关） */
     onPixcallImported?: () => void;
 }
 
@@ -55,13 +57,23 @@ const generateQRCodeUrl = (text: string, size = 400): string => {
 export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, onTakeoverPixcall, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning, onPixcallImported }) => {
     const [step, setStep] = useState(1);
     /**
-     * 第 1 步的两颗按钮互斥（§6.1 第 3 条）：点哪颗，下面的卡片就切到哪个模式。
-     * `null` = 还没选（现状，不显示卡片）；`'pixcall'` 的进度条语义随阶段切换，
-     * 扫描阶段直接复用现有 `scanProgress`/`isScanning`，不另做一套。
+     * 第 1 步的来源按钮互斥（§6.1 第 3 条，Eagle 第二来源同规则）：点哪颗，下面的卡片
+     * 就切到哪个模式。`null` = 还没选（现状，不显示卡片）；`'pixcall'` / `'eagle'` 的
+     * 进度条语义随阶段切换，扫描阶段直接复用现有 `scanProgress`/`isScanning`，不另做一套。
      */
-    const [sourceMode, setSourceMode] = useState<'folder' | 'pixcall' | null>(null);
-    // pixcall 模式的「下一步」门禁是 import 完成（folder 模式沿用 currentPath && !isScanning）
+    const [sourceMode, setSourceMode] = useState<'folder' | 'pixcall' | 'eagle' | null>(null);
+    // pixcall / eagle 模式的「下一步」门禁是 import 完成（folder 模式沿用 currentPath && !isScanning）
     const [pixcallDone, setPixcallDone] = useState(false);
+    const [eagleDone, setEagleDone] = useState(false);
+    /**
+     * 来源按钮的显示口径与设置页一致：**按发现结果显示**。发现进行中两颗都不渲染
+     * （`null` = 还没回来，避免闪现一颗点了只能报错的按钮）；两边都空则第 1 步只剩
+     * 「选择文件夹」。welcome 阶段还没有「我们的根」，只能按注册表发现（§6.3 第 ② 条，
+     * 与 PixcallCard 51-75 行的既有约定一致）。
+     */
+    const [pixcallLibs, setPixcallLibs] = useState<PixcallLibrary[] | null>(null);
+    const [eagleLibs, setEagleLibs] = useState<EagleLibrary[] | null>(null);
+    const discoveryStartedRef = useRef(false);
     // AI 步：草稿只在点「下一步」时提交（跳过不落盘）；进入该步时以当前设置重置
     const [aiDraft, setAiDraft] = useState<AIConfig>(settings.ai);
     const [aiTesting, setAiTesting] = useState(false);
@@ -115,17 +127,60 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
         if (androidQrRef.current?.complete) setQrLoading(false);
     }, [androidQrUrl]);
 
+    /**
+     * 第 1 步可见时**一次性**并发发现两路库（PixCall + Eagle），结果缓存进 state：
+     * 门禁只看这份缓存，不随 step 来回重跑。发现失败按「没有库」处理——按钮整颗
+     * 不渲染，与设置页「发现不到库整块不渲染」的口径一致。
+     */
+    useEffect(() => {
+        if (!show || discoveryStartedRef.current) return;
+        discoveryStartedRef.current = true;
+        let cancelled = false;
+        pixcallDiscover(null)
+            .then(libs => {
+                if (!cancelled) setPixcallLibs(libs);
+            })
+            .catch(() => {
+                if (!cancelled) setPixcallLibs([]);
+            });
+        eagleDiscover(null)
+            .then(libs => {
+                if (!cancelled) setEagleLibs(libs);
+            })
+            .catch(() => {
+                if (!cancelled) setEagleLibs([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [show]);
+
     if (!show) return null;
 
     const stepTitles = [t('welcome.step1Title'), t('welcome.step2Title'), t('welcome.step3Title'), t('welcome.step4Title')];
     const stepDescs = [t('welcome.step1Desc'), t('welcome.step2Desc'), t('welcome.step3Desc'), t('welcome.step4Desc')];
     const isLastStep = step === WELCOME_STEPS.length;
 
-    // 第 1 步门禁：folder 模式沿用现状（选了目录且扫完），pixcall 模式是 import 完成
+    // 第 1 步门禁：folder 模式沿用现状（选了目录且扫完），pixcall / eagle 模式是 import 完成
     const step1Ready =
         sourceMode === 'pixcall'
             ? pixcallDone
+            : sourceMode === 'eagle'
+            ? eagleDone
             : !!currentPath && !isScanning;
+
+    // 来源按钮只在「发现 ≥1 个库」时渲染（发现中/发现为空都不出），且要求有接管回调
+    const hasPixcall = !!onTakeoverPixcall && !!pixcallLibs && pixcallLibs.length > 0;
+    const hasEagle = !!onTakeoverPixcall && !!eagleLibs && eagleLibs.length > 0;
+
+    // 「或」分隔线只画在第一颗可见的来源按钮之前（两颗都在时按钮连排，分隔线只出现一次）
+    const sourceDivider = (
+        <div className="my-2 flex items-center gap-3 text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
+            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
+            <span>{t('welcome.or')}</span>
+            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
+        </div>
+    );
 
     const goNext = () => {
         if (step === 1) {
@@ -301,9 +356,9 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                         <div className="m-auto w-full space-y-6">
                         {step === 1 && (
                             <div className="text-center">
-                                {/* pixcall 模式收掉这颗磁盘图标：卡片自带库图标，而第 1 步是定高的，
-                                    图标留着会把结果区挤出一条滚动条 */}
-                                {sourceMode !== 'pixcall' && (
+                                {/* 任一来源模式都收掉这颗磁盘图标：来源卡自带库图标，而第 1 步是
+                                    定高的，图标留着会把结果区挤出一条滚动条 */}
+                                {sourceMode !== 'pixcall' && sourceMode !== 'eagle' && (
                                     <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400">
                                         <HardDrive size={32} />
                                     </div>
@@ -314,14 +369,11 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                 >
                                     {t('welcome.selectFolder')}
                                 </button>
-                                {/* 第二颗按钮：语义是「接管 PixCall 库」，与选择文件夹互斥（§6.1 第 3 条） */}
-                                {onTakeoverPixcall && (
+                                {/* 来源按钮按发现结果显示（§6.1 第 3 条 + 与设置页同口径）：
+                                    PixCall / Eagle 各自发现 ≥1 个库才出，「或」分隔线画在第一颗可见来源按钮之前 */}
+                                {hasPixcall && (
                                     <>
-                                        <div className="my-2 flex items-center gap-3 text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500">
-                                            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
-                                            <span>{t('welcome.or')}</span>
-                                            <span className="h-px flex-1 bg-gray-200 dark:bg-gray-700"></span>
-                                        </div>
+                                        {sourceDivider}
                                         <button
                                             data-testid="welcome-use-pixcall"
                                             onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
@@ -329,6 +381,19 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                         >
                                             <PixcallLogo size={18} className="mr-2" />
                                             {t('welcome.usePixcallLibrary')}
+                                        </button>
+                                    </>
+                                )}
+                                {hasEagle && (
+                                    <>
+                                        {!hasPixcall && sourceDivider}
+                                        <button
+                                            data-testid="welcome-use-eagle"
+                                            onClick={() => { setEagleDone(false); setSourceMode('eagle'); }}
+                                            className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
+                                        >
+                                            <EagleLogo size={18} className="mr-2" />
+                                            {t('welcome.useEagleLibrary')}
                                         </button>
                                     </>
                                 )}
@@ -344,7 +409,19 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                         }}
                                     />
                                 )}
-                                {currentPath && sourceMode !== 'pixcall' && (
+                                {sourceMode === 'eagle' && onTakeoverPixcall && (
+                                    <WelcomeEagleCard
+                                        t={t}
+                                        onTakeover={onTakeoverPixcall}
+                                        scanProgress={scanProgress}
+                                        isScanning={isScanning}
+                                        onCompleted={result => {
+                                            setEagleDone(!!result);
+                                            if (result) onPixcallImported?.();
+                                        }}
+                                    />
+                                )}
+                                {currentPath && sourceMode !== 'pixcall' && sourceMode !== 'eagle' && (
                                     <div className="mt-6 bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center">
                                         <div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div>
                                         <div className="text-sm font-mono truncate px-2">{currentPath}</div>

@@ -32,6 +32,7 @@ import { isSameRootPath, rootDisplayName } from '../../utils/rootHistory';
 import { formatFileSize, formatEstimatedTimeMs } from './utils';
 import { ROW_CLASS, ROW_ICON_CLASS } from './constants';
 import PixcallImportSection from './PixcallImportSection';
+import EagleImportSection from './EagleImportSection';
 import SwitchRootConfirmDialog from './SwitchRootConfirmDialog';
 
 // 存储设置 + 主色调数据库管理面板组件
@@ -785,8 +786,18 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             </div>
           </div>
 
-          {/* 导入来源（设计方案 §6.1 第 4 条）：PixCall 是第一张，后续来源排在这同一条列表里 */}
+          {/* 导入来源（设计方案 §6.1 第 4 条；Eagle 为第二来源，调研 §10④）：
+              两张卡排在这同一条列表里（v4.13 口径：整宽、同构、不再各自定宽），
+              各自发现不到库时整块不渲染 */}
           <PixcallImportSection
+            t={t}
+            currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
+            onShowToast={onShowToast}
+            onSwitchRoot={onSwitchRoot}
+            onImported={onPixcallImported}
+          />
+          {/* onImported 与 PixCall 共用同一条「回读元数据」回调（prop 名 onPixcallImported 是历史原因） */}
+          <EagleImportSection
             t={t}
             currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
             onShowToast={onShowToast}

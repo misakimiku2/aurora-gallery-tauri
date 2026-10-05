@@ -23,6 +23,7 @@ export const translations = {
       selectFolder: '选择文件夹',
       or: '或',
       usePixcallLibrary: '使用 PixCall 库',
+      useEagleLibrary: '使用 Eagle 库',
       currentPath: '当前选择',
       scanOnStart: '扫描将立即开始；主色提取将在您点击"开始使用"后启动',
       scanning: '扫描中...',
@@ -667,6 +668,8 @@ export const translations = {
       importTagsHint: '从 JSON 合并到当前库',
       importFromPixcall: '从 PixCall 导入标注',
       importFromPixcallHint: '只导入标注，不改变资源目录',
+      importFromEagle: '从 Eagle 导入标注',
+      importFromEagleHint: '只导入标注，不改变资源目录',
       importSuccess: '导入成功',
       importError: '导入失败：文件格式无效',
       lmStudioModelSwitched: 'LM Studio 模型已切换为：',
@@ -1098,8 +1101,61 @@ export const translations = {
       trashDetail: '未迁的回收站项',
       trashOrigin: '原在 {folder}',
       warningsDetail: '提示',
+      // Eagle 期新增栏（调研 §13.7 H2）。PixCall 侧报告暂无此栏（不渲染），键先落好
+      unmatchedItems: '未命中条目',
       pickLibrary: '选择 PixCall 库',
       noPixcallLibrary: '没有找到 PixCall 库'
+    },
+    // Eagle 导入（第二期，调研文档 §13.7）。键集对照上面的 import.*（PixCall）逐一镜像：
+    // 报告视图复用 PixcallReportView，EagleImportSection 把 `import.` 前缀换成本命名空间，
+    // 所以键名必须与 import.* 一一对应；措辞差异（条目/智能文件夹/品牌名）在这里落。
+    eagle: {
+      statTags: '标签',
+      statDescriptions: '描述',
+      statLinks: '来源',
+      statTopics: '专题',
+      statFiles: '成员',
+      noteExisting: '已有内容 {count} 项未覆盖',
+      noteLinksExisting: '来源网址 {count} 条我们已有，未重复添加',
+      noteLinksAdded: '来源网址新增 {added} 条，另有 {existing} 条我们已有、未重复添加',
+      noteMerged: '并入已有专题 {count} 个',
+      // Eagle 侧没命中的是「条目」（item），不是路径
+      noteUnmatched: '未匹配 {count} 个条目',
+      noteUnmatchedHint: '这些条目在当前资源根里没找到：可能还没扫描，或文件不在这个根下面',
+      unmatchedRootHint: '未匹配 {count} 个：这些文件不在当前资源根下，把根设到它们的目录、重新扫描后再点一次导入',
+      noteTrash: '回收站 {count} 条未迁（仍在 Eagle 中）',
+      // Eagle 的 skippedUnsupportedType 覆盖视频/音频/字体（is_indexable 单点拦下，调研 §7）
+      noteVideo: '不支持的类型 {count} 条未导入',
+      noteVideoHint: 'Eagle 的视频/音频/字体条目暂不支持导入',
+      noteWords: '新增标签词 {count} 个',
+      // Eagle 的智能文件夹固化成快照专题（P2：断言通过才固化）
+      noteMaterialized: '智能文件夹 {count} 个（固化为静态专题）',
+      noteCovered: '专题补封面 {count} 个',
+      done: '导入完成',
+      currentLibrary: '当前库',
+      libraryOutsideRoot: '该库不在当前资源根目录下，导入时将先切换到该库',
+      libraryInsideRoot: '当前资源根内',
+      libraryWillSwitch: '将切换',
+      retry: '重试',
+      probing: '读取标注…',
+      switchingRoot: '切换资源根目录并扫描…',
+      importing: '导入中…',
+      doneToast: '已导入 Eagle 标注',
+      failed: '导入失败：{message}',
+      nothingFound: '没有可迁移的标注',
+      lastReport: '上次导入',
+      lastImported: '已导入 · {time}',
+      foundLibraries: '发现 {count} 个库',
+      reportAt: '{time} · 来自 {root}',
+      reportUnreadable: '报告无法解析',
+      trashDetail: '未迁的回收站项',
+      trashOrigin: '原在 {folder}',
+      warningsDetail: '提示',
+      // H2 新增：未命中的 Eagle 条目名明细（「上次导入」展开区）
+      unmatchedItems: '未命中条目',
+      pickLibrary: '选择 Eagle 库',
+      // welcome 的第二来源另议（本期不做，先落键）
+      noEagleLibrary: '没有找到 Eagle 库'
     }
   },
   en: {
@@ -1126,6 +1182,7 @@ export const translations = {
       selectFolder: 'Select Folder',
       or: 'or',
       usePixcallLibrary: 'Use PixCall Library',
+      useEagleLibrary: 'Use Eagle Library',
       currentPath: 'Selected Path',
       scanOnStart: 'Scanning will start immediately; color processing will begin after you click "Start Using"',
       scanning: 'Scanning...',
@@ -1770,6 +1827,8 @@ export const translations = {
       importTagsHint: 'Merge a JSON backup into this library',
       importFromPixcall: 'Import annotations from PixCall',
       importFromPixcallHint: 'Adds annotations to the open library only',
+      importFromEagle: 'Import annotations from Eagle',
+      importFromEagleHint: 'Adds annotations to the open library only',
       importSuccess: 'Import successful',
       importError: 'Import failed: Invalid file format',
       lmStudioModelSwitched: 'LM Studio model switched to: ',
@@ -2201,8 +2260,62 @@ export const translations = {
       trashDetail: 'Skipped trash items',
       trashOrigin: 'was in {folder}',
       warningsDetail: 'Notes',
+      // Eagle-era report column (research doc §13.7 H2). PixCall reports never carry it (not rendered); key kept in place.
+      unmatchedItems: 'Unmatched items',
       pickLibrary: 'Pick a PixCall library',
       noPixcallLibrary: 'No PixCall library found'
+    },
+    // Eagle import (phase 2, research doc §13.7). Keys mirror import.* (PixCall) one for one:
+    // the report view is reused via PixcallReportView, and EagleImportSection swaps the
+    // `import.` prefix for this namespace, so key names must match import.* exactly.
+    // Eagle-specific wording (items / smart folders / brand name) lands here.
+    eagle: {
+      statTags: 'Tags',
+      statDescriptions: 'Descriptions',
+      statLinks: 'Links',
+      statTopics: 'Topics',
+      statFiles: 'Members',
+      noteExisting: 'Kept {count} existing values',
+      noteLinksExisting: '{count} source links already present, not added twice',
+      noteLinksAdded: 'Added {added} source link(s); {existing} already present, not added twice',
+      noteMerged: 'Merged into {count} existing topics',
+      // Eagle unmatched units are library items, not paths
+      noteUnmatched: '{count} items unmatched',
+      noteUnmatchedHint: 'Not found in the current root — maybe not scanned yet, or outside this library',
+      unmatchedRootHint: '{count} items unmatched: those files sit outside the current root. Point the root at their folder, rescan, then import again.',
+      noteTrash: 'Skipped {count} trash items (still in Eagle)',
+      // Eagle's skippedUnsupportedType covers video/audio/fonts (is_indexable gate, research doc §7)
+      noteVideo: 'Skipped {count} unsupported items',
+      noteVideoHint: "Eagle's video/audio/font items aren't supported yet",
+      noteWords: 'Added {count} new tag words',
+      // Eagle smart folders are materialized into snapshot topics (P2: only when the count assertion holds)
+      noteMaterialized: 'Saved {count} smart folders as static topics',
+      noteCovered: 'Added {count} topic covers',
+      done: 'Import complete',
+      currentLibrary: 'Current',
+      libraryOutsideRoot: 'This library is outside the current resource root — importing will switch to it first',
+      libraryInsideRoot: 'In current root',
+      libraryWillSwitch: 'Will switch',
+      retry: 'Retry',
+      probing: 'Reading annotations…',
+      switchingRoot: 'Switching resource root and scanning…',
+      importing: 'Importing…',
+      doneToast: 'Eagle annotations imported',
+      failed: 'Import failed: {message}',
+      nothingFound: 'Nothing to import',
+      lastReport: 'Last import',
+      lastImported: 'Imported {time}',
+      foundLibraries: '{count} libraries found',
+      reportAt: '{time} · from {root}',
+      reportUnreadable: 'Report could not be parsed',
+      trashDetail: 'Skipped trash items',
+      trashOrigin: 'was in {folder}',
+      warningsDetail: 'Notes',
+      // H2: detail list of Eagle item names that matched nothing (expanded "last import" view)
+      unmatchedItems: 'Unmatched items',
+      pickLibrary: 'Pick an Eagle library',
+      // A second welcome source is a separate decision (not in this phase; key reserved)
+      noEagleLibrary: 'No Eagle library found'
     }
   }
 };
