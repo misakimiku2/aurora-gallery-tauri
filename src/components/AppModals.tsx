@@ -72,6 +72,8 @@ interface AppModalsProps {
   setRememberExitChoice: (val: boolean) => void;
   // Settings specific
   handleChangePath: (type: 'resource' | 'cache') => void | Promise<void>;
+  /** 只弹系统目录选择框、不切根（§13：选完先弹切根确认，确认后才真切） */
+  pickRootDirectory?: () => Promise<string | null>;
   /** 历史资源根：选中以前用过的根后切过去（P3） */
   handleSwitchRoot?: (path: string) => void | Promise<void>;
   // Welcome specific
@@ -145,6 +147,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   rememberExitChoice,
   setRememberExitChoice,
   handleChangePath,
+  pickRootDirectory,
   handleSwitchRoot,
   showWelcome,
   handleWelcomeFinish,
@@ -605,6 +608,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
             });
           }}
           onUpdatePath={handleChangePath}
+          onPickRootDirectory={pickRootDirectory}
           onSwitchRoot={handleSwitchRoot}
           onPixcallImported={onRefreshMetadata}
           onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))}

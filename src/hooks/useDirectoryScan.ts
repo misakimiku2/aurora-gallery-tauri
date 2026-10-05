@@ -532,6 +532,20 @@ export const useDirectoryScan = ({
   };
 
   /**
+   * 只弹系统目录选择框，**不切根**（§13 的切根确认弹窗需要先拿到目标路径再问用户）。
+   * 拿到就返回路径，用户取消返回 null；调用方负责确认后走 `handleSwitchRoot`。
+   */
+  const pickRootDirectory = async (): Promise<string | null> => {
+    try {
+      return await openDirectory();
+    } catch (e) {
+      console.error("Failed to open directory", e);
+      showToast("Error opening directory");
+      return null;
+    }
+  };
+
+  /**
    * 从「历史资源根」弹窗里选一个以前用过的根。语义与现选一个目录完全一致
    * （同一条切库链路），只是目录已知、不再弹系统选择框。
    */
@@ -547,6 +561,7 @@ export const useDirectoryScan = ({
     handleRefreshMetadata,
     handleRefreshTags,
     handleChangePath,
+    pickRootDirectory,
     handleSwitchRoot,
   };
 };

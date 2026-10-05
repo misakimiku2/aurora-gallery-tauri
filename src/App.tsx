@@ -1452,7 +1452,7 @@ export const App: React.FC = () => {
     });
   };
 
-  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshMetadata, handleRefreshTags, handleChangePath, handleSwitchRoot } = useDirectoryScan({
+  const { handleOpenFolder, openKnownPath, scanAndMerge, handleRefresh, handleRefreshMetadata, handleRefreshTags, handleChangePath, pickRootDirectory, handleSwitchRoot } = useDirectoryScan({
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
@@ -2967,6 +2967,7 @@ export const App: React.FC = () => {
         rememberExitChoice={rememberExitChoice}
         setRememberExitChoice={setRememberExitChoice}
         handleChangePath={handleChangePath}
+        pickRootDirectory={pickRootDirectory}
         handleSwitchRoot={handleSwitchRoot}
         showWelcome={showWelcome}
         handleWelcomeFinish={handleWelcomeFinish}

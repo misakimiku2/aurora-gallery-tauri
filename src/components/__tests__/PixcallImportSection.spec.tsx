@@ -109,7 +109,7 @@ describe('设置 → 从 PixCall 导入标注', () => {
     await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
   });
 
-  // §6 末：库不在资源根下时**点之前**就说清，别等跑完才发现一条都没进来
+  // §6 末：库不在资源根下时**点之前**就说清（场景 C 会先切根，见下）
   it('库在资源根之外时行下提前提示：导入不会命中任何文件', async () => {
     vi.mocked(pixcallDiscover).mockResolvedValueOnce([
       { root: 'D:/Pix', isCurrent: false, rootRelation: 'outside' },
@@ -119,13 +119,78 @@ describe('设置 → 从 PixCall 导入标注', () => {
     expect(screen.getByText('import.libraryOutsideRoot')).toBeInTheDocument();
   });
 
-  // 子目录形态（我们根 = Videos、库 = Videos\NVIDIA）路径照样能中，不该被警告
-  it('库就在资源根下（或在其子目录）时不提示', async () => {
+  // §13 场景 C：outside 的库要先弹切根确认，确认后才切根 + 导入
+  it('场景 C：点 outside 的库先弹切根确认，确认后先切根再导入', async () => {
+    const onSwitchRoot = vi.fn(async () => {});
+    vi.mocked(pixcallDiscover).mockResolvedValueOnce([
+      { root: 'D:/Pix', isCurrent: false, rootRelation: 'outside' },
+    ] as never);
+    render(
+      <PixcallImportSection
+        t={t}
+        currentRoot="C:/Videos"
+        onShowToast={() => {}}
+        onSwitchRoot={onSwitchRoot}
+      />
+    );
+    fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    fireEvent.click(screen.getByTestId('pixcall-library-row'));
+
+    // 确认弹窗出现，且此刻什么都没干
+    expect(await screen.findByText('settings.switchRootConfirmTitle')).toBeInTheDocument();
+    expect(onSwitchRoot).not.toHaveBeenCalled();
+    expect(pixcallProbe).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('settings.switchRoot'));
+    await waitFor(() => expect(onSwitchRoot).toHaveBeenCalledWith('D:/Pix'));
+    await waitFor(() => expect(pixcallProbe).toHaveBeenCalledWith('D:/Pix'));
+  });
+
+  it('场景 C 的确认框可以取消，取消后既不切根也不导入', async () => {
+    const onSwitchRoot = vi.fn(async () => {});
+    vi.mocked(pixcallDiscover).mockResolvedValueOnce([
+      { root: 'D:/Pix', isCurrent: false, rootRelation: 'outside' },
+    ] as never);
+    render(
+      <PixcallImportSection
+        t={t}
+        currentRoot="C:/Videos"
+        onShowToast={() => {}}
+        onSwitchRoot={onSwitchRoot}
+      />
+    );
+    fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    fireEvent.click(screen.getByTestId('pixcall-library-row'));
+    fireEvent.click(await screen.findByText('settings.cancel'));
+
+    await waitFor(() =>
+      expect(screen.queryByText('settings.switchRootConfirmTitle')).toBeNull()
+    );
+    expect(onSwitchRoot).not.toHaveBeenCalled();
+    expect(pixcallProbe).not.toHaveBeenCalled();
+  });
+
+  // A/B 两种场景（same / inside）照旧不切根
+  it('场景 A/B：同一个根或子目录时直接导入，不弹确认也不切根', async () => {
+    const onSwitchRoot = vi.fn(async () => {});
     vi.mocked(pixcallDiscover).mockResolvedValueOnce([
       { root: 'C:/Videos/NVIDIA', isCurrent: true, rootRelation: 'inside' },
     ] as never);
-    render(<PixcallImportSection t={t} currentRoot="C:/Videos" onShowToast={() => {}} />);
+    render(
+      <PixcallImportSection
+        t={t}
+        currentRoot="C:/Videos"
+        onShowToast={() => {}}
+        onSwitchRoot={onSwitchRoot}
+      />
+    );
     fireEvent.click(await screen.findByTestId('pixcall-source-header'));
+    fireEvent.click(screen.getByTestId('pixcall-library-row'));
+
+    await waitFor(() => expect(pixcallProbe).toHaveBeenCalledWith('C:/Videos/NVIDIA'));
+    expect(onSwitchRoot).not.toHaveBeenCalled();
+    expect(screen.queryByText('settings.switchRootConfirmTitle')).toBeNull();
+    // 子目录形态路径照样能中，行下也不该有「会切根」那句提示
     expect(screen.queryByTestId('pixcall-library-outside-hint')).toBeNull();
   });
 });

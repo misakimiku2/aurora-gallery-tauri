@@ -21,6 +21,8 @@ interface SettingsModalProps {
   onUpdatePath: (type: 'resource') => void;
   /** 历史资源根：选中以前用过的根后切过去（P3） */
   onSwitchRoot?: (path: string) => void;
+  /** 只弹系统目录选择框、不切根（§13：选完先弹切根确认，确认后才真切） */
+  onPickRootDirectory?: () => Promise<string | null>;
   t: (key: string) => string;
   onUpdateAIConnectionStatus: (status: 'checking' | 'connected' | 'disconnected') => void;
   onClipEnabledChange?: (enabled: boolean) => void;
@@ -39,7 +41,7 @@ interface SettingsModalProps {
   onPixcallImported?: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onSwitchRoot, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile, onPixcallImported }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onSwitchRoot, onPickRootDirectory, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile, onPixcallImported }) => {
   const [isAndroid, setIsAndroid] = useState(false);
   // 设置面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   const settingsScrollRef = useRef<HTMLDivElement | null>(null);
@@ -149,6 +151,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               isAndroid={isAndroid}
               onUpdateSettings={onUpdateSettings}
               onUpdatePath={onUpdatePath}
+              onPickRootDirectory={onPickRootDirectory}
               onSwitchRoot={onSwitchRoot}
               onClose={onClose}
               onShowToast={onShowToast}

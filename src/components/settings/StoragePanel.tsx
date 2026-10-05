@@ -32,6 +32,7 @@ import { isSameRootPath, rootDisplayName } from '../../utils/rootHistory';
 import { formatFileSize, formatEstimatedTimeMs } from './utils';
 import { ROW_CLASS, ROW_ICON_CLASS } from './constants';
 import PixcallImportSection from './PixcallImportSection';
+import SwitchRootConfirmDialog from './SwitchRootConfirmDialog';
 
 // 存储设置 + 主色调数据库管理面板组件
 interface StoragePanelProps {
@@ -42,7 +43,9 @@ interface StoragePanelProps {
   onUpdateSettings: (updates: Partial<AppState>) => void;
   onUpdatePath: (type: 'resource') => void;
   /** 从「历史资源根」弹窗里选中一个根后调用（P3）。与现选一个目录走同一条切库链路。 */
-  onSwitchRoot?: (path: string) => void;
+  onSwitchRoot?: (path: string) => void | Promise<void>;
+  /** 只弹系统目录选择框、不切根（§13：选完先弹切根确认，确认后才真切） */
+  onPickRootDirectory?: () => Promise<string | null>;
   onClose: () => void;
   onShowToast?: (msg: string, duration?: number) => void;
   onRefresh?: () => void;
@@ -51,7 +54,7 @@ interface StoragePanelProps {
   onPixcallImported?: () => void;
 }
 
-const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onSwitchRoot, onClose, onShowToast, onRefresh, onNavigateToFile, onPixcallImported }) => {
+const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndroid, onUpdateSettings, onUpdatePath, onSwitchRoot, onPickRootDirectory, onClose, onShowToast, onRefresh, onNavigateToFile, onPixcallImported }) => {
   // Color database management state
   const [colorDbStats, setColorDbStats] = useState<ColorDbStats | null>(null);
   const [errorFiles, setErrorFiles] = useState<ColorDbErrorFile[]>([]);
@@ -88,8 +91,33 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
       setIsSwitchingRoot(false);
     }
   };
-  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [isDeleting, setIsDeleting] = useState(false);
+  // 待确认的切根目标（§13）：手动换根「更改」按钮选完目录后先停在这，
+  // 用户确认了才真切。PixCall 场景 C 走 PixcallImportSection 自己的那一颗。
+  const [pendingRootSwitch, setPendingRootSwitch] = useState<string | null>(null);
+  const [isConfirmingRootSwitch, setIsConfirmingRootSwitch] = useState(false);
+
+  /** 「更改」→ 弹系统选择框 → 拿到路径先问一句，不直接切 */
+  const chooseNewRoot = async () => {
+    if (!onPickRootDirectory) {
+      await onUpdatePath('resource');
+      return;
+    }
+    const picked = await onPickRootDirectory();
+    if (picked) setPendingRootSwitch(picked);
+  };
+
+  const confirmRootSwitch = async () => {
+    if (!pendingRootSwitch || !onSwitchRoot) return;
+    setIsConfirmingRootSwitch(true);
+    try {
+      await onSwitchRoot(pendingRootSwitch);
+      setPendingRootSwitch(null);
+    } finally {
+      setIsConfirmingRootSwitch(false);
+    }
+  };
+
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());  const [isDeleting, setIsDeleting] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
@@ -629,7 +657,7 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
                 {settings.paths.resourceRoot}
               </div>
               <button
-                onClick={() => onUpdatePath('resource')}
+                onClick={chooseNewRoot}
                 className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r"
               >
                 {t('settings.change')}
@@ -762,6 +790,7 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             t={t}
             currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
             onShowToast={onShowToast}
+            onSwitchRoot={onSwitchRoot}
             onImported={onPixcallImported}
           />
         </div>
@@ -1401,6 +1430,16 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
       </div>,
       document.body
     )}
+
+    {/* 切根确认弹窗（§13）：手动换根与「导入 PixCall 库时自动切根」共用这一个组件与文案。
+        welcome 的「使用 PixCall 库」刻意不用——那里是首次设置根，不是「切换」。 */}
+    <SwitchRootConfirmDialog
+      targetPath={pendingRootSwitch}
+      busy={isConfirmingRootSwitch}
+      onCancel={() => setPendingRootSwitch(null)}
+      onConfirm={confirmRootSwitch}
+      t={t}
+    />
   </>
   );
 };
