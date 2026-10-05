@@ -264,7 +264,9 @@ pub struct SmartFolderNode {
     pub description: Option<String>,
     pub parent_id: Option<String>,
     pub conditions: Vec<ConditionGroup>,
-    /// 磁盘 `imageCount`。**只在子节点上有**（§13.2 实测）；没有它就无法断言 → 跳过。
+    /// 磁盘 `imageCount`。**只在子节点上有**（§13.2 实测）。
+    /// 没有它就无法做计数断言：早先整夹跳过，2026-10-06 改成「条件全标定则按条件自算成员落库、
+    /// 但不算固化成快照专题」（实测库 TESTV2 = 无 imageCount 却有 12 个成员的父夹）。
     pub image_count: Option<i64>,
 }
 
@@ -1104,9 +1106,22 @@ fn plan_smart_folders(
     eligible: &[&Item],
     report: &mut MigrationReport,
 ) -> Res<Vec<TopicCreate>> {
-    // ① 求值：过三道门 → 命中成员的 file_id 列表；没过 → None（warnings 已记原因）
-    let mut evaluated: HashMap<String, Option<Vec<String>>> = HashMap::new();
+    // ① 求值：命中成员的 file_id 列表；跳过 → None（warnings 已记原因）。
+    //    返回值第二项 = 这个夹是**断言过**的还是「按条件自算但没断言」的（后者不计入
+    //    `topics_materialized`，2026-10-06 实测库的 TESTV2 就是这种）。
+    let mut evaluated: HashMap<String, Option<(Vec<String>, bool)>> = HashMap::new();
     for node in &source.smart_folders {
+        // 空条件：我们求值器里「没有组」等于命中一切，Eagle 侧语义不明（实测库的「阿萨的」就是
+        // 这个形态）。按「全部条目」落库会造出一枚含 49 条的专题，宁可不落。
+        if node.conditions.is_empty() {
+            report.topics_skipped_unverifiable += 1;
+            report.warnings.push(format!(
+                "智能夹「{}」没有条件，Eagle 侧语义不明（我们的求值器会当成「命中一切」），跳过不迁（P2b）",
+                node.name
+            ));
+            evaluated.insert(node.id.clone(), None);
+            continue;
+        }
         let Some(recomputed) = select_members(&node.conditions, eligible) else {
             report.topics_skipped_unverifiable += 1;
             report.warnings.push(format!(
@@ -1116,43 +1131,57 @@ fn plan_smart_folders(
             evaluated.insert(node.id.clone(), None);
             continue;
         };
-        let Some(image_count) = node.image_count else {
-            report.topics_skipped_unverifiable += 1;
-            report.warnings.push(format!(
-                "智能夹「{}」磁盘上没有 imageCount，无法做计数断言，跳过（P2b）",
-                node.name
-            ));
-            evaluated.insert(node.id.clone(), None);
-            continue;
+        let asserted = match node.image_count {
+            Some(image_count) => {
+                if recomputed.len() as i64 != image_count {
+                    report.topics_skipped_unverifiable += 1;
+                    report.warnings.push(format!(
+                        "智能夹「{}」复算得 {} 条 ≠ imageCount {}，计数断言不过，跳过（P2b；类型不支持的条目不在复算集里，源库含视频/字体/书签时会保守失败）",
+                        node.name,
+                        recomputed.len(),
+                        image_count
+                    ));
+                    evaluated.insert(node.id.clone(), None);
+                    continue;
+                }
+                true
+            }
+            None => {
+                // 2026-10-06 实测修正：Eagle **只在子节点上写 imageCount**，父节点常常没有，
+                // 但它同样是有成员的（实测库 TESTV2 = 全部 12 张 jpg）。断言做不了 ≠ 数据不可信：
+                // 条件已全部标定的前提下按条件自算成员落库，但**不算「固化成快照专题」**
+                // （那条计数与「新落入条件的文件不会自动加入」的说明只给断言过的夹）。
+                report.warnings.push(format!(
+                    "智能夹「{}」磁盘上没有 imageCount，无法做计数断言；条件已全部标定，按条件自算 {} 条落库（未断言）",
+                    node.name,
+                    recomputed.len()
+                ));
+                false
+            }
         };
-        if recomputed.len() as i64 != image_count {
-            report.topics_skipped_unverifiable += 1;
-            report.warnings.push(format!(
-                "智能夹「{}」复算得 {} 条 ≠ imageCount {}，计数断言不过，跳过（P2b；类型不支持的条目不在复算集里，源库含视频/字体/书签时会保守失败）",
-                node.name,
-                recomputed.len(),
-                image_count
-            ));
-            evaluated.insert(node.id.clone(), None);
-            continue;
-        }
+
         let member_file_ids: Vec<String> = recomputed
             .iter()
             .filter_map(|item| matched_files.get(&item.id).cloned())
             .collect();
         if member_file_ids.is_empty() {
             report.warnings.push(format!(
-                "智能夹「{}」断言通过（{} 条）但没有一条命中我们的索引，不落空专题",
-                node.name, image_count
+                "智能夹「{}」{}但没有一条命中我们的索引，不落空专题",
+                node.name,
+                if asserted {
+                    format!("断言通过（{} 条）", recomputed.len())
+                } else {
+                    format!("自算得 {} 条", recomputed.len())
+                }
             ));
         }
-        evaluated.insert(node.id.clone(), Some(member_file_ids));
+        evaluated.insert(node.id.clone(), Some((member_file_ids, asserted)));
     }
 
     // ② 谁需要专题：自己有命中成员，或**后代需要**（被跳过的祖先因此成为容器）
     let mut needed: HashSet<String> = HashSet::new();
-    for (id, members) in &evaluated {
-        if members.as_ref().map_or(false, |m| !m.is_empty()) {
+    for (id, value) in &evaluated {
+        if value.as_ref().map_or(false, |(members, _)| !members.is_empty()) {
             needed.insert(id.clone());
         }
     }
@@ -1175,7 +1204,11 @@ fn plan_smart_folders(
             mapped.insert(node.id.clone(), None);
             continue;
         }
-        let member_file_ids = evaluated.get(&node.id).cloned().flatten().unwrap_or_default();
+        let (member_file_ids, asserted) = evaluated
+            .get(&node.id)
+            .cloned()
+            .flatten()
+            .unwrap_or_default();
         // 没成员的 = 被跳过的祖先（或断言过但没命中的夹）：只承载层级
         let is_container = member_file_ids.is_empty();
         if is_container {
@@ -1209,8 +1242,9 @@ fn plan_smart_folders(
             node.description.as_deref(),
             parent_topic_id,
             member_file_ids,
-            // 容器不算「智能夹固化」：这条计数只给断言通过的节点
-            !is_container,
+            // 「固化成快照专题」这条计数只给**断言通过**的夹：容器（父夹跳过）与
+            // 「条件标定但无 imageCount」（自算成员）都不算，报告里各有 warnings 说明
+            asserted && !is_container,
         )?;
         mapped.insert(node.id.clone(), Some(topic.id.clone()));
         created.push(topic);

@@ -474,10 +474,61 @@ fn smart_folder_materializes_only_when_the_count_assertion_passes() {
     assert!(jpgs.materialized);
     assert_eq!(jpgs.file_ids, vec!["f1".to_string(), "f2".to_string()]);
     assert_eq!(p.report.topics_materialized, 2);
-    assert_eq!(p.report.topics_skipped_unverifiable, 4, "S3 断言不过 + S4/S5 未标定 + S6 无 imageCount");
+    assert_eq!(p.report.topics_skipped_unverifiable, 4, "S3 断言不过 + S4/S5 未标定 + S6 无条件");
     assert!(p.report.warnings.iter().any(|w| w.contains("WRONG") && w.contains("计数断言不过")));
     assert!(p.report.warnings.iter().any(|w| w.contains("RATED") && w.contains("未标定")));
-    assert!(p.report.warnings.iter().any(|w| w.contains("NOCOUNT") && w.contains("imageCount")));
+    assert!(
+        p.report.warnings.iter().any(|w| w.contains("NOCOUNT") && w.contains("没有条件")),
+        "空条件语义不明 → 跳过（求值器里等于命中一切，不许落一枚含全部条目的专题）"
+    );
+}
+
+/// 实测库 TESTV2 的真实形态（2026-10-06 重录）：**父智能夹没有 imageCount**，
+/// 但它有条件（`type = jpg`）且有 12 个成员；子智能夹 HEA 有 imageCount 与描述。
+/// 断言做不了 ≠ 数据不可信：条件全标定就按条件自算成员落库，报告里说清「未断言」，
+/// 且不计入 `topics_materialized`；描述要跟着进专题描述。
+#[test]
+fn smart_folder_without_image_count_still_materializes_its_members() {
+    let lib = Lib::new("testv2-real");
+    lib.header(json!({"smartFolders": [
+        {"id": "P1", "name": "TESTV2", "description": "测试用的主专题",
+         "conditions": [group("OR", vec![rule("type", "equal", json!("jpg"))])],
+         "children": [
+            {"id": "C1", "name": "HEA", "parent": "P1", "description": "测试用的子专题\n",
+             "conditions": [group("OR", vec![rule("name", "contain", json!("HEAD"))])], "imageCount": 1}
+        ]}
+    ]}));
+    lib.item("M1", item_meta("M1", "head1", "jpg"), &["head1.jpg"]);
+    lib.item("M2", item_meta("M2", "other", "jpg"), &["other.jpg"]);
+    lib.item("M3", item_meta("M3", "pic", "png"), &["pic.png"]);
+    let our = our_db();
+    add_row(&our, "f1", "C:/L/head1.jpg", "head1.jpg", 1000, Some(100), Some(50));
+    add_row(&our, "f2", "C:/L/other.jpg", "other.jpg", 1000, Some(100), Some(50));
+    add_row(&our, "f3", "C:/L/pic.png", "pic.png", 1000, Some(100), Some(50));
+    let p = plan_for(&lib, &our);
+
+    let parent = p.topics.iter().find(|t| t.name == "TESTV2").unwrap();
+    assert_eq!(parent.file_ids, vec!["f1".to_string(), "f2".to_string()], "两张 jpg 都进来");
+    assert_eq!(parent.description.as_deref(), Some("测试用的主专题"), "夹描述 → 专题描述");
+    assert!(!parent.materialized, "没断言过不算「固化成快照专题」");
+    assert!(p.report.warnings.iter().any(|w| w.contains("TESTV2") && w.contains("未断言")));
+
+    let child = p.topics.iter().find(|t| t.name == "HEA").unwrap();
+    assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+    assert_eq!(child.file_ids, vec!["f1".to_string()]);
+    assert_eq!(child.description.as_deref(), Some("测试用的子专题"), "尾部换行要 trim");
+    assert!(child.materialized, "有 imageCount 且断言通过的才是固化");
+    assert_eq!(p.report.topics_materialized, 1, "只有 HEA 算固化");
+
+    // 落库之后：描述真的写进了 topics.description（这就是「描述会不会跟着迁」的答案）
+    apply_plan(&our, &p, 100, None).unwrap();
+    let all = topics::get_all_topics(&our).unwrap();
+    let parent_row = all.iter().find(|t| t.name == "TESTV2").unwrap();
+    let child_row = all.iter().find(|t| t.name == "HEA").unwrap();
+    assert_eq!(parent_row.description.as_deref(), Some("测试用的主专题"));
+    assert_eq!(child_row.description.as_deref(), Some("测试用的子专题"));
+    assert_eq!(child_row.parent_id.as_deref(), Some(parent_row.id.as_str()));
+    assert_eq!(topics::get_topic_files(&our, &parent_row.id).unwrap().len(), 2);
 }
 
 /// 实测标定：contain 的 value 为空串 = 什么都不命中（OCR 夹 `value:""` 且 imageCount=0）。
@@ -766,21 +817,28 @@ fn discovery_scans_children_and_filters_invalid_libraries() {
 #[test]
 #[ignore]
 fn eagle_real_library_smoke() {
-    const ROOT: &str = "C:\\Users\\misakimiku\\Pictures\\AuroraGallery\\Test.library";
-    if !is_valid_library(ROOT) {
-        println!("eagle_real_library_smoke：真实库不存在（{}），早退", ROOT);
+    // 两处候选：.174 上的原库，与本机 `Z:\AuroraGallery` 的副本（验收人 2026-10-06 重录过描述）
+    const CANDIDATES: &[&str] = &[
+        "C:\\Users\\misakimiku\\Pictures\\AuroraGallery\\Test.library",
+        "Z:\\AuroraGallery\\Test.library",
+    ];
+    let Some(ROOT) = CANDIDATES.iter().copied().find(|r| is_valid_library(r)) else {
+        println!("eagle_real_library_smoke：真实库不存在（{:?}），早退", CANDIDATES);
         return;
-    }
+    };
 
-    // 发现链路：给资源根，应能扫到这个库（②扫一级子目录）
-    let discovered = discover(Some("C:\\Users\\misakimiku\\Pictures\\AuroraGallery"));
-    assert!(
-        discovered
-            .iter()
-            .any(|l| normalize_path(&l.root) == normalize_path(ROOT)),
-        "discover 应能从资源根扫到 Test.library，实际：{:?}",
-        discovered
-    );
+    // 发现链路：给库的父目录，应能扫到这个库（②扫一级子目录）
+    if let Some(parent) = Path::new(ROOT).parent() {
+        let discovered = discover(Some(&parent.to_string_lossy()));
+        assert!(
+            discovered
+                .iter()
+                .any(|l| normalize_path(&l.root) == normalize_path(ROOT)),
+            "discover 应能从资源根扫到 {:?}，实际：{:?}",
+            parent,
+            discovered
+        );
+    }
 
     let library = DiscoveredLibrary {
         root: ROOT.to_string(),
@@ -840,6 +898,18 @@ fn eagle_real_library_smoke() {
     println!("warnings:");
     for w in &r.warnings {
         println!("  - {}", w);
+    }
+    println!("========== 专题计划（{} 枚） ==========", plan.topics.len());
+    for t in &plan.topics {
+        println!(
+            "  - {}（父={}，成员 {}，固化={}，描述={:?}，并入已有={}）",
+            t.name,
+            t.parent_id.as_deref().unwrap_or("<根>"),
+            t.file_ids.len(),
+            t.materialized,
+            t.description,
+            t.merge_into_existing
+        );
     }
     println!(
         "解码条目 {} / 手动夹 {} / 智能夹 {} / 密码夹 {} / tagsGroups {}",
