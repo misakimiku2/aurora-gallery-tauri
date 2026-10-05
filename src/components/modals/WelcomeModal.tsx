@@ -371,32 +371,33 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                     {t('welcome.selectFolder')}
                                 </button>
                                 {/* 来源按钮按发现结果显示（§6.1 第 3 条 + 与设置页同口径）：
-                                    PixCall / Eagle 各自发现 ≥1 个库才出，「或」分隔线画在第一颗可见来源按钮之前 */}
-                                {hasPixcall && (
-                                    <>
-                                        {sourceDivider}
-                                        <button
-                                            data-testid="welcome-use-pixcall"
-                                            onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
-                                            className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
-                                        >
-                                            <PixcallLogo size={18} className="mr-2" />
-                                            {t('welcome.usePixcallLibrary')}
-                                        </button>
-                                    </>
-                                )}
-                                {hasEagle && (
-                                    <>
-                                        {!hasPixcall && sourceDivider}
-                                        <button
-                                            data-testid="welcome-use-eagle"
-                                            onClick={() => { setEagleDone(false); setSourceMode('eagle'); }}
-                                            className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
-                                        >
-                                            <EagleLogo size={18} className="mr-2" />
-                                            {t('welcome.useEagleLibrary')}
-                                        </button>
-                                    </>
+                                   PixCall / Eagle 各自发现 ≥1 个库才出，「或」分隔线画在第一颗可见
+                                   来源按钮之前。两颗按钮同形制、又都紧跟在分隔线下面，**必须给它们
+                                   之间留出间距**（gap-2.5），否则两枚描边按钮会贴成一块。 */}
+                                {(hasPixcall || hasEagle) && sourceDivider}
+                                {(hasPixcall || hasEagle) && (
+                                    <div className="flex flex-col gap-2.5">
+                                        {hasPixcall && (
+                                            <button
+                                                data-testid="welcome-use-pixcall"
+                                                onClick={() => { setPixcallDone(false); setSourceMode('pixcall'); }}
+                                                className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
+                                            >
+                                                <PixcallLogo size={18} className="mr-2" />
+                                                {t('welcome.usePixcallLibrary')}
+                                            </button>
+                                        )}
+                                        {hasEagle && (
+                                            <button
+                                                data-testid="welcome-use-eagle"
+                                                onClick={() => { setEagleDone(false); setSourceMode('eagle'); }}
+                                                className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 px-6 py-2.5 rounded-xl font-bold transition-all active:scale-95 flex items-center justify-center w-full"
+                                            >
+                                                <EagleLogo size={18} className="mr-2" />
+                                                {t('welcome.useEagleLibrary')}
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
                                 {sourceMode === 'pixcall' && onTakeoverPixcall && (
                                     <WelcomePixcallCard
