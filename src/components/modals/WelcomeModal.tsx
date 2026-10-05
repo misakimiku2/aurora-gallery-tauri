@@ -171,7 +171,8 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
 
     // 来源按钮只在「发现 ≥1 个库」时渲染（发现中/发现为空都不出），且要求有接管回调
     const hasPixcall = !!onTakeoverPixcall && !!pixcallLibs && pixcallLibs.length > 0;
-    const hasEagle = !!onTakeoverPixcall && !!eagleLibs && eagleLibs.length > 0;
+    // Eagle 那颗不依赖接管回调了：它不再切换资源根，落地位置就是用户选的资源目录
+    const hasEagle = !!eagleLibs && eagleLibs.length > 0;
 
     // 「或」分隔线只画在第一颗可见的来源按钮之前（两颗都在时按钮连排，分隔线只出现一次）
     const sourceDivider = (
@@ -409,16 +410,21 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                         }}
                                     />
                                 )}
-                                {sourceMode === 'eagle' && onTakeoverPixcall && (
+                                {sourceMode === 'eagle' && (
                                     <WelcomeEagleCard
                                         t={t}
-                                        onTakeover={onTakeoverPixcall}
+                                        onSelectFolder={() => {
+                                            // 选完目录回来还是 Eagle 这条路（封面/落点都在这里）
+                                            setSourceMode('eagle');
+                                            onSelectFolder();
+                                        }}
+                                        currentRoot={currentPath}
                                         scanProgress={scanProgress}
                                         isScanning={isScanning}
                                         onCompleted={result => {
                                             setEagleDone(!!result);
-                                            if (result) onPixcallImported?.();
                                         }}
+                                        onImported={onPixcallImported}
                                     />
                                 )}
                                 {currentPath && sourceMode !== 'pixcall' && sourceMode !== 'eagle' && (

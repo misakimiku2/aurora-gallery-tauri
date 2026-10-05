@@ -789,3 +789,228 @@ fn eagle_real_library_smoke() {
         source.tags_groups
     );
 }
+
+// ---------------------------------------------------------------- C 档：连文件接管
+//
+// 这几条测的是「搬完之后用户的图库能独立存在」这件事：实体从 `<ID>.info/` 里剥出来、
+// 剥掉缩略图、按夹落进用户自己的资源根，并且**搬运进来的新行要能被 A 档认亲链命中**
+// （Q8：先搬 → 后认亲，不另写一套）。
+
+fn temp_target(tag: &str) -> PathBuf {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+        "aurora-eagle-target-{}-{}-{}",
+        tag,
+        std::process::id(),
+        millis
+    ));
+    let _ = std::fs::remove_dir_all(&path);
+    path
+}
+
+/// 一个带实体的条目（`size` 与真实文件一致，认亲复核要用）。
+fn lib_with_item(tag: &str) -> Lib {
+    let lib = Lib::new(tag);
+    lib.header(json!({"folders": [], "applicationVersion": "4.0.0"}));
+    let meta = json!({
+        "id": "A1", "name": "bentley", "ext": "jpg", "size": 2,
+        "width": 100, "height": 50, "tags": ["car"], "folders": [], "isDeleted": false
+    });
+    // `_thumbnail.png` 必须跟着：它就是验收人实测里那张「多余的第二张缩略图」
+    lib.item("A1", meta, &["bentley.jpg", "bentley_thumbnail.png"]);
+    lib
+}
+
+#[test]
+fn takeover_copies_the_entity_and_never_the_thumbnail() {
+    let lib = lib_with_item("take-basic");
+    let target = temp_target("take-basic");
+    let our_db_conn = our_db();
+    let our = OurIndex::load(&our_db_conn).unwrap();
+
+    let plan = plan_takeover(&lib.source(), &our, &target.to_string_lossy(), false).unwrap();
+    let preview = takeover_preview(&plan);
+    assert_eq!(preview.total_items, 1, "只有 1 个条目参与");
+    assert_eq!(preview.to_copy, 1, "禁掉硬链接时走复制");
+
+    let outcome = execute_takeover(&plan, None);
+    assert_eq!(outcome.copied, 1);
+    assert_eq!(outcome.files.len(), 1);
+
+    let dst = Path::new(&outcome.files[0].path);
+    assert!(dst.is_file(), "实体要真的落到目标目录里：{}", dst.display());
+    assert_eq!(dst.file_name().unwrap(), "bentley.jpg");
+    // ★ 目标目录里只有一张图：`.info` 这层目录与 `_thumbnail.png` 都不进图库
+    let listed: Vec<String> = std::fs::read_dir(dst.parent().unwrap())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(listed, vec!["bentley.jpg".to_string()]);
+    // 源库全程只读：实体还在原处
+    assert!(lib
+        .root
+        .join("images/A1.info/bentley.jpg")
+        .is_file());
+
+    // ③ 搬运结果入库后，A 档的认亲链要能命中它（Q8）
+    let mut conn = our_db();
+    index_takeover(&mut conn, &outcome).unwrap();
+    let reloaded = OurIndex::load(&conn).unwrap();
+    assert!(
+        !reloaded.find_by_name_ext("bentley.jpg").is_empty(),
+        "搬进来的行要能被 name+ext 认亲命中"
+    );
+    let plan2 = build_plan(&lib.source(), &reloaded, &conn).unwrap();
+    assert_eq!(plan2.report.matched, 1, "搬运完再认亲应当命中");
+    assert_eq!(plan2.report.tags_unioned, 1, "标签照挂（A 档复用同一条链）");
+
+    let _ = std::fs::remove_dir_all(&target);
+}
+
+#[test]
+fn takeover_skips_what_we_already_have() {
+    let lib = lib_with_item("take-skip");
+    let target = temp_target("take-skip");
+    let conn = our_db();
+    // 我们库里已经有同一张图（同名 + 同 size + 同宽高）
+    add_row(&conn, "EXISTING", "C:/our/bentley.jpg", "bentley.jpg", 2, Some(100), Some(50));
+    let our = OurIndex::load(&conn).unwrap();
+
+    let plan = plan_takeover(&lib.source(), &our, &target.to_string_lossy(), false).unwrap();
+    let preview = takeover_preview(&plan);
+    assert_eq!(preview.already_here, 1, "认亲命中 = 不搬");
+    assert_eq!(preview.to_copy, 0, "没有东西要搬");
+
+    let outcome = execute_takeover(&plan, None);
+    assert_eq!(outcome.copied, 0);
+    assert_eq!(outcome.already_here, 1);
+    assert!(outcome.files.is_empty());
+
+    let _ = std::fs::remove_dir_all(&target);
+}
+
+#[test]
+fn takeover_mirrors_the_folder_tree_and_disambiguates_names() {
+    let lib = Lib::new("take-tree");
+    lib.header(json!({
+        "folders": [
+            {"id": "F1", "name": "Cars"},
+            {"id": "F2", "name": "Cars", "children": []}
+        ],
+        "applicationVersion": "4.0.0"
+    }));
+    let meta_in_f = |id: &str, name: &str| -> Value {
+        json!({"id": id, "name": name, "ext": "png", "size": 2, "width": 10, "height": 10,
+               "tags": [], "folders": ["F1"], "isDeleted": false})
+    };
+    lib.item("A1", meta_in_f("A1", "same"), &["same.png"]);
+    // 另一个夹也要有成员，且名字故意撞车 → 撞名加 `_<短id>`（Q5）
+    let mut meta2 = meta_in_f("A2", "same");
+    meta2["folders"] = json!(["F2"]);
+    lib.item("A2", meta2, &["same.png"]);
+
+    let target = temp_target("take-tree");
+    let conn = our_db();
+    let our = OurIndex::load(&conn).unwrap();
+    let plan = plan_takeover(&lib.source(), &our, &target.to_string_lossy(), false).unwrap();
+    let outcome = execute_takeover(&plan, None);
+
+    let names: Vec<String> = outcome
+        .files
+        .iter()
+        .map(|f| Path::new(&f.path).file_name().unwrap().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(names.len(), 2, "两条都要搬进来，谁也不许丢");
+    assert!(names.iter().any(|n| n.starts_with("same")), "落盘名以显示名为主：{:?}", names);
+    assert!(
+        names.iter().any(|n| n.contains("_A2") || n.contains("_A1")),
+        "撞名要消歧：{:?}",
+        names
+    );
+    // 有夹时按夹镜像一层目录（Q2）：两个夹同名，第二个要带短 id
+    let parents: Vec<String> = outcome
+        .files
+        .iter()
+        .map(|f| {
+            Path::new(&f.path)
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert!(parents.iter().all(|p| p.starts_with("Cars")), "夹名镜像成目录：{:?}", parents);
+
+    let _ = std::fs::remove_dir_all(&target);
+}
+
+#[test]
+fn takeover_refuses_to_write_into_the_library() {
+    let lib = lib_with_item("take-guard");
+    let conn = our_db();
+    let our = OurIndex::load(&conn).unwrap();
+    // 目标落在库内部 → 必须报错，不能一层层把自己拷进去（硬约束 1：库只读）
+    let inside = lib.root.join("images");
+    let err = plan_takeover(
+        &lib.source(),
+        &our,
+        &inside.to_string_lossy(),
+        false,
+    );
+    assert!(err.is_err(), "往库里搬东西必须被拒");
+    assert!(err.unwrap_err().contains("库"), "错误信息要点明是库的问题");
+}
+
+/// 同名不同图：我们索引里已经有一个 `bentley.jpg`（尺寸不同），搬进来的那张必须改名，
+/// 否则认亲键变多义 → 两张都成 unmatched（Q5 那条「撞名才加后缀」的真正用途）。
+#[test]
+fn takeover_renames_when_the_name_would_become_ambiguous() {
+    let lib = lib_with_item("take-name");
+    let target = temp_target("take-name");
+    let conn = our_db();
+    // 同名但不同图（size 2 vs 999，宽高也不同）
+    add_row(&conn, "OTHER", "C:/our/bentley.jpg", "bentley.jpg", 999, Some(1), Some(1));
+    let our = OurIndex::load(&conn).unwrap();
+
+    let plan = plan_takeover(&lib.source(), &our, &target.to_string_lossy(), false).unwrap();
+    let outcome = execute_takeover(&plan, None);
+    assert_eq!(outcome.copied, 1);
+
+    let name = Path::new(&outcome.files[0].path)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    assert!(name.contains("_A1"), "撞名要加短 id 后缀，实际落盘名：{}", name);
+
+    // 落盘之后认亲键仍唯一 → 这条能被命中（而不是变成多义不命中）
+    let mut conn2 = our_db();
+    index_takeover(&mut conn2, &outcome).unwrap();
+    let reloaded = OurIndex::load(&conn2).unwrap();
+    assert_eq!(reloaded.find_by_name_ext(&name.to_lowercase()).len(), 1);
+
+    let _ = std::fs::remove_dir_all(&target);
+}
+
+#[test]
+fn takeover_is_idempotent_when_run_twice() {
+    let lib = lib_with_item("take-twice");
+    let target = temp_target("take-twice");
+    let conn = our_db();
+    let our = OurIndex::load(&conn).unwrap();
+    let target_str = target.to_string_lossy().to_string();
+
+    let first = execute_takeover(&plan_takeover(&lib.source(), &our, &target_str, false).unwrap(), None);
+    assert_eq!(first.copied, 1);
+
+    // 第二次：目标位置已有同尺寸文件 → 幂等跳过（Q7）
+    let second = execute_takeover(&plan_takeover(&lib.source(), &our, &target_str, false).unwrap(), None);
+    assert_eq!(second.copied, 0, "重跑不该再复制一遍");
+    assert_eq!(second.skipped_existing, 1);
+
+    let _ = std::fs::remove_dir_all(&target);
+}

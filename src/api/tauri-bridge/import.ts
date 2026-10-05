@@ -51,6 +51,20 @@ export interface MigrationReport {
    */
   unmatchedItems?: string[];
   warnings: string[];
+  // ——— C 档「连文件接管」的搬运栏（讨论稿 §5 Q10）———
+  // 只有 Eagle 落这些栏；PixCall 与纯 A 档导入恒为 0。
+  // Rust 侧带 serde default，旧 `report_json` 反序列化后是 undefined，UI 按缺省跳过。
+  /** 同一卷内硬链接进来的条数（不额外占空间） */
+  filesLinked?: number;
+  /** 硬链接不可用、回退为复制的条数 */
+  filesCopied?: number;
+  /** 我们库里已经有同一张图 → 没搬，只走挂标注那条路 */
+  filesAlreadyHere?: number;
+  /** 目标位置已有同名文件（上次搬过）→ 幂等跳过 */
+  filesSkippedExisting?: number;
+  filesFailed?: number;
+  bytesImported?: number;
+  takeoverRoot?: string | null;
 }
 
 /** §6.5 迁移记录（跟着库走）。`reportJson` 是上面那份报告的序列化。 */
@@ -164,22 +178,67 @@ export const eagleDiscover = async (ourRoot?: string | null): Promise<EagleLibra
   }
 };
 
-/** Eagle 只读探测：零写入，返回报告；快照留在 Rust 侧供 import 复用（同 PixCall §6.2 末） */
-export const eagleProbe = async (sourceRoot: string): Promise<MigrationReport> => {
+/** C 档搬运预览：动手之前告诉用户要搬多少、能不能硬链接、占不占空间 */
+export interface EagleTakeoverPreview {
+  targetRoot: string;
+  totalItems: number;
+  /** 我们图库里已经有同一张图 → 不搬，只挂标注 */
+  alreadyHere: number;
+  /** 目标位置已经有这个文件（上次搬过）→ 幂等跳过 */
+  skippedExisting: number;
+  toLink: number;
+  toCopy: number;
+  bytes: number;
+  /** 目标所在的卷支不支持硬链接（跨盘符 / 网络盘）→ 只能复制 */
+  linkSupported: boolean;
+  warnings: string[];
+}
+
+/** probe 的返回：A 档口径的报告 + C 档口径的搬运预览 */
+export interface EaglePreview {
+  report: MigrationReport;
+  takeover: EagleTakeoverPreview | null;
+}
+
+/**
+ * Eagle 只读探测：零写入。**给 `targetRoot` 就顺带算搬运预览**——往用户资源根里写文件之前，
+ * 先给一眼「要搬多少条、占不占空间」的账。快照留在 Rust 侧供 import 复用（同 PixCall §6.2 末）。
+ */
+export const eagleProbe = async (
+  sourceRoot: string,
+  targetRoot?: string | null,
+  preferLink?: boolean
+): Promise<EaglePreview> => {
   if (!isTauriEnvironment()) throw new Error('not in tauri');
   try {
-    return await invoke('eagle_probe', { sourceRoot });
+    return await invoke('eagle_probe', {
+      sourceRoot,
+      targetRoot: targetRoot ?? null,
+      preferLink: preferLink ?? true,
+    });
   } catch (e) {
     console.error('Failed to probe Eagle library:', e);
     throw e;
   }
 };
 
-/** Eagle 执行导入：纯增量、重跑安全（同 PixCall §6.1 第 2/3 条） */
-export const eagleImport = async (sourceRoot: string): Promise<MigrationReport> => {
+/**
+ * Eagle 执行迁移：**给 `targetRoot` 就是 C 档**——先把实体从 `.library` 里剥出来落进
+ * 用户的资源根，再复用 A 档的认亲链挂标注；不给就是纯 A 档（图已经在我们库里）。
+ * 纯增量、重跑安全（同 PixCall §6.1 第 2/3 条）。
+ */
+export const eagleImport = async (
+  sourceRoot: string,
+  targetRoot?: string | null,
+  preferLink?: boolean
+): Promise<MigrationReport> => {
   if (!isTauriEnvironment()) throw new Error('not in tauri');
   try {
-    return await invoke('eagle_import', { sourceRoot });
+    return await invoke('eagle_import', {
+      sourceRoot,
+      targetRoot: targetRoot ?? null,
+      preferLink: preferLink ?? true,
+    });
   } catch (e) {
     console.error('Failed to import from Eagle:', e);
     throw e;

@@ -25,6 +25,39 @@ export const libraryDisplayName = (root: string): string => {
   return segments.length > 1 ? segments[segments.length - 1] : root;
 };
 
+/**
+ * 库根 → 落进我们资源根的**目录名**（C 档迁移的目标子目录）。
+ * `Test.library` → `Test`：`.library` 是 Eagle 的包后缀，进了我们的资源根就是个普通文件夹。
+ * 与 Rust 侧 `eagle::library_dir_name` 同一形态（那里的 `sanitize_name` 由盘片上 walk 兜底，
+ * 这里只负责取名字，两边得一致）。
+ */
+export const libraryFolderName = (root: string): string => {
+  const segments = root.split(/[\\/]+/).filter(Boolean);
+  const last = segments.length > 0 ? segments[segments.length - 1] : root;
+  return last.replace(/\.library$/i, '') || last;
+};
+
+/** C 档：当前资源根 + 库名 → 这一库的迁入位置 */
+export const takeoverTargetFor = (currentRoot: string | null | undefined, libraryRoot: string): string | null => {
+  if (!currentRoot) return null;
+  const sep = currentRoot.includes('\\') ? '\\' : '/';
+  return `${currentRoot.replace(/[\\/]+$/, '')}${sep}${libraryFolderName(libraryRoot)}`;
+};
+
+/** 搬运预览里的字节数（沿用 1024 进制的分档习惯） */
+export const formatImportBytes = (bytes: number): string => {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const text = unit === 0 ? String(Math.round(value)) : value.toFixed(value >= 100 ? 0 : 1);
+  return `${text} ${units[unit]}`;
+};
+
 /** §4.7 的计数栏 → 界面上的数字徽章（0 的不显示，全 0 时由 reportHasWrites 走「没有可迁移」） */
 export interface ReportStat {
   label: string;
@@ -101,6 +134,8 @@ export const buildReportNotes = (report: MigrationReport, t: (key: string) => st
     );
   }
   // v4.5 拍板 A：welcome 只给计数，名字明细在设置面板的展开区
+  if (report.filesFailed && report.filesFailed > 0)
+    notes.push({ text: fillTemplate(t('import.noteFailed'), { count: report.filesFailed }) });
   if (report.excludedTrash > 0)
     notes.push({ text: fillTemplate(t('import.noteTrash'), { count: report.excludedTrash }) });
   // §4.9 第 2 条：搁置的视频标注要说出来，不是静默丢弃
@@ -131,5 +166,8 @@ export const reportHasWrites = (report: MigrationReport): boolean =>
     report.sourceUrlsWritten +
     report.topicsCreated +
     report.topicsMergedName +
-    report.topicsCovered >
+    report.topicsCovered +
+    // C 档：搬进来一批图但一张都没带标注，也是真的动了库
+    (report.filesLinked ?? 0) +
+    (report.filesCopied ?? 0) >
   0;

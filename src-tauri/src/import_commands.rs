@@ -314,29 +314,59 @@ pub async fn eagle_discover(our_root: Option<String>) -> Result<Vec<EagleLibrary
         .collect())
 }
 
-/// 只读探测：零写入，返回全栏报告供 UI 展示。解码结果留给 `eagle_import` 复用。
+/// probe 的返回：A 档口径的报告 + C 档口径的搬运预览，一次给 UI。
+///
+/// 报告那份是按**当前索引**算的——搬运发生在它之后，所以预览阶段看的是「现在能认亲多少」，
+/// 真正的成绩在 `eagle_import` 的返回里（搬运进来的新行也参与认亲）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EaglePreview {
+    pub report: MigrationReport,
+    /// 给了目标目录才有值；`null` = 纯 A 档（不搬文件）
+    pub takeover: Option<eagle::TakeoverPreview>,
+}
+
+/// 只读探测：零写入。**给 `target_root` 就顺带算出搬运预览**（动手之前让用户知道要搬多少、
+/// 能不能硬链接、会不会额外占空间）。解码结果留给 `eagle_import` 复用。
 #[tauri::command]
 pub async fn eagle_probe(
     source_root: String,
+    target_root: Option<String>,
+    prefer_link: Option<bool>,
     app: AppHandle,
     pool: State<'_, AppDbPool>,
     snapshots: State<'_, EagleSnapshots>,
-) -> Result<MigrationReport, String> {
+) -> Result<EaglePreview, String> {
     let library = to_eagle_library(&source_root)?;
     let root = aurora_core::db::normalize_path(&library.root);
     let source = eagle::read_source(&library, Some(&|done, total| {
         emit_eagle_progress(&app, "probe", &root, done, total);
     }))?;
 
-    let report = {
+    let (takeover, report) = {
         let conn = pool.get_connection();
         let our = OurIndex::load(&*conn).map_err(|e| e.to_string())?;
-        if our.is_empty() {
+        let take = match target_root.as_deref() {
+            Some(target) => {
+                let plan = eagle::plan_takeover(
+                    &source,
+                    &our,
+                    target,
+                    prefer_link.unwrap_or(true),
+                )?;
+                Some(eagle::takeover_preview(&plan))
+            }
+            None => None,
+        };
+        let report = eagle::build_plan(&source, &our, &*conn)?.report;
+        // 索引为空且没有可搬的东西时，别让用户看着满屏 unmatched（§6.3 前置条件的 Eagle 版）
+        let incoming = take.as_ref().map(|p| p.to_link + p.to_copy).unwrap_or(0);
+        if our.is_empty() && report.matched == 0 && incoming == 0 {
             return Err(
-                "这个库里还没有索引到任何文件，请先扫描一次再导入（§6.3 前置条件）".to_string(),
+                "这个库里还没有索引到任何文件，也没有可搬运的内容（§6.3 前置条件）".to_string(),
             );
         }
-        eagle::build_plan(&source, &our, &*conn)?.report
+        (take, report)
     };
 
     snapshots
@@ -346,14 +376,18 @@ pub async fn eagle_probe(
         .insert(root.clone(), source);
 
     emit_eagle_progress(&app, "done", &root, 0, 0);
-    Ok(report)
+    Ok(EaglePreview { report, takeover })
 }
 
-/// 执行导入：合并是纯增量的（并集 / 仅为空时填 / 同名不新建 / position 续排），重跑安全。
-/// probe 发现 0 条可迁标注时不写迁移记录。
+/// 执行迁移。**给 `target_root` 就是 C 档**（讨论稿 §5 Q8：先搬 → 再认亲 → 再挂标注，
+/// 复用 A 档同一条合并链）；不给就是纯 A 档（图已经在我们库里，只叠标注）。
+///
+/// `prefer_link`：同一卷优先硬链接（零额外空间），失败的那些按条降级为复制；`false` = 总是复制。
 #[tauri::command]
 pub async fn eagle_import(
     source_root: String,
+    target_root: Option<String>,
+    prefer_link: Option<bool>,
     app: AppHandle,
     pool: State<'_, AppDbPool>,
     snapshots: State<'_, EagleSnapshots>,
@@ -371,10 +405,35 @@ pub async fn eagle_import(
     };
     let root = source.root.clone();
 
-    let report = {
+    // ① 认亲要看一次索引——短读取就放手，**不许占着连接池做搬运**（搬运动辄几分钟，
+    //    占着会让后台索引与 UI 读写一起排队）
+    let our_before = {
         let conn = pool.get_connection();
+        OurIndex::load(&*conn).map_err(|e| e.to_string())?
+    };
+
+    // ② C 档：把实体从 `.library` 里剥出来落进用户的资源根（源库全程只读，绝不 move）
+    let takeover = match target_root.as_deref() {
+        Some(target) => {
+            let plan = eagle::plan_takeover(&source, &our_before, target, prefer_link.unwrap_or(true))?;
+            let used_root = plan.target_root().to_string();
+            let outcome = eagle::execute_takeover(&plan, Some(&|done, total| {
+                emit_eagle_progress(&app, "takeover", &root, done, total);
+            }));
+            Some((outcome, used_root))
+        }
+        None => None,
+    };
+
+    let report = {
+        let mut conn = pool.get_connection();
+        // ③ 搬运结果先入库——不用等重新扫描就能在网格里看到（与 scanner 同一张表、同一个 generate_id）
+        if let Some((outcome, _)) = &takeover {
+            eagle::index_takeover(&mut *conn, outcome).map_err(|e| e.to_string())?;
+        }
+        // ④ A 档：认亲 + 合并。搬运进来的新行从这里开始参与匹配（Q8）
         let our = OurIndex::load(&*conn).map_err(|e| e.to_string())?;
-        if our.is_empty() {
+        if our.is_empty() && takeover.is_none() {
             return Err(
                 "这个库里还没有索引到任何文件，请先扫描一次再导入（§6.3 前置条件）".to_string(),
             );
@@ -385,13 +444,27 @@ pub async fn eagle_import(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let report = apply_plan(
+        let mut report = apply_plan(
             &*conn,
             &plan,
             now,
             Some(&|done, total| emit_eagle_progress(&app, "import", &root, done, total)),
         )
         .map_err(|e| e.to_string())?;
+
+        // ⑤ 搬运栏并入报告（Q10）
+        if let Some((outcome, used_root)) = &takeover {
+            report.files_linked = outcome.linked;
+            report.files_copied = outcome.copied;
+            report.files_already_here = outcome.already_here;
+            report.files_skipped_existing = outcome.skipped_existing;
+            report.files_failed = outcome.failed;
+            report.bytes_imported = outcome.bytes;
+            report.takeover_root = Some(used_root.clone());
+            for warning in &outcome.warnings {
+                report.warnings.push(warning.clone());
+            }
+        }
 
         // §6.5：记录跟着库走；无可迁内容时不写
         if has_anything_to_migrate(&report) {
@@ -409,7 +482,8 @@ pub async fn eagle_import(
     };
 
     // 导入改的是 file_metadata 与 topics，前端内存里存的是旧行。与 pixcall_import 同一条
-    // 现成的失效通道（`lan-share-data-changed`），不另起一套刷新逻辑。
+    // 现成的失效通道（`lan-share-data-changed`），不另起一套刷新逻辑：
+    // `files` 那一路会让 App 重扫当前目录——搬运进来的新图要立刻可见，不能等用户手动刷新。
     if has_anything_to_migrate(&report) {
         let _ = app.emit(
             "lan-share-data-changed",
@@ -419,6 +493,12 @@ pub async fn eagle_import(
             let _ = app.emit(
                 "lan-share-data-changed",
                 serde_json::json!({ "kind": "topics" }),
+            );
+        }
+        if report.files_linked + report.files_copied > 0 {
+            let _ = app.emit(
+                "lan-share-data-changed",
+                serde_json::json!({ "kind": "files" }),
             );
         }
     }

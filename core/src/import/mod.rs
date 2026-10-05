@@ -88,6 +88,29 @@ pub struct MigrationReport {
     /// 旧 `report_json` 的反序列化靠 `#[serde(default)]` 不破）
     #[serde(default)]
     pub unmatched_items: Vec<String>,
+    /// C 档「连文件接管」的搬运栏（讨论稿 §5 Q10：新增栏而不是改 `unmatched_paths` 的语义）。
+    /// PixCall / 纯 A 档导入恒为 0，只有 Eagle 落这些栏。带 `serde(default)`，
+    /// 旧 `report_json` 反序列化不受影响（与上面 `unmatched_items` 同一条 H2 先例）。
+    /// 硬链接进库的条数（同盘符零额外空间）
+    #[serde(default)]
+    pub files_linked: u32,
+    /// 硬链接不可用（跨盘符 / 网络盘 / 不支持的文件系统）回退为复制的条数
+    #[serde(default)]
+    pub files_copied: u32,
+    /// 我们库里已经有同一张图（`name+ext` 唯一命中且 size/宽高复核通过）→ 不搬，只走挂标注
+    #[serde(default)]
+    pub files_already_here: u32,
+    /// 目标路径已经存在同名文件、按幂等跳过的条数
+    #[serde(default)]
+    pub files_skipped_existing: u32,
+    /// 搬运失败的条数（读到总线仍继续，失败明细进 warnings）
+    #[serde(default)]
+    pub files_failed: u32,
+    #[serde(default)]
+    pub bytes_imported: u64,
+    /// 搬运落到的目录（`<资源根>/<库名>` 那一层），报告里要能复核落到哪了
+    #[serde(default)]
+    pub takeover_root: Option<String>,
     /// 规则外状态的说明（`tag_groups` 有行、标签挂在文件夹上、智能判据两信号不一致等）。
     /// 这些都不进计数栏，但不能静默吞掉。
     pub warnings: Vec<String>,
@@ -232,6 +255,14 @@ impl OurIndex {
             .unwrap_or_default();
         rows.sort_by(|a, b| a.path.cmp(&b.path));
         rows
+    }
+
+    /// C 档搬运用：索引里有没有这个 `name+ext`（小写）键。
+    ///
+    /// 搬运落盘时要靠它保证文件名唯一——否则搬进来一个与已有行同名的文件，
+    /// `find_by_name_ext` 就会变成多义（>1 行按不命中处理），那张图白搬一趟。
+    pub fn has_name_ext(&self, name_ext_lower: &str) -> bool {
+        self.by_name_ext.contains_key(name_ext_lower)
     }
 }
 
@@ -518,6 +549,9 @@ pub fn has_anything_to_migrate(report: &MigrationReport) -> bool {
     report.tags_unioned + report.descriptions_written + report.source_urls_written > 0
         || report.topic_files_added > 0
         || report.topics_covered > 0
+        // C 档：「搬了文件但没有一张带标注」也是真的动了库（库里多了图），
+        // 不能因为没有标注就不写迁移记录——那样的重跑既补不齐又会让人以为没导成功。
+        || report.files_linked + report.files_copied > 0
 }
 
 /// §6.5：落一条迁移记录。写不写由调用方决定（见 `has_anything_to_migrate`）。

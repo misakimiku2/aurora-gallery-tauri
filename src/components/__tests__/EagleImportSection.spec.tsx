@@ -30,10 +30,13 @@ vi.mock('../../api/tauri-bridge', () => {
     unmatchedPaths: [] as string[],
     unmatchedItems: ['orphan.png', 'renamed.jpg'],
     warnings: ['未标定的智能夹条件已跳过'],
+    filesLinked: 44,
+    filesCopied: 0,
+    filesAlreadyHere: 5,
   };
   return {
     eagleDiscover: vi.fn(async () => [{ root: 'C:/Libs/Test.library', isCurrent: true }]),
-    eagleProbe: vi.fn(async () => report),
+    eagleProbe: vi.fn(async () => ({ report, takeover: { targetRoot: 'C:/Videos/Test', totalItems: 49, alreadyHere: 5, skippedExisting: 0, toLink: 44, toCopy: 0, bytes: 134217728, linkSupported: true, warnings: [] } })),
     eagleImport: vi.fn(async () => report),
     eagleImportRecords: vi.fn(async () => [] as unknown[]),
     eagleLastImportReport: vi.fn(async () => null),
@@ -71,9 +74,17 @@ const makeReport = (overrides: Partial<MigrationReport> = {}): MigrationReport =
   ...overrides,
 });
 
-const setup = () => render(<EagleImportSection t={t} currentRoot={null} onShowToast={() => {}} />);
+const setup = (currentRoot: string | null = 'C:/Videos') =>
+  render(<EagleImportSection t={t} currentRoot={currentRoot} onShowToast={() => {}} />);
 
-describe('设置 → 从 Eagle 导入标注', () => {
+/** 展开 + 点库行：probe 完应该停在意会确认这一步 */
+const openAndProbe = async () => {
+  fireEvent.click(await screen.findByTestId('eagle-source-header'));
+  fireEvent.click(screen.getByTestId('eagle-library-row'));
+  await screen.findByTestId('eagle-takeover-confirm');
+};
+
+describe('设置 → 从 Eagle 迁移（C 档：连文件接管）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -112,13 +123,62 @@ describe('设置 → 从 Eagle 导入标注', () => {
     expect(await screen.findByText(/eagle\.lastImported/)).toBeInTheDocument();
   });
 
-  it('点库行 = probe 后 import 同一个根（与 PixCall 同款：两次读同一份快照）', async () => {
+  // C 档往用户盘上写文件，动手之前必须先给一眼账：多少个条目、多少字节、能不能硬链接
+  it('点库行只是 probe：出迁入位置与条数，此刻还没碰用户的盘', async () => {
+    setup();
+    await openAndProbe();
+
+    expect(eagleProbe).toHaveBeenCalledWith('C:/Libs/Test.library', 'C:/Videos/Test', true);
+    expect(eagleImport).not.toHaveBeenCalled();
+    // 目标目录 = <当前资源根>/<库名>（`.library` 后缀剥掉），不是把资源根换掉
+    expect(screen.getByTestId('eagle-takeover-confirm').textContent).toContain('C:/Videos/Test');
+    expect(screen.getByTestId('eagle-takeover-confirm').textContent).toContain('eagle.takeoverLinkMode');
+  });
+
+  it('确认之后才搬运：同一个根、同一个链接偏好，两条链读同一份快照', async () => {
+    setup();
+    await openAndProbe();
+    fireEvent.click(screen.getByTestId('eagle-takeover-start'));
+
+    await waitFor(() =>
+      expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library', 'C:/Videos/Test', true)
+    );
+  });
+
+  // Q1 的用户可见口径：不想与 Eagle 共用同一份数据就改成复制
+  it('勾「改为复制导入」后按复制跑：probe 与 import 都带上 preferLink=false', async () => {
     setup();
     fireEvent.click(await screen.findByTestId('eagle-source-header'));
     fireEvent.click(screen.getByTestId('eagle-library-row'));
+    // 偏好在 probe 之前就能改；改完重一次 probe 才是用户看到的账
+    fireEvent.click(await screen.findByTestId('eagle-prefer-copy'));
+    fireEvent.click(screen.getByTestId('eagle-library-row'));
+    await screen.findByTestId('eagle-takeover-confirm');
+    fireEvent.click(screen.getByTestId('eagle-takeover-start'));
 
-    await waitFor(() => expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library'));
-    expect(eagleProbe).toHaveBeenCalledWith('C:/Libs/Test.library');
+    await waitFor(() =>
+      expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library', 'C:/Videos/Test', false)
+    );
+  });
+
+  it('确认框可以取消：取消后什么都不做', async () => {
+    setup();
+    await openAndProbe();
+    fireEvent.click(screen.getByTestId('eagle-takeover-cancel'));
+
+    await waitFor(() => expect(screen.queryByTestId('eagle-takeover-confirm')).toBeNull());
+    expect(eagleImport).not.toHaveBeenCalled();
+  });
+
+  // 迁移是往**用户的资源根**里添文件，没有根就没有落点
+  it('没有选资源目录时不许动手：给提示而不是替用户挑一个', async () => {
+    setup(null);
+    fireEvent.click(await screen.findByTestId('eagle-source-header'));
+    fireEvent.click(screen.getByTestId('eagle-library-row'));
+
+    expect(await screen.findByText('eagle.takeoverNoRoot')).toBeInTheDocument();
+    await waitFor(() => expect(eagleProbe).not.toHaveBeenCalled());
+    expect(eagleImport).not.toHaveBeenCalled();
   });
 
   it('发现不到 Eagle 库时整块不渲染', async () => {
@@ -131,87 +191,11 @@ describe('设置 → 从 Eagle 导入标注', () => {
   // 导入是 Rust 侧直接写库，不回读一次 state.files 就还停在旧值（与 PixCall 同一个坑）
   it('导入成功后回调 onImported，让上层回读元数据', async () => {
     const onImported = vi.fn();
-    render(<EagleImportSection t={t} currentRoot={null} onShowToast={() => {}} onImported={onImported} />);
-    fireEvent.click(await screen.findByTestId('eagle-source-header'));
-    fireEvent.click(screen.getByTestId('eagle-library-row'));
+    render(<EagleImportSection t={t} currentRoot="C:/Videos" onShowToast={() => {}} onImported={onImported} />);
+    await openAndProbe();
+    fireEvent.click(screen.getByTestId('eagle-takeover-start'));
 
     await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1));
-  });
-
-  // 库不在资源根下时点之前就说清；场景 C 会先弹切根确认
-  it('场景 C：点 outside 的库先弹切根确认，确认后先切根再导入', async () => {
-    const onSwitchRoot = vi.fn(async () => {});
-    vi.mocked(eagleDiscover).mockResolvedValueOnce([
-      { root: 'D:/Libs/Other.library', isCurrent: false, rootRelation: 'outside' },
-    ] as never);
-    render(
-      <EagleImportSection
-        t={t}
-        currentRoot="C:/Videos"
-        onShowToast={() => {}}
-        onSwitchRoot={onSwitchRoot}
-      />
-    );
-    fireEvent.click(await screen.findByTestId('eagle-source-header'));
-    fireEvent.click(screen.getByTestId('eagle-library-row'));
-
-    // 确认弹窗出现，且此刻什么都没干
-    expect(await screen.findByText('settings.switchRootConfirmTitle')).toBeInTheDocument();
-    expect(onSwitchRoot).not.toHaveBeenCalled();
-    expect(eagleProbe).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByText('settings.switchRoot'));
-    await waitFor(() => expect(onSwitchRoot).toHaveBeenCalledWith('D:/Libs/Other.library'));
-    await waitFor(() => expect(eagleProbe).toHaveBeenCalledWith('D:/Libs/Other.library'));
-  });
-
-  it('场景 C 的确认框可以取消，取消后既不切根也不导入', async () => {
-    const onSwitchRoot = vi.fn(async () => {});
-    vi.mocked(eagleDiscover).mockResolvedValueOnce([
-      { root: 'D:/Libs/Other.library', isCurrent: false, rootRelation: 'outside' },
-    ] as never);
-    render(
-      <EagleImportSection
-        t={t}
-        currentRoot="C:/Videos"
-        onShowToast={() => {}}
-        onSwitchRoot={onSwitchRoot}
-      />
-    );
-    fireEvent.click(await screen.findByTestId('eagle-source-header'));
-    fireEvent.click(screen.getByTestId('eagle-library-row'));
-    fireEvent.click(await screen.findByText('settings.cancel'));
-
-    await waitFor(() =>
-      expect(screen.queryByText('settings.switchRootConfirmTitle')).toBeNull()
-    );
-    expect(onSwitchRoot).not.toHaveBeenCalled();
-    expect(eagleProbe).not.toHaveBeenCalled();
-  });
-
-  // A/B 两种场景（same / inside）照旧不切根
-  it('场景 A/B：同一个根或子目录时直接导入，不弹确认也不切根', async () => {
-    const onSwitchRoot = vi.fn(async () => {});
-    vi.mocked(eagleDiscover).mockResolvedValueOnce([
-      { root: 'C:/Videos/Pics.library', isCurrent: true, rootRelation: 'inside' },
-    ] as never);
-    render(
-      <EagleImportSection
-        t={t}
-        currentRoot="C:/Videos"
-        onShowToast={() => {}}
-        onSwitchRoot={onSwitchRoot}
-      />
-    );
-    fireEvent.click(await screen.findByTestId('eagle-source-header'));
-    fireEvent.click(screen.getByTestId('eagle-library-row'));
-
-    await waitFor(() => expect(eagleProbe).toHaveBeenCalledWith('C:/Videos/Pics.library'));
-    expect(onSwitchRoot).not.toHaveBeenCalled();
-    expect(screen.queryByText('settings.switchRootConfirmTitle')).toBeNull();
-    // 卡内不该有「会切根」那句提示，但要有绿色徽章
-    expect(screen.queryByTestId('eagle-library-outside-hint')).toBeNull();
-    expect(screen.getByTestId('eagle-library-inside-badge')).toBeInTheDocument();
   });
 
   // H2 新栏：未命中的 Eagle 条目名明细在「上次导入」展开区逐条可见

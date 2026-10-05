@@ -14,6 +14,7 @@
 //!    命中后再用 size + width/height 复核（§13.3：实测样例两侧全相等，零误报）。
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,8 +23,9 @@ use super::{
     existing_vocabulary, fill_if_empty, find_topic_by_name, is_indexable, merge_tag_lists,
     new_topic_id, AnnotationEdit, MigrationPlan, MigrationReport, OurIndex, TopicCreate, TrashItem,
 };
+use crate::db::file_index::FileIndexEntry;
 use crate::db::file_metadata;
-use crate::db::normalize_path;
+use crate::db::{generate_id, normalize_path};
 use crate::file_types;
 
 pub const SOURCE_NAME: &str = "eagle";
@@ -216,6 +218,9 @@ pub struct Item {
     pub is_deleted: bool,
     /// 三级回退后有没有实体文件。全落空 = 无实体条目（Bookmark 类，§8.3）→ 不参与匹配。
     pub has_entity: bool,
+    /// C 档搬运用：三级回退**定位到的那个文件本身**（`<ID>.info/` 内的绝对路径）。
+    /// `has_entity` 的 superset——有它就一定有 `has_entity == true`；A 档不动文件，可以只看后者。
+    pub entity_path: Option<String>,
     /// 图上矩形标注条数（Eagle 4.0 build22+；P4 拍板丢弃 + 上报）
     pub comments: usize,
     // star（P5 不迁）/ palettes / order / noThumbnail / btime / mtime 等一律忽略：
@@ -415,9 +420,11 @@ fn decode_item(id: &str, dir: &Path, v: &Value) -> Item {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+    let entity = resolve_entity_file(dir, &name, &ext);
     Item {
         id: id.to_string(),
-        has_entity: locate_entity(dir, &name, &ext),
+        has_entity: entity.is_some(),
+        entity_path: entity.map(|p| p.to_string_lossy().to_string()),
         name,
         ext,
         size: v.get("size").and_then(Value::as_i64),
@@ -449,13 +456,17 @@ fn string_list(v: Option<&Value>) -> Vec<String> {
 /// 实体文件定位三级回退（§8.4）：精确 `<name>.<ext>` → `<name>.*` 前缀 → 目录内最大文件。
 /// `*_thumbnail.*` 一律排除、绝不当作条目实体；`metadata.json` 是 sidecar 本身，同样排除。
 /// 三级都落空 = 无实体文件条目（Bookmark 类）。
-fn locate_entity(dir: &Path, name: &str, ext: &str) -> bool {
+///
+/// C 档用它**定位到具体文件**（A 档只问有没有）。勘误点：原来第 ③ 级只判存在性，
+/// 迁移要知道搬哪个文件，统一取目录中体积最大的那个——与 §8.4 的回退原本是同一件事。
+fn resolve_entity_file(dir: &Path, name: &str, ext: &str) -> Option<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+        return None;
     };
-    let mut candidates: Vec<String> = Vec::new();
+    let mut candidates: Vec<(String, PathBuf, u64)> = Vec::new();
     for entry in entries.flatten() {
-        if !entry.path().is_file() {
+        let path = entry.path();
+        if !path.is_file() {
             continue;
         }
         let file_name = entry.file_name().to_string_lossy().to_string();
@@ -470,21 +481,32 @@ fn locate_entity(dir: &Path, name: &str, ext: &str) -> bool {
         if stem.ends_with("_thumbnail") {
             continue;
         }
-        candidates.push(file_name);
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        candidates.push((file_name, path, size));
     }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
     // ① 精确
-    if !name.is_empty() && !ext.is_empty() && candidates.iter().any(|f| *f == format!("{}.{}", name, ext)) {
-        return true;
+    if !name.is_empty() && !ext.is_empty() {
+        let exact = format!("{}.{}", name, ext);
+        if let Some(hit) = candidates.iter().find(|(f, _, _)| *f == exact) {
+            return Some(hit.1.clone());
+        }
     }
     // ② `<name>.*` 前缀（Windows 文件名大小写不敏感，回退层统一小写比）
     if !name.is_empty() {
         let prefix = format!("{}.", name.to_lowercase());
-        if candidates.iter().any(|f| f.to_lowercase().starts_with(&prefix)) {
-            return true;
+        let hit = candidates
+            .iter()
+            .find(|(f, _, _)| f.to_lowercase().starts_with(&prefix));
+        if let Some(hit) = hit {
+            return Some(hit.1.clone());
         }
     }
-    // ③ 目录内还有别的文件就算有实体（只判存在性——迁移不碰实体文件）
-    !candidates.is_empty()
+    // ③ 目录内体积最大的那个
+    candidates
+        .into_iter()
+        .max_by_key(|(_, _, size)| *size)
+        .map(|(_, path, _)| path)
 }
 
 /// 手动夹树递归（先序：父先于子）。**节点带 `password` → 该子树整体跳过**（D7：
@@ -1200,3 +1222,576 @@ fn plan_topic_node(
 
 #[cfg(test)]
 mod tests;
+
+// ---------------------------------------------------------------- C 档：连文件接管（讨论稿 §5 Q1–Q10）
+//
+// **为什么要有这一层**：我们是 Eagle 的竞品而不是它的插件，迁移的完成标准是「用户搬完之后
+// 他的图库能独立存在」。把 `.library` 当资源根（路线 B）做不到这一点——文件还在 Eagle 的库里，
+// 删掉 Eagle 就没了，而且 `.info` 这层目录与 `_thumbnail.png` 会把网格糊成一团
+// （验收人 2026-10-06 实测：49 条目 = 49 个文件夹 / 每图 3 张缩略图）。所以 C 档把**实体文件**
+// 从库里剥出来、剥掉 `.info` 与缩略图、按 Eagle 的夹结构落进用户自己的资源根，随后复用 A 档
+// 的匹配链挂标注（Q8：先搬运、后认亲，不另写一套）。
+//
+// 三条硬约束（讨论稿 §6）：
+// 1. **库只读**：只 `read` 源的实体文件，绝不 move、绝不写回 `.library`；
+// 2. `is_indexable` 全仓单点门禁——这里不认扩展名黑名单，视频/字体在前一步就被拦下；
+// 3. 幂等：目标路径已有同样大小的文件就跳过，中断后重跑安全（Q7，不做事务回滚）。
+
+/// 目标位置 与 链接能力的预览（probe 之后、动手之前给用户看的那栏）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TakeoverPreview {
+    pub target_root: String,
+    /// 会参与搬运的条目数（含我们侧已有的那些——它们最终也进 wit 图库）
+    pub total_items: u32,
+    /// 我们图库里已经有同一张图 → 不搬，只挂标注
+    pub already_here: u32,
+    /// 目标位置已有同名文件（上次搬过）→ 跳过搬运
+    pub skipped_existing: u32,
+    pub to_link: u32,
+    pub to_copy: u32,
+    pub bytes: u64,
+    /// 目标位置所在的卷支不支持硬链接（跨盘符 / 网络盘 / 非 NTFS）→ 只能复制（占同样空间）
+    pub link_supported: bool,
+    pub warnings: Vec<String>,
+}
+
+/// 搬完之后的产出，`eagle_import` 用它填报告的搬运栏并落索引。
+#[derive(Debug, Default)]
+pub struct TakeoverOutcome {
+    pub linked: u32,
+    pub copied: u32,
+    /// 我们侧已经有同一张图、没搬只挂标注的条数（Q8：A 档退化成 C 的一步）
+    pub already_here: u32,
+    pub skipped_existing: u32,
+    pub failed: u32,
+    /// 搬进来的内容体量（硬链接同样计入——不额外占空间是另一回事，
+    /// 报告里让用户知道搬了多少内容，不用两次数值口径）
+    pub bytes: u64,
+    /// 落盘时用得到：新建出来的目录（含 `<目标根>` 本身），按路径长度升序（父先于子）
+    pub created_dirs: Vec<String>,
+    pub files: Vec<TakeoverFile>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TakeoverFile {
+    pub path: String,
+    /// Eagle 的 `width`/`height`：**走 `${name}.${ext}` 认亲时 size/宽高复核要用**，
+    /// 这里直接带上，省掉导入后再排一次后台解图。
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[derive(Debug)]
+struct PlannedFile {
+    src: PathBuf,
+    dst: PathBuf,
+    size: u64,
+    width: Option<u32>,
+    height: Option<u32>,
+}
+
+/// `plan_takeover` 的产物。字段刻意私有：调用方只把它交给 `takeover_preview` /
+/// `execute_takeover`，不许自己改文件名规则（Q5 的语义要保持单点）。
+#[derive(Debug)]
+pub struct TakeoverPlan {
+    target_root: String,
+    link_supported: bool,
+    files: Vec<PlannedFile>,
+    dirs: Vec<String>,
+    total_items: u32,
+    already_here: u32,
+    skipped_existing: u32,
+    warnings: Vec<String>,
+}
+
+impl TakeoverPlan {
+    /// 最终落地的目标目录（归一化后）——报告里要能复核「搬到哪了」。
+    pub fn target_root(&self) -> &str {
+        &self.target_root
+    }
+}
+
+/// 文件名/目录名净化：Windows 与 Unix 禁用字符集的交集之外的内容换成 `_`，
+/// 再去首尾空白与点。空名给稳定占位（夹名可能就是空的）。
+fn sanitize_name(raw: &str) -> String {
+    const FORBIDDEN: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_control() && !FORBIDDEN.contains(c))
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "_".to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn short_id(id: &str) -> String {
+    if id.len() > 6 {
+        id[..6].to_string()
+    } else {
+        id.to_string()
+    }
+}
+
+/// 库目录名 → 我们图库里的那个子目录名（`Test.library` → `Test`）。
+pub fn library_dir_name(root: &str) -> String {
+    let raw = Path::new(root)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.to_string());
+    let stripped = raw.strip_suffix(".library").unwrap_or(&raw).to_string();
+    sanitize_name(&stripped)
+}
+
+/// 大小/位置比较统一小写比（Windows 大小写不敏感）。判断 `child` 是否落在 `parent` 里。
+fn path_is_inside(parent: &str, child: &str) -> bool {
+    let p = parent.to_lowercase();
+    let c = child.to_lowercase();
+    if p == c {
+        return true;
+    }
+    let p = p.trim_end_matches(['/', '\\']);
+    c.starts_with(&format!("{}/", p)) || c.starts_with(&format!("{}\\", p))
+}
+
+/// 一个path 的最深**已存在**祖先（用于硬链接探测，避免为了探测就去建目录）。
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = Some(path);
+    while let Some(p) = current {
+        if p.is_dir() {
+            return Some(p.to_path_buf());
+        }
+        current = p.parent();
+    }
+    None
+}
+
+/// 目标卷支能不能建硬链接：探测文件必须落在**目标同一卷**上才准，
+/// 所以拿最深已存在的祖先目录当探测位（通常是用户的资源根，早已存在）。
+fn probe_hard_link_support(target: &Path) -> bool {
+    let probe_dir = match existing_ancestor(target) {
+        Some(dir) => dir,
+        None => return false,
+    };
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let base = probe_dir.join(format!(".aurora-link-probe-{}", stamp));
+    if std::fs::write(&base, b"").is_err() {
+        return false;
+    }
+    let link = probe_dir.join(format!(".aurora-link-probe-{}.lnk", stamp));
+    let ok = std::fs::hard_link(&base, &link).is_ok();
+    let _ = std::fs::remove_file(&link);
+    let _ = std::fs::remove_file(&base);
+    ok
+}
+
+/// Eagle 手动夹树 → 目标目录下的相对子目录（Q2/Q3：有夹则镜像一层目录）。
+/// 兄弟同名用短 id 消歧；父级缺失（源树残缺）就当成根级堆着。
+fn folder_relative_paths(source: &SourceData) -> HashMap<String, String> {
+    let mut rel: HashMap<String, String> = HashMap::new();
+    let mut siblings: HashMap<String, HashSet<String>> = HashMap::new();
+    for node in &source.folders {
+        let name = sanitize_name(&node.name);
+        let parent_rel = node
+            .parent_id
+            .as_ref()
+            .and_then(|p| rel.get(p).cloned())
+            .unwrap_or_default();
+        let taken = siblings.entry(parent_rel.clone()).or_default();
+        let mut final_name = name.clone();
+        if !taken.insert(final_name.clone()) {
+            final_name = format!("{}_{}", name, short_id(&node.id));
+            let mut salt = 1u32;
+            while !taken.insert(final_name.clone()) && salt < 64 {
+                salt += 1;
+                final_name = format!("{}_{}_{}", name, short_id(&node.id), salt);
+            }
+        }
+        let value = if parent_rel.is_empty() {
+            final_name
+        } else {
+            format!("{}/{}", parent_rel, final_name)
+        };
+        rel.insert(node.id.clone(), value);
+    }
+    rel
+}
+
+/// 一个条目在我们的索引里是不是已经精确到同一张图（A 档的认亲判据，与 build_plan 同一套）。
+fn already_indexed(our: &OurIndex, item: &Item) -> bool {
+    let key = format!("{}.{}", item.name, item.ext).to_lowercase();
+    let candidates = our.find_by_name_ext(&key);
+    if candidates.len() != 1 {
+        return false;
+    }
+    let row = candidates[0];
+    let size_ok = item.size.map(|s| s == row.size as i64).unwrap_or(false);
+    let dims_ok = matches!(
+        (item.width, item.height, row.width, row.height),
+        (Some(w), Some(h), Some(rw), Some(rh)) if w == rw as i64 && h == rh as i64
+    );
+    size_ok && dims_ok
+}
+
+/// `name.ext` 撞了已占位的文件名 → 在扩展名前加 `_<短id>`（Q5：默认原名，撞名才加后缀）。
+///
+/// 「已占位」有两处来源，缺一不可：① 本次计划里已经用过的名字；② **我们索引里已有的
+/// `name.ext`**——撞它等于给认亲键制造多义（`find_by_name_ext` >1 行按不命中处理），
+/// 那这张图就白搬了。所以同名不同图的条目会以 `foo_<短id>.jpg` 落盘，宁可名字丑也不让键歧义。
+fn planned_name(name: &str, id: &str, taken: &HashSet<String>, our: &OurIndex) -> String {
+    let base = sanitize_name(name);
+    if taken.contains(&base.to_lowercase()) || our.has_name_ext(&base.to_lowercase()) {
+        let (stem, ext) = match base.rsplit_once('.') {
+            Some((s, e)) => (s.to_string(), e.to_string()),
+            None => (base, String::new()),
+        };
+        if ext.is_empty() {
+            format!("{}_{}", stem, short_id(id))
+        } else {
+            format!("{}_{}.{}", stem, short_id(id), ext)
+        }
+    } else {
+        base
+    }
+}
+
+/// 计划搬运动作。**纯计算 + 只读源侧**：不建目录、不写任何文件。
+pub fn plan_takeover(
+    source: &SourceData,
+    our: &OurIndex,
+    target_root: &str,
+    prefer_link: bool,
+) -> Res<TakeoverPlan> {
+    let target = normalize_path(target_root);
+    if target.is_empty() {
+        return Err("搬运需要一个目标目录".to_string());
+    }
+    // 不许把文件往源库自己里面塞：目标不能落在库内部（那样会一层层把自己拷进去）
+    if path_is_inside(&source.root, &target) {
+        return Err(format!(
+            "目标目录 {} 在 Eagle 库内部，不能往库里搬东西（调研硬约束 1：库只读）",
+            target
+        ));
+    }
+
+    let link_supported = if prefer_link {
+        probe_hard_link_support(Path::new(&target))
+    } else {
+        false
+    };
+
+    let folder_rel = folder_relative_paths(source);
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut files: Vec<PlannedFile> = Vec::new();
+    let mut dirs: Vec<String> = Vec::new();
+    let mut total_items = 0u32;
+    let mut already_here = 0u32;
+    let mut skipped_existing = 0u32;
+    let mut warnings = Vec::new();
+
+    for item in &source.items {
+        // 与 build_plan 同一条分类顺序（§4.8 变体）：软删 → 无实体 → 类型门禁
+        if item.is_deleted {
+            continue;
+        }
+        let entity = match &item.entity_path {
+            Some(path) => PathBuf::from(path),
+            None => continue,
+        };
+        let mime = file_types::mime_for_extension(&item.ext);
+        if !mime.map(is_indexable).unwrap_or(false) {
+            continue;
+        }
+        total_items += 1;
+
+        // Q8：认亲优先——已经是同一张图就不搬，标注照挂（A 档退化成 C 的一步）
+        if already_indexed(our, item) {
+            already_here += 1;
+            continue;
+        }
+
+        // Q2/Q3：多归属只落物理一份（主夹 = `folders[]` 里的第一个），其余夹关系走专题
+        let rel_dir = item
+            .folders
+            .iter()
+            .find_map(|fid| folder_rel.get(fid).cloned())
+            .unwrap_or_default();
+        let dest_dir = if rel_dir.is_empty() {
+            target.clone()
+        } else {
+            normalize_path(&format!("{}/{}", target.trim_end_matches('/'), rel_dir))
+        };
+        if !dirs.contains(&dest_dir) {
+            dirs.push(dest_dir.clone());
+        }
+
+        let base_name = display_name(item);
+        let mut file_name = planned_name(&base_name, &item.id, &taken, our);
+        let mut dst = PathBuf::from(&dest_dir).join(&file_name);
+        // Q5/Q7：目标已存在 → 同尺寸就是上次搬过（幂等跳过），不同则加短 id 再比一次
+        if dst.exists() {
+            let same = std::fs::metadata(&dst)
+                .map(|m| item.size.map(|s| m.len() == s as u64).unwrap_or(false))
+                .unwrap_or(false);
+            if same {
+                skipped_existing += 1;
+                taken.insert(file_name.to_lowercase());
+                continue;
+            }
+            let (stem, ext) = display_name(item)
+                .rsplit_once('.')
+                .map(|(s, e)| (s.to_string(), e.to_string()))
+                .unwrap_or_else(|| (display_name(item), String::new()));
+            file_name = if ext.is_empty() {
+                format!("{}_{}", stem, short_id(&item.id))
+            } else {
+                format!("{}_{}.{}", stem, short_id(&item.id), ext)
+            };
+            dst = PathBuf::from(&dest_dir).join(&file_name);
+            if dst.exists() {
+                warnings.push(format!(
+                    "目标位置已经有 {}，跳过不覆盖（可能是同名不同图，认亲要靠用户自己确认）",
+                    display_name(item)
+                ));
+                continue;
+            }
+        }
+        taken.insert(file_name.to_lowercase());
+
+        let size = std::fs::metadata(&entity).map(|m| m.len()).unwrap_or(0);
+        files.push(PlannedFile {
+            src: entity,
+            dst,
+            size,
+            width: item.width.map(|w| w as u32),
+            height: item.height.map(|h| h as u32),
+        });
+    }
+
+    // 目标根自己也入库（用户第一次倒时它还不在索引里），并保证父先于子
+    if !dirs.contains(&target) {
+        dirs.push(target.clone());
+    }
+    dirs.sort_by_key(|p| p.matches('/').count());
+
+    Ok(TakeoverPlan {
+        target_root: target,
+        link_supported,
+        files,
+        dirs,
+        total_items,
+        already_here,
+        skipped_existing,
+        warnings,
+    })
+}
+
+/// 从计划导出 UI 要的那张预览表（同一个 plan，`eagle_import` 前的口估）。
+pub fn takeover_preview(plan: &TakeoverPlan) -> TakeoverPreview {
+    let bytes = plan.files.iter().map(|f| f.size).sum::<u64>();
+    let links_possible = plan.link_supported;
+    TakeoverPreview {
+        target_root: plan.target_root.clone(),
+        total_items: plan.total_items,
+        already_here: plan.already_here,
+        skipped_existing: plan.skipped_existing,
+        to_link: if links_possible {
+            plan.files.len() as u32
+        } else {
+            0
+        },
+        to_copy: if links_possible {
+            0
+        } else {
+            plan.files.len() as u32
+        },
+        bytes,
+        link_supported: links_possible,
+        warnings: plan.warnings.clone(),
+    }
+}
+
+/// 执行搬运：**硬链接优先、失败自动降级复制**（Q1）。源侧全程只读。
+pub fn execute_takeover(
+    plan: &TakeoverPlan,
+    progress: Option<&(dyn Fn(usize, usize) + Send + Sync)>,
+) -> TakeoverOutcome {
+    let mut out = TakeoverOutcome::default();
+    out.warnings = plan.warnings.clone();
+    // 这两栏在计划阶段就定了（认亲命中 / 目标已有同尺寸文件），执行阶段只是照抄
+    out.already_here = plan.already_here;
+    out.skipped_existing = plan.skipped_existing;
+    let total = plan.files.len();
+
+    for dir in &plan.dirs {
+        if std::path::Path::new(dir).exists() {
+            continue;
+        }
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            out.warnings.push(format!("建目录 {} 失败：{}", dir, e));
+        }
+    }
+    out.created_dirs = plan.dirs.clone();
+
+    for (index, file) in plan.files.iter().enumerate() {
+        let mut done = false;
+        if plan.link_supported {
+            match std::fs::hard_link(&file.src, &file.dst) {
+                Ok(()) => {
+                    out.linked += 1;
+                    out.bytes += file.size;
+                    done = true;
+                }
+                Err(e) => {
+                    // 跨盘符/不支持就降级：这一条仍然得进去，不能凭空丢图
+                    out.warnings.push(format!(
+                        "「{}」硬链接失败（{}），已改为复制",
+                        file.dst.display(),
+                        e
+                    ));
+                }
+            }
+        }
+        if !done {
+            match std::fs::copy(&file.src, &file.dst) {
+                Ok(size) => {
+                    out.copied += 1;
+                    out.bytes += size;
+                    done = true;
+                }
+                Err(e) => {
+                    out.warnings.push(format!(
+                        "复制「{}」失败：{}（该图没有进图库，重跑会再试一次）",
+                        file.dst.display(),
+                        e
+                    ));
+                }
+            }
+        }
+        if done {
+            out.files.push(TakeoverFile {
+                path: normalize_path(&file.dst.to_string_lossy()),
+                width: file.width,
+                height: file.height,
+            });
+        } else {
+            out.failed += 1;
+        }
+        if let Some(cb) = progress {
+            cb(index + 1, total);
+        }
+    }
+    out
+}
+
+/// 把搬运结果写进 `file_index`（目录行 + 图片行），这样**不等重新扫描**就能在网格里看到。
+///
+/// 与 scanner 用的是同一张表和同一个 `generate_id(path)`；宽高三联取自 Eagle 的条目维度，
+/// 省掉一次后台解图；`file_type` / `size` / 时间戳取自真文件系统。
+pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u32> {
+    if outcome.files.is_empty() {
+        return Ok(0);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let id_of_path = |path: &str| -> String { generate_id(path) };
+    let existing_id = |path: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT file_id FROM file_index WHERE path = ?1",
+            [path],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+    };
+
+    let mut entries: Vec<FileIndexEntry> = Vec::new();
+    for dir in &outcome.created_dirs {
+        let file_id = id_of_path(dir);
+        let parent_id = Path::new(dir)
+            .parent()
+            .map(|p| normalize_path(&p.to_string_lossy()))
+            .and_then(|p| existing_id(&p).or_else(|| Some(id_of_path(&p))));
+        let meta = std::fs::metadata(dir).ok();
+        let name = Path::new(dir)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        entries.push(FileIndexEntry {
+            file_id,
+            parent_id,
+            path: normalize_path(dir),
+            name,
+            file_type: "Folder".to_string(),
+            size: 0,
+            created_at: meta
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+                .unwrap_or(now),
+            modified_at: meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+                .unwrap_or(now),
+            width: None,
+            height: None,
+            format: None,
+        });
+    }
+
+    for file in &outcome.files {
+        let meta = std::fs::metadata(&file.path).ok();
+        let name = Path::new(&file.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let format = Path::new(&file.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase());
+        let parent_path = Path::new(&file.path)
+            .parent()
+            .map(|p| normalize_path(&p.to_string_lossy()))
+            .unwrap_or_default();
+        let parent_id = if parent_path.is_empty() {
+            None
+        } else {
+            existing_id(&parent_path).or_else(|| Some(id_of_path(&parent_path)))
+        };
+        entries.push(FileIndexEntry {
+            file_id: id_of_path(&file.path),
+            parent_id,
+            path: normalize_path(&file.path),
+            name,
+            file_type: "Image".to_string(),
+            size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+            created_at: meta
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+                .unwrap_or(now),
+            modified_at: meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
+                .unwrap_or(now),
+            width: file.width,
+            height: file.height,
+            format,
+        });
+    }
+
+    let count = entries.len() as u32;
+    crate::db::file_index::batch_upsert(conn, &entries).map_err(|e| e.to_string())?;
+    Ok(count)
+}

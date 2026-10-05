@@ -47,7 +47,21 @@ vi.mock('../../api/tauri-bridge', () => ({
   listenPixcallProgress: vi.fn(async () => () => {}),
   // Eagle 第二来源（welcome-eagle-card 用）。默认「本机没有 Eagle 库」，Eagle 相关用例各自覆盖。
   eagleDiscover: vi.fn(async () => [] as unknown[]),
-  eagleProbe: vi.fn(async () => pixcallReport),
+  // C 档：probe 返回「报告 + 搬运预览」，不再是裸报告
+  eagleProbe: vi.fn(async () => ({
+    report: pixcallReport,
+    takeover: {
+      targetRoot: 'C:/Gallery/Test',
+      totalItems: 49,
+      alreadyHere: 0,
+      skippedExisting: 0,
+      toLink: 49,
+      toCopy: 0,
+      bytes: 268435456,
+      linkSupported: true,
+      warnings: [] as string[],
+    },
+  })),
   eagleImport: vi.fn(async () => pixcallReport),
   listenEagleProgress: vi.fn(async () => () => {}),
 }));
@@ -368,16 +382,33 @@ describe('WelcomeModal 四步向导', () => {
     expect(screen.getAllByText('welcome.or')).toHaveLength(1);
   });
 
-  it('eagle 模式：发现 1 库 → Eagle 按钮渲染，点击后自动接管 → probe → import，完成后放开下一步', async () => {
+  it('eagle 模式：还没选资源目录时不许动手，卡内给「选择资源目录」这条路', async () => {
     vi.mocked(eagleDiscover).mockResolvedValue([{ root: 'C:/Libs/Test.library', isCurrent: true }]);
-    const takeover = vi.fn(async () => {});
-    setup({ currentPath: null, onTakeoverPixcall: takeover });
+    setup({ currentPath: null, onTakeoverPixcall: async () => {} });
     fireEvent.click(await screen.findByTestId('welcome-use-eagle'));
 
-    // 与 PixCall 同一条来源无关的接管链：先切根 + 扫描（扫完才 resolve），再 probe、import
-    await waitFor(() => expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library'));
-    expect(takeover).toHaveBeenCalledWith('C:/Libs/Test.library');
-    expect(eagleProbe).toHaveBeenCalledWith('C:/Libs/Test.library');
+    expect(await screen.findByText('eagle.takeoverNoRoot')).toBeInTheDocument();
+    expect(await screen.findByTestId('welcome-eagle-pick-root')).toBeInTheDocument();
+    // 关键：不再把 Eagle 库切成本应用的资源根（那是路线 B，网格会退化成 .info 文件夹）
+    expect(eagleProbe).not.toHaveBeenCalled();
+    expect(eagleImport).not.toHaveBeenCalled();
+    expect(screen.getByTestId('welcome-next-button')).toBeDisabled();
+  });
+
+  it('eagle 模式：选好资源目录 → 出迁入位置与条数 → 确认后 probe/import 同一个根，完成后放开下一步', async () => {
+    vi.mocked(eagleDiscover).mockResolvedValue([{ root: 'C:/Libs/Test.library', isCurrent: true }]);
+    const takeover = vi.fn(async () => {});
+    setup({ currentPath: 'C:/Gallery', onTakeoverPixcall: takeover });
+    fireEvent.click(await screen.findByTestId('welcome-use-eagle'));
+
+    // 单库自动 probe（零写入），落点 = 用户选的资源根 + 库名，而不是把根切到库上
+    await waitFor(() => expect(eagleProbe).toHaveBeenCalledWith('C:/Libs/Test.library', 'C:/Gallery/Test', true));
+    expect(takeover).not.toHaveBeenCalled();
+    expect(eagleImport).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('welcome-eagle-confirm').then(el => el.textContent)).toContain('C:/Gallery/Test');
+
+    fireEvent.click(screen.getByTestId('welcome-eagle-start'));
+    await waitFor(() => expect(eagleImport).toHaveBeenCalledWith('C:/Libs/Test.library', 'C:/Gallery/Test', true));
 
     const row = await screen.findByTestId('welcome-eagle-result');
     expect(row.textContent).toContain('eagle.done');

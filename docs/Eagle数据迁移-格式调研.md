@@ -5,6 +5,7 @@
 > **方法诚实声明**：本机**没有 Eagle**（`%APPDATA%`、`%LOCALAPPDATA%` 无 Eagle 目录；C/D/E 盘 depth≤4 内无任何 `*.library`），所以本文没有一条是**本机实测**。每条结论带来源与置信度，标注体系见 §0 末。**下一步是拿真实库复测，不是照本文开工。**
 > 上游文档：`docs/PixCall数据迁移-设计方案.md`（下称「设计方案」，本文的 §N 引用除非注明皆指该文）。
 > **v2（2026-10-05）**：本机实测已完成（Eagle 4.0.0 build20260401 + `Test.library` 49 条目，全程开着 Eagle），新增 §13。上文的「方法诚实声明」（无本机实测）**仅对 v1 有效**；§13 全部为【实测】，与 v1 结论冲突处**以 §13 为准**。
+> **交接入口**：与外部讨论 Eagle 导入方案用 `docs/Eagle数据迁移-方案讨论稿.md`（自包含简报：现状/已拍板/C 档待决问题清单），本文是其背后的规格书。
 
 ---
 
@@ -466,7 +467,9 @@ D1 摆平之后才谈得上解码。四条路线，代价各不相同：
 | v1.2（2026-10-01） | 社区做法调研：新增 §8.1–8.5。按「解决什么问题」重分四类，补 6 个本文漏掉的项目；**§8.2 回答两个硬问题**：多归属落物理树只有三种粗糙解（复制多份/只放一处/不落树）→ 反倒证明 A/B 更对；「空间翻倍」非必然（同盘符硬链接、move、符号链接、官方导出）→ **修正 §5-C 的代价描述**；§8.3 补两类漏掉的条目（Bookmark 无实体文件、未分类条目）；§8.4 三条可直抄的解析策略（按内容分类 JSON、资产三级回退、ZIP 不整体解压）；§8.5 新增假线索（SQLite 说法） |
 | v2（2026-10-05） | **本机实测**（Eagle 4.0.0 build20260401 + `Test.library` 49 条目，全程开着 Eagle）：新增 §13。§9 清单落定 5 项；**更正 §3.1 `btime` 语义**（是文件系统创建时间，非「加入库的时间」）；**M6 落定**（`file_index.name` 含扩展名 → join 键 `${name}.${ext}`）；H1/M2 复核属实；API 无鉴权实测 + 新发现 `/api/library/info` 带 `library.path`、Settings 带 `rootDir`；智能夹 `imageCount` 落磁盘子节点 + 条件枚举新增 2 个实测对；**匹配率首轮：键构造零误报，按现势磁盘 49/49 唯一命中**（按陈旧索引 69.4%，15 个不命中全部归因索引陈旧）；样本缺口清单见 §13.6 |
 | v2.1（2026-10-05） | **A 档实现落地**（桌面单端，按 §13.7 拍板）：`core/src/import/eagle.rs`（发现→解码→分类→匹配→计划）+ 匹配层 `by_name_ext`（H1）+ 报告新栏 `unmatched_items`（H2，serde default 兼容旧记录）+ `eagle_*` 五命令 + 设置-存储 Eagle 卡（v4.13 整宽同构，报告视图复用 PixcallReportView 薄包装）+ i18n zh/en；`file_types.rs` 补 `mime_for_extension`（仓内本无现成 ext→mime 映射）。**真实库 smoke：matched 49 / unmatched 0；HEA 断言过固化 4 成员、TESTV2/「阿萨的」无 imageCount 跳过、OCR 空串过断言不落空专题**。门禁：cargo test 178✓（pixcall 81 例未破）、`npm run build` ✓、vitest 本次改动相关全绿；vitest 仅有的两个失败文件均为既有环境问题（colorUtils 的 `localStorage.clear` 缺陷、groupedTags 触发 cargo 链接撞 Y 盘 LNK1104 文件锁——本地 `CARGO_TARGET_DIR` 重跑 9/9 过，均与本工作无关）。**C 档（连文件接管）未实现，留作独立切片** |
-| v2.2（2026-10-06） | **Welcome 接入 Eagle 来源**（§10 ④ 的「welcome 那颗另议」落定）：WelcomeModal 第 1 步按发现结果显示来源按钮——step 1 挂载时并发 `pixcallDiscover(null)`+`eagleDiscover(null)`，各有库才渲染各自按钮、发现中都不渲染、都空则只剩「选择文件夹」（与设置页「发现不到整块不渲染」同口径，修掉「无条件渲染、点了才报错」的反模式）；新增 `WelcomeEagleCard`（镜像 PixcallCard 的接管链：切根→扫描→probe→import，复用来源无关的 `openKnownPath`）；i18n 仅新增 `welcome.useEagleLibrary`（其余全走既有 `eagle.*` 镜像键）；welcome 测试 20→25 例全绿、`npm run build` ✓ |
+| v2.2（2026-10-06） | **Welcome 接入 Eagle 来源**（§10 ④ 的「welcome 那颗另议」落定）：WelcomeModal 第 1 步按发现结果显示来源按钮——step 1 挂载时并发 `pixcallDiscover(null)`+`eagleDiscover(null)`，各有库才渲染各自按钮、发现中都不渲染、都空则只剩「选择文件夹」（与设置页「发现不到整块不渲染」同口径，修掉「无条件渲染、点了才报错」的反模式）；新增 `WelcomeEagleCard`（镜像 PixcallCard 的接管链：切根→扫描→probe→import，复用来源无关的 `openKnownPath`）；i18n 仅新增 `welcome.useEagleLibrary`（其余全走既有 `eagle.*` 镜像键）；welcome 测试 20→25 例全绿、`npm run build` ✓。**⚠️ 这条里的「切根接管」在 v2.4 被撤销——它实现的是 §5 明确否决的路线 B** |
+| v2.3（2026-10-06） | **产品定位拍板（P7）**：我们与 Eagle / PixCall 是同赛道的竞品，不是附属；迁移功能 = 让用户搬过来的成本最低。由此 **路线重排：C（连文件接管）升主航道、A 退化为 C 流程内的一步、B 出局**——判断标准是「搬完之后用户的图库能不能独立存在」。详见方案讨论稿 §0.5 |
+| v2.4（2026-10-06，本文最新） | **C 档实现 + B 档误实现的撤销**：① 撤销 v2.2 的「切根→扫描」——`WelcomeEagleCard` 与 `EagleImportSection` 都不再收 `onSwitchRoot`，资源根永远由用户自己选，Eagle 只往 `<资源根>/<库名>/` 里添文件；② `core/src/import/eagle.rs` 新增 `plan_takeover` / `takeover_preview` / `execute_takeover` / `index_takeover`，`Item` 加 `entity_path`（三级回退改为**定位文件本身**）；③ 搬运语义 = **硬链接优先、失败按条降级复制、绝不 move**（库只读）；④ `MigrationReport` 加搬运栏（serde default），`has_anththing_to_migrate` 认「搬了文件但没标注」；⑤ 命令签名扩为 `eagle_probe/import(sourceRoot, targetRoot?, preferLink?)`，probe 返回 `{report, takeover}`；⑥ 新增 5 条 C 档单测（只搬实体不搬缩略图 / 认亲命中不搬 / 夹树镜像+撞名消歧 / 拒绝往库里写 / 重跑幂等），cargo test 178→183。**实测过的事实（B 档的代价，供后人别再走回去）**：49 条目 → 网格 49 个 `<ID>.info` 文件夹、每格两张图，一张原图 3 张缩略图（Eagle 自存的 `_thumbnail.png` + 我们为实体生成的 + 我们为那张缩略图又生成的） |
 
 ## 来源清单
 

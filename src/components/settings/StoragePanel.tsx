@@ -796,12 +796,12 @@ const StoragePanel: React.FC<StoragePanelProps> = ({ t, state, settings, isAndro
             onSwitchRoot={onSwitchRoot}
             onImported={onPixcallImported}
           />
-          {/* onImported 与 PixCall 共用同一条「回读元数据」回调（prop 名 onPixcallImported 是历史原因） */}
+          {/* onImported 与 PixCall 共用同一条「回读元数据」回调（prop 名 onPixcallImported 是历史原因）；
+              Eagle 那张卡不再收 onSwitchRoot：它往当前资源根里添文件，不换用户的根 */}
           <EagleImportSection
             t={t}
             currentRoot={state.roots.length > 0 ? state.files[state.roots[0]]?.path : null}
             onShowToast={onShowToast}
-            onSwitchRoot={onSwitchRoot}
             onImported={onPixcallImported}
           />
         </div>
