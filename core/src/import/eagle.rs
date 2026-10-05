@@ -961,6 +961,46 @@ fn resolve_parent(
     (None, reparented)
 }
 
+/// 源树层级（1 起）。父在先序里一定先出现，所以一遍就能算出来。
+fn parent_level(parent_id: &Option<String>, levels: &HashMap<String, usize>) -> usize {
+    parent_id
+        .as_ref()
+        .and_then(|p| levels.get(p).copied())
+        .unwrap_or(0)
+        + 1
+}
+
+/// 我们侧专题**只有两级**（主专题 / 子专题），Eagle 的夹树却可以更深。
+///
+/// 规则（2026-10-06 验收人实测后定）：一级 = 主专题，二级及以下**一律压到二级**——
+/// 挂到它那一支的一级祖先下面，而不是照搬源树的深度。照搬的话三级专题建出来也看不见
+/// （专题面板只渲染两级），不如提前压平，层级关系还能保住主干。
+///
+/// 返回「该挂到哪个源节点下面」（`None` = 挂到我们 topics 的根）。
+fn clamped_parent(
+    node_id: &str,
+    levels: &HashMap<String, usize>,
+    parent_of: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let level = levels.get(node_id).copied().unwrap_or(1);
+    if level <= 1 {
+        return None;
+    }
+    let direct = parent_of(node_id);
+    if level == 2 {
+        return direct;
+    }
+    // 三级及以上：往上找到一级祖先，挂到它下面
+    let mut current = direct.clone();
+    while let Some(id) = current {
+        if levels.get(&id).copied().unwrap_or(1) == 1 {
+            return Some(id);
+        }
+        current = parent_of(&id);
+    }
+    direct
+}
+
 /// 手动夹树 → 专题。空 `folders[]` 的条目自然不是任何夹的成员（主流形态，不是错误）；
 /// 夹本身即使没有任何命中成员也照建（棋盘层级要靠它，同 PixCall 的 folder-only）。
 fn plan_folders(
@@ -971,11 +1011,21 @@ fn plan_folders(
     report: &mut MigrationReport,
 ) -> Res<Vec<TopicCreate>> {
     let mut mapped: HashMap<String, Option<String>> = HashMap::new();
+    let mut levels: HashMap<String, usize> = HashMap::new();
     let mut created = Vec::new();
     // source.folders 已是先序（父先于子，JSON 数组序）
     for node in &source.folders {
+        levels.insert(node.id.clone(), parent_level(&node.parent_id, &levels));
+        // 我们侧专题只有两级：三级及更深一律压到二级（挂那一支的一级祖先下面）
+        let desired_parent = clamped_parent(&node.id, &levels, |pid| {
+            source
+                .folders
+                .iter()
+                .find(|n| n.id == pid)
+                .and_then(|n| n.parent_id.clone())
+        });
         let (parent_topic_id, reparented) = resolve_parent(
-            &node.parent_id,
+            &desired_parent,
             |pid| {
                 source
                     .folders
@@ -1039,6 +1089,14 @@ fn plan_folders(
 ///
 /// 复算集合是 Eagle 侧的 `eligible`（与我们这边命中与否无关）；固化时成员只取
 /// 命中我们索引的那部分。断言过但命中成员为 0 → 不落空专题（空专题不算真的动了库）。
+///
+/// 2026-10-06 实测后补的一条：**被跳过的祖先仍然可能是层级的载体**。样本库里 `TESTV2`
+/// 自己没有 `imageCount`（断言做不了 → 跳过），它的子智能夹 `HEA` 断言过了；按老逻辑 HEA
+/// 会「沿链找最近的已迁祖先」——一个都没有，于是挂到了根上，变成一枚顶层专题。验收人要的是
+/// **TESTV2 作主专题、HEA 作它的子专题**。所以这里改成两趟：
+/// ① 先给每个节点求值（三道门）；② 再看哪些被跳过的节点**有后代要挂**，给它们建一枚
+/// **只承载层级、不带成员的容器专题**——成员不猜：父夹的条件本来就断言不了，把子夹的成员
+/// 抄上去等于报一组我们没验过的数。
 fn plan_smart_folders(
     source: &SourceData,
     our_conn: &Connection,
@@ -1046,20 +1104,17 @@ fn plan_smart_folders(
     eligible: &[&Item],
     report: &mut MigrationReport,
 ) -> Res<Vec<TopicCreate>> {
-    let mut mapped: HashMap<String, Option<String>> = HashMap::new();
-    let mut created = Vec::new();
+    // ① 求值：过三道门 → 命中成员的 file_id 列表；没过 → None（warnings 已记原因）
+    let mut evaluated: HashMap<String, Option<Vec<String>>> = HashMap::new();
     for node in &source.smart_folders {
-        let recomputed = match select_members(&node.conditions, eligible) {
-            Some(items) => items,
-            None => {
-                report.topics_skipped_unverifiable += 1;
-                report.warnings.push(format!(
-                    "智能夹「{}」的条件含未标定的 property/method/boolean，跳过不迁（P2b：只实现 type=equal 与 name=contain）",
-                    node.name
-                ));
-                mapped.insert(node.id.clone(), None);
-                continue;
-            }
+        let Some(recomputed) = select_members(&node.conditions, eligible) else {
+            report.topics_skipped_unverifiable += 1;
+            report.warnings.push(format!(
+                "智能夹「{}」的条件含未标定的 property/method/boolean，跳过不迁（P2b：只实现 type=equal 与 name=contain）",
+                node.name
+            ));
+            evaluated.insert(node.id.clone(), None);
+            continue;
         };
         let Some(image_count) = node.image_count else {
             report.topics_skipped_unverifiable += 1;
@@ -1067,7 +1122,7 @@ fn plan_smart_folders(
                 "智能夹「{}」磁盘上没有 imageCount，无法做计数断言，跳过（P2b）",
                 node.name
             ));
-            mapped.insert(node.id.clone(), None);
+            evaluated.insert(node.id.clone(), None);
             continue;
         };
         if recomputed.len() as i64 != image_count {
@@ -1078,7 +1133,7 @@ fn plan_smart_folders(
                 recomputed.len(),
                 image_count
             ));
-            mapped.insert(node.id.clone(), None);
+            evaluated.insert(node.id.clone(), None);
             continue;
         }
         let member_file_ids: Vec<String> = recomputed
@@ -1090,21 +1145,54 @@ fn plan_smart_folders(
                 "智能夹「{}」断言通过（{} 条）但没有一条命中我们的索引，不落空专题",
                 node.name, image_count
             ));
+        }
+        evaluated.insert(node.id.clone(), Some(member_file_ids));
+    }
+
+    // ② 谁需要专题：自己有命中成员，或**后代需要**（被跳过的祖先因此成为容器）
+    let mut needed: HashSet<String> = HashSet::new();
+    for (id, members) in &evaluated {
+        if members.as_ref().map_or(false, |m| !m.is_empty()) {
+            needed.insert(id.clone());
+        }
+    }
+    // 反向先序（子一定在父之后 → 反着走时子先被处理）把「需要」往上传
+    for node in source.smart_folders.iter().rev() {
+        if needed.contains(&node.id) {
+            if let Some(parent_id) = &node.parent_id {
+                needed.insert(parent_id.clone());
+            }
+        }
+    }
+
+    // ③ 建专题（先序，父先于子）
+    let mut mapped: HashMap<String, Option<String>> = HashMap::new();
+    let mut levels: HashMap<String, usize> = HashMap::new();
+    let mut created = Vec::new();
+    for node in &source.smart_folders {
+        levels.insert(node.id.clone(), parent_level(&node.parent_id, &levels));
+        if !needed.contains(&node.id) {
             mapped.insert(node.id.clone(), None);
             continue;
         }
-
-        let (parent_topic_id, reparented) = resolve_parent(
-            &node.parent_id,
-            |pid| {
-                source
-                    .smart_folders
-                    .iter()
-                    .find(|n| n.id == *pid)
-                    .and_then(|n| n.parent_id.clone())
-            },
-            &mapped,
-        );
+        let member_file_ids = evaluated.get(&node.id).cloned().flatten().unwrap_or_default();
+        // 没成员的 = 被跳过的祖先（或断言过但没命中的夹）：只承载层级
+        let is_container = member_file_ids.is_empty();
+        if is_container {
+            report.warnings.push(format!(
+                "智能夹「{}」自身没能固化（见上一条提示），但它的子夹要挂在它下面 → 建了一枚只承载层级、没有成员的专题",
+                node.name
+            ));
+        }
+        let parent_of = |pid: &str| {
+            source
+                .smart_folders
+                .iter()
+                .find(|n| n.id == pid)
+                .and_then(|n| n.parent_id.clone())
+        };
+        let desired_parent = clamped_parent(&node.id, &levels, parent_of);
+        let (parent_topic_id, reparented) = resolve_parent(&desired_parent, parent_of, &mapped);
         if reparented {
             report.topics_reparented += 1;
             report.warnings.push(format!(
@@ -1121,7 +1209,8 @@ fn plan_smart_folders(
             node.description.as_deref(),
             parent_topic_id,
             member_file_ids,
-            true,
+            // 容器不算「智能夹固化」：这条计数只给断言通过的节点
+            !is_container,
         )?;
         mapped.insert(node.id.clone(), Some(topic.id.clone()));
         created.push(topic);

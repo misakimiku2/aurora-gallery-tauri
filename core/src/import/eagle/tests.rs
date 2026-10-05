@@ -513,11 +513,72 @@ fn smart_child_is_evaluated_independently_and_reparented_when_parent_skips() {
     add_row(&our, "f1", "C:/L/head1.jpg", "head1.jpg", 1000, Some(100), Some(50));
     let p = plan_for(&lib, &our);
 
+    // 2026-10-06 改：父被跳过但**有后代要挂** → 建一枚只承载层级的容器专题，子挂到它下面
+    let parent = p.topics.iter().find(|t| t.name == "父").unwrap();
+    assert_eq!(parent.parent_id, None, "父就是一级主专题");
+    assert!(parent.file_ids.is_empty(), "父的条件断言不了 → 成员不猜，留空");
+    assert!(!parent.materialized, "容器不算智能夹固化");
     let child = p.topics.iter().find(|t| t.name == "子").unwrap();
-    assert_eq!(child.parent_id, None, "父级未标定没落库 → 降级挂根");
+    assert_eq!(
+        child.parent_id.as_deref(),
+        Some(parent.id.as_str()),
+        "子挂到父下面，不再降级到根上变成顶层专题"
+    );
     assert!(child.materialized, "子按自己的独立条件求值，不受父连坐");
-    assert_eq!(p.report.topics_reparented, 1);
+    assert_eq!(p.report.topics_reparented, 0, "层级保住了，不用降级");
     assert_eq!(p.report.topics_skipped_unverifiable, 1, "只有父（未标定 color）跳过");
+    assert!(p.report.warnings.iter().any(|w| w.contains("父") && w.contains("只承载层级")));
+}
+
+/// 实测库那个形态：`TESTV2` 自己没有 `imageCount`（断言做不了），它的子智能夹 `HEA`
+/// 有 `imageCount=1` 且断言过。用户要的成品是 **TESTV2 主专题 → HEA 子专题**，
+/// 不是一枚孤零零的顶层 `HEA`。
+#[test]
+fn real_shape_skipped_parent_without_image_count_still_parents_the_child() {
+    let lib = Lib::new("testv2");
+    lib.header(json!({"smartFolders": [
+        {"id": "P1", "name": "TESTV2", "conditions": [], "children": [
+            {"id": "C1", "name": "HEA", "parent": "P1",
+             "conditions": [group("OR", vec![rule("name", "contain", json!("HEAD"))])], "imageCount": 1}
+        ]}
+    ]}));
+    lib.item("M1", item_meta("M1", "head1", "jpg"), &["head1.jpg"]);
+    let our = our_db();
+    add_row(&our, "f1", "C:/L/head1.jpg", "head1.jpg", 1000, Some(100), Some(50));
+    let p = plan_for(&lib, &our);
+
+    let parent = p.topics.iter().find(|t| t.name == "TESTV2").expect("父要成为主专题");
+    let child = p.topics.iter().find(|t| t.name == "HEA").expect("子要固化");
+    assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+    assert_eq!(child.file_ids, vec!["f1".to_string()]);
+    assert_eq!(p.topics.len(), 2, "就两枚：主专题 + 子专题");
+}
+
+/// 我们侧专题只有两级：三级及更深一律压到二级（挂那一支的一级祖先下面），
+/// 不照搬源树深度——建出来也看不见。
+#[test]
+fn deeper_than_two_levels_is_clamped_to_a_subtopic() {
+    let lib = Lib::new("depth");
+    lib.header(json!({"folders": [
+        {"id": "L1", "name": "一级", "children": [
+            {"id": "L2", "name": "二级", "children": [
+                {"id": "L3", "name": "三级", "children": []}
+            ]}
+        ]}
+    ]}));
+    let our = our_db();
+    let p = plan_for(&lib, &our);
+
+    let one = p.topics.iter().find(|t| t.name == "一级").unwrap();
+    let two = p.topics.iter().find(|t| t.name == "二级").unwrap();
+    let three = p.topics.iter().find(|t| t.name == "三级").unwrap();
+    assert_eq!(one.parent_id, None);
+    assert_eq!(two.parent_id.as_deref(), Some(one.id.as_str()));
+    assert_eq!(
+        three.parent_id.as_deref(),
+        Some(one.id.as_str()),
+        "三级压到二级：挂一级祖先，不挂在二级下面"
+    );
 }
 
 // ---------------------------------------------------------------- 合并（共享策略）
