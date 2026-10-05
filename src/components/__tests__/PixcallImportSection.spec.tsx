@@ -117,6 +117,10 @@ describe('设置 → 从 PixCall 导入标注', () => {
     render(<PixcallImportSection t={t} currentRoot="C:/Videos" onShowToast={() => {}} />);
     fireEvent.click(await screen.findByTestId('pixcall-source-header'));
     expect(screen.getByText('import.libraryOutsideRoot')).toBeInTheDocument();
+    // outside 要有「将切换」徽章，且提示行在**卡片内部**（同一个 button 里）
+    expect(screen.getByTestId('pixcall-library-switch-badge')).toBeInTheDocument();
+    const row = screen.getByTestId('pixcall-library-row');
+    expect(row).toContainElement(screen.getByTestId('pixcall-library-outside-hint'));
   });
 
   // §13 场景 C：outside 的库要先弹切根确认，确认后才切根 + 导入
@@ -190,7 +194,8 @@ describe('设置 → 从 PixCall 导入标注', () => {
     await waitFor(() => expect(pixcallProbe).toHaveBeenCalledWith('C:/Videos/NVIDIA'));
     expect(onSwitchRoot).not.toHaveBeenCalled();
     expect(screen.queryByText('settings.switchRootConfirmTitle')).toBeNull();
-    // 子目录形态路径照样能中，行下也不该有「会切根」那句提示
+    // 子目录形态路径照样能中，卡内不该有「会切根」那句提示，但要有绿色徽章
     expect(screen.queryByTestId('pixcall-library-outside-hint')).toBeNull();
+    expect(screen.getByTestId('pixcall-library-inside-badge')).toBeInTheDocument();
   });
 });
