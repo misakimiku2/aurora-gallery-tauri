@@ -179,27 +179,36 @@ npm run tauri:build
 ### 项目结构
 
 ```
-├── src/                    # 前端 React 代码
+├── src/                    # 前端 React 代码（桌面端 UI）
 │   ├── components/         # React 组件
 │   ├── hooks/             # 自定义 Hooks
 │   ├── services/          # 业务服务
 │   ├── utils/             # 工具函数
 │   └── workers/           # Web Workers
-├── src-tauri/             # Rust 后端代码
-│   ├── src/               # Rust 源码
-│   └── icons/             # 应用图标
+├── core/                  # 双端共享 Rust core（桌面 Tauri 与安卓 uniffi 共用同一套 db/import/ai）
+├── src-tauri/             # 桌面端 Tauri 壳（IPC 命令、系统集成、LAN 服务端）
+├── kotlin-app/            # 安卓端（Kotlin 原生 Compose + uniffi 调 core）
+├── docs/                  # 设计与实现文档（见下）
 ├── public/                # 静态资源
-└── memory/                # 项目文档
 ```
 
 ## 文档
 
-详细的技术文档位于 `memory/` 目录：
+详细的技术文档位于 `docs/` 目录：
 
-- [API 参考](memory/API_REFERENCE.md)
-- [技术架构](memory/TECHNICAL_ARCHITECTURE.md)
-- [项目结构](memory/PROJECT_STRUCTURE.md)
-- [快速参考](memory/QUICK_REFERENCE.md)
+**入门与排期**
+- [未来更新计划（Roadmap）](docs/未来更新计划.md) — 所有未来工作的唯一入口
+- [三端功能矩阵](docs/Android/Kotlin版/三端功能矩阵.md) — 桌面 / 安卓 / 互联的逐项状态
+- [安卓 Kotlin 版并行开发规划](docs/Android/Kotlin版/安卓Kotlin版并行开发规划.md) — 迁移路线与里程碑
+
+**开发与构建**
+- [安卓端启动指南](docs/Android/Kotlin版/启动指南.md) — 环境、构建、uniffi 绑定与 so 打包
+- [测试指南](docs/TESTING_GUIDE.md)
+- [前端热更新方案](docs/前端热更新方案设计.md)
+
+**当前主线**
+- [资源库接管（PixCall 导入与切根）](docs/资源库接管-设计方案.md)
+- [启动欢迎流程优化](docs/启动欢迎流程优化-设计方案.md)
 
 ## 贡献
 

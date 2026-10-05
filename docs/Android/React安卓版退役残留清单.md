@@ -97,9 +97,13 @@ M7 验收清单里明确登记（`docs/Android/Kotlin版/M7对齐验收任务清
   `LanMediaSource.kt:17` 注释自称与之"逐字对齐"，删掉就失去参照实现。建议留到最后，或先把基准说明
   迁进文档再删。
 - **文档/CI 里的陈旧指向**：`docs/Android/Android版本开发记录.md:265-271,522,717-720,1525`、
-  `docs/Android/android-native-viewer.md:238,257`、`plan/PHASE1_DETAILED_PLAN.md:237-240`、
+  `docs/Android/android-native-viewer.md:238,257`、
   `.github/workflows/ci.yml:34`（注释仍称 `.cargo/config.toml` 含 NDK 绝对路径，该文件已删；
   该 `rust` job 本身已整段注释、当前 CI 不执行，风险低于另外几条）。
+  > **v1.2 补记（2026-10-05）**：原清单里还列了 `plan/PHASE1_DETAILED_PLAN.md:237-240`，
+  > 但 `plan/` 整个目录（连同 `memory/`）已作为历史遗留删除——那批文档属于 **React 安卓版时代**
+  > （`plan/ANDROID_DEVELOPMENT_PLAN.md` 写的还是「Tauri 2.0 + 复用 React 前端」，M7 D42 已推翻），
+  > 留着比删掉更危险。**这一条陈旧指向随之消失，不必再处理。**
 - **Kotlin 源码里的陈旧指向**（v1 漏登记，v1.1 补）：`kotlin-app/` 内 **7 处** "WebView" 历史对照注释
   ——`viewer/NativeGalleryView.kt:57,60,2253,2316`、`ui/components/TreeSidebar.kt:117`、
   `viewer/dialogs/DeleteConfirmDialog.kt:13`、`viewer/dialogs/FolderPickerDialog.kt:36`、
