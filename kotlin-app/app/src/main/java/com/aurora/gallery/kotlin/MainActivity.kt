@@ -794,6 +794,8 @@ class MainActivity : ComponentActivity() {
 
     private fun ensureViewer(): NativeGalleryView = viewer ?: NativeGalleryView(this).also {
         it.listener = viewerListener(it)
+        // 沉浸态的系统栏/窗口色接管：查看器只发「进/出」，动 flags 与色值一律在宿主
+        it.onImmersiveBarsChange = { hidden -> setViewerImmersiveBars(hidden) }
         viewer = it
     }
 
@@ -1113,14 +1115,188 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 全屏面（画布）的系统栏接管：进入=隐藏、退出=还原。**仅画布使用**——查看器
-     * 2026-10-07 B1 定稿后全程不碰系统栏（沉浸=chrome 滑出），原因有二：
-     * ①荣耀真机实锤 EMUI 手势条面板跟「状态栏重新显示」事件走，带主题默认底色
-     * （深 42/浅白，无视窗口 navigationBarColor）盖住内容直到返回网格；②任何
-     * flags/insets 翻转都会让图片重新居中产生位移。若画布未来也报同类问题，出路是
-     * 同款「只动 chrome」改造，而非回到 flags 层。
+     * 全屏面（画布）的系统栏接管：进入=隐藏、退出=还原。**仅画布使用**——查看器的沉浸
+     * 态走 [setViewerImmersiveBars]（同一套 flags，但额外管窗口黑底）。
      */
     private var savedSystemUiVisibility: Int? = null
+
+    /** 查看器是否已把状态栏藏进沉浸态（[setViewerImmersiveBars] 的幂等/重申依据）。 */
+    private var viewerBarsHidden = false
+
+    /** API<30 用：沉浸隐藏状态栏前的系统 UI 位（还原回写它，不用 0——0 会清掉别处设的 LAYOUT 位）。 */
+    private var savedViewerImmersiveUiVisibility: Int? = null
+
+    /**
+     * 查看器沉浸态的系统栏接管（2026-10-07 B2 定稿）：进=隐藏**状态栏** + 窗口色置黑，
+     * 退=先还原主题色再 show 状态栏。
+     *
+     * **导航栏一律不碰**（B2-1，真机截图实测定音）：荣耀 MagicOS 的导航栏面板在
+     * 「insets 隐藏→重新显示」这一轮之后会带系统默认底色（深 #2A2A2A / 浅白，无视
+     * navigationBarColor）**常驻**盖住内容——`log/V2.jpg` 与 `log/V1.jpg` 逐像素对比：
+     * 只有底部 64px（y=2276..2339）不同，V1 露的是图片、V2 是纯 #2A2A2A，其余全同。
+     * 而导航栏在本 App 的常态下本是透明的（V1 底部就是图片本身），隐藏它换不来任何
+     * 观感，只会换来这条色带 → 只 hide/show `Type.statusBars()`。同理不写
+     * navigationBarColor：那条色带无视它，写了也只是徒增一个「重新显示」事件源。
+     *
+     * 退出时**先 [applyWindowTheme] 再 show**：调用顺序保证系统面板浮出时窗口底色已是
+     * 主题色，接缝不可见。
+     *
+     * 位移风险不在 flags 层而在布局层：查看器容器已改成恒全屏（不吃 insets，见
+     * setContent 组合根），翻转状态栏零 resize，图片不重居中。
+     */
+    private fun setViewerImmersiveBars(hidden: Boolean) {
+        if (hidden == viewerBarsHidden) return
+        viewerBarsHidden = hidden
+        val window = this.window
+        // ⚠ `android.view.WindowInsets.Type` 是 API 30 才有的类——它必须在下面的
+        // 版本分支**内部**引用。提到外面（哪怕只是取个常量）在 API 29 上会直接
+        // NoClassDefFoundError 崩进程（真机报障：荣耀 Magic2 一点图片就闪退）。
+        if (hidden) {
+            // 窗口底色置黑（沉浸时查看器铺满窗口，这层只在系统面板浮出时可见）；
+            // 全限定名：本文件顶部已 import androidx.compose.ui.graphics.Color（重名）
+            window.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK)
+            )
+            @Suppress("DEPRECATION")
+            window.statusBarColor = android.graphics.Color.BLACK
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let { controller ->
+                    controller.hide(android.view.WindowInsets.Type.statusBars())
+                    controller.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            } else {
+                if (savedViewerImmersiveUiVisibility == null) {
+                    @Suppress("DEPRECATION")
+                    savedViewerImmersiveUiVisibility = window.decorView.systemUiVisibility
+                }
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN)
+            }
+        } else {
+            // 先上主题色、后 show：让系统面板与查看器还原后的底色同色
+            applyWindowTheme(isDarkTheme())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let { controller ->
+                    controller.show(android.view.WindowInsets.Type.statusBars())
+                    controller.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_DEFAULT
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility = savedViewerImmersiveUiVisibility
+                    ?: View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                savedViewerImmersiveUiVisibility = null
+            }
+        }
+        android.util.Log.i("NativeViewer", "setViewerImmersiveBars hidden=$hidden api=${Build.VERSION.SDK_INT}")
+        showImmersiveDiagnostics(if (hidden) "enter" else "exit")
+    }
+
+    // ==================== 临时诊断（2026-10-07 B2-2，定位 Magic2 底部色带；定案后整段删除）====
+    //
+    // 现场：Android 10 及以下（Magic2/API29）进沉浸再退出后，屏幕底部出现一条 64px 纯色带
+    // （#2A2A2A，逐像素实测：`log/K1.jpg` y=2156..2219、`log/K2.jpg` y=2276..2339），
+    // 且它总是贴着**应用窗口的底边**——两次的窗口高差 120px（避让导航栏与否），色带跟着走。
+    // 这说明它是「窗口/内容」层的产物，不是固定贴屏幕底的系统条。真机上没法读 logcat，
+    // 故把关键几何与**命中测试**（色带处的视图链）算出来给指挥官复制粘贴回来。
+    //
+    // 要回答的三个问题：
+    // ① 色带那一段（几档 y）最深命中哪个 View、它的背景色多少？
+    // ② 查看器（NativeGalleryView）的屏幕矩形是否覆盖到窗口底边？
+    // ③ 进出沉浸前后 systemUiVisibility / insets / 窗口可见帧各是多少？
+
+    private fun showImmersiveDiagnostics(tag: String) {
+        // 只在 debug 包生效（本模块没开 buildConfig 特性，用 debuggable 位判断，等价）
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return
+        val v = viewer ?: return
+        val decor = window.decorView
+        val sb = StringBuilder()
+        sb.append("tag=$tag  api=${Build.VERSION.SDK_INT}\n")
+        val dloc = IntArray(2)
+        decor.getLocationOnScreen(dloc)
+        sb.append("decor=${dloc[0]},${dloc[1]} ${decor.width}x${decor.height}\n")
+        val vf = android.graphics.Rect()
+        decor.getWindowVisibleDisplayFrame(vf)
+        sb.append("visFrame=$vf\n")
+        @Suppress("DEPRECATION")
+        sb.append("sysUiVis=0x${Integer.toHexString(decor.systemUiVisibility)}\n")
+        @Suppress("DEPRECATION")
+        sb.append("navColor=#${Integer.toHexString(window.navigationBarColor)}")
+        @Suppress("DEPRECATION")
+        sb.append(" statusColor=#${Integer.toHexString(window.statusBarColor)}\n")
+        androidx.core.view.ViewCompat.getRootWindowInsets(decor)?.let { ri ->
+            sb.append("insets status=${ri.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())}")
+            sb.append(" nav=${ri.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())}\n")
+            sb.append("insets sysbars=${ri.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())}\n")
+        }
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        sb.append("viewer=${loc[0]},${loc[1]} ${v.width}x${v.height} vis=${v.visibility}\n")
+        val screenH = resources.displayMetrics.heightPixels
+        val screenW = resources.displayMetrics.widthPixels
+        for (dy in intArrayOf(16, 48, 80, 120, 160, 260)) {
+            sb.append("hit y=${screenH - dy}: ${hitChain(decor, screenW / 2f, (screenH - dy).toFloat())}\n")
+        }
+        // 抽屉露出量（park 是否精确）：竖屏比位移差、横屏比宽度差。>0 = 面板顶边在屏内
+        val drawer = v.debugDrawer()
+        val peek = if (drawer != null && drawer.height > 0) {
+            if (drawer.width >= drawer.height) (drawer.width - drawer.translationX).toInt()
+            else (drawer.height - drawer.translationY).toInt()
+        } else 0
+        sb.append("drawer=${drawer?.width}x${drawer?.height} tx=${drawer?.translationX} ty=${drawer?.translationY} peek=$peek\n")
+        val text = sb.toString()
+        android.util.Log.i("NativeViewer", "DIAG $tag\n$text")
+        runCatching {
+            val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("aurora-diag", text))
+        }
+        // 只在真的露出来时才弹框打扰——修好后进出沉浸应该一个框都不弹
+        if (peek > 1) {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("查看器诊断：抽屉露出 $peek px（已复制到剪贴板）")
+                .setMessage(text)
+                .setPositiveButton("好") { d, _ -> d.dismiss() }
+                .show()
+        }
+    }
+
+    /** 从 [root] 逐层找出包含屏幕点 (x,y) 的最深可见子视图，拼成 `depth0 < depth1 < ...` 描述链。 */
+    private fun hitChain(root: View, x: Float, y: Float): String {
+        val chain = StringBuilder()
+        var cur: View = root
+        var guard = 0
+        while (cur is ViewGroup && guard++ < 24) {
+            var next: View? = null
+            for (i in cur.childCount - 1 downTo 0) {
+                val c = cur.getChildAt(i)
+                if (c.visibility != View.VISIBLE) continue
+                val r = android.graphics.Rect()
+                if (c.getGlobalVisibleRect(r) && r.contains(x.toInt(), y.toInt())) {
+                    next = c
+                    break
+                }
+            }
+            next ?: break
+            chain.append(describeView(next)).append(" < ")
+            cur = next
+        }
+        if (chain.isEmpty()) chain.append("(仅容器)")
+        return chain.toString()
+    }
+
+    private fun describeView(v: View): String {
+        val bg = when (val d = v.background) {
+            null -> "null"
+            is android.graphics.drawable.ColorDrawable -> "#" + Integer.toHexString(d.color)
+            is android.graphics.drawable.GradientDrawable -> "grad"
+            else -> d.javaClass.simpleName
+        }
+        val r = android.graphics.Rect()
+        v.getGlobalVisibleRect(r)
+        return "${v.javaClass.simpleName}${v.id.takeIf { it != View.NO_ID }?.let { "#$it" } ?: ""}[$r,bg=$bg]"
+    }
 
     private fun setViewerSystemBars(hidden: Boolean) {
         val window = this.window
@@ -1184,6 +1360,10 @@ class MainActivity : ComponentActivity() {
      * 管（系统栏接管只动 flags，不再写任何色值）。
      */
     private fun applyWindowTheme(dark: Boolean) {
+        // 查看器沉浸期间窗口色归黑（[setViewerImmersiveBars]）：这条每次重组都会跑，
+        // 不挡住会把黑底刷回主题色，瞬态系统栏一浮出就是一条亮边。还原分支显式重跑
+        // 本函数（先置色、后 show），所以这里让位不会漏掉任何一次真正需要的重涂。
+        if (viewerBarsHidden) return
         val palette = AuroraPalettes.of(dark)
         // 窗口底色 = palette.main（2026-09-26 验收反馈：主界面悬浮卡片化对齐 React
         // 桌面 bg-main 环绕层）——App 的主界面 Row 内缩裁圆角成卡片，四周留边透出这层；
@@ -1327,6 +1507,11 @@ class MainActivity : ComponentActivity() {
                     aiFilterIds = viewModel.aiSearchIds.value ?: viewModel.colorSearchIds.value,
                 )
                 val imagesPending = viewModel.imagesPending.value
+                // 组合根**不吃** insets：查看器要真全屏——若它挂在带 statusBarsPadding
+                // 的容器里，沉浸隐藏系统栏时 padding 归零→容器变高→图片重居中→「图片
+                // 位置上下变动」。主内容另套一层吃 statusBarsPadding，观感与旧版一致；
+                // 查看器则在本层铺满窗口，翻转系统栏零 resize（2026-10-07 B2 定稿）。
+                Box(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxSize().statusBarsPadding()) {
                     App(
                         state = appState,
@@ -1680,23 +1865,8 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(appState.activeTab.viewingFileId) {
                     appState.activeTab.viewingFileId?.let { maybeAutoExtractPalette(it) }
                 }
-                ViewerLayerHost(
-                    state = appState,
-                    displayImages = displayImages,
-                    viewerProvider = ::ensureViewer,
-                    parentName = currentFolderName,
-                    tagsByFile = viewModel.tagsByFile.value,
-                    metadataById = viewModel.metadataById.value,
-                    // M6a 阶段 5：远端元数据缓存——isLan 项抽屉的标签/描述/来源只取这里
-                    lanMetaById = viewModel.lanMetaByPath.value,
-                    // M6a 阶段 4：LAN 大图 URL 构造器（查看器 isLan 项的取图源）
-                    lanImageUrlOf = viewModel.lanImageUrlOf(),
-                    // M6a 阶段 6：编辑门禁位（查看器 LAN 项的删除入口显隐；同款会话现取）
-                    lanAllowEdit = viewModel.lanAllowEdit.value,
-                    // M6b 阶段 3：抽屉 Section 4 主色调预填 + 自动提取开关推进
-                    colorPalettesById = viewModel.colorPalettesById.value,
-                    autoExtractPalette = viewModel.settings.value.autoExtractPalette,
-                )
+                // 查看器不在这里挂：它要真全屏（不吃 statusBarsPadding），挂在上面那层
+                // 全屏 Box 的末尾（主内容之后 → 盖在网格之上）。见下方 ViewerLayerHost。
                 // M6b 阶段 5（D40）：桌面词表推进查看器（LAN 项标签编辑建议源）
                 LaunchedEffect(viewModel.lanVocab.value) {
                     ensureViewer().lanVocab = viewModel.lanVocab.value
@@ -1795,6 +1965,28 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 }
+                // ↑ 主内容层收口（吃 statusBarsPadding）
+                }
+                // 查看器：真全屏覆盖层，画在主内容之上、设置页/欢迎向导之前（后者与查看器
+                // 不同屏共存，不受影响）。容器不吃 insets 是 B2 的核心——沉浸隐藏系统栏
+                // 时容器尺寸恒定，图片不重居中，进出零位移。
+                ViewerLayerHost(
+                    state = appState,
+                    displayImages = displayImages,
+                    viewerProvider = ::ensureViewer,
+                    parentName = currentFolderName,
+                    tagsByFile = viewModel.tagsByFile.value,
+                    metadataById = viewModel.metadataById.value,
+                    // M6a 阶段 5：远端元数据缓存——isLan 项抽屉的标签/描述/来源只取这里
+                    lanMetaById = viewModel.lanMetaByPath.value,
+                    // M6a 阶段 4：LAN 大图 URL 构造器（查看器 isLan 项的取图源）
+                    lanImageUrlOf = viewModel.lanImageUrlOf(),
+                    // M6a 阶段 6：编辑门禁位（查看器 LAN 项的删除入口显隐；同款会话现取）
+                    lanAllowEdit = viewModel.lanAllowEdit.value,
+                    // M6b 阶段 3：抽屉 Section 4 主色调预填 + 自动提取开关推进
+                    colorPalettesById = viewModel.colorPalettesById.value,
+                    autoExtractPalette = viewModel.settings.value.autoExtractPalette,
+                )
                 }
             }
         }
@@ -1928,6 +2120,9 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        // 沉浸态重申：切后台/被系统面板打断时系统可能自行把栏放回来，回前台按查看器
+        // 的权威沉浸态重申一次（幂等——setViewerImmersiveBars 同值短路，非沉浸不做事）
+        viewer?.takeIf { it.isImmersiveNow() }?.let { setViewerImmersiveBars(true) }
         // 欢迎向导权限步：用户从系统设置授权页返回时 launcher 不会回调——这里按当前
         // 权限态推进（授权了就走 onPermissionGranted 并开扫，仍被拒则留在权限步）
         if (showWelcome && welcomeState.step == WelcomeStep.PERMISSION && hasMediaPermission()) {

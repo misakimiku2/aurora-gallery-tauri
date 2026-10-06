@@ -172,6 +172,20 @@ class NativeGalleryView @JvmOverloads constructor(
     private var currentIndex = 0
     private var isAnimating = AtomicBoolean(false)
     private var isImmersive = false
+    /**
+     * 沉浸态系统栏接管回调（宿主注入，2026-10-07 B2 定稿）：true=隐藏系统栏并把窗口色
+     * 置黑，false=还原。查看器容器恒**真全屏**（不吃 insets，见 MainActivity 组合根），
+     * 所以翻转系统栏不引起容器 resize——「图片位置上下变动」由此从机制上消失，钉扎只
+     * 留作非 e2e 窗口（低版本会真 resize）的兜底。
+     */
+    var onImmersiveBarsChange: ((Boolean) -> Unit)? = null
+    /**
+     * 状态栏高度（权威值，只信窗口 insets）。B2 后查看器容器顶=窗口顶（真全屏），顶栏
+     * 必须自补这段，否则标题/按钮钻进状态栏与挖孔区；不读 `status_bar_height` 资源
+     * （被挖孔顶高，avd_honor29 实测 182 vs 实际 90）。
+     * 沉浸期间 insets 归零——**冻结上一个真值**，否则顶栏会在滑出途中被抽掉一截。
+     */
+    private var statusBarInsetPx = 0
     private var slideshowIntervalMs = 5000L
     private var slideshowTransition = "fade"
     private var slideshowRandom = false
@@ -745,16 +759,38 @@ class NativeGalleryView @JvmOverloads constructor(
         applyDrawerBackground()
         // 把手拖拽条只属于底部面板形制（横屏右缘抽屉无下滑关闭语义）
         drawerHandleStrip.visibility = if (portrait) VISIBLE else GONE
+        // 形制决定抽屉顶边是否在窗口顶（横屏全高抽屉要让状态栏），换形制即重算
+        applyDrawerTopInset()
         // 位移落回「关闭」位：换了形制/尺寸，旧轴向位移值作废（横屏的 translationX=320
         // 在竖屏全宽面板下会露出一条竖条，反之面板整条悬在屏上）；抽屉开着时调用方
         //（onConfigurationChanged/onSizeChanged）会紧跟 applyDrawerProgress 按当前进度
         // 重放视觉——旋转中态直接落位，不要求动画过渡（用户拍板）
-        if (portrait) {
+        parkDrawer()
+    }
+
+    /**
+     * 抽屉归位（关闭位）——**按抽屉自己的实测尺寸**下移/右移，而不是再算一遍
+     * `height*2/3`。
+     *
+     * 真机实锤（2026-10-07 B2-2，荣耀 Magic2 / API29）：要完全藏住必须
+     * `translationY == 抽屉高`；而 `height*2/3` 是**按调用时刻的根高**算的，抽屉的
+     * layoutParams 高度又是**另一个时刻**写的。进出沉浸时窗口内容帧在 [96,2340]（高
+     * 2244）与 [0,2340]（高 2340）之间跳，两次各取一个根高 → 差 96px（状态栏高），
+     * 露出 96×2/3 = **64px** 的面板顶边（#2A2A2A=palette.panel，逐行 std=0 的纯色带，
+     * 盖住图片；抽屉把手在条下方 42..54px 处，正好被屏幕底边裁掉，所以看着是空条）。
+     * 未进过沉浸时根高没变过 → 无错位 → 从不出现，与「只在这台机上、只有进出全屏后才有」
+     * 完全吻合。改用自身尺寸后，无论何时调用都精确藏住，错位从机制上不可能。
+     */
+    private fun parkDrawer() {
+        if (isCompactPortrait) {
             metadataDrawer.translationX = 0f
-            metadataDrawer.translationY = drawerExtentPx.toFloat()
+            // 未布局时（height=0）退回按根高估算，避免写成 0 让面板整块露在屏上
+            val h = metadataDrawer.height.takeIf { it > 0 } ?: drawerExtentPx
+            metadataDrawer.translationY = h.toFloat()
         } else {
             metadataDrawer.translationY = 0f
-            metadataDrawer.translationX = drawerWidthPx.toFloat()
+            val w = metadataDrawer.width.takeIf { it > 0 } ?: drawerExtentPx
+            metadataDrawer.translationX = w.toFloat()
         }
     }
 
@@ -1073,11 +1109,10 @@ class NativeGalleryView @JvmOverloads constructor(
                     // 抽屉打开：系统栏本就随会话隐藏（2026-10-07 模型），无需也不可再切换
                     // （不改 isImmersive，保留单次点击的沉浸状态）
                 } else {
-                    // 抽屉关闭：恢复抽屉打开前的沉浸状态
+                    // 抽屉关闭：恢复抽屉打开前的沉浸状态。横屏抽屉打开期间不改
+                    // isImmersive，也没动过背景与系统栏，这里只需把它落回权威值
                     isImmersive = immersiveBeforeDrawer
-                    // B1：背景恒主题色（沉浸只藏 chrome，不再有「黑色剧场」态，
-                    // 否则与常驻状态栏/手势条区形成色差接缝）
-                    setBackgroundColor(colorBg())
+                    setBackgroundColor(if (immersiveBeforeDrawer) Color.BLACK else colorBg())
                 }
             }
         })
@@ -1131,7 +1166,50 @@ class NativeGalleryView @JvmOverloads constructor(
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
+        // 状态栏高度随窗口 insets 走（旋转/挖孔/分屏都会变）：每次布局同步一次，值变了
+        // 才改 topMargin/padding（幂等，不会与布局互相触发成环）
+        syncStatusBarInset()
+        // 抽屉停车自愈（B2-2）：关闭态每帧按自身实测尺寸重新归位。params 高度与位移的
+        // 写入时机可能跨过一次根高变化（进出沉浸），自愈让错位不可能存活到下一帧。
+        // 开着/动画中一律不碰——那两种状态的位移由 applyDrawerProgress 管。
+        if (!drawerOpen && drawerWidthAnimator == null && drawerPanelProgress <= 0f) parkDrawer()
         applyImageAreaPin()
+    }
+
+    // —— 状态栏高度自补（B2：容器真全屏后由本类自己让位）——
+
+    /**
+     * 从窗口 insets 读状态栏高度。归零（沉浸隐藏中 / 尚未 attach）时保留上一个真值——
+     * 冻结是刻意的，见 [statusBarInsetPx]。值变了才落 margin/padding。
+     */
+    private fun syncStatusBarInset() {
+        val insets = androidx.core.view.ViewCompat.getRootWindowInsets(this) ?: return
+        val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
+        if (top > 0 && top != statusBarInsetPx) {
+            statusBarInsetPx = top
+            applyTopBarTopMargin()
+            applyDrawerTopInset()
+        }
+    }
+
+    /** 顶栏 topMargin = 状态栏高度 + 8dp（8dp 是 2026-09-27 验收的图库卡片形制内缩）。 */
+    private fun applyTopBarTopMargin() {
+        val lp = topBar.layoutParams as? LayoutParams ?: return
+        val want = statusBarInsetPx + (resources.displayMetrics.density * 8).toInt()
+        if (lp.topMargin != want) {
+            lp.topMargin = want
+            topBar.layoutParams = lp
+        }
+    }
+
+    /**
+     * 抽屉顶部让位：横屏/平板的右缘抽屉是全高（顶=窗口顶），内容必须避开状态栏；
+     * 竖屏底部面板钉在屏幕下缘、顶边本就在屏内，不加。
+     */
+    private fun applyDrawerTopInset() {
+        val side = (resources.displayMetrics.density * 16).toInt()
+        val top = side + if (isCompactPortrait) 0 else statusBarInsetPx
+        if (metadataDrawer.paddingTop != top) metadataDrawer.setPadding(side, top, side, side)
     }
 
     /**
@@ -1890,6 +1968,22 @@ class NativeGalleryView @JvmOverloads constructor(
     /** 查看器是否已打开。 */
     fun isOpen(): Boolean = isOpen
 
+    /** 当前是否处于沉浸（真全屏）态。宿主从后台回前台时据此重申系统栏。 */
+    fun isImmersiveNow(): Boolean = isImmersive
+
+    /** 临时诊断用（B2-2 色带定位）：取抽屉容器本体供宿主演算「露出量」。定案后随诊断段删。 */
+    fun debugDrawer(): View = metadataDrawer
+
+    /**
+     * 外部强制设定沉浸态（同值/抽屉开着时短路）。走 [toggleImmersive] 同一条路径——
+     * 背景、系统栏、chrome 滑出三件事必须一起动，不能各写一半。
+     */
+    fun setImmersive(enabled: Boolean) {
+        if (enabled == isImmersive) return
+        if (drawerOpen) return
+        toggleImmersive()
+    }
+
     /** 打开查看器，显示 [startIndex] 位置的图片。 */
     fun open(images: List<ImageItem>, startIndex: Int, options: JSONObject?) {
         Log.i("NativeViewer", "open called: images=${images.size}, startIndex=$startIndex, options=$options, alreadyOpen=$isOpen, currentIdx=$currentIndex")
@@ -1930,6 +2024,8 @@ class NativeGalleryView @JvmOverloads constructor(
             thumbnailStrip.translationY = 0f
             if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = 0f
             setBackgroundColor(colorBg())
+            // 系统栏一并还原：残留的那次沉浸把栏藏了，宿主侧的隐藏标记也要跟着清
+            onImmersiveBarsChange?.invoke(false)
         }
         if (skipReload) {
             Log.i("NativeViewer", "open: skipping reload, already at index $currentIndex (onNavigate re-entry)")
@@ -1965,8 +2061,8 @@ class NativeGalleryView @JvmOverloads constructor(
 
     /** 应用当前主题到所有 UI 元素。 */
     private fun applyTheme() {
-        // 沉浸模式下保持黑色背景（切换图片时 open() 重入会调用 applyTheme，不应重置为主题色）
-        setBackgroundColor(colorBg())
+        // 沉浸态背景恒黑（翻页/切主题的重涂不该把剧场态刷回主题色）
+        setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
         // 顶栏/底栏/缩略图条背景
         topBar.setBackgroundColor(colorBgAlpha(0x4D))
         bottomInfo.setBackgroundColor(colorBgAlpha(0xCC))
@@ -2030,15 +2126,10 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerWidthAnimator?.cancel()
         drawerWidthAnimator = null
         metadataDrawer.animate().cancel()
-        // 关闭位按形制落轴（M8b-8）：竖屏面板藏屏幕下方（行程=根高 2/3），横屏抽屉藏
-        // 右缘（320dp）——竖屏形制只写 translationX=320 会留一条全宽面板竖在屏内
-        if (isCompactPortrait) {
-            metadataDrawer.translationX = 0f
-            metadataDrawer.translationY = drawerExtentPx.toFloat()
-        } else {
-            metadataDrawer.translationY = 0f
-            metadataDrawer.translationX = (resources.displayMetrics.density * 320)
-        }
+        // 关闭位按形制落轴（M8b-8）：竖屏面板藏屏幕下方（行程=面板自身高），横屏抽屉藏
+        // 右缘（行程=面板自身宽）——竖屏形制只写 translationX=320 会留一条全宽面板竖在
+        // 屏内。位移一律取抽屉自身实测尺寸（见 parkDrawer），不重算根高 2/3
+        parkDrawer()
         primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         // 重置填充进度，下次打开时从 fit 开始
@@ -2049,8 +2140,9 @@ class NativeGalleryView @JvmOverloads constructor(
         // 恢复缩放许可（抽屉已关闭）
         primaryView.allowZoom = true
         secondaryView.allowZoom = true
-        // 系统栏不在此处还原：会话模型下由宿主在 Listener.onClose 里统一收尾
-        //（restore——本类任何路径都不该在会话内重新 show 系统栏，2026-10-07）。
+        // B2：系统栏由本类按沉浸态自行接管（不再是会话模型），关闭时必须还原——
+        // 否则「沉浸中退出查看器」会把隐藏的系统栏带进网格。
+        onImmersiveBarsChange?.invoke(false)
         // drawerOpen 清零仍须在背景色还原之前：横屏抽屉打开不改 isImmersive，
         // 背景色分支依赖最终标志位。
         isImmersive = false
@@ -2269,9 +2361,14 @@ class NativeGalleryView @JvmOverloads constructor(
         if (drawerOpen) return
         Log.i("NativeViewer", "toggleImmersive: isImmersive=$isImmersive -> ${!isImmersive}")
         // 钉扎保持期：进/出的 resize 分段落位期间 onLayout 不重锚，图片全程钉在
-        // 进入前矩形上（见 applyImageAreaPin）
+        // 进入前矩形上（见 applyImageAreaPin）。e2e 窗口本就不 resize（零位移由容器
+        // 恒全屏保证），这层只兜非 e2e 低版本窗口的真 resize。
         imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
         isImmersive = !isImmersive
+        // B2：沉浸=真全屏剧场态——背景转纯黑 + 系统栏隐藏；退出两者一并还原。
+        // 容器恒全屏（不吃 insets），故隐藏系统栏不引起任何 resize，图片全程不动。
+        setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
+        onImmersiveBarsChange?.invoke(isImmersive)
         val targetTop = if (isImmersive) topBarHideTranslation() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
         val targetInfo = if (isImmersive) height.toFloat() else 0f
@@ -2280,10 +2377,13 @@ class NativeGalleryView @JvmOverloads constructor(
         if (bottomInfo.visibility == VISIBLE) {
             bottomInfo.animate().translationY(targetInfo - bottomInfo.translationY).setDuration(200).start()
         }
-        // 2026-10-07 B1 定稿：沉浸=chrome 隐藏（顶栏/缩略图条/底部信息滑出），系统栏
-        // 全程不翻不染色、背景保持 colorBg——荣耀真机实锤：EMUI 手势条面板跟「状态栏
-        // 重新显示」事件走（带主题默认底色 42/白、无视 navigationBarColor），任何
-        // flags/insets 层面的操作都会引出底部异色块+图片位移；所以一切只到 view 层为止。
+        // 2026-10-07 B2 定稿（取代同日 B1）：沉浸=真全屏——系统栏隐藏 + 背景纯黑 +
+        // chrome 滑出，退出三者一并还原。B1 的「只动 chrome」被推翻是因为它满足不了
+        // 「像系统相册那样全屏」；它防的两件事改由结构兜住：
+        // ① 图片位移——容器恒全屏不吃 insets，翻转系统栏零 resize（B1 是躲开 resize）；
+        // ② EMUI 手势条面板异色块——宿主在还原分支先写回主题色再 show，瞬态系统面板
+        //   的底色(=主题默认色)与还原后的查看器底色同色，接缝不可见（见 MainActivity
+        //   setViewerImmersiveBars）。
         // MagicUI 真机：滑出动画曾因窗口 resize 冻在半程，200ms 动画结束后按权威状态
         // 瞬时落位一次（onSizeChanged 的重申是尺寸变化路径的兜底，此处是动画路径的
         // 兜底，两处都以 isImmersive 为唯一事实）。
@@ -2694,11 +2794,13 @@ class NativeGalleryView @JvmOverloads constructor(
         addView(sv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         sv.start()
         updateSlideshowButtonIcon()
-        // 系统栏随会话本就隐藏（2026-10-07 模型）；slideshowHidSystemUi 只服务钉扎门
-        // （isChromeHidden：幻灯片期间不重锚/不钉顶栏），不再驱动任何系统栏切换
+        // 幻灯片覆盖层是黑底全屏，系统栏必须跟着走（否则一条状态栏横在剧场中间）。
+        // B2 下翻转系统栏不引起容器 resize（容器恒全屏），位移风险由结构兜住。
+        // slideshowHidSystemUi 同时是钉扎门（isChromeHidden：期间不重锚/不钉顶栏）。
         slideshowHidSystemUi = !isImmersive
         if (slideshowHidSystemUi) {
             imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
+            onImmersiveBarsChange?.invoke(true)
         }
     }
 
@@ -2727,6 +2829,9 @@ class NativeGalleryView @JvmOverloads constructor(
         if (slideshowHidSystemUi) {
             imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
             slideshowHidSystemUi = false
+            // 只在查看器自身不沉浸时还原——沉浸态的系统栏归 toggleImmersive 管，
+            // 这里抢着 show 会把沉浸态的隐藏状态抹掉
+            if (!isImmersive) onImmersiveBarsChange?.invoke(false)
         }
     }
 
