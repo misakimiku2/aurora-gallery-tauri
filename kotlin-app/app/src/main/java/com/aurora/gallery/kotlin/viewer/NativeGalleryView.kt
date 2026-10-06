@@ -67,6 +67,13 @@ class NativeGalleryView @JvmOverloads constructor(
 ) : FrameLayout(context), DialogTheme {
 
     interface Listener {
+        /**
+         * 查看器会话开始（open() 尾声回调）。2026-10-07 定稿：系统栏由宿主按「会话」
+         * 接管——open 时隐藏、[onClose] 时还原，会话中途（沉浸切换/抽屉/幻灯片）绝不
+         * 翻转。荣耀真机实锤：会话内任何「状态栏重新显示」都会让 EMUI 手势条面板带着
+         * 主题默认底色（深 42/浅白，无视窗口 navigationBarColor）浮上来盖住查看器底部，
+         * 直到返回网格才消失；全程不 show 就结构上免疫。 */
+        fun onOpen()
         /** 用户点击了关闭按钮。 */
         fun onClose()
         /** 当前图片索引变化（用户操作或幻灯片）。 */
@@ -82,8 +89,6 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onCopyToFolder(fileId: String)
         /** 用户点击了"移动到文件夹"。 */
         fun onMoveToFolder(fileId: String)
-        /** 用户切换了沉浸模式。immersive=true 表示进入沉浸，false 表示退出。 */
-        fun onImmersiveToggle(immersive: Boolean)
         /**
          * 用户在原生层编辑了文件元数据。`updatesJson` 是 **camelCase** 的 JSON 对象，
          * 且**只带用户这次编辑过的那几个键**——缺键=不改，不是清空。
@@ -191,6 +196,23 @@ class NativeGalleryView @JvmOverloads constructor(
     private var palette: AuroraPalette = AuroraPalettes.of(isDarkTheme)
     // 查看器是否打开（open 时设 true，close 时设 false）
     private var isOpen = false
+
+    // —— 内容区钉扎（2026-10-06 报障：沉浸切换隐藏/恢复系统栏的窗口 resize 分两段落位
+    // （avd_honor29 实测底部先收、顶部后收），图片在变高/变矮的容器里各重居中一次，
+    // 肉眼可见「先下后上」。把图片双 buffer 与顶栏/缩略图条/底部信息的可用区用锚矩形
+    // 钉住：系统栏被隐藏期间黑底向四周扩展，各视图的屏幕位置与尺寸逐帧不变（10-07
+    // 真机报障「退出沉浸后顶部文件名跳动」= 顶栏随窗口顶边分段回落，一并由钉扎消除）
+    // ——ZoomableImageView 视图尺寸恒定，onSizeChanged 不触发 resetToCenter，缩放
+    // 状态也不丢）——
+    private var imageAnchorTopAbs = 0
+    private var imageAnchorBottomAbs = 0
+    private var imageAnchorValid = false
+    // 锚时刻各钉扎子视图的本地 top/bottom（还原分段中按锚绝对矩形回摆）
+    private class ChromePin(val view: View, val top: Int, val bottom: Int)
+    private val chromePins = ArrayList<ChromePin>()
+    // 切换保持期：切换/还原的 resize 分段期间（实测 ~1s，MagicUI 更碎）onLayout 禁止
+    // 重锚，否则还原半程又按中途几何重居中一次。3s > 任何实测分段落位时长。
+    private var imagePinHoldUntil = 0L
 
     /**
      * 加载代号（[loadIntoView] 每轮递增）。Coil 的 lambda target 请求不挂在视图的
@@ -810,6 +832,9 @@ class NativeGalleryView @JvmOverloads constructor(
         // 进度读 drawerPanelProgress（面板进度权威值）；横屏形制靠 applyDrawerProgress
         // 横屏分支把图片压缩宽度一起重放。
         applyDrawerFormFactor()
+        // 旋转后旧锚属于旧方向：失效自愈为不钉扎（原行为），非沉浸静止后由
+        // applyImageAreaPin 重录
+        imageAnchorValid = false
         if (drawerOpen) {
             drawerWidthAnimator?.cancel()
             applyDrawerProgress(drawerPanelProgress)
@@ -820,10 +845,11 @@ class NativeGalleryView @JvmOverloads constructor(
         val density = resources.displayMetrics.density
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            // 2026-09-27 验收（顶栏偏低）：组合根（MainActivity AndroidView 外层 Box）已有
-            // statusBarsPadding，此处再自加 status_bar_height 属双重内缩——avd_ai1 实测按钮
-            // 中心 y=352.5，图库 TopBar 基准 237.5，差 115px。改为对齐图库卡片形制：
-            // topMargin 8dp + 行高 56dp → 按钮中心 = statusTop+8+28 ≈ 236.5（±1px）。
+            // topMargin 由 [open] 每会话按「隐藏前窗口 insets 的状态栏高度」动态补足
+            //（2026-10-07 会话模型：会话内系统栏隐藏、组合根 statusBarsPadding 恒 0，
+            // 原生侧必须自补，否则标题撞挖孔）。不在此处用 status_bar_height 资源：
+            // 该值会被挖孔/cutout 顶高（avd_honor29 实测 182 vs 实际 90），只有系统
+            // 派发的 insets 才是权威。2026-09-27 的「勿双重内缩」教训前提同理反转。
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (density * 56).toInt()).apply {
                 gravity = android.view.Gravity.TOP
                 topMargin = (density * 8).toInt()
@@ -997,18 +1023,21 @@ class NativeGalleryView @JvmOverloads constructor(
             secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
         }
         // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）。横屏滑一个身位
-        // 即可：抽屉打开时 onImmersiveToggle(true) 会隐藏系统状态栏，topBar 藏在状态栏
-        // 后不可见；竖屏底部面板不隐藏状态栏（纯覆盖层），滑一个身位会停在透明状态栏
+        // 即可：系统栏随会话全程隐藏（2026-10-07 模型），topBar 藏在窗口顶外不可见；
+        // 竖屏底部面板不隐藏状态栏（纯覆盖层），滑一个身位会停在透明状态栏
         // 后仍透出（M8b-8 实测残影），行程加根自身的窗口顶偏移，完全移出屏幕上方。
         if (topBar.height > 0) {
             topBar.translationY = if (isImmersive) {
-                -topBar.height.toFloat()
+                // 行程用 bottom（= topMargin 8dp + 高）：topBar 在父容器里不贴 y=0，只滑
+                // -height 会留一条 topMargin 宽的半透明横条露在黑底顶端（真机报障「进全屏
+                // 上方仍有灰色区域」的元凶，avd_honor29 实测 24px）
+                -topBar.bottom.toFloat()
             } else if (isCompactPortrait) {
                 val rootTopLoc = IntArray(2)
                 getLocationOnScreen(rootTopLoc)
                 -(rootTopLoc[1] + topBar.bottom) * progress
             } else {
-                -topBar.height * progress
+                -topBar.bottom * progress
             }
         }
         // 缩略图条向下滑出（沉浸模式下始终保持隐藏）
@@ -1060,12 +1089,11 @@ class NativeGalleryView @JvmOverloads constructor(
                 primaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
                 secondaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
                 if (open) {
-                    // 抽屉打开：隐藏系统状态栏，但不改变 isImmersive（保留单次点击的沉浸状态）
-                    listener?.onImmersiveToggle(true)
+                    // 抽屉打开：系统栏本就随会话隐藏（2026-10-07 模型），无需也不可再切换
+                    // （不改 isImmersive，保留单次点击的沉浸状态）
                 } else {
                     // 抽屉关闭：恢复抽屉打开前的沉浸状态
                     isImmersive = immersiveBeforeDrawer
-                    listener?.onImmersiveToggle(immersiveBeforeDrawer)
                     // 还原背景色：若之前在沉浸模式则保持黑色，否则还原主题色
                     setBackgroundColor(if (immersiveBeforeDrawer) Color.BLACK else colorBg())
                 }
@@ -1119,6 +1147,60 @@ class NativeGalleryView @JvmOverloads constructor(
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        applyImageAreaPin()
+    }
+
+    /**
+     * 内容区钉扎：非沉浸静止时锚=当前屏幕矩形与各 chrome 子视图的本地矩形（同值赋值
+     * 零开销）；系统栏被本查看器隐藏期间（含还原分段中），把图片双 buffer 与缩略图条/
+     * 底部信息直接 layout 回各自的锚矩形——窗口分段 resize 时黑底向四周补位，全部内容
+     * 的屏幕位置与尺寸逐帧不变（laid-out 尺寸恒定，ZoomableImageView 的 onSizeChanged
+     * 不触发，resetToCenter 不重跑，缩放状态也不丢）。用 child.layout 同帧纠偏而非
+     * padding/params：不产生 requestLayout 二次遍历，无「先按旧几何摆、下一帧再修正」
+     * 的闪烁。幻灯片隐藏系统栏（不改 isImmersive）走同一钉扎。顶栏只在还原分段钉
+     * （沉浸期间钉扎会顶住滑出量，见循环内注）。旋转后旧锚属于旧方向：失效自愈为
+     * 不钉扎（原行为），非沉浸静止后重录。
+     */
+    private fun applyImageAreaPin() {
+        if (width <= 0 || height <= 0) return
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val now = android.os.SystemClock.uptimeMillis()
+        if (!isChromeHidden() && now >= imagePinHoldUntil) {
+            imageAnchorTopAbs = loc[1]
+            imageAnchorBottomAbs = loc[1] + height
+            chromePins.clear()
+            for (v in pinnedChromeChildren()) {
+                if (v.height > 0 && v.width > 0) chromePins.add(ChromePin(v, v.top, v.bottom))
+            }
+            imageAnchorValid = true
+        }
+        if (!imageAnchorValid) return
+        // 抽屉 fill/压缩有自己的图片几何（显式宽高与进度动画），不叠加钉扎
+        if (drawerOpen || drawerWidthAnimator != null || drawerPanelProgress > 0f) return
+        // 各子视图锚矩形随锚顶边平移回摆；clamp 进当前几何，锚异常时退化为不钉扎
+        val deltaY = imageAnchorTopAbs - loc[1]
+        for (p in chromePins) {
+            // 顶栏在系统栏被本查看器隐藏期间不钉（2026-10-07 荣耀真机回归实锤）：滑出量
+            // -topBar.bottom 按自然布局校准，钉扎却把布局按回锚位（+deltaY），两者相减
+            // 恰好漏出 ~状态栏高的一条——标题/图标的下缘碎片恒驻沉浸态屏幕顶端。隐藏
+            // 期间滑出交还 translationY 全权负责；退出还原分段（!isChromeHidden 且保持
+            // 期内）照旧钉住，顶栏在窗口分段回落时逐帧不动（防「文件名跳动」）。
+            if (p.view === topBar && isChromeHidden()) continue
+            val t = (p.top + deltaY).coerceIn(0, height)
+            val b = (p.bottom + deltaY).coerceIn(0, height)
+            if (p.view.top != t || p.view.bottom != b) p.view.layout(p.view.left, t, p.view.right, b)
+        }
+    }
+
+    /** 参与钉扎的 chrome：图片双 buffer + 顶栏 + 缩略图条 + 底部信息（幻灯片覆盖层除外）。 */
+    private fun pinnedChromeChildren(): List<View> = listOf(primaryView, secondaryView, topBar, thumbnailStrip, bottomInfo)
+
+    /** 系统栏当前是否由本查看器隐藏（沉浸切换或幻灯片覆盖，二者都不改对方标志）。 */
+    private fun isChromeHidden(): Boolean = isImmersive || slideshowHidSystemUi
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
@@ -1135,7 +1217,7 @@ class NativeGalleryView @JvmOverloads constructor(
         // 顶栏冻在 ~30% 行程=「点了没进全屏」）。尺寸一变就按 isImmersive 瞬时落位；
         // toggleImmersive 的 postDelayed 是动画正常结束时的第二道兜底。
         if (sizeChanged && topBar.height > 0) {
-            topBar.translationY = if (isImmersive) -topBar.height.toFloat() else 0f
+            topBar.translationY = if (isImmersive) -topBar.bottom.toFloat() else 0f
             if (isImmersive) {
                 if (thumbnailStrip.height > 0) thumbnailStrip.translationY = height.toFloat()
                 if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = height.toFloat()
@@ -1149,7 +1231,7 @@ class NativeGalleryView @JvmOverloads constructor(
             applyDrawerProgress(drawerPanelProgress)
         }
         if (topBar.height > 0) {
-            topBar.translationY = -topBar.height.toFloat()
+            topBar.translationY = -topBar.bottom.toFloat()
         }
     }
 
@@ -1860,10 +1942,27 @@ class NativeGalleryView @JvmOverloads constructor(
         visibility = VISIBLE
         alpha = 1f
         requestFocus()
+        // 会话系统栏锚定保持期：open 触发的隐藏→insets 归零是分段落位的（MagicUI 更碎），
+        // 期间不录锚，落位稳定后再录（见 applyImageAreaPin）
+        imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 1500
+        // 顶栏自补状态栏高度：此刻系统栏尚未隐藏，insets 顶值=真实状态栏高度（权威值，
+        // 资源查表会被挖孔顶高）；onOpen 隐藏系统栏后组合根 padding 归零，原生侧顶上
+        // 同值，顶栏屏幕位置与旧模型（组合根 padding+8dp）逐像素一致
+        val topInset = rootWindowInsets?.let {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                it.getInsets(android.view.WindowInsets.Type.statusBars()).top
+            } else {
+                @Suppress("DEPRECATION")
+                it.systemWindowInsetTop
+            }
+        } ?: 0
+        (topBar.layoutParams as? LayoutParams)?.let { lp ->
+            lp.topMargin = topInset + (resources.displayMetrics.density * 8).toInt()
+            topBar.layoutParams = lp
+        }
         if (staleImmersive) {
-            Log.w("NativeViewer", "open: stale immersive state leaked from previous session, restoring chrome & system bars")
+            Log.w("NativeViewer", "open: stale immersive state leaked from previous session, restoring chrome")
             isImmersive = false
-            listener?.onImmersiveToggle(false)
             topBar.translationY = 0f
             thumbnailStrip.translationY = 0f
             if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = 0f
@@ -1881,6 +1980,8 @@ class NativeGalleryView @JvmOverloads constructor(
         // 根尺寸，首次 open 根视图 GONE 未布局时挂起，onSizeChanged 补应用
         applyDrawerFormFactor()
         updateTitle()
+        // 会话开始：宿主在此隐藏系统栏（全程不翻转，见 Listener.onOpen 注）
+        listener?.onOpen()
         if (autoStartSlideshow) setSlideshow(true)
     }
 
@@ -1960,10 +2061,6 @@ class NativeGalleryView @JvmOverloads constructor(
         primaryView.setImageDrawable(null)
         secondaryView.setImageDrawable(null)
         isOpen = false
-        // drawerOpen 的清零挪到下方系统栏恢复判断之后：横屏抽屉打开会隐藏系统栏但不
-        // 改 isImmersive（onImmersiveToggle(true) 直呼），提前置 false 会让
-        // 「isImmersive || drawerOpen」失真成 isImmersive——抽屉开着直接 close() 时
-        // 系统栏隐藏态就泄漏到下次打开
         // 清除主色调 loading 状态，防止下次打开时残留
         loadingPaletteFileId = null
         // 清除自动提取失败记录，下次打开重新尝试
@@ -1991,13 +2088,10 @@ class NativeGalleryView @JvmOverloads constructor(
         // 恢复缩放许可（抽屉已关闭）
         primaryView.allowZoom = true
         secondaryView.allowZoom = true
-        // 恢复系统状态栏（沉浸或抽屉打开时状态栏被隐藏）——drawerOpen 清零必须在
-        // 本判断之后：横屏抽屉打开会隐藏系统栏但不改 isImmersive（1064 行），若在
-        // 上方提前置 false，此条件退化为 isImmersive，抽屉开着直接 close() 时系统
-        // 栏就泄漏成隐藏态带到下一次打开
-        if (isImmersive || drawerOpen) {
-            listener?.onImmersiveToggle(false)
-        }
+        // 系统栏不在此处还原：会话模型下由宿主在 Listener.onClose 里统一收尾
+        //（restore——本类任何路径都不该在会话内重新 show 系统栏，2026-10-07）。
+        // drawerOpen 清零仍须在背景色还原之前：横屏抽屉打开不改 isImmersive，
+        // 背景色分支依赖最终标志位。
         isImmersive = false
         drawerOpen = false
         // 沉浸模式背景为黑色，关闭时还原主题色，避免下次打开残留黑色
@@ -2199,8 +2293,11 @@ class NativeGalleryView @JvmOverloads constructor(
         // 抽屉打开时不允许进入/退出沉浸
         if (drawerOpen) return
         Log.i("NativeViewer", "toggleImmersive: isImmersive=$isImmersive -> ${!isImmersive}")
+        // 钉扎保持期：进/出的 resize 分段落位期间 onLayout 不重锚，图片全程钉在
+        // 进入前矩形上（见 applyImageAreaPin）
+        imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
         isImmersive = !isImmersive
-        val targetTop = if (isImmersive) -topBar.height.toFloat() else 0f
+        val targetTop = if (isImmersive) -topBar.bottom.toFloat() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
         val targetInfo = if (isImmersive) height.toFloat() else 0f
         topBar.animate().translationY(targetTop).setDuration(200).start()
@@ -2215,13 +2312,14 @@ class NativeGalleryView @JvmOverloads constructor(
         colorAnim.duration = 200
         colorAnim.addUpdateListener { anim -> setBackgroundColor(anim.animatedValue as Int) }
         colorAnim.start()
-        listener?.onImmersiveToggle(isImmersive)
+        // 2026-10-07 会话模型：沉浸切换只动 chrome（系统栏由宿主在 onOpen/onClose 接管，
+        // 会话中途翻转系统栏会让 EMUI 手势条面板带底色浮上来，见 Listener.onOpen 注）
         // MagicUI 真机：隐藏系统栏的窗口 resize/insets 派发会把上面的滑出动画冻在
         // 半程。200ms 动画结束后按权威状态瞬时落位一次（onSizeChanged 的重申是尺寸
         // 变化路径的兜底，此处是动画路径的兜底，两处都以 isImmersive 为唯一事实）。
         topBar.postDelayed({
             if (!isOpen || topBar.height <= 0) return@postDelayed
-            topBar.translationY = if (isImmersive) -topBar.height.toFloat() else 0f
+            topBar.translationY = if (isImmersive) -topBar.bottom.toFloat() else 0f
         }, 240)
     }
 
@@ -2626,9 +2724,12 @@ class NativeGalleryView @JvmOverloads constructor(
         addView(sv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         sv.start()
         updateSlideshowButtonIcon()
-        // 隐藏系统状态栏（查看器已沉浸时状态栏本就隐藏，无需重复切换）
+        // 系统栏随会话本就隐藏（2026-10-07 模型）；slideshowHidSystemUi 只服务钉扎门
+        // （isChromeHidden：幻灯片期间不重锚/不钉顶栏），不再驱动任何系统栏切换
         slideshowHidSystemUi = !isImmersive
-        if (slideshowHidSystemUi) listener?.onImmersiveToggle(true)
+        if (slideshowHidSystemUi) {
+            imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
+        }
     }
 
     /** 幻灯片正常退出：同步当前索引到查看器并恢复 UI。 */
@@ -2647,14 +2748,14 @@ class NativeGalleryView @JvmOverloads constructor(
         if (changed) listener?.onNavigate(currentIndex)
     }
 
-    /** 移除幻灯片覆盖层并恢复系统 UI（不触发索引同步，供 close/destroy 调用）。 */
+    /** 移除幻灯片覆盖层并复位覆盖态标志（系统栏由会话接管，此处不动；供 close/destroy 调用）。 */
     private fun cleanupSlideshow() {
         val sv = slideshowView ?: return
         removeView(sv)
         slideshowView = null
         updateSlideshowButtonIcon()
         if (slideshowHidSystemUi) {
-            listener?.onImmersiveToggle(false)
+            imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
             slideshowHidSystemUi = false
         }
     }

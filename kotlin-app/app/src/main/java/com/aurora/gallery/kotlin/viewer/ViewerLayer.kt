@@ -122,7 +122,6 @@ fun NativeViewerLayer(
     )
     val latestItems by rememberUpdatedState(items)
     val latestStart by rememberUpdatedState(startIndex)
-    val latestClose by rememberUpdatedState(onRequestClose)
     // 门禁位推进查看器实例（key = 值本身：浏览中门禁变化也即时生效，菜单构建时现读）
     LaunchedEffect(lanAllowEdit) { viewer.lanAllowEdit = lanAllowEdit }
     LaunchedEffect(autoExtractPalette) { viewer.autoExtractPalette = autoExtractPalette }
@@ -134,12 +133,10 @@ fun NativeViewerLayer(
             viewer.isSlideshowPlaying() -> viewer.exitSlideshow()
             viewer.isDrawerOpen() -> viewer.closeDrawer()
             else -> {
-                // 关闭分支必须先走 viewer.close()（与宿主 onClose 监听器同序）再
-                // latestClose()：直接关 Compose 层会跳过 viewer.close() 的清理——
-                // 沉浸标志、顶栏位移、系统栏隐藏全部残留，下次 open 把脏状态带进来
-                //（真机报障：重开查看器系统状态栏已被隐藏；close 顺序 2026-10-06）
-                viewer.close()
-                latestClose()
+                // 关闭分支走宿主 listener 的 onClose（与查看器内部返回键同路）：它先
+                // viewer.close() 再由宿主还原系统栏会话（2026-10-07 模型下系统栏由
+                // onOpen/onClose 接管，直关 Compose 层会把「系统栏隐藏」泄漏到网格）
+                viewer.listener?.onClose()
             }
         }
     }

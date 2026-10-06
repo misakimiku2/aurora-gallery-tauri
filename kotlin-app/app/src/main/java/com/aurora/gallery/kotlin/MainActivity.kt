@@ -798,8 +798,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun viewerListener(view: NativeGalleryView) = object : NativeGalleryView.Listener {
+        override fun onOpen() {
+            // 会话开始：系统栏隐藏并保持到会话结束（会话中途翻转会引 EMUI 手势条
+            // 面板带默认底色浮上来，见 setViewerSystemBars 注）
+            setViewerSystemBars(hidden = true)
+        }
+
         override fun onClose() {
             view.close()
+            // 会话结束：系统栏整体还原（close() 本身不再碰系统栏），网格页回到原样
+            setViewerSystemBars(hidden = false)
             viewModel.appState.closeViewer()
         }
 
@@ -814,9 +822,6 @@ class MainActivity : ComponentActivity() {
             viewModel.appState.viewerNavigated(fileId)
             maybeAutoExtractPalette(fileId)
         }
-
-        /** 3.3：沉浸是纯系统 UI 控制，M3 就做。 */
-        override fun onImmersiveToggle(immersive: Boolean) = setImmersiveMode(immersive)
 
         /**
          * 3.2 删除：查看器自己已经把这张从它的序列里摘掉并前进到下一张（confirmDelete），
@@ -1116,72 +1121,53 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 3.3 沉浸：从 React 壳 `setImmersiveMode` 平移（那边是 overlay 的窗口标志，这里是
-     * Activity 窗口——D7 ③ 下查看器就在 Activity 的视图树里，系统栏控制天然归到窗口层）。
-     * 首次进入前记下状态栏原色，退出时还原。
-     */
-    private var savedStatusBarColor: Int? = null
-    // 导航栏色同法保管：沉浸期间导航栏写黑对齐查看器背景（真机报障：查看器底部
-    // 白边=窗口底色/默认白导航栏透出），退出还原
-    private var savedNavigationBarColor: Int? = null
-    /**
-     * 进入沉浸前的 systemUiVisibility 原值（API<30 路径），退出恢复原值。历史教训两层：
-     * ①写死 LAYOUT_STABLE 会残留稳定 inset 派发（顶部定死变高）；②v2.2 起连 LAYOUT_*
-     * 全家都不带、decorFits 也永不翻转（见 setImmersiveMode 内注）——MagicUI 对
-     * e2e 翻转后的 insets 重派发不可靠，纯 flags 才是结构上免疫的形态。
+     * 查看器/画布会话的系统栏接管（2026-10-07 定稿）：全屏面 open 时隐藏、close 时
+     * 还原，会话中途绝不翻转——荣耀真机实锤：会话内任何「状态栏重新显示」都会让
+     * EMUI 手势条面板（GestureNavBottom，NAVIGATION_BAR_PANEL）带着主题默认底色
+     * （深 42/浅白，无视窗口 navigationBarColor——实测属性 #ff1a1a1a 屏上 42）浮上来
+     * 盖住查看器底部，直到返回网格才消失；全程不 show 就结构上免疫。色值全程不写：
+     * 窗口/栏色保持 applyWindowTheme 的 palette 基线，瞬态栏、letterbox 与查看器底
+     * 同色（历史的写黑/保存还原机制随会话模型一并退役）。
+     *
+     * API<30 仍走纯沉浸 flags（2026-10-06 荣耀真机定稿）：绝不动 LAYOUT_* 标志与
+     * decorFits——MagicUI 对 e2e 翻转后的 insets 重派发不可靠，纯 flags 才是结构上免疫的形态。
      */
     private var savedSystemUiVisibility: Int? = null
 
-    private fun setImmersiveMode(immersive: Boolean) {
+    private fun setViewerSystemBars(hidden: Boolean) {
         val window = this.window
-        if (immersive) {
-            if (savedStatusBarColor == null) savedStatusBarColor = window.statusBarColor
-            if (savedNavigationBarColor == null) savedNavigationBarColor = window.navigationBarColor
+        if (hidden) {
             if (savedSystemUiVisibility == null) {
                 @Suppress("DEPRECATION")
                 savedSystemUiVisibility = window.decorView.systemUiVisibility
             }
-        } else {
-            savedStatusBarColor?.let { window.statusBarColor = it }
-            savedNavigationBarColor?.let { window.navigationBarColor = it }
-            savedSystemUiVisibility?.let {
-                @Suppress("DEPRECATION")
-                window.decorView.systemUiVisibility = it
-            }
-            savedStatusBarColor = null
-            savedNavigationBarColor = null
-            savedSystemUiVisibility = null
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.let { controller ->
-                if (immersive) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let { controller ->
                     controller.hide(android.view.WindowInsets.Type.systemBars())
                     controller.systemBarsBehavior =
                         android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                } else {
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
+            }
+        } else {
+            // 全屏面关闭：系统栏整体还原（API<30 清 flags；R+ 显式 show + 行为位复位，
+            // 残留 TRANSIENT_BY_SWIPE 会让主界面下滑只出瞬态栏，常态栏出不来）。
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = savedSystemUiVisibility ?: 0
+            savedSystemUiVisibility = null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.insetsController?.let { controller ->
                     controller.show(android.view.WindowInsets.Type.systemBars())
-                    // 行为位一并复位：残留 TRANSIENT_BY_SWIPE 会让主界面下滑只出
-                    // 瞬态栏（自动再隐藏），常态栏出不来
                     controller.systemBarsBehavior =
                         android.view.WindowInsetsController.BEHAVIOR_DEFAULT
                 }
             }
-        } else if (immersive) {
-            // 纯沉浸 flags（2026-10-06 荣耀真机定稿）：绝不动 LAYOUT_*/decorFits——
-            // 它们把窗口翻成 e2e，隐藏系统栏必发 resize+insets 派发，MagicUI 上会把
-            // Compose 根的 statusBarsPadding 卡在 statusTop（返回主界面顶部定死变高、
-            // 重启才恢复），还会把查看器滑出动画冻在半程（顶栏残留=「点了没进全屏」）。
-            // 纯 flags 下窗口同样放大到全屏、内容 insets 恒 0，两个症状结构上不可能发生。
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
         }
-        if (immersive) {
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            window.navigationBarColor = android.graphics.Color.BLACK
-        }
-        android.util.Log.i("NativeViewer", "setImmersiveMode immersive=$immersive api=${Build.VERSION.SDK_INT}")
+        android.util.Log.i("NativeViewer", "setViewerSystemBars hidden=$hidden api=${Build.VERSION.SDK_INT}")
     }
 
     // —— M4c 主题管线 ——
@@ -1206,8 +1192,8 @@ class MainActivity : ComponentActivity() {
     /**
      * 窗口层主题同步（M4c）：窗口底色 = palette.content——edge-to-edge 下系统栏镂空区露的
      * 也是这层；statusBarColor 在 API 35+ 被 edge-to-edge 忽略，低版本写它对齐观感。状态栏
-     * 图标深浅随档切。查看器沉浸会自行接管/还原状态栏色，这里写的是非沉浸基准值，
-     * SideEffect 每次重组幂等重写，两条路径最终一致。
+     * 图标深浅随档切。SideEffect 每次重组幂等重写。2026-10-07 会话模型后色值全程归本函数
+     * 管（系统栏接管只动 flags，不再写任何色值）。
      */
     private fun applyWindowTheme(dark: Boolean) {
         val palette = AuroraPalettes.of(dark)
@@ -1218,6 +1204,12 @@ class MainActivity : ComponentActivity() {
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(palette.main))
         @Suppress("DEPRECATION")
         window.statusBarColor = palette.main
+        // 导航栏也对齐 main（2026-10-07 真机报障）：EMUI 手势栏在常态下随窗口属性上色，
+        // 默认值与周边底色不同（浅色=纯白、深色=#2A2A2A）。显式写 main 后栏色=四周
+        // 环境色，网格底部隐形；查看器会话内系统栏全程隐藏，此值只在瞬态栏露出时
+        // 可见（与查看器底同色）。API 35+ e2e 忽略此值，无副作用。
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = palette.main
         WindowCompat.getInsetsController(window, window.decorView)
             ?.isAppearanceLightStatusBars = !dark
     }
@@ -1509,7 +1501,9 @@ class MainActivity : ComponentActivity() {
                         onLanOverviewClick = { viewModel.appState.openLanOverview() },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
                         onLoadPickerImages = viewModel::loadCanvasPickerImages,
-                        onSetImmersive = { setImmersiveMode(it) },
+                        // 画布沉浸开关（M5 4）：进=会话隐藏、退=还原。画布不经查看器的
+                        // onClose，退出必须走还原分支，否则导航栏卡在隐藏
+                        onSetImmersive = { setViewerSystemBars(it) },
                         // M5 3.1：网格选中集加入画布（FFI 解析宽高 → 装箱落 store）
                         onAddSelectionToCanvas = { ids, onDone ->
                             viewModel.canvasSourcesFor(ids) { sources ->
@@ -2147,7 +2141,7 @@ fun App(
     onAddSelectionToCanvas: (Collection<String>, onDone: (Boolean) -> Unit) -> Unit = { _, _ -> },
     /** M5 3.3：添加图片弹窗的四类数据源取数（宿主转 GalleryViewModel）。 */
     onLoadPickerImages: (String, String, (List<Image>) -> Unit) -> Unit = { _, _, _ -> },
-    /** M5 4：画布沉浸开关（宿主转 setImmersiveMode）。 */
+    /** M5 4：画布沉浸开关（宿主转 setViewerSystemBars）。 */
     onSetImmersive: (Boolean) -> Unit = {},
     // —— M6a 阶段 4：LAN 浏览视图 ——
     /** LAN 总览的文件夹卡片序列（GalleryViewModel.lanOverviewFolders，数据层算好的结构）。 */
