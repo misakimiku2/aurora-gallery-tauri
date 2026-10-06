@@ -1176,8 +1176,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (scanStarted) return
         scanStarted = true
         initialScanJob = viewModelScope.launch {
+            val t0 = android.os.SystemClock.elapsedRealtime()
             val cached = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
             folders.value = cached
+            // 冷启动「文件夹列表可见」的耗时锚点（几万张图库上 list_folders 是主要瓶颈）
+            Log.i(TAG, "[Scan] first publish folders=${cached.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
             // 标签快照走本地库、不依赖 MediaStore，先于全量扫描发布：否则扫描那几秒里
             // 侧栏标签区是空的，重进应用的标签要等扫描跑完才回来。专题同理（3.2）。
             reloadTagState()

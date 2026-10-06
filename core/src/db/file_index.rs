@@ -41,8 +41,21 @@ pub fn create_table(conn: &Connection) -> Result<()> {
         [],
     )?;
     
+    // 复合索引服务两类热查询（几万张图的库上单列 parent 索引要逐子行回表 +
+    // 每文件夹排序，list_folders 一次数秒）：
+    //   - list_folders 每文件夹四个子查询：COUNT / 封面(modified_at DESC LIMIT 1)
+    //     / MAX(created_at) / MAX(modified_at)
+    //   - list_images：parent_id + file_type 等值，modified_at DESC 直接走索引序
+    // 单列 parent 索引被最左前缀覆盖，删掉省一份对账逐行索引维护。
+    conn.execute("DROP INDEX IF EXISTS idx_file_index_parent", [])?;
+
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_file_index_parent ON file_index(parent_id)",
+        "CREATE INDEX IF NOT EXISTS idx_file_index_parent_type_modified ON file_index(parent_id, file_type, modified_at)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_index_parent_type_created ON file_index(parent_id, file_type, created_at)",
         [],
     )?;
 
