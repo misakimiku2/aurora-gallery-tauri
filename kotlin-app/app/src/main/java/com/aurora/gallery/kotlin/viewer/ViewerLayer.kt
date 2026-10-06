@@ -134,8 +134,8 @@ fun NativeViewerLayer(
             viewer.isDrawerOpen() -> viewer.closeDrawer()
             else -> {
                 // 关闭分支走宿主 listener 的 onClose（与查看器内部返回键同路）：它先
-                // viewer.close() 再由宿主还原系统栏会话（2026-10-07 模型下系统栏由
-                // onOpen/onClose 接管，直关 Compose 层会把「系统栏隐藏」泄漏到网格）
+                // viewer.close() 再关 Compose 层——直接 latestClose() 会跳过 close() 的
+                // chrome 状态复位，脏状态会被下次 open 带进来（真机报障 2026-10-06）
                 viewer.listener?.onClose()
             }
         }

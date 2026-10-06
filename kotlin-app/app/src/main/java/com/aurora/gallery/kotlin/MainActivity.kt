@@ -798,16 +798,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun viewerListener(view: NativeGalleryView) = object : NativeGalleryView.Listener {
-        override fun onOpen() {
-            // 会话开始：系统栏隐藏并保持到会话结束（会话中途翻转会引 EMUI 手势条
-            // 面板带默认底色浮上来，见 setViewerSystemBars 注）
-            setViewerSystemBars(hidden = true)
-        }
-
         override fun onClose() {
             view.close()
-            // 会话结束：系统栏整体还原（close() 本身不再碰系统栏），网格页回到原样
-            setViewerSystemBars(hidden = false)
             viewModel.appState.closeViewer()
         }
 
@@ -1121,16 +1113,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 查看器/画布会话的系统栏接管（2026-10-07 定稿）：全屏面 open 时隐藏、close 时
-     * 还原，会话中途绝不翻转——荣耀真机实锤：会话内任何「状态栏重新显示」都会让
-     * EMUI 手势条面板（GestureNavBottom，NAVIGATION_BAR_PANEL）带着主题默认底色
-     * （深 42/浅白，无视窗口 navigationBarColor——实测属性 #ff1a1a1a 屏上 42）浮上来
-     * 盖住查看器底部，直到返回网格才消失；全程不 show 就结构上免疫。色值全程不写：
-     * 窗口/栏色保持 applyWindowTheme 的 palette 基线，瞬态栏、letterbox 与查看器底
-     * 同色（历史的写黑/保存还原机制随会话模型一并退役）。
-     *
-     * API<30 仍走纯沉浸 flags（2026-10-06 荣耀真机定稿）：绝不动 LAYOUT_* 标志与
-     * decorFits——MagicUI 对 e2e 翻转后的 insets 重派发不可靠，纯 flags 才是结构上免疫的形态。
+     * 全屏面（画布）的系统栏接管：进入=隐藏、退出=还原。**仅画布使用**——查看器
+     * 2026-10-07 B1 定稿后全程不碰系统栏（沉浸=chrome 滑出），原因有二：
+     * ①荣耀真机实锤 EMUI 手势条面板跟「状态栏重新显示」事件走，带主题默认底色
+     * （深 42/浅白，无视窗口 navigationBarColor）盖住内容直到返回网格；②任何
+     * flags/insets 翻转都会让图片重新居中产生位移。若画布未来也报同类问题，出路是
+     * 同款「只动 chrome」改造，而非回到 flags 层。
      */
     private var savedSystemUiVisibility: Int? = null
 
@@ -1206,8 +1194,7 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = palette.main
         // 导航栏也对齐 main（2026-10-07 真机报障）：EMUI 手势栏在常态下随窗口属性上色，
         // 默认值与周边底色不同（浅色=纯白、深色=#2A2A2A）。显式写 main 后栏色=四周
-        // 环境色，网格底部隐形；查看器会话内系统栏全程隐藏，此值只在瞬态栏露出时
-        // 可见（与查看器底同色）。API 35+ e2e 忽略此值，无副作用。
+        // 环境色，网格与查看器底部手势区都隐形；API 35+ e2e 忽略此值，无副作用。
         @Suppress("DEPRECATION")
         window.navigationBarColor = palette.main
         WindowCompat.getInsetsController(window, window.decorView)

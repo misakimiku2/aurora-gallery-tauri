@@ -67,13 +67,6 @@ class NativeGalleryView @JvmOverloads constructor(
 ) : FrameLayout(context), DialogTheme {
 
     interface Listener {
-        /**
-         * 查看器会话开始（open() 尾声回调）。2026-10-07 定稿：系统栏由宿主按「会话」
-         * 接管——open 时隐藏、[onClose] 时还原，会话中途（沉浸切换/抽屉/幻灯片）绝不
-         * 翻转。荣耀真机实锤：会话内任何「状态栏重新显示」都会让 EMUI 手势条面板带着
-         * 主题默认底色（深 42/浅白，无视窗口 navigationBarColor）浮上来盖住查看器底部，
-         * 直到返回网格才消失；全程不 show 就结构上免疫。 */
-        fun onOpen()
         /** 用户点击了关闭按钮。 */
         fun onClose()
         /** 当前图片索引变化（用户操作或幻灯片）。 */
@@ -845,11 +838,11 @@ class NativeGalleryView @JvmOverloads constructor(
         val density = resources.displayMetrics.density
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            // topMargin 由 [open] 每会话按「隐藏前窗口 insets 的状态栏高度」动态补足
-            //（2026-10-07 会话模型：会话内系统栏隐藏、组合根 statusBarsPadding 恒 0，
-            // 原生侧必须自补，否则标题撞挖孔）。不在此处用 status_bar_height 资源：
-            // 该值会被挖孔/cutout 顶高（avd_honor29 实测 182 vs 实际 90），只有系统
-            // 派发的 insets 才是权威。2026-09-27 的「勿双重内缩」教训前提同理反转。
+            // topMargin 8dp + 行高 56dp 对齐图库卡片形制（2026-09-27 验收）。2026-10-07
+            // B1 定稿后组合根 statusBarsPadding 常驻（查看器不再隐藏系统栏，组合根
+            // padding 不会归零），原生侧**勿**再自加状态栏高度——双重内缩会重演
+            // 「顶栏偏低」；也勿读 status_bar_height 资源（被挖孔顶高，avd_honor29
+            // 实测 182 vs 实际 90）。
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (density * 56).toInt()).apply {
                 gravity = android.view.Gravity.TOP
                 topMargin = (density * 8).toInt()
@@ -1022,23 +1015,11 @@ class NativeGalleryView @JvmOverloads constructor(
             primaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
             secondaryView.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, imageH)
         }
-        // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）。横屏滑一个身位
-        // 即可：系统栏随会话全程隐藏（2026-10-07 模型），topBar 藏在窗口顶外不可见；
-        // 竖屏底部面板不隐藏状态栏（纯覆盖层），滑一个身位会停在透明状态栏
-        // 后仍透出（M8b-8 实测残影），行程加根自身的窗口顶偏移，完全移出屏幕上方。
+        // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）。滑出量一律含
+        // 容器顶的窗口偏移（=状态栏高度）：B1 后系统栏常驻，只滑 -bottom 会停在状态
+        // 栏区内露出按钮（M8b-8「滑一个身位≠移出屏幕」同源教训，横竖屏统一走窗口坐标）。
         if (topBar.height > 0) {
-            topBar.translationY = if (isImmersive) {
-                // 行程用 bottom（= topMargin 8dp + 高）：topBar 在父容器里不贴 y=0，只滑
-                // -height 会留一条 topMargin 宽的半透明横条露在黑底顶端（真机报障「进全屏
-                // 上方仍有灰色区域」的元凶，avd_honor29 实测 24px）
-                -topBar.bottom.toFloat()
-            } else if (isCompactPortrait) {
-                val rootTopLoc = IntArray(2)
-                getLocationOnScreen(rootTopLoc)
-                -(rootTopLoc[1] + topBar.bottom) * progress
-            } else {
-                -topBar.bottom * progress
-            }
+            topBar.translationY = topBarHideTranslation(if (isImmersive) 1f else progress)
         }
         // 缩略图条向下滑出（沉浸模式下始终保持隐藏）
         if (thumbnailStrip.height > 0) {
@@ -1094,8 +1075,9 @@ class NativeGalleryView @JvmOverloads constructor(
                 } else {
                     // 抽屉关闭：恢复抽屉打开前的沉浸状态
                     isImmersive = immersiveBeforeDrawer
-                    // 还原背景色：若之前在沉浸模式则保持黑色，否则还原主题色
-                    setBackgroundColor(if (immersiveBeforeDrawer) Color.BLACK else colorBg())
+                    // B1：背景恒主题色（沉浸只藏 chrome，不再有「黑色剧场」态，
+                    // 否则与常驻状态栏/手势条区形成色差接缝）
+                    setBackgroundColor(colorBg())
                 }
             }
         })
@@ -1212,12 +1194,11 @@ class NativeGalleryView @JvmOverloads constructor(
             drawerWidthAnimator?.cancel()
             applyDrawerFormFactor()
         }
-        // 沉浸 chrome 权威重申（2026-10-06 荣耀真机）：隐藏系统栏在非 e2e 窗口上必发
-        // 窗口 resize，MagicUI 的 insets/布局时机会把进行中的滑出动画冻在半程（实测
-        // 顶栏冻在 ~30% 行程=「点了没进全屏」）。尺寸一变就按 isImmersive 瞬时落位；
-        // toggleImmersive 的 postDelayed 是动画正常结束时的第二道兜底。
+        // 沉浸 chrome 权威重申（2026-10-06 荣耀真机）：尺寸变化时按 isImmersive 瞬时
+        // 落位，防止滑出动画被布局时序冻在半程；toggleImmersive 的 postDelayed 是动画
+        // 路径的第二道兜底。
         if (sizeChanged && topBar.height > 0) {
-            topBar.translationY = if (isImmersive) -topBar.bottom.toFloat() else 0f
+            topBar.translationY = topBarHideTranslation(if (isImmersive) 1f else 0f)
             if (isImmersive) {
                 if (thumbnailStrip.height > 0) thumbnailStrip.translationY = height.toFloat()
                 if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = height.toFloat()
@@ -1231,7 +1212,7 @@ class NativeGalleryView @JvmOverloads constructor(
             applyDrawerProgress(drawerPanelProgress)
         }
         if (topBar.height > 0) {
-            topBar.translationY = -topBar.bottom.toFloat()
+            topBar.translationY = topBarHideTranslation(if (isImmersive) 1f else 0f)
         }
     }
 
@@ -1942,24 +1923,6 @@ class NativeGalleryView @JvmOverloads constructor(
         visibility = VISIBLE
         alpha = 1f
         requestFocus()
-        // 会话系统栏锚定保持期：open 触发的隐藏→insets 归零是分段落位的（MagicUI 更碎），
-        // 期间不录锚，落位稳定后再录（见 applyImageAreaPin）
-        imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 1500
-        // 顶栏自补状态栏高度：此刻系统栏尚未隐藏，insets 顶值=真实状态栏高度（权威值，
-        // 资源查表会被挖孔顶高）；onOpen 隐藏系统栏后组合根 padding 归零，原生侧顶上
-        // 同值，顶栏屏幕位置与旧模型（组合根 padding+8dp）逐像素一致
-        val topInset = rootWindowInsets?.let {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                it.getInsets(android.view.WindowInsets.Type.statusBars()).top
-            } else {
-                @Suppress("DEPRECATION")
-                it.systemWindowInsetTop
-            }
-        } ?: 0
-        (topBar.layoutParams as? LayoutParams)?.let { lp ->
-            lp.topMargin = topInset + (resources.displayMetrics.density * 8).toInt()
-            topBar.layoutParams = lp
-        }
         if (staleImmersive) {
             Log.w("NativeViewer", "open: stale immersive state leaked from previous session, restoring chrome")
             isImmersive = false
@@ -1980,8 +1943,6 @@ class NativeGalleryView @JvmOverloads constructor(
         // 根尺寸，首次 open 根视图 GONE 未布局时挂起，onSizeChanged 补应用
         applyDrawerFormFactor()
         updateTitle()
-        // 会话开始：宿主在此隐藏系统栏（全程不翻转，见 Listener.onOpen 注）
-        listener?.onOpen()
         if (autoStartSlideshow) setSlideshow(true)
     }
 
@@ -2005,7 +1966,7 @@ class NativeGalleryView @JvmOverloads constructor(
     /** 应用当前主题到所有 UI 元素。 */
     private fun applyTheme() {
         // 沉浸模式下保持黑色背景（切换图片时 open() 重入会调用 applyTheme，不应重置为主题色）
-        setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
+        setBackgroundColor(colorBg())
         // 顶栏/底栏/缩略图条背景
         topBar.setBackgroundColor(colorBgAlpha(0x4D))
         bottomInfo.setBackgroundColor(colorBgAlpha(0xCC))
@@ -2289,6 +2250,20 @@ class NativeGalleryView @JvmOverloads constructor(
         updateDrawer(item)
     }
 
+    /**
+     * 顶栏移出「窗口」所需的 translationY（progress<1 时为部分行程，抽屉进度用）。
+     * B1 模型下查看器容器顶=状态栏高度（组合根 statusBarsPadding 常驻、系统栏全程
+     * 显示），滑出量必须含这段窗口顶偏移，否则顶栏底部停在状态栏区内、按钮仍露出
+     * （`-topBar.bottom` 只对容器顶=0 的全屏形态成立）。与抽屉进度分支「行程加根
+     * 自身的窗口顶偏移」同源（M8b-8：滑一个身位≠移出屏幕）。用容器（无 translation）
+     * 的窗口坐标，不能用 topBar 自己的（其值含进行中的 translationY，二次调用会漂移）。
+     */
+    private fun topBarHideTranslation(progress: Float = 1f): Float {
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        return -(loc[1] + topBar.bottom) * progress
+    }
+
     private fun toggleImmersive() {
         // 抽屉打开时不允许进入/退出沉浸
         if (drawerOpen) return
@@ -2297,7 +2272,7 @@ class NativeGalleryView @JvmOverloads constructor(
         // 进入前矩形上（见 applyImageAreaPin）
         imagePinHoldUntil = android.os.SystemClock.uptimeMillis() + 3000
         isImmersive = !isImmersive
-        val targetTop = if (isImmersive) -topBar.bottom.toFloat() else 0f
+        val targetTop = if (isImmersive) topBarHideTranslation() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
         val targetInfo = if (isImmersive) height.toFloat() else 0f
         topBar.animate().translationY(targetTop).setDuration(200).start()
@@ -2305,21 +2280,16 @@ class NativeGalleryView @JvmOverloads constructor(
         if (bottomInfo.visibility == VISIBLE) {
             bottomInfo.animate().translationY(targetInfo - bottomInfo.translationY).setDuration(200).start()
         }
-        // 背景色与顶栏动画同步过渡：进入沉浸→黑色，退出沉浸→主题色
-        val fromColor = if (isImmersive) colorBg() else Color.BLACK
-        val toColor = if (isImmersive) Color.BLACK else colorBg()
-        val colorAnim = android.animation.ValueAnimator.ofObject(android.animation.ArgbEvaluator(), fromColor, toColor)
-        colorAnim.duration = 200
-        colorAnim.addUpdateListener { anim -> setBackgroundColor(anim.animatedValue as Int) }
-        colorAnim.start()
-        // 2026-10-07 会话模型：沉浸切换只动 chrome（系统栏由宿主在 onOpen/onClose 接管，
-        // 会话中途翻转系统栏会让 EMUI 手势条面板带底色浮上来，见 Listener.onOpen 注）
-        // MagicUI 真机：隐藏系统栏的窗口 resize/insets 派发会把上面的滑出动画冻在
-        // 半程。200ms 动画结束后按权威状态瞬时落位一次（onSizeChanged 的重申是尺寸
-        // 变化路径的兜底，此处是动画路径的兜底，两处都以 isImmersive 为唯一事实）。
+        // 2026-10-07 B1 定稿：沉浸=chrome 隐藏（顶栏/缩略图条/底部信息滑出），系统栏
+        // 全程不翻不染色、背景保持 colorBg——荣耀真机实锤：EMUI 手势条面板跟「状态栏
+        // 重新显示」事件走（带主题默认底色 42/白、无视 navigationBarColor），任何
+        // flags/insets 层面的操作都会引出底部异色块+图片位移；所以一切只到 view 层为止。
+        // MagicUI 真机：滑出动画曾因窗口 resize 冻在半程，200ms 动画结束后按权威状态
+        // 瞬时落位一次（onSizeChanged 的重申是尺寸变化路径的兜底，此处是动画路径的
+        // 兜底，两处都以 isImmersive 为唯一事实）。
         topBar.postDelayed({
             if (!isOpen || topBar.height <= 0) return@postDelayed
-            topBar.translationY = if (isImmersive) -topBar.bottom.toFloat() else 0f
+            topBar.translationY = if (isImmersive) topBarHideTranslation() else 0f
         }, 240)
     }
 
