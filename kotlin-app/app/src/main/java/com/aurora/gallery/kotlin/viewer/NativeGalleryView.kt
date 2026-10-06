@@ -1130,6 +1130,17 @@ class NativeGalleryView @JvmOverloads constructor(
             drawerWidthAnimator?.cancel()
             applyDrawerFormFactor()
         }
+        // 沉浸 chrome 权威重申（2026-10-06 荣耀真机）：隐藏系统栏在非 e2e 窗口上必发
+        // 窗口 resize，MagicUI 的 insets/布局时机会把进行中的滑出动画冻在半程（实测
+        // 顶栏冻在 ~30% 行程=「点了没进全屏」）。尺寸一变就按 isImmersive 瞬时落位；
+        // toggleImmersive 的 postDelayed 是动画正常结束时的第二道兜底。
+        if (sizeChanged && topBar.height > 0) {
+            topBar.translationY = if (isImmersive) -topBar.height.toFloat() else 0f
+            if (isImmersive) {
+                if (thumbnailStrip.height > 0) thumbnailStrip.translationY = height.toFloat()
+                if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = height.toFloat()
+            }
+        }
         if (!drawerOpen) return
         // 抽屉开着时尺寸变化：按当前进度直接落位（旋转中态，无动画——用户拍板）。
         // 进度读 drawerPanelProgress（面板进度权威值，两形制通用；竖屏 drawerFillProgress
@@ -1578,6 +1589,16 @@ class NativeGalleryView @JvmOverloads constructor(
                 actView.animate().cancel()
                 actView.translationX = 0f
                 cleanupSwipeAdjacentImmediate()
+                // 取消正在进行的抽屉动画，跟手接管——取消后必须按权威进度回写
+                // drawerOpen：松手判定（onVerticalSwipeEnd/把手拖拽/toggleDrawer）先把
+                // drawerOpen 置为目标值再起 280ms 动画，动画若在这里被下一次触摸取消，
+                // onAnimationEnd 因 cancelled 早退、面板停在取消时刻的 progress，标志与
+                // 视觉就此脱钩（面板视觉已关而 drawerOpen 恒 true），此后所有单击被
+                // onSingleTapConfirmed/toggleImmersive 的 drawerOpen 护栏静默吞掉——
+                // 真机「点击图片不进全屏且零反应」的根因（2026-10-06 荣耀/华为报障）
+                drawerWidthAnimator?.cancel()
+                drawerWidthAnimator = null
+                drawerOpen = drawerPanelProgress > 0.5f
                 // 记录抽屉跟手起始状态，供 onVerticalSwipeDrag/End 使用。
                 // 进度读 drawerPanelProgress（面板进度权威值）：竖屏 drawerFillProgress
                 // 恒 0，读它会让松手后的继续拖动被方向限制钳在 0 跟丢手指
@@ -1587,11 +1608,9 @@ class NativeGalleryView @JvmOverloads constructor(
                     // 可能即将通过垂直手势打开抽屉——保存沉浸状态
                     immersiveBeforeDrawer = isImmersive
                 }
-                // 取消正在进行的抽屉动画，跟手接管
-                drawerWidthAnimator?.cancel()
-                drawerWidthAnimator = null
             }
             override fun onSingleTapConfirmed() {
+                Log.i("NativeViewer", "onSingleTapConfirmed: drawerOpen=$drawerOpen isImmersive=$isImmersive isOpen=$isOpen")
                 if (drawerOpen) return
                 // 幻灯片播放时本视图被 SlideshowView 覆盖，不会收到此回调
                 toggleImmersive()
@@ -1811,6 +1830,11 @@ class NativeGalleryView @JvmOverloads constructor(
     /** 打开查看器，显示 [startIndex] 位置的图片。 */
     fun open(images: List<ImageItem>, startIndex: Int, options: JSONObject?) {
         Log.i("NativeViewer", "open called: images=${images.size}, startIndex=$startIndex, options=$options, alreadyOpen=$isOpen, currentIdx=$currentIndex")
+        // 上次会话的沉浸态残留检测：实例跨打开复用（Coil 缓存随实例走），若上次经
+        // 兜底 BackHandler 之外任何未走 close() 的路径退出，isImmersive=true、顶栏
+        // 停在滑出位、系统状态栏残留隐藏会全部带进本次（真机报障：重开查看器状态
+        // 栏已被隐藏）。isOpen（查看器开着被重入）时不属于残留，不动。
+        val staleImmersive = !isOpen && isImmersive
         val skipReload = isOpen && startIndex == currentIndex && this.images.size == images.size
         this.images.clear()
         this.images.addAll(images)
@@ -1836,6 +1860,15 @@ class NativeGalleryView @JvmOverloads constructor(
         visibility = VISIBLE
         alpha = 1f
         requestFocus()
+        if (staleImmersive) {
+            Log.w("NativeViewer", "open: stale immersive state leaked from previous session, restoring chrome & system bars")
+            isImmersive = false
+            listener?.onImmersiveToggle(false)
+            topBar.translationY = 0f
+            thumbnailStrip.translationY = 0f
+            if (bottomInfo.visibility == VISIBLE) bottomInfo.translationY = 0f
+            setBackgroundColor(colorBg())
+        }
         if (skipReload) {
             Log.i("NativeViewer", "open: skipping reload, already at index $currentIndex (onNavigate re-entry)")
         } else {
@@ -1927,7 +1960,10 @@ class NativeGalleryView @JvmOverloads constructor(
         primaryView.setImageDrawable(null)
         secondaryView.setImageDrawable(null)
         isOpen = false
-        drawerOpen = false
+        // drawerOpen 的清零挪到下方系统栏恢复判断之后：横屏抽屉打开会隐藏系统栏但不
+        // 改 isImmersive（onImmersiveToggle(true) 直呼），提前置 false 会让
+        // 「isImmersive || drawerOpen」失真成 isImmersive——抽屉开着直接 close() 时
+        // 系统栏隐藏态就泄漏到下次打开
         // 清除主色调 loading 状态，防止下次打开时残留
         loadingPaletteFileId = null
         // 清除自动提取失败记录，下次打开重新尝试
@@ -1955,11 +1991,15 @@ class NativeGalleryView @JvmOverloads constructor(
         // 恢复缩放许可（抽屉已关闭）
         primaryView.allowZoom = true
         secondaryView.allowZoom = true
-        // 恢复系统状态栏（沉浸或抽屉打开时状态栏被隐藏）
+        // 恢复系统状态栏（沉浸或抽屉打开时状态栏被隐藏）——drawerOpen 清零必须在
+        // 本判断之后：横屏抽屉打开会隐藏系统栏但不改 isImmersive（1064 行），若在
+        // 上方提前置 false，此条件退化为 isImmersive，抽屉开着直接 close() 时系统
+        // 栏就泄漏成隐藏态带到下一次打开
         if (isImmersive || drawerOpen) {
             listener?.onImmersiveToggle(false)
         }
         isImmersive = false
+        drawerOpen = false
         // 沉浸模式背景为黑色，关闭时还原主题色，避免下次打开残留黑色
         setBackgroundColor(colorBg())
         topBar.translationY = 0f
@@ -2158,6 +2198,7 @@ class NativeGalleryView @JvmOverloads constructor(
     private fun toggleImmersive() {
         // 抽屉打开时不允许进入/退出沉浸
         if (drawerOpen) return
+        Log.i("NativeViewer", "toggleImmersive: isImmersive=$isImmersive -> ${!isImmersive}")
         isImmersive = !isImmersive
         val targetTop = if (isImmersive) -topBar.height.toFloat() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
@@ -2175,6 +2216,13 @@ class NativeGalleryView @JvmOverloads constructor(
         colorAnim.addUpdateListener { anim -> setBackgroundColor(anim.animatedValue as Int) }
         colorAnim.start()
         listener?.onImmersiveToggle(isImmersive)
+        // MagicUI 真机：隐藏系统栏的窗口 resize/insets 派发会把上面的滑出动画冻在
+        // 半程。200ms 动画结束后按权威状态瞬时落位一次（onSizeChanged 的重申是尺寸
+        // 变化路径的兜底，此处是动画路径的兜底，两处都以 isImmersive 为唯一事实）。
+        topBar.postDelayed({
+            if (!isOpen || topBar.height <= 0) return@postDelayed
+            topBar.translationY = if (isImmersive) -topBar.height.toFloat() else 0f
+        }, 240)
     }
 
     private fun rotateCurrent() {

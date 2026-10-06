@@ -961,7 +961,13 @@ internal fun AuroraDropdown(
                             rect,
                             snapshot,
                             { result ->
-                                if (result == PixelCopy.SUCCESS) backdrop = snapshot
+                                if (result == PixelCopy.SUCCESS) {
+                                    // GPU BlurEffect 仅 31+ 生效（997 行守卫）；26-30 上
+                                    // 快照原样清晰垫底=「毛玻璃消失只剩透明」（荣耀
+                                    // Android 10 真机报障）——先在位图层面糊掉再垫底
+                                    backdrop = if (Build.VERSION.SDK_INT >= 31) snapshot
+                                    else blurBackdropSnapshot(context, snapshot)
+                                }
                             },
                             Handler(Looper.getMainLooper()),
                         )

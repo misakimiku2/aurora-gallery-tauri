@@ -22,6 +22,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.aurora.gallery.kotlin.ui.components.blurBackdropSnapshot
 import com.aurora.gallery.kotlin.ui.theme.withAlpha
 
 /**
@@ -96,7 +97,9 @@ class MoreMenuPopup(
         // 毛玻璃垫底（M8b-12 用户拍板：查看器菜单此前只有半透没有模糊）——AuroraDropdown
         // 同款技法：PixelCopy 从宿主窗口拷贝菜单正后方的区域（只拷宿主自己的 surface，
         // 不含弹层本身），模糊后垫在 90% 面板底之下。API 26 起才有 PixelCopy、31 起
-        // 才有 RenderEffect 模糊——低版本退化为纯半透明底（文档化回退路径）。快照是
+        // 才有 RenderEffect 模糊——31+ 走 GPU 模糊，26-30 用 blurBackdropSnapshot 在
+        // 位图层面降采样-回插糊掉快照（原清晰垫底被用户感知为「毛玻璃消失」，2026-10-06
+        // 荣耀 Android 10 真机报障）；API<26 或拷贝失败退化为纯半透明底。快照是
         // 打开瞬间的静态画面：菜单为模态（打开期间内容不可交互），静态与实时等价。
         val backdrop = ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_XY
@@ -215,12 +218,17 @@ class MoreMenuPopup(
                         snapshot,
                         { result ->
                             if (result == PixelCopy.SUCCESS) {
-                                backdrop.setImageBitmap(snapshot)
                                 if (Build.VERSION.SDK_INT >= 31) {
+                                    backdrop.setImageBitmap(snapshot)
                                     val r = density * 12 // ≈ 桌面 backdrop-blur-md（AuroraDropdown 同值）
                                     backdrop.setRenderEffect(
                                         android.graphics.RenderEffect.createBlurEffect(r, r, android.graphics.Shader.TileMode.CLAMP),
                                     )
+                                } else {
+                                    // GPU RenderEffect 仅 31+；26-30 用降采样-回插在位图
+                                    // 层面糊掉快照（原清晰垫底=「毛玻璃消失」，荣耀
+                                    // Android 10 真机报障，与 AuroraDropdown 同批修）
+                                    backdrop.setImageBitmap(blurBackdropSnapshot(context, snapshot))
                                 }
                             }
                         },

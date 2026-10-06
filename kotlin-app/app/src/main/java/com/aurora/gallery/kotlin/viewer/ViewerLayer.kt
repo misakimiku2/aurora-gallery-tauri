@@ -133,7 +133,14 @@ fun NativeViewerLayer(
         when {
             viewer.isSlideshowPlaying() -> viewer.exitSlideshow()
             viewer.isDrawerOpen() -> viewer.closeDrawer()
-            else -> latestClose()
+            else -> {
+                // 关闭分支必须先走 viewer.close()（与宿主 onClose 监听器同序）再
+                // latestClose()：直接关 Compose 层会跳过 viewer.close() 的清理——
+                // 沉浸标志、顶栏位移、系统栏隐藏全部残留，下次 open 把脏状态带进来
+                //（真机报障：重开查看器系统状态栏已被隐藏；close 顺序 2026-10-06）
+                viewer.close()
+                latestClose()
+            }
         }
     }
 }

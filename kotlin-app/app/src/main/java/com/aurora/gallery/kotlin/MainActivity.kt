@@ -1121,15 +1121,36 @@ class MainActivity : ComponentActivity() {
      * 首次进入前记下状态栏原色，退出时还原。
      */
     private var savedStatusBarColor: Int? = null
+    // 导航栏色同法保管：沉浸期间导航栏写黑对齐查看器背景（真机报障：查看器底部
+    // 白边=窗口底色/默认白导航栏透出），退出还原
+    private var savedNavigationBarColor: Int? = null
+    /**
+     * 进入沉浸前的 systemUiVisibility 原值（API<30 路径），退出恢复原值。历史教训两层：
+     * ①写死 LAYOUT_STABLE 会残留稳定 inset 派发（顶部定死变高）；②v2.2 起连 LAYOUT_*
+     * 全家都不带、decorFits 也永不翻转（见 setImmersiveMode 内注）——MagicUI 对
+     * e2e 翻转后的 insets 重派发不可靠，纯 flags 才是结构上免疫的形态。
+     */
+    private var savedSystemUiVisibility: Int? = null
 
     private fun setImmersiveMode(immersive: Boolean) {
         val window = this.window
         if (immersive) {
             if (savedStatusBarColor == null) savedStatusBarColor = window.statusBarColor
-            WindowCompat.setDecorFitsSystemWindows(window, false)
+            if (savedNavigationBarColor == null) savedNavigationBarColor = window.navigationBarColor
+            if (savedSystemUiVisibility == null) {
+                @Suppress("DEPRECATION")
+                savedSystemUiVisibility = window.decorView.systemUiVisibility
+            }
         } else {
-            WindowCompat.setDecorFitsSystemWindows(window, true)
             savedStatusBarColor?.let { window.statusBarColor = it }
+            savedNavigationBarColor?.let { window.navigationBarColor = it }
+            savedSystemUiVisibility?.let {
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility = it
+            }
+            savedStatusBarColor = null
+            savedNavigationBarColor = null
+            savedSystemUiVisibility = null
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.insetsController?.let { controller ->
@@ -1139,24 +1160,28 @@ class MainActivity : ComponentActivity() {
                         android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 } else {
                     controller.show(android.view.WindowInsets.Type.systemBars())
+                    // 行为位一并复位：残留 TRANSIENT_BY_SWIPE 会让主界面下滑只出
+                    // 瞬态栏（自动再隐藏），常态栏出不来
+                    controller.systemBarsBehavior =
+                        android.view.WindowInsetsController.BEHAVIOR_DEFAULT
                 }
             }
-        } else {
+        } else if (immersive) {
+            // 纯沉浸 flags（2026-10-06 荣耀真机定稿）：绝不动 LAYOUT_*/decorFits——
+            // 它们把窗口翻成 e2e，隐藏系统栏必发 resize+insets 派发，MagicUI 上会把
+            // Compose 根的 statusBarsPadding 卡在 statusTop（返回主界面顶部定死变高、
+            // 重启才恢复），还会把查看器滑出动画冻在半程（顶栏残留=「点了没进全屏」）。
+            // 纯 flags 下窗口同样放大到全屏、内容 insets 恒 0，两个症状结构上不可能发生。
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (immersive) {
-                @Suppress("DEPRECATION")
-                (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
-            } else {
-                @Suppress("DEPRECATION")
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            }
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
         }
-        if (immersive) window.statusBarColor = android.graphics.Color.TRANSPARENT
+        if (immersive) {
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.BLACK
+        }
+        android.util.Log.i("NativeViewer", "setImmersiveMode immersive=$immersive api=${Build.VERSION.SDK_INT}")
     }
 
     // —— M4c 主题管线 ——
