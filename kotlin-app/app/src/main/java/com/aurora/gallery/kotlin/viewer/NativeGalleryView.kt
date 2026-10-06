@@ -463,9 +463,11 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerHandleStrip = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER
+            // 高度 32→20dp（2026-10-07 用户：竖屏抽屉「文件名上方的操作区太高」）。
+            // 热区仍是整宽 1080px×60px，拖拽手感不受影响；把手 4dp 居中，上下各留 8dp。
             layoutParams = LinearLayout.LayoutParams(
                 LayoutParams.MATCH_PARENT,
-                (resources.displayMetrics.density * 32).toInt(),
+                (resources.displayMetrics.density * DRAWER_HANDLE_STRIP_DP).toInt(),
             )
             visibility = GONE
             isClickable = true
@@ -1183,10 +1185,21 @@ class NativeGalleryView @JvmOverloads constructor(
      * 冻结是刻意的，见 [statusBarInsetPx]。值变了才落 margin/padding。
      */
     private fun syncStatusBarInset() {
+        // 沉浸期间 insets 归零——冻结上一真值：按 0 重算会把顶栏**抽上去**一整个状态栏
+        //（真机报障「退出沉浸时标题跳动」的同源坑）。
+        if (isChromeHidden()) return
         val insets = androidx.core.view.ViewCompat.getRootWindowInsets(this) ?: return
-        val top = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
-        if (top > 0 && top != statusBarInsetPx) {
-            statusBarInsetPx = top
+        val statusTop = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        // ⚠ 关键：**减掉本容器自己在窗口内的顶偏移**。insets 的 statusBars 是相对**窗口**的，
+        // 而本容器未必从窗口顶开始——非 e2e 窗口（荣耀 Magic2 / API29 实测）容器顶本就是 96
+        //（状态栏让位由窗口完成），再自加 96 就是「双重内缩」→ 顶栏凭空低一整个状态栏
+        // （B1 注释早就警告过这条，B2 自补时踩了）。于是顶栏的屏幕顶恒 =
+        // max(容器顶, 状态栏底) + 8dp，e2e 与非 e2e 两种窗口下都落在同一位置。
+        val need = (statusTop - loc[1]).coerceAtLeast(0)
+        if (need != statusBarInsetPx) {
+            statusBarInsetPx = need
             applyTopBarTopMargin()
             applyDrawerTopInset()
         }
@@ -1207,8 +1220,11 @@ class NativeGalleryView @JvmOverloads constructor(
      * 竖屏底部面板钉在屏幕下缘、顶边本就在屏内，不加。
      */
     private fun applyDrawerTopInset() {
-        val side = (resources.displayMetrics.density * 16).toInt()
-        val top = side + if (isCompactPortrait) 0 else statusBarInsetPx
+        val d = resources.displayMetrics.density
+        val side = (d * 16).toInt()
+        // 竖屏底部面板：顶内边距 16→12dp（与把手条 32→20dp 一起，把「面板顶→文件名」
+        // 从 48dp 收到 32dp）。横屏右缘全高抽屉额外让出状态栏（见 statusBarInsetPx）。
+        val top = if (isCompactPortrait) (d * DRAWER_TOP_PAD_DP).toInt() else side + statusBarInsetPx
         if (metadataDrawer.paddingTop != top) metadataDrawer.setPadding(side, top, side, side)
     }
 
@@ -1970,9 +1986,6 @@ class NativeGalleryView @JvmOverloads constructor(
 
     /** 当前是否处于沉浸（真全屏）态。宿主从后台回前台时据此重申系统栏。 */
     fun isImmersiveNow(): Boolean = isImmersive
-
-    /** 临时诊断用（B2-2 色带定位）：取抽屉容器本体供宿主演算「露出量」。定案后随诊断段删。 */
-    fun debugDrawer(): View = metadataDrawer
 
     /**
      * 外部强制设定沉浸态（同值/抽屉开着时短路）。走 [toggleImmersive] 同一条路径——
@@ -2950,6 +2963,13 @@ class NativeGalleryView @JvmOverloads constructor(
         private const val SWIPE_GAP_DP = 16f
         /** 元数据抽屉宽度（dp）。文件信息格子按它算列宽，见 [buildDetailCell]。 */
         private const val DRAWER_WIDTH_DP = 320f
+        /**
+         * 竖屏抽屉顶缘把手条高度（dp）。拖拽热区，整宽×此高（32≈96px 原值偏高，
+         * 2026-10-07 用户要求收窄「文件名上方的操作区」→ 20）。
+         */
+        private const val DRAWER_HANDLE_STRIP_DP = 20f
+        /** 竖屏抽屉顶部内边距（dp）：16→12，与把手条一起把「面板顶→文件名」48dp→32dp。 */
+        private const val DRAWER_TOP_PAD_DP = 12f
     }
 
     /** 翻页间隔的像素值 */
