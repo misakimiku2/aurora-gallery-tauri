@@ -876,14 +876,14 @@ class NativeGalleryView @JvmOverloads constructor(
         val density = resources.displayMetrics.density
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            // topMargin 8dp + 行高 56dp 对齐图库卡片形制（2026-09-27 验收）。2026-10-07
-            // B1 定稿后组合根 statusBarsPadding 常驻（查看器不再隐藏系统栏，组合根
-            // padding 不会归零），原生侧**勿**再自加状态栏高度——双重内缩会重演
-            // 「顶栏偏低」；也勿读 status_bar_height 资源（被挖孔顶高，avd_honor29
-            // 实测 182 vs 实际 90）。
+            // 行高 56dp 对齐图库顶条形制（2026-09-27 验收）。topMargin 只是初始值，真值
+            // 由 [applyTopBarTopMargin] 按「状态栏让位量 + [TOP_BAR_TOP_GAP_DP]」每次
+            // 布局同步——状态栏让位量取窗口 insets 并**扣掉容器自身顶偏移**（非 e2e 窗口
+            // 容器顶本就在状态栏下方，自加就是双重内缩＝顶栏偏低）；也不读
+            // status_bar_height 资源（被挖孔顶高，avd_honor29 实测 182 vs 实际 90）。
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (density * 56).toInt()).apply {
                 gravity = android.view.Gravity.TOP
-                topMargin = (density * 8).toInt()
+                topMargin = (density * TOP_BAR_TOP_GAP_DP).toInt()
             }
             setBackgroundColor(colorBgAlpha(0x4D))
             // 水平 16dp 对齐图库 TopBar 按钮起点（Row horizontal 8dp + 卡片边 8dp）；原 24px。
@@ -1205,10 +1205,14 @@ class NativeGalleryView @JvmOverloads constructor(
         }
     }
 
-    /** 顶栏 topMargin = 状态栏高度 + 8dp（8dp 是 2026-09-27 验收的图库卡片形制内缩）。 */
+    /**
+     * 顶栏 topMargin = 状态栏让位量（[statusBarInsetPx]，已扣容器自身顶偏移）+ 顶部间距。
+     * 间距见 [TOP_BAR_TOP_GAP_DP]：2026-10-07 指挥官拍板「状态栏下方就是顶栏、中间不留
+     * 空隙」→ 0；原 8dp 来自 2026-09-27 对齐图库卡片形制的内缩，已作废。
+     */
     private fun applyTopBarTopMargin() {
         val lp = topBar.layoutParams as? LayoutParams ?: return
-        val want = statusBarInsetPx + (resources.displayMetrics.density * 8).toInt()
+        val want = statusBarInsetPx + (resources.displayMetrics.density * TOP_BAR_TOP_GAP_DP).toInt()
         if (lp.topMargin != want) {
             lp.topMargin = want
             topBar.layoutParams = lp
@@ -2970,6 +2974,11 @@ class NativeGalleryView @JvmOverloads constructor(
         private const val DRAWER_HANDLE_STRIP_DP = 20f
         /** 竖屏抽屉顶部内边距（dp）：16→12，与把手条一起把「面板顶→文件名」48dp→32dp。 */
         private const val DRAWER_TOP_PAD_DP = 12f
+        /**
+         * 顶栏顶边与状态栏底边之间的间距（dp）。2026-10-07 用户拍板「状态栏下方就是顶部
+         * 工具栏、中间不要有空隙」→ 0。原 8dp 是 2026-09-27 对齐图库卡片形制的内缩。
+         */
+        private const val TOP_BAR_TOP_GAP_DP = 0f
     }
 
     /** 翻页间隔的像素值 */
