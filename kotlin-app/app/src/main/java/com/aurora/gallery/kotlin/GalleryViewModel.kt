@@ -1490,9 +1490,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     // 华为 Q 的 update 白名单对 legacy 没豁免：标准目录 MediaStore 成功
                     // （保 _id），被拒（白名单外）再走 Q 传统视图的文件路径直写
                     val mediaOk = try {
-                        appContext.contentResolver.update(uri, values, null, null) > 0
+                        appContext.contentResolver.update(uri, values, null, null).also {
+                            if (it <= 0) Log.w(TAG, "[FileOp] update returned $it, fallback to file: $uri")
+                        } > 0
                     } catch (e: Exception) {
                         if (isWriteConsentRequired(e)) throw e
+                        Log.w(TAG, "[FileOp] update threw, fallback to file: $uri", e)
                         false
                     }
                     mediaOk || legacyRenameViaFile(uri, newName)
@@ -1539,9 +1542,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     }
                     // 与 renameFiles 同款：MediaStore 被华为 Q 白名单拒绝时走文件路径直写
                     val mediaOk = try {
-                        appContext.contentResolver.update(uri, values, null, null) > 0
+                        appContext.contentResolver.update(uri, values, null, null).also {
+                            if (it <= 0) Log.w(TAG, "[FileOp] update returned $it, fallback to file: $uri")
+                        } > 0
                     } catch (e: Exception) {
                         if (isWriteConsentRequired(e)) throw e
+                        Log.w(TAG, "[FileOp] update threw, fallback to file: $uri", e)
                         false
                     }
                     mediaOk || legacyMoveViaFile(uri, relPath)
@@ -1611,6 +1617,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             insertImageCopy(source, relPath, overrideName) ?: return null
         } catch (e: Exception) {
             viaFile = true
+            Log.w(TAG, "[FileOp] insert rejected, fallback to file: $source", e)
             debugLog("copyOne insert rejected, trying file-path copy: $e")
             legacyCopyViaFile(source, relPath, overrideName) ?: return null
         }
@@ -1816,9 +1823,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // 文件系统变更走 File 直写（Q 传统文件管理器的标准姿势），MediaStore 行靠 MediaScanner
     // 重扫收尾。_id 必变 → 元数据/标签/专题成员关系搬家（migrateMetadataAndTagsToNewUri）。
 
-    /** 仅 SDK 29 且真拿到传统存储视图（targetSdk 29 + requestLegacyExternalStorage）。 */
+    /** SDK 29 且本包走传统存储语义（targetSdk ≤ 29 + manifest requestLegacyExternalStorage）。
+     *  **不查 Environment.isExternalStorageLegacy()**：EMUI 上该 API 依赖进程的挂载命名
+     *  空间，覆盖安装后的过渡态进程会误报 false（2026-10-07 实测：同一包内 delete 豁免
+     *  与重命名成功并存、isLegacy 却 false），而 File 原语失败本身无副作用（renameTo/
+     *  copyTo 返回 false），让实际操作说话比赌 API 可靠。 */
     private fun isQLegacyFileStorage(): Boolean =
-        Build.VERSION.SDK_INT == 29 && android.os.Environment.isExternalStorageLegacy()
+        Build.VERSION.SDK_INT == 29 && appContext.applicationInfo.targetSdkVersion <= 29
 
     /** 行的 DATA 全路径（传统视图下可读）。 */
     private fun queryDataPath(uri: android.net.Uri): String? =
@@ -1904,12 +1915,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** Q 传统视图改名：File.renameTo + 重扫 + 旧行清理 + 元数据/标签/专题搬家。 */
     private fun legacyRenameViaFile(uri: android.net.Uri, newName: String): Boolean {
-        if (!isQLegacyFileStorage()) return false
-        val data = queryDataPath(uri) ?: return false
+        if (!isQLegacyFileStorage()) {
+            Log.w(TAG, "[FileOp] legacy rename skipped: not Q legacy storage")
+            return false
+        }
+        val data = queryDataPath(uri)
+        if (data == null) {
+            Log.w(TAG, "[FileOp] legacy rename: row gone (data null) $uri")
+            return false
+        }
         val src = java.io.File(data)
-        if (!src.isFile) return false
+        if (!src.isFile) {
+            Log.w(TAG, "[FileOp] legacy rename: source missing $data")
+            return false
+        }
         val dst = resolveConflictName(src.parentFile, newName)
-        if (!src.renameTo(dst)) return false
+        if (!src.renameTo(dst)) {
+            Log.w(TAG, "[FileOp] legacy rename: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
+            return false
+        }
         val newUri = scanFileSync(dst)
         // 旧行指向的旧名文件已不存在，直删旧行避免幽灵索引（Q legacy 下 delete 放行）
         runCatching { appContext.contentResolver.delete(uri, null, null) }
@@ -1919,14 +1943,33 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** Q 传统视图移动：跨目录 renameTo（同卷）+ 重扫 + 旧行清理 + 元数据搬家。 */
     private fun legacyMoveViaFile(uri: android.net.Uri, relPath: String): Boolean {
-        if (!isQLegacyFileStorage()) return false
-        val data = queryDataPath(uri) ?: return false
+        if (!isQLegacyFileStorage()) {
+            Log.w(TAG, "[FileOp] legacy move skipped: not Q legacy storage")
+            return false
+        }
+        val data = queryDataPath(uri)
+        if (data == null) {
+            Log.w(TAG, "[FileOp] legacy move: row gone (data null) $uri")
+            return false
+        }
         val src = java.io.File(data)
-        if (!src.isFile) return false
+        if (!src.isFile) {
+            Log.w(TAG, "[FileOp] legacy move: source missing $data")
+            return false
+        }
         val dstDir = qRelDir(relPath)
-        if (!dstDir.isDirectory && !dstDir.mkdirs()) return false
+        // 同目录移动 = 无操作（用户在当前相册里选了它自己当目标）；MediaStore 版 update
+        // 同值会被系统当 0 行变更 → 误报失败，这里显式放行。
+        if (src.parentFile == dstDir) return true
+        if (!dstDir.isDirectory && !dstDir.mkdirs()) {
+            Log.w(TAG, "[FileOp] legacy move: mkdirs failed ${dstDir.absolutePath}")
+            return false
+        }
         val dst = resolveConflictName(dstDir, src.name)
-        if (!src.renameTo(dst)) return false
+        if (!src.renameTo(dst)) {
+            Log.w(TAG, "[FileOp] legacy move: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
+            return false
+        }
         val newUri = scanFileSync(dst)
         runCatching { appContext.contentResolver.delete(uri, null, null) }
         if (newUri != null) migrateMetadataAndTagsToNewUri(uri, newUri, includeTopic = true)
@@ -1939,21 +1982,36 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         relPath: String,
         overrideName: String?,
     ): android.net.Uri? {
-        if (!isQLegacyFileStorage()) return null
-        val data = queryDataPath(source) ?: return null
+        if (!isQLegacyFileStorage()) {
+            Log.w(TAG, "[FileOp] legacy copy skipped: not Q legacy storage")
+            return null
+        }
+        val data = queryDataPath(source)
+        if (data == null) {
+            Log.w(TAG, "[FileOp] legacy copy: row gone (data null) $source")
+            return null
+        }
         val src = java.io.File(data)
-        if (!src.isFile) return null
+        if (!src.isFile) {
+            Log.w(TAG, "[FileOp] legacy copy: source missing $data")
+            return null
+        }
         val dstDir = qRelDir(relPath)
-        if (!dstDir.isDirectory && !dstDir.mkdirs()) return null
+        if (!dstDir.isDirectory && !dstDir.mkdirs()) {
+            Log.w(TAG, "[FileOp] legacy copy: mkdirs failed ${dstDir.absolutePath}")
+            return null
+        }
         val name = resolveConflictName(dstDir, overrideName ?: src.name).name
         val dst = java.io.File(dstDir, name)
         try {
             src.copyTo(dst, overwrite = false)
         } catch (e: Exception) {
+            Log.w(TAG, "[FileOp] legacy copy: copyTo failed $src -> $dst", e)
             debugLog("legacyCopy stream failed $src -> $dst: $e")
             return null
         }
         return scanFileSync(dst) ?: run {
+            Log.w(TAG, "[FileOp] legacy copy: scanFileSync null, remove $dst")
             debugLog("legacyCopy scan failed, remove $dst")
             runCatching { dst.delete() }
             null
