@@ -109,6 +109,7 @@ import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
 import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
+import com.aurora.gallery.kotlin.ui.isCompactWidth
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
 import android.view.KeyEvent
@@ -1246,6 +1247,9 @@ class MainActivity : ComponentActivity() {
         super.onConfigurationChanged(newConfig)
         systemDark =
             (newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        // 旋转/分屏会翻转 compact 判定：手机向导（蓝状态栏）↔ 平板向导/主界面（主题色
+        // 状态栏）的窗口色要跟着重涂；无向导时重写同值，幂等无害。
+        applyWindowTheme(isDarkTheme())
     }
 
     /**
@@ -1259,6 +1263,19 @@ class MainActivity : ComponentActivity() {
         // 不挡住会把黑底刷回主题色，瞬态系统栏一浮出就是一条亮边。还原分支显式重跑
         // 本函数（先置色、后 show），所以这里让位不会漏掉任何一次真正需要的重涂。
         if (viewerBarsHidden) return
+        // 手机端欢迎向导：整卡铺满全屏，顶部品牌横幅（blue-600）直抵屏幕顶——状态栏
+        // 镂空区刷横幅同色（浅深两档横幅同值，见 WelcomeFlow.BrandPanel），白图标。
+        // 底部手势区不受影响：内容区 rightBg 背景本就画到屏幕底。平板向导是悬浮卡+
+        // 页底色不吃这条；向导结束/转场后 SideEffect 重跑本函数自然还原主题色。
+        if (showWelcome && isCompactWidth(resources.configuration)) {
+            val brandBlue = 0xFF2563EB.toInt() // BrandPanel 同款 blue-600
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(brandBlue))
+            @Suppress("DEPRECATION")
+            window.statusBarColor = brandBlue
+            WindowCompat.getInsetsController(window, window.decorView)
+                ?.isAppearanceLightStatusBars = false
+            return
+        }
         val palette = AuroraPalettes.of(dark)
         // 窗口底色 = palette.main（2026-09-26 验收反馈：主界面悬浮卡片化对齐 React
         // 桌面 bg-main 环绕层）——App 的主界面 Row 内缩裁圆角成卡片，四周留边透出这层；
