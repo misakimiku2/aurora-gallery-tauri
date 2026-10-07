@@ -44,6 +44,15 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // 挂正式 keystore：kotlin:dev 的 installDebug 用 debug.keystore 会与已装的
+            // release 签名包冲突（INSTALL_FAILED_UPDATE_INCOMPATIBLE，卸载重装会清掉
+            // 用户索引库）。同签名覆盖安装后仍保留 debuggable——run-as 可读
+            // filesDir/debug_fileop.log（华为吞 logcat 时的取证兜底）。
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         getByName("release") {
             isMinifyEnabled = false
             if (hasReleaseSigning) {

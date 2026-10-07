@@ -196,6 +196,8 @@ class MainActivity : ComponentActivity() {
             viewModel.startScanIfNeeded()
             // 欢迎向导权限步：授权即推进状态机（向导继续走，扫描已在后台跑）
             if (showWelcome) welcomeState = welcomeState.onPermissionGranted()
+            // Q 传统视图：READ 到手后补请求 WRITE（全新安装后的首次启动走这里）
+            requestWritePermissionIfNeeded()
         } else if (showWelcome) {
             welcomePermissionDenied = true
         }
@@ -304,7 +306,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** API < 30 的写权限兜底（manifest WRITE_EXTERNAL_STORAGE maxSdkVersion=29）。 */
+    /** API < 30 的写权限兜底（manifest WRITE_EXTERNAL_STORAGE maxSdkVersion 已去掉）。 */
     private val writePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -314,6 +316,23 @@ class MainActivity : ComponentActivity() {
             callback?.invoke()
         } else {
             Toast.makeText(this, "未获存储写权限，操作已取消", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 首启主动请求 WRITE 的独立出口（不带挂起写操作——只为把权限拿到手）。 */
+    private val writeStoragePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* 拒绝则写操作会失败并提示，这里无需动作 */ }
+
+    /** Q 传统视图（API ≤ 29）的 WRITE 主动请求：**全新安装后若无人请求它**，直写共享
+     *  存储抛的是普通 SecurityException——被写闭包静默吞掉，四种文件操作间接全失败
+     *  且无提示（2026-10-07 荣耀真机全新安装实测）。READ 授权回调与本函数都会调它。 */
+    private fun requestWritePermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT <= 29 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            writeStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
 
@@ -2112,8 +2131,10 @@ class MainActivity : ComponentActivity() {
     private fun requestMediaPermissionIfNeeded() {
         if (hasMediaPermission()) {
             viewModel.startScanIfNeeded()
+            requestWritePermissionIfNeeded()
             requestNotificationPermissionIfNeeded()
         } else {
+            // READ 授权回调里会再进 WRITE 补请求，见 requestPermission 的 granted 分支
             requestPermission.launch(mediaPermission())
         }
     }

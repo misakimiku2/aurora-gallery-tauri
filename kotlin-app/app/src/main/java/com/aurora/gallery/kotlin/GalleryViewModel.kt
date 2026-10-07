@@ -1616,10 +1616,13 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         overrideName: String? = null,
     ): Boolean {
         val uri = try {
-            insertImageCopy(source, relPath, overrideName) ?: return false
+            insertImageCopy(source, relPath, overrideName) ?: run {
+                debugLog("copyOne: insert null (source query empty)")
+                return false
+            }
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] insert rejected, fallback to file: $source", e)
-            debugLog("copyOne insert rejected, trying file-path copy: $e")
+            debugLog("copyOne: insert rejected, fallback to file: $e")
             val dst = legacyCopyToDir(source, relPath, overrideName) ?: return false
             registerRowAndMigrateAsync(source, dst, includeTopic = false)
             return true
@@ -1668,6 +1671,17 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     private fun debugLog(msg: String) {
         try {
             java.io.File(appContext.filesDir, "debug_fileop.log").appendText("$msg\n")
+        } catch (_: Exception) {
+        }
+        // 镜像到共享存储：华为间歇吞第三方 logcat（实时流也吞），run-as 又读不了
+        // 非 debuggable 包的 filesDir——外部存储这份是唯一可靠取证面（排查完删）。
+        try {
+            if (Build.VERSION.SDK_INT == 29 && android.os.Environment.isExternalStorageLegacy()) {
+                java.io.File(
+                    android.os.Environment.getExternalStorageDirectory(),
+                    "aurora_diag_debug.log",
+                ).appendText("${System.currentTimeMillis()} $msg\n")
+            }
         } catch (_: Exception) {
         }
     }
@@ -2000,16 +2014,19 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         val data = queryDataPath(source)
         if (data == null) {
             Log.w(TAG, "[FileOp] legacy copy: row gone (data null) $source")
+            debugLog("legacyCopy: row gone (data null) $source")
             return null
         }
         val src = java.io.File(data)
         if (!src.isFile) {
             Log.w(TAG, "[FileOp] legacy copy: source missing $data")
+            debugLog("legacyCopy: source missing $data")
             return null
         }
         val dstDir = qRelDir(relPath)
         if (!dstDir.isDirectory && !dstDir.mkdirs()) {
             Log.w(TAG, "[FileOp] legacy copy: mkdirs failed ${dstDir.absolutePath}")
+            debugLog("legacyCopy: mkdirs failed ${dstDir.absolutePath}")
             return null
         }
         val name = resolveConflictName(dstDir, overrideName ?: src.name).name
@@ -2018,8 +2035,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             src.copyTo(dst, overwrite = false)
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] legacy copy: copyTo failed $src -> $dst", e)
+            debugLog("legacyCopy: copyTo failed $src -> $dst: $e")
             return null
         }
+        debugLog("legacyCopy: copied $src -> $dst")
         return dst
     }
 
