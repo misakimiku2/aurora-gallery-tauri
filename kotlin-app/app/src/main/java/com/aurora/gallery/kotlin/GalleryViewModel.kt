@@ -1327,6 +1327,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     onDone(n)
                 },
                 onBlocked = onBlocked,
+                optimistic = { okItems -> optimisticRemoveFromGrid(okItems) },
             )
         }
     }
@@ -1358,17 +1359,17 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         Build.VERSION.SDK_INT >= 29 &&
             e.javaClass.name == "android.app.RecoverableSecurityException"
 
-    /** 逐个执行 [write]：成功计数，被系统拦下的收进 blocked（不计失败）。IO 线程调用。 */
+    /** 逐个执行 [write]：成功的收进 okItems，被系统拦下的收进 blocked（不计失败）。IO 线程调用。 */
     private fun <T> runWriteBatch(
         items: List<T>,
         uriOf: (T) -> android.net.Uri,
         write: (T) -> Boolean,
-    ): Pair<Int, List<T>> {
-        var ok = 0
+    ): Pair<List<T>, List<T>> {
+        val okItems = ArrayList<T>()
         val blocked = ArrayList<T>()
         for (item in items) {
             try {
-                if (write(item)) ok++
+                if (write(item)) okItems += item
             } catch (e: Exception) {
                 if (isWriteConsentRequired(e)) {
                     Log.i(TAG, "[FileOp] system consent required: ${uriOf(item)}")
@@ -1378,7 +1379,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 }
             }
         }
-        return ok to blocked
+        return okItems to blocked
     }
 
     /**
@@ -1388,6 +1389,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      *
      * [onDone] 因此**在整批最终结束后才回调一次**（Toast 只弹一次）。宿主若不打算请求
      * 授权（如 API < 30 的删除没有对应 API），不要调 retry，自行收尾。
+     *
+     * 体感（2026-10-07 荣耀真机）：26k 行的全量对账要 ~4s，UI 不能等它——写完先
+     * [optimistic] 更新内存网格、立刻 [onDone]，对账挪进后台协程（[refreshAfterWriteAsync]，
+     * MediaStore observer 防抖兜底也在）；对账完成后的 reloadImages 会用权威数据覆盖
+     * 乐观结果，两者幂等。
      */
     private suspend fun <T> writeWithConsentFallback(
         items: List<T>,
@@ -1395,27 +1401,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         write: (T) -> Boolean,
         onDone: (Int) -> Unit,
         onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit,
+        optimistic: (List<T>) -> Unit = {},
     ) {
         val first = withContext(Dispatchers.IO) { runWriteBatch(items, uriOf, write) }
-        val ok = first.first
+        val okItems = first.first
         val blocked = first.second
-        debugLog("writeBatch ok=$ok blocked=${blocked.size}/${items.size}")
-        // 无条件对账：成功要反映变更；失败（含对索引死行的操作——update/delete 返回 0
-        // 不抛异常）也要把 MediaStore 已不存在的行从索引清出去，否则幽灵文件反复失败
-        // （真机 17:54 实测踩过）。
-        refreshAfterWrite()
+        debugLog("writeBatch ok=${okItems.size} blocked=${blocked.size}/${items.size}")
         if (blocked.isEmpty()) {
-            onDone(ok)
+            optimistic(okItems)
+            refreshAfterWriteAsync()
+            onDone(okItems.size)
             return
         }
         onBlocked(blocked.map(uriOf)) {
             viewModelScope.launch {
                 val retried = withContext(Dispatchers.IO) { runWriteBatch(blocked, uriOf, write) }
-                refreshAfterWrite()
+                val retriedOk = retried.first
                 if (retried.second.isNotEmpty()) {
                     Log.w(TAG, "[FileOp] ${retried.second.size} item(s) still blocked after consent")
                 }
-                onDone(ok + retried.first)
+                if (retriedOk.isNotEmpty()) optimistic(retriedOk)
+                refreshAfterWriteAsync()
+                onDone(okItems.size + retriedOk.size)
             }
         }
     }
@@ -1495,6 +1502,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     onDone(n)
                 },
                 onBlocked = onBlocked,
+                optimistic = { okItems -> optimisticRenameInGrid(okItems) },
             )
         }
     }
@@ -1543,6 +1551,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     onDone(n)
                 },
                 onBlocked = onBlocked,
+                optimistic = { okItems -> optimisticRemoveFromGrid(okItems) },
             )
         }
     }
@@ -1564,20 +1573,22 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
         val relPath = targetRelPath.ensureTrailingSlash()
         viewModelScope.launch {
-            val n = withContext(Dispatchers.IO) {
-                var count = 0
+            val okUris = withContext(Dispatchers.IO) {
+                val out = ArrayList<android.net.Uri>()
                 for (source in uris) {
                     try {
-                        if (copyOneWithMetadata(source, relPath) != null) count++
+                        copyOneWithMetadata(source, relPath)?.let { out += it }
                     } catch (e: Exception) {
                         Log.w(TAG, "[FileOp] copy failed $source -> $relPath", e)
                     }
                 }
-                count
+                out
             }
-            Log.i(TAG, "[FileOp] copied=$n/${uris.size} -> $relPath")
-            refreshAfterWrite()
-            onDone(n)
+            Log.i(TAG, "[FileOp] copied=${okUris.size}/${uris.size} -> $relPath")
+            // 与删除/移动同款：onDone 不等对账（副本到当前视图的出现交给后台对账——
+            // 拿不到「目标 = 当前文件夹」的可靠判定，不做乐观插入）
+            refreshAfterWriteAsync()
+            onDone(okUris.size)
         }
     }
 
@@ -1685,13 +1696,49 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** 逐条写操作后的主动刷新（防抖 observer 只是兜底）。 */
-    private suspend fun refreshAfterWrite() {
-        try {
-            scanAndReconcile()
-            reloadImages()
-        } catch (e: Exception) {
-            Log.w(TAG, "[FileOp] post-write refresh failed", e)
+    /** 逐条写操作后的主动刷新（防抖 observer 只是兜底）——**后台跑**：乐观更新已让 UI
+     *  即时反映，对账的全量扫描（26k 行 ~4s，老机）不再阻塞 onDone/UI 收尾。 */
+    private fun refreshAfterWriteAsync() {
+        viewModelScope.launch {
+            try {
+                scanAndReconcile()
+                reloadImages()
+            } catch (e: Exception) {
+                Log.w(TAG, "[FileOp] post-write refresh failed", e)
+            }
+        }
+    }
+
+    // ===== 写操作的乐观内存更新 =====
+    //
+    // 网格数据 = [images]（Compose State）；对账要把 MediaStore 快照写进索引再重查，
+    // 26k 行上要数秒——写操作先改这份内存列表让 UI 当帧反映，对账完成后的 reloadImages
+    // 用权威数据覆盖（幂等）。只动 [images]，imagesCacheByKey 留给对账修正（乐观改缓存
+    // 要考虑视图 key 语义，收益配不上风险）。
+
+    /** content uri → MediaStore _id（external / external_primary 两种字符串拼法都归一）。 */
+    private fun mediaIdOf(uri: android.net.Uri): Long? =
+        runCatching { ContentUris.parseId(uri) }.getOrNull()
+
+    /** 删除/移出：把命中的项从当前网格移除（标签/专题视图同样移除——文件已不存在）。 */
+    private fun optimisticRemoveFromGrid(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        val ids = uris.mapNotNull { mediaIdOf(it) }.toHashSet()
+        if (ids.isEmpty()) return
+        val cur = images.value
+        val filtered = cur.filter { img -> mediaIdOf(android.net.Uri.parse(img.contentUri)) !in ids }
+        if (filtered.size != cur.size) images.value = filtered
+    }
+
+    /** 重命名：就地更新命中项的显示名（_id 不变或 Q 文件路径版 _id 变化都由对账收尾）。 */
+    private fun optimisticRenameInGrid(targets: List<Pair<android.net.Uri, String>>) {
+        if (targets.isEmpty()) return
+        val byId = targets.mapNotNull { (uri, _) -> mediaIdOf(uri) }.toHashSet()
+        if (byId.isEmpty()) return
+        val nameById = targets.associate { (uri, name) -> mediaIdOf(uri) to name }
+        images.value = images.value.map { img ->
+            val id = mediaIdOf(android.net.Uri.parse(img.contentUri))
+            if (id != null && id in byId) img.copy(name = nameById[id] ?: img.name) else img
         }
     }
 
