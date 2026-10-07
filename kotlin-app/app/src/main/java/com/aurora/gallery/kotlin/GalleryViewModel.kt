@@ -3,6 +3,7 @@ package com.aurora.gallery.kotlin
 import android.app.Application
 import android.content.ContentUris
 import android.content.ContentValues
+import android.content.Context
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -11,6 +12,7 @@ import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
+import org.json.JSONObject
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -1349,13 +1351,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     // （封面回退到剩余最新图、计数-1、时间戳回退、按时间排序的位置
                     // 归位）——不等全量对账（1s 防抖 + 2.4s 扫描），否则删除后卡片
                     // 几秒不动甚至计数还没减（索引死行在对账前一直算在内）。
+                    val beforeFolders = folders.value
                     viewModelScope.launch {
                         val ids = okItems.map { generateId(it.toString()) }
                         withContext(Dispatchers.IO) {
                             runCatching { deleteIndexEntries(ids) }
                                 .onFailure { Log.w(TAG, "[Delete] index cleanup failed", it) }
                         }
-                        refreshFolderCards()
+                        refreshFolderCards(force = true)
+                        // 删除也是「操作过文件夹」：内容时间会掉回去，活动时间托在前面
+                        bumpActivityForChangedFolders(beforeFolders)
                     }
                 },
             )
@@ -2164,6 +2169,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val t0 = android.os.SystemClock.elapsedRealtime()
+            // 操作前的总览快照（move/rename 的活动时间 diff 用）。IO 上读 Compose state
+            // 有先例：resolveSelectionFileIds 同样在 withContext(IO) 里读 folders.value。
+            val beforeFolders = folders.value
             val newUri = try {
                 scanFileSync(dstFile)
             } catch (e: Exception) {
@@ -2206,6 +2214,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 runCatching { deleteIndexEntries(listOf(generateId(srcUri.toString()))) }
                     .onFailure { Log.w(TAG, "[FileOp] old index row delete failed: $srcUri", it) }
                 refreshFolderCards()
+                // 移动的源与目标文件夹计数一减一增，diff 双双命中；重命名不改变聚合
+                // （同文件夹同文件数），不 bump——它的内容时间也未变，排序位置不动。
+                bumpActivityForChangedFolders(beforeFolders)
             }
             // 正停在某个本地视图就地刷新（之后才进目标文件夹的场景由 openFolder 首发+重查覆盖）
             withContext(Dispatchers.Main) { reloadImages() }
@@ -2289,6 +2300,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 listImagesByIds(listOf(generateId(img.contentUri))).firstOrNull()
             } ?: return@launch
             val folderId = generateId(img.bucketId)
+            // 活动时间先戳：复制进文件夹 = 操作过它（新图内容时间通常也已=现在，双保险）
+            bumpFolderActivity(listOf(folderId))
             val tab = appState.activeTab
             // 1. 网格：正停在目标文件夹才插（排序由 rememberDisplayImages 重算）
             if (tab.viewMode == ViewMode.BROWSER && tab.folderId == folderId &&
@@ -2333,13 +2346,95 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * modified_at) 复合索引覆盖，全量约百毫秒（老机），比等 1s 防抖 + 2.4s 扫描快
      * 一个量级。与对账幂等（对账稍后以权威数据覆盖同一结果）。
      */
-    private suspend fun refreshFolderCards() {
+    private suspend fun refreshFolderCards(force: Boolean = false) {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastFolderCardsRefreshAt < 500) return
+        if (!force && now - lastFolderCardsRefreshAt < 500) return
         lastFolderCardsRefreshAt = now
         val refreshed = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
         folders.value = refreshed
         debugLog("refreshFolderCards: n=${refreshed.size}")
+    }
+
+    // ===== 文件夹活动时间（「操作过就排前面」的排序语义）=====
+    //
+    // 按时间排序的口径原本是「内容最新时间」（直接子图 MAX(date_added)，两端刻意
+    // 对齐）：复制文件进文件夹 → 内容时间=现在 → 排前面 ✓；但删掉该文件 → 内容时间
+    // 掉回剩余最新图 → 文件夹被排到后面 ✗。用户体感：「我明明刚操作过这个文件夹」。
+    //
+    // 活动时间：写操作（复制进/删除/移动/重命名）成功时把涉及文件夹的活动时间戳为
+    // 当前，总览排序键 = max(内容最新时间, 活动时间)（GridModels.sortFolders 的
+    // activityAt 参数）——删除也能托在前面，与文件系统里「目录 mtime 随增删改更新」
+    // 的直觉一致。只改安卓（桌面端内容时间语义不变，2026-10-08 用户拍板）。
+    //
+    // 持久化 SharedPreferences（跨重启保留；30 天前的活动自然过期让位内容时间，
+    // 上限 1000 条防无限增长）。与对账幂等：对账只重算内容时间，活动时间是独立的
+    // 叠加层，不会被覆盖。
+
+    private val folderActivityPrefs by lazy {
+        appContext.getSharedPreferences("aurora_folder_activity", Context.MODE_PRIVATE)
+    }
+
+    /** folderId → 活动时间（epoch 秒）。Compose state：总览排序的 remember 键之一。 */
+    val folderActivityAt = mutableStateOf<Map<String, Long>>(emptyMap())
+
+    /** 活动时间的保留窗口：超过则视为沉寂，排序回落到内容时间。 */
+    private val folderActivityTtlSec = 30L * 24 * 3600
+
+    /** 活动时间表上限（按时间倒序保留最新的，防无限增长）。 */
+    private val folderActivityMaxEntries = 1000
+
+    init {
+        folderActivityAt.value = loadFolderActivity()
+    }
+
+    private fun loadFolderActivity(): Map<String, Long> {
+        val raw = folderActivityPrefs.getString(KEY_FOLDER_ACTIVITY, null) ?: return emptyMap()
+        val cutoff = System.currentTimeMillis() / 1000 - folderActivityTtlSec
+        return runCatching {
+            val obj = JSONObject(raw)
+            val out = HashMap<String, Long>()
+            for (key in obj.keys()) {
+                val v = obj.optLong(key, 0L)
+                if (v > cutoff) out[key] = v
+            }
+            out
+        }.getOrDefault(emptyMap())
+    }
+
+    /** 把涉及文件夹的活动时间戳为当前（只增不减：后到的操作盖先前的）。 */
+    private fun bumpFolderActivity(folderIds: Collection<String>) {
+        if (folderIds.isEmpty()) return
+        val nowSec = System.currentTimeMillis() / 1000
+        val merged = (folderActivityAt.value + folderIds.associateWith { nowSec })
+            .toList()
+            .sortedByDescending { it.second }
+            .take(folderActivityMaxEntries)
+            .toMap()
+        folderActivityAt.value = merged
+        runCatching {
+            val obj = JSONObject()
+            merged.forEach { (id, at) -> obj.put(id, at) }
+            folderActivityPrefs.edit().putString(KEY_FOLDER_ACTIVITY, obj.toString()).apply()
+        }
+        debugLog("folderActivity: bump n=${folderIds.size} at=$nowSec ids=$folderIds")
+    }
+
+    /**
+     * 写操作前后 [folders] 快照对比：聚合发生变化（计数/封面/时间戳任一不同）的文件夹
+     * 就是被操作过的，活动时间戳当前。删除/移动的源与目标都由此覆盖（计数一减一增），
+     * 无需知道具体动了哪些文件；重命名不改变聚合，不在此列。
+     *
+     * 调用时机：操作的即时收尾（索引摘行/新行入库 + [refreshFolderCards]）之后，
+     * [before] 传操作前的快照。
+     */
+    private fun bumpActivityForChangedFolders(before: List<Folder>) {
+        val beforeById = before.associateBy { it.id }
+        val changed = folders.value.filter { f ->
+            val old = beforeById[f.id]
+            old == null || old.imageCount != f.imageCount || old.coverUri != f.coverUri ||
+                old.createdAt != f.createdAt || old.modifiedAt != f.modifiedAt
+        }.map { it.id }
+        bumpFolderActivity(changed)
     }
 
     /**
@@ -4221,10 +4316,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * （sortedBy 稳定排序）。总览 TopBar 的排序菜单（sortFolders）在其上再排，置顶规则
      * 两处都做，压在用户排序之上。
      */
-    private fun orderFoldersForOverview(list: List<Folder>): List<Folder> =
-        if (list.any { it.name == ROOT_FOLDER_DISPLAY_NAME })
-            list.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
-        else list
+    private fun orderFoldersForOverview(list: List<Folder>): List<Folder> {
+        // EMUI 对存储根目录散文件的 bucket_display_name 返回字面 "0"（AOSP 为 NULL，
+        // scanMediaStore 只兜了 NULL）：索引里根目录 Folder 行的 name 因此是 "0"——
+        // 总览卡片/浏览器标题/目标选择器显示 "0」，且按 ROOT_FOLDER_DISPLAY_NAME
+        // 匹配的置顶规则（本函数与 GridModels.sortFolders 双保险）全部失效。
+        // 按**路径**（= 外部存储根本身）认根目录并归一名字：路径判定不受 bucket 名字
+        // quirks 影响，也不会误伤真名叫 "0" 的子文件夹（它们的 path 不是存储根）。
+        val storageRoot = android.os.Environment.getExternalStorageDirectory().absolutePath
+        val normalized = list.map { f ->
+            if (f.path == storageRoot && f.name != ROOT_FOLDER_DISPLAY_NAME) {
+                f.copy(name = ROOT_FOLDER_DISPLAY_NAME)
+            } else {
+                f
+            }
+        }
+        return if (normalized.any { it.name == ROOT_FOLDER_DISPLAY_NAME })
+            normalized.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
+        else normalized
+    }
 
     // ===== 2026-10 排序改造：本地总览封面随排序重选 =====
     //
@@ -4382,6 +4492,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
         /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
+
+        /** 文件夹活动表的 SharedPreferences key（JSON: folderId → epoch 秒）。 */
+        private const val KEY_FOLDER_ACTIVITY = "activity"
 
         /** 阶段 5：远端库 browse 并发上限（远端目录可能上百，压并发护服务端与手机网络）。 */
         private const val LAN_BROWSE_CONCURRENCY = 4

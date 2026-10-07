@@ -149,8 +149,19 @@ fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection
  *
  * 本函数只吃字段值，不关心来源：本地/LAN 的字段填充侧（list_folders SQL、
  * rebuildLanOverview）已各自改为「内容最新时间」口径，此处排序代码无需再动。
+ *
+ * 2026-10-08 活动时间叠加（只改安卓，桌面端内容时间语义不变）：[activityAt] 非空时
+ * date 排序键 = max(createdAt, 活动时间)——「操作过这个文件夹（增/删/改）就排前面」，
+ * 删除文件也不例外（纯内容时间会掉回剩余最新图）。默认空查找 = 纯内容时间（历史行为，
+ * LAN 总览与桌面口径不受影响）。
  */
-fun sortFolders(folders: List<Folder>, sortBy: SortOption, direction: SortDirection): List<Folder> {
+fun sortFolders(
+    folders: List<Folder>,
+    sortBy: SortOption,
+    direction: SortDirection,
+    /** folderId → 活动时间（epoch 秒；写操作 bump，见 GalleryViewModel.folderActivityAt）。 */
+    activityAt: (String) -> Long = { 0L },
+): List<Folder> {
     if (folders.size < 2) return folders
     val sorted = when (sortBy) {
         SortOption.SIZE -> {
@@ -159,9 +170,10 @@ fun sortFolders(folders: List<Folder>, sortBy: SortOption, direction: SortDirect
             else folders.sortedWith(comparator.reversed())
         }
         SortOption.DATE -> {
-            val comparator = compareBy<Folder> { it.createdAt }
-            val dated = folders.filter { it.createdAt > 0 }
-            val undated = folders.filterNot { it.createdAt > 0 }
+            val key: (Folder) -> Long = { maxOf(it.createdAt, activityAt(it.id)) }
+            val comparator = compareBy<Folder> { key(it) }
+            val dated = folders.filter { key(it) > 0 }
+            val undated = folders.filterNot { key(it) > 0 }
             if (direction == SortDirection.ASC) dated.sortedWith(comparator) + undated
             else dated.sortedWith(comparator.reversed()) + undated
         }
