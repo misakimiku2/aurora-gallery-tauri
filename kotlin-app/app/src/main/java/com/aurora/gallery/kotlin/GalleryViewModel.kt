@@ -408,6 +408,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
         // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
         lan.start()
+        // 本地人物快照：启动即拉一次。此前只在 WD14 识别完成后刷新（399x），
+        // 结果"库里已经有人物"也要等下一次识别才显示（2026-10-08 指挥官实测：
+        // 人物页在做过识别之前恒为空）——人物和标签一样是库里的事实，进页面就该看得见。
+        reloadLocalPeople()
         // M6a 阶段 7：对等服务端启动恢复（持久化开关为开才自启，内部异步）+ 配对回调接线
         lanServer.autoStartIfEnabled()
         lanServer.onPeerPairing = { host, port, code, _ ->

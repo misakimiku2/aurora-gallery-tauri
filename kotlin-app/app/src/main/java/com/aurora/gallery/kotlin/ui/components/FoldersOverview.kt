@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
@@ -237,6 +238,12 @@ fun FoldersOverview(
         )
     }
 
+    // 页面级拖拽滚动条（2026-10-08）：与网格同层叠放，滚动时出现、静止后淡出。
+    // controller 每个组合实例一份，只管自己 add 的那一个滚动监听——RV 跨组合复用时
+    // 「旧组合 detach」与「新组合 attach」无论谁先谁后都不会互相摘错监听器。
+    val scrollbar = remember { GridScrollbarController() }
+    DisposableEffect(scrollbar) { onDispose { scrollbar.detach() } }
+
     LaunchedEffect(folders) {
         // 复用旧 RV 时 adapter 里的数据还在，内容相同则 submit 是 no-op：
         // 不 notify 就不要把宿主记录的滚动位置归零（否则离开时记的位置被抹掉）
@@ -245,6 +252,8 @@ fun FoldersOverview(
             // 返回总览的恢复（pendingRestore>0）在其后的布局回调里执行，会覆盖这里的值
             onScrollChanged(0)
         }
+        // 数据变化后刷新一次滚动条几何（同 FileGrid：不等第一次滚动才更新可显示性）
+        rvHolder.rv?.doOnLayout { scrollbar.sync() }
     }
 
     LaunchedEffect(selectedIds) {
@@ -331,222 +340,238 @@ fun FoldersOverview(
     // 组合期读 containerWidthDp 所以无此问题。
     @Suppress("UNUSED_VARIABLE") val measuredWidthDpSubscribed = rvState.measuredWidthDp
 
-    AndroidView(
-        factory = { ctx ->
-            // 复用旧 RV（2026-09-28：修「返回主界面刷一下」）：进文件夹时总览离开组合，
-            // AndroidView dispose 只是把 RV 从窗口中摘下、实例本身还在 rvState 里。这里
-            // 直接把它从上一个宿主 ViewGroup 摘下来重新 attach——VH 池、滚动位置、已绑定
-            // 的封面全部原样保留，不必重新 create/bind、不必重新加载缩略图。
-            // 必须先 removeView：旧 AndroidViewHolder 仍是它的 parent，不摘就 addView 会崩。
-            rvHolder.rv?.let { existing ->
-                (existing.parent as? ViewGroup)?.removeView(existing)
-                return@AndroidView existing
-            }
-            // 初始列数按**内容宽**（扣除侧栏）算（2026-09-20 用户报障修复）：此前用整屏宽
-            // 兜底，侧栏展开时首帧列数偏大（6 列），进入/返回总览后先见 6 列布局、重组才
-            // 收敛到 5 列（FLIP 重排 + 滚动恢复落在错误几何上 → 位置漂移）。组合时侧栏
-            // 状态是静态的（开合动画前/后都在此值上），扣除即可首帧就对。
-            val sidebarPx = if (sidebarVisible) with(density) { SIDEBAR_WIDTH_DP.roundToPx() } else 0
-            val initialWidthPx = (ctx.resources.displayMetrics.widthPixels - sidebarPx).coerceAtLeast(1)
-            val initialCols = targetCols(ctx.pxToDp(initialWidthPx), level)
-            decoration.spanCount = initialCols
-            // 先建 LM 以便挂 previewRestorer：捏合期间任何布局（如换档）都会把手动的
-            // 预览几何洗掉，必须在布局末尾重放（对齐 FileGrid）
-            val gridLayoutManager = AuroraGridLayoutManager(ctx, initialCols).apply {
-                previewRestorer = { rvHolder.rv?.let { pinchFlip.reapplyPreview(it) } }
-            }
-            RecyclerView(ctx).apply {
-                layoutManager = gridLayoutManager
-                adapter = gridAdapter
-                addItemDecoration(decoration)
-                setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
-                clipToPadding = false
-                // 裁剪双保险（对齐 FileGrid）：滚出 RV 顶边的内容不得画进 TopBar——Compose
-                // interop 链路默认不裁剪，捏合预览的手动 layout 与 FLIP 位移都会把卡片摆到
-                // 负 y（2026-09-17 用户报障：总览滚动/捏合后图片盖住 TopBar）。RV 无背景，
-                // clipToOutline 的 outline 必须显式给 rect，否则 BACKGROUND provider 拿到
-                // null outline、裁剪不生效。
-                clipToOutline = true
-                outlineProvider = object : ViewOutlineProvider() {
-                    override fun getOutline(view: View, outline: Outline) {
-                        outline.setRect(0, 0, view.width, view.height)
-                    }
+    // 滚动条叠在网格上层（Box）：只有按在拇指上才吃事件，其余全部放行给 RV。
+    Box(modifier = modifier.clipToBounds()) {
+        AndroidView(
+            factory = { ctx ->
+                // 复用旧 RV（2026-09-28：修「返回主界面刷一下」）：进文件夹时总览离开组合，
+                // AndroidView dispose 只是把 RV 从窗口中摘下、实例本身还在 rvState 里。这里
+                // 直接把它从上一个宿主 ViewGroup 摘下来重新 attach——VH 池、滚动位置、已绑定
+                // 的封面全部原样保留，不必重新 create/bind、不必重新加载缩略图。
+                // 必须先 removeView：旧 AndroidViewHolder 仍是它的 parent，不摘就 addView 会崩。
+                rvHolder.rv?.let { existing ->
+                    (existing.parent as? ViewGroup)?.removeView(existing)
+                    // 复用分支也要重新挂滚动条：本组合的 controller 是新的
+                    scrollbar.attach(RvScrollMetrics(existing))
+                    return@AndroidView existing
                 }
-                // 换档时旧 child 尽量走 mCachedViews 同位置复用（不重走 bind → 不闪图）；
-                // 非 bind 复用路径的封面高度由 FolderAdapter.onViewAttachedToWindow 归一兜底。
-                setItemViewCacheSize(48)
-                itemAnimator = null
-                isVerticalScrollBarEnabled = false
-                rvHolder.rv = this
-                // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
-                val pinch = PinchGridSpanListener(
-                    context = ctx,
-                    onPinchStart = { _, _ ->
-                        rvHolder.rv?.let { rv ->
-                            pinchFlip.begin(rv, currentGapPx.value)
-                            // 列表末端缩小（列数变多）时目标行上移，上方目标区域属于已回收
-                            // 的更早 item——预览只动已挂载子项，不补铺的话顶部会留一段空白、
-                            // 松手后卡片又被钳回钉底位置（先上后下两段式）。
-                            // 截止位置必须按「收拢目标列数」对齐整行：按旧列数取 span*4 会
-                            // 停在目标几何某行的中间，该行左侧缺的列在后程露在视口顶
-                            //（2026-09-17 用户复测：左上角 3 格空白，6→9 列时 until=30 正好
-                            // 卡在目标行 27..35 的中间）。展开方向 delta=0 不需要补铺，
-                            // 多铺的部分松手后自然回收。
-                            val lm = rv.layoutManager as? AuroraGridLayoutManager
-                            val first = (rv.layoutManager as? LinearLayoutManager)
-                                ?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
-                            if (lm != null && first != RecyclerView.NO_POSITION) {
-                                val shrinkSpan = targetCols(
-                                    rv.context.pxToDp(rv.width),
-                                    max(0, currentLevel.value - 1),
-                                )
-                                lm.prefillAboveUntilPosition =
-                                    max(0, (first / shrinkSpan - 4) * shrinkSpan)
-                                rv.requestLayout()
-                            }
-                            Log.i(
-                                TAG,
-                                "[Overview.pinchStart] level=${currentLevel.value} " +
-                                    "beginActive=${pinchFlip.isActive} first=$first " +
-                                    "span=${lm?.spanCount} prefillUntil=${lm?.prefillAboveUntilPosition}",
-                            )
-                        }
-                    },
-                    onPinchProgress = { scale, _, _ ->
-                        val rv = rvHolder.rv ?: return@PinchGridSpanListener
-                        if (!pinchFlip.isActive) return@PinchGridSpanListener
-                        val dir = if (scale >= 1f) 1 else -1
-                        val targetLevel = (currentLevel.value + dir).coerceIn(0, 2)
-                        val progress = if (targetLevel == currentLevel.value) {
-                            0f
-                        } else {
-                            PinchFlipController.progressFor(scale)
-                        }
-                        // 目标列数用 rv 实际宽度算，与 update 提交口径一致，避免首帧屏宽兜底值
-                        // 与 pxToDp(rv.width) 的舍入差异导致预览列数与提交列数不一致。
-                        val widthDp = rv.context.pxToDp(rv.width)
-                        pinchFlip.update(
-                            rv,
-                            targetLevel,
-                            targetCols(widthDp, targetLevel),
-                            progress,
-                        )
-                    },
-                    onPinchEnd = {
-                        val rv = rvHolder.rv ?: return@PinchGridSpanListener
-                        // 捏合结束关闭上方补铺（后续换档布局按默认行为）
-                        (rv.layoutManager as? AuroraGridLayoutManager)?.prefillAboveUntilPosition =
-                            RecyclerView.NO_POSITION
-                        if (pinchFlip.isActive) {
-                            val target = pinchFlip.currentTargetLevel
-                            if (pinchFlip.shouldCommit() && target != currentLevel.value) {
-                                // 收尾只跑剩下的那一段，别让手感发黏
-                                val remaining = 1f - pinchFlip.currentProgress
-                                flipDurationMs =
-                                    (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
-                                // 锚点（含末端钳制位移 δ 的 commitAnchorTop）必须在 release 前
-                                // 取——release 清掉 lastTables 后 commitAnchorTop 会退回原始值
-                                pendingPinchAnchor.value = PinchAnchor(
-                                    pinchFlip.pinchAnchorPos,
-                                    pinchFlip.commitAnchorTop,
-                                )
-                                Log.i(
-                                    TAG,
-                                    "[Overview.commit] target=$target level=${currentLevel.value} " +
-                                        "p=${pinchFlip.currentProgress} " +
-                                        "anchor=${pendingPinchAnchor.value?.let { "${it.pos}@${it.top}" }}",
-                                )
-                                pinchFlip.release()
-                                onLevelChange(target)
-                            } else {
-                                Log.i(
-                                    TAG,
-                                    "[Overview.settle] target=$target level=${currentLevel.value} " +
-                                        "shouldCommit=${pinchFlip.shouldCommit()} p=${pinchFlip.currentProgress}",
-                                )
-                                pinchFlip.settle(rv)
-                            }
-                        }
-                    },
-                )
-                setOnTouchListener(pinch)
-                addOnItemTouchListener(pinch)
-                // 首次布局完成补写量宽 state，强制 update 重跑（update 可能在布局前跑、
-                // width=0 提前返回；教训见 FileGrid factory 的同款注释）
-                doOnLayout { view ->
-                    if (rvState.measuredWidthDp == 0 && view.width > 0) {
-                        rvState.measuredWidthDp = view.context.pxToDp(view.width)
-                    }
-                }
-                // 宽度变化自愈（对齐 FileGrid factory 的同款监听）：侧栏开合（3.5）逐帧改
-                // 变内容宽度但不触发 Compose 重组。封面已固定 WRAP_CONTENT（按宽自动正方
-                // 形，无滞后无 notify），这里只负责**列数收敛**：宽度稳定 80ms 后写量宽
-                // state → 重组 → update 内 targetCols + animateSpanChange 以 FLIP 动画把
-                // 列数确定性收敛，避免列数停在旧值等某次随机重组才跳变（卡片突然变大、
-                // 与开合脱节）。
-                var pendingSpanSync: Runnable? = null
-                addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
-                    val newW = right - left
-                    if (newW <= 0 || newW == oldRight - oldLeft) return@addOnLayoutChangeListener
-                    pendingSpanSync?.let(v::removeCallbacks)
-                    val spanSync = Runnable {
-                        // 宽度已稳定：退场预测（sidebarSynced 对齐目标状态），下一轮重组按
-                        // 实际宽度复算列数/cell（与点按时的预测值通常一致，仅小数舍入差）
-                        sidebarSynced.value = currentSidebarVisible.value
-                        spanSyncTick.value++
-                    }
-                    pendingSpanSync = spanSync
-                    v.postDelayed(spanSync, 80)
-                }
-                // 滚动位置上报：宿主用普通字段记录（非 Compose state，不触发重组），
-                // 返回总览时作为 initialScrollTop 传回归位
-                addOnScrollListener(object : RecyclerView.OnScrollListener() {
-                    override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                        onScrollChanged(rv.computeVerticalScrollOffset())
-                    }
-                })
-            }.also { rv ->
-                // 4.4 下拉刷新：注册在捏合监听器之后（同 FileGrid 的注释）
-                pullToRefreshState?.let { st ->
-                    val currentPull = currentOnPullToRefresh
-                    rv.addOnItemTouchListener(
-                        PullToRefreshListener(
-                            state = st,
-                            thresholdPx = ctx.dp(80),
-                            maxPullPx = ctx.dp(160),
-                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st, ctx.dp(80)) } },
-                        )
-                    )
-                }
-            }
-        },
-        update = { rv ->
-            val lm = rv.layoutManager as? GridLayoutManager ?: return@AndroidView
-            if (rv.width <= 0) return@AndroidView
-            spanSyncTick.value // 订阅：侧栏动画结束后由监听器递增，触发本次收敛重算
-            val predicting = sidebarVisible != sidebarSynced.value
-            val sidebarPx = with(density) { SIDEBAR_WIDTH_DP.roundToPx() }
-            // 预测中 = 动画进行中：宽度取目标状态的最终值（点按瞬间的 rv.width + 全部增量）
-            val widthPx = rv.width + if (predicting) (if (sidebarVisible) -sidebarPx else sidebarPx) else 0
-            val widthDp = rv.context.pxToDp(widthPx)
-            if (rvState.measuredWidthDp != widthDp) rvState.measuredWidthDp = widthDp
-            val span = targetCols(widthDp, level)
-            if (span != lm.spanCount) {
-                // 捏合落档的锚点只消费一次；非捏合换档（anchor=null）退回 firstVisible 锚点
-                val anchor = pendingPinchAnchor.value
-                pendingPinchAnchor.value = null
-                animateSpanChange(rv, lm, decoration, span, flipDurationMs, pinchAnchor = anchor)
-                flipDurationMs = FLIP_DURATION_MS
-            }
-            // 封面高度同步（L8 同款，对齐 FileGrid.applyCellWidth）。cellWidthPx 现仅作
-            // 捏合预览的几何簿记（封面已 WRAP_CONTENT 自动正方形），用预测宽度保持一致。
-            val gap = currentGapPx.value
-            val cell = ((widthPx - rv.paddingLeft - rv.paddingRight - (span - 1) * gap) / span)
-                .coerceAtLeast(1)
-            gridAdapter.applyCellWidth(cell)
-        },
-        modifier = modifier.clipToBounds(),
-    )
+              // 初始列数按**内容宽**（扣除侧栏）算（2026-09-20 用户报障修复）：此前用整屏宽
+              // 兜底，侧栏展开时首帧列数偏大（6 列），进入/返回总览后先见 6 列布局、重组才
+              // 收敛到 5 列（FLIP 重排 + 滚动恢复落在错误几何上 → 位置漂移）。组合时侧栏
+              // 状态是静态的（开合动画前/后都在此值上），扣除即可首帧就对。
+              val sidebarPx = if (sidebarVisible) with(density) { SIDEBAR_WIDTH_DP.roundToPx() } else 0
+              val initialWidthPx = (ctx.resources.displayMetrics.widthPixels - sidebarPx).coerceAtLeast(1)
+              val initialCols = targetCols(ctx.pxToDp(initialWidthPx), level)
+              decoration.spanCount = initialCols
+              // 先建 LM 以便挂 previewRestorer：捏合期间任何布局（如换档）都会把手动的
+              // 预览几何洗掉，必须在布局末尾重放（对齐 FileGrid）
+              val gridLayoutManager = AuroraGridLayoutManager(ctx, initialCols).apply {
+                  previewRestorer = { rvHolder.rv?.let { pinchFlip.reapplyPreview(it) } }
+              }
+              RecyclerView(ctx).apply {
+                  layoutManager = gridLayoutManager
+                  adapter = gridAdapter
+                  addItemDecoration(decoration)
+                  setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
+                  clipToPadding = false
+                  // 裁剪双保险（对齐 FileGrid）：滚出 RV 顶边的内容不得画进 TopBar——Compose
+                  // interop 链路默认不裁剪，捏合预览的手动 layout 与 FLIP 位移都会把卡片摆到
+                  // 负 y（2026-09-17 用户报障：总览滚动/捏合后图片盖住 TopBar）。RV 无背景，
+                  // clipToOutline 的 outline 必须显式给 rect，否则 BACKGROUND provider 拿到
+                  // null outline、裁剪不生效。
+                  clipToOutline = true
+                  outlineProvider = object : ViewOutlineProvider() {
+                      override fun getOutline(view: View, outline: Outline) {
+                          outline.setRect(0, 0, view.width, view.height)
+                      }
+                  }
+                  // 换档时旧 child 尽量走 mCachedViews 同位置复用（不重走 bind → 不闪图）；
+                  // 非 bind 复用路径的封面高度由 FolderAdapter.onViewAttachedToWindow 归一兜底。
+                  setItemViewCacheSize(48)
+                  itemAnimator = null
+                  isVerticalScrollBarEnabled = false
+                  rvHolder.rv = this
+                  // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
+                  val pinch = PinchGridSpanListener(
+                      context = ctx,
+                      onPinchStart = { _, _ ->
+                          rvHolder.rv?.let { rv ->
+                              pinchFlip.begin(rv, currentGapPx.value)
+                              // 列表末端缩小（列数变多）时目标行上移，上方目标区域属于已回收
+                              // 的更早 item——预览只动已挂载子项，不补铺的话顶部会留一段空白、
+                              // 松手后卡片又被钳回钉底位置（先上后下两段式）。
+                              // 截止位置必须按「收拢目标列数」对齐整行：按旧列数取 span*4 会
+                              // 停在目标几何某行的中间，该行左侧缺的列在后程露在视口顶
+                              //（2026-09-17 用户复测：左上角 3 格空白，6→9 列时 until=30 正好
+                              // 卡在目标行 27..35 的中间）。展开方向 delta=0 不需要补铺，
+                              // 多铺的部分松手后自然回收。
+                              val lm = rv.layoutManager as? AuroraGridLayoutManager
+                              val first = (rv.layoutManager as? LinearLayoutManager)
+                                  ?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+                              if (lm != null && first != RecyclerView.NO_POSITION) {
+                                  val shrinkSpan = targetCols(
+                                      rv.context.pxToDp(rv.width),
+                                      max(0, currentLevel.value - 1),
+                                  )
+                                  lm.prefillAboveUntilPosition =
+                                      max(0, (first / shrinkSpan - 4) * shrinkSpan)
+                                  rv.requestLayout()
+                              }
+                              Log.i(
+                                  TAG,
+                                  "[Overview.pinchStart] level=${currentLevel.value} " +
+                                      "beginActive=${pinchFlip.isActive} first=$first " +
+                                      "span=${lm?.spanCount} prefillUntil=${lm?.prefillAboveUntilPosition}",
+                              )
+                          }
+                      },
+                      onPinchProgress = { scale, _, _ ->
+                          val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                          if (!pinchFlip.isActive) return@PinchGridSpanListener
+                          val dir = if (scale >= 1f) 1 else -1
+                          val targetLevel = (currentLevel.value + dir).coerceIn(0, 2)
+                          val progress = if (targetLevel == currentLevel.value) {
+                              0f
+                          } else {
+                              PinchFlipController.progressFor(scale)
+                          }
+                          // 目标列数用 rv 实际宽度算，与 update 提交口径一致，避免首帧屏宽兜底值
+                          // 与 pxToDp(rv.width) 的舍入差异导致预览列数与提交列数不一致。
+                          val widthDp = rv.context.pxToDp(rv.width)
+                          pinchFlip.update(
+                              rv,
+                              targetLevel,
+                              targetCols(widthDp, targetLevel),
+                              progress,
+                          )
+                      },
+                      onPinchEnd = {
+                          val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                          // 捏合结束关闭上方补铺（后续换档布局按默认行为）
+                          (rv.layoutManager as? AuroraGridLayoutManager)?.prefillAboveUntilPosition =
+                              RecyclerView.NO_POSITION
+                          if (pinchFlip.isActive) {
+                              val target = pinchFlip.currentTargetLevel
+                              if (pinchFlip.shouldCommit() && target != currentLevel.value) {
+                                  // 收尾只跑剩下的那一段，别让手感发黏
+                                  val remaining = 1f - pinchFlip.currentProgress
+                                  flipDurationMs =
+                                      (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
+                                  // 锚点（含末端钳制位移 δ 的 commitAnchorTop）必须在 release 前
+                                  // 取——release 清掉 lastTables 后 commitAnchorTop 会退回原始值
+                                  pendingPinchAnchor.value = PinchAnchor(
+                                      pinchFlip.pinchAnchorPos,
+                                      pinchFlip.commitAnchorTop,
+                                  )
+                                  Log.i(
+                                      TAG,
+                                      "[Overview.commit] target=$target level=${currentLevel.value} " +
+                                          "p=${pinchFlip.currentProgress} " +
+                                          "anchor=${pendingPinchAnchor.value?.let { "${it.pos}@${it.top}" }}",
+                                  )
+                                  pinchFlip.release()
+                                  onLevelChange(target)
+                              } else {
+                                  Log.i(
+                                      TAG,
+                                      "[Overview.settle] target=$target level=${currentLevel.value} " +
+                                          "shouldCommit=${pinchFlip.shouldCommit()} p=${pinchFlip.currentProgress}",
+                                  )
+                                  pinchFlip.settle(rv)
+                              }
+                          }
+                      },
+                  )
+                  setOnTouchListener(pinch)
+                  addOnItemTouchListener(pinch)
+                  // 首次布局完成补写量宽 state，强制 update 重跑（update 可能在布局前跑、
+                  // width=0 提前返回；教训见 FileGrid factory 的同款注释）
+                  doOnLayout { view ->
+                      if (rvState.measuredWidthDp == 0 && view.width > 0) {
+                          rvState.measuredWidthDp = view.context.pxToDp(view.width)
+                      }
+                  }
+                  // 宽度变化自愈（对齐 FileGrid factory 的同款监听）：侧栏开合（3.5）逐帧改
+                  // 变内容宽度但不触发 Compose 重组。封面已固定 WRAP_CONTENT（按宽自动正方
+                  // 形，无滞后无 notify），这里只负责**列数收敛**：宽度稳定 80ms 后写量宽
+                  // state → 重组 → update 内 targetCols + animateSpanChange 以 FLIP 动画把
+                  // 列数确定性收敛，避免列数停在旧值等某次随机重组才跳变（卡片突然变大、
+                  // 与开合脱节）。
+                  var pendingSpanSync: Runnable? = null
+                  addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+                      val newW = right - left
+                      if (newW <= 0 || newW == oldRight - oldLeft) return@addOnLayoutChangeListener
+                      pendingSpanSync?.let(v::removeCallbacks)
+                      val spanSync = Runnable {
+                          // 宽度已稳定：退场预测（sidebarSynced 对齐目标状态），下一轮重组按
+                          // 实际宽度复算列数/cell（与点按时的预测值通常一致，仅小数舍入差）
+                          sidebarSynced.value = currentSidebarVisible.value
+                          spanSyncTick.value++
+                      }
+                      pendingSpanSync = spanSync
+                      v.postDelayed(spanSync, 80)
+                  }
+                  // 滚动位置上报：宿主用普通字段记录（非 Compose state，不触发重组），
+                  // 返回总览时作为 initialScrollTop 传回归位
+                  addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                      override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                          onScrollChanged(rv.computeVerticalScrollOffset())
+                      }
+                  })
+              }.also { rv ->
+                  // 挂页面滚动条：attach 只登记一个 OnScrollListener，不碰 RV 既有配置
+                  // （下拉刷新/捏合监听都在上面注册完毕，互不干扰）
+                  scrollbar.attach(RvScrollMetrics(rv))
+                  // 4.4 下拉刷新：注册在捏合监听器之后（同 FileGrid 的注释）
+                  pullToRefreshState?.let { st ->
+                      val currentPull = currentOnPullToRefresh
+                      rv.addOnItemTouchListener(
+                          PullToRefreshListener(
+                              state = st,
+                              thresholdPx = ctx.dp(80),
+                              maxPullPx = ctx.dp(160),
+                              onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st, ctx.dp(80)) } },
+                          )
+                      )
+                  }
+              }
+          },
+          update = { rv ->
+              val lm = rv.layoutManager as? GridLayoutManager ?: return@AndroidView
+              if (rv.width <= 0) return@AndroidView
+              spanSyncTick.value // 订阅：侧栏动画结束后由监听器递增，触发本次收敛重算
+              val predicting = sidebarVisible != sidebarSynced.value
+              val sidebarPx = with(density) { SIDEBAR_WIDTH_DP.roundToPx() }
+              // 预测中 = 动画进行中：宽度取目标状态的最终值（点按瞬间的 rv.width + 全部增量）
+              val widthPx = rv.width + if (predicting) (if (sidebarVisible) -sidebarPx else sidebarPx) else 0
+              val widthDp = rv.context.pxToDp(widthPx)
+              if (rvState.measuredWidthDp != widthDp) rvState.measuredWidthDp = widthDp
+              val span = targetCols(widthDp, level)
+              if (span != lm.spanCount) {
+                  // 捏合落档的锚点只消费一次；非捏合换档（anchor=null）退回 firstVisible 锚点
+                  val anchor = pendingPinchAnchor.value
+                  pendingPinchAnchor.value = null
+                  animateSpanChange(rv, lm, decoration, span, flipDurationMs, pinchAnchor = anchor)
+                  flipDurationMs = FLIP_DURATION_MS
+              }
+              // 封面高度同步（L8 同款，对齐 FileGrid.applyCellWidth）。cellWidthPx 现仅作
+              // 捏合预览的几何簿记（封面已 WRAP_CONTENT 自动正方形），用预测宽度保持一致。
+              val gap = currentGapPx.value
+              val cell = ((widthPx - rv.paddingLeft - rv.paddingRight - (span - 1) * gap) / span)
+                  .coerceAtLeast(1)
+              gridAdapter.applyCellWidth(cell)
+          },
+            // fillMaxSize 而非 matchParentSize：让网格自己把 Box 撑满，不依赖「Box 先量出
+          // 尺寸再回灌子节点」这条隐式链（命中层的定位也按同一套坐标算）
+          modifier = Modifier.fillMaxSize(),
+        )
+        GridScrollbar(
+            controller = scrollbar,
+            color = colors.textSecondary,
+            indicatorColor = colors.content,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
 }
 
 internal class FolderAdapter(

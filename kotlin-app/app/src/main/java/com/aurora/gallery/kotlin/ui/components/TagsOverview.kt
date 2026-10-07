@@ -86,6 +86,8 @@ fun TagsOverview(
 ) {
     val colors = AuroraTheme.colors
     val gridState = rememberLazyGridState()
+    // 页面级拖拽滚动条（2026-10-08）：与文件夹/网格同一条，条目 <100 时自动不显示
+    val scrollbar = rememberLazyScrollbar(gridState)
 
     // 滚动恢复：本次组合实例消费一次（同 FoldersOverview 的 pendingRestore 模式）
     var pendingRestore by remember { mutableIntStateOf(initialScrollAnchor) }
@@ -130,59 +132,67 @@ fun TagsOverview(
         return
     }
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 120.dp),
-        state = gridState,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
-        modifier = modifier.fillMaxSize(),
-    ) {
-        displayGroups.forEach { group ->
-            // 组名行：通栏分隔标题（桌面 TagsList 的 header:* 条目同款）
-            item(key = "header:${group.key}", span = { GridItemSpan(maxLineSpan) }) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 120.dp),
+            state = gridState,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            displayGroups.forEach { group ->
+                // 组名行：通栏分隔标题（桌面 TagsList 的 header:* 条目同款）
+                item(key = "header:${group.key}", span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
                         Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            // 桌面组名行的字母盒（blue-50 底 + blue-600 字）＝色表的 tagBg/tagText；
-                            // 这两个角色在 View 档，Compose 侧经 palette 取
-                            .background(Color(colors.palette.tagBg)),
-                        contentAlignment = Alignment.Center,
+                            .fillMaxWidth()
+                            .padding(top = 8.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                // 桌面组名行的字母盒（blue-50 底 + blue-600 字）＝色表的 tagBg/tagText；
+                                // 这两个角色在 View 档，Compose 侧经 palette 取
+                                .background(Color(colors.palette.tagBg)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                group.key,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(colors.palette.tagText),
+                            )
+                        }
+                        Spacer(Modifier.size(12.dp))
                         Text(
-                            group.key,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(colors.palette.tagText),
+                            "${group.tags.size} 项",
+                            fontSize = 12.sp,
+                            color = colors.textSecondary,
                         )
                     }
-                    Spacer(Modifier.size(12.dp))
-                    Text(
-                        "${group.tags.size} 项",
-                        fontSize = 12.sp,
-                        color = colors.textSecondary,
+                }
+                items(
+                    count = group.tags.size,
+                    key = { i -> "tag:${group.tags[i].tag}" },
+                ) { i ->
+                    val entry = group.tags[i]
+                    TagCard(
+                        tag = entry.tag,
+                        count = entry.count,
+                        onClick = { onTagClick(entry.tag) },
                     )
                 }
             }
-            items(
-                count = group.tags.size,
-                key = { i -> "tag:${group.tags[i].tag}" },
-            ) { i ->
-                val entry = group.tags[i]
-                TagCard(
-                    tag = entry.tag,
-                    count = entry.count,
-                    onClick = { onTagClick(entry.tag) },
-                )
-            }
         }
+        GridScrollbar(
+            controller = scrollbar,
+            color = colors.textSecondary,
+            indicatorColor = colors.content,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -274,6 +284,8 @@ fun PeopleOverview(
     onAvatarChange: (LanPerson) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
+    val peopleGridState = rememberLazyGridState()
+    val peopleScrollbar = rememberLazyScrollbar(peopleGridState)
     if (lanPeople.isEmpty() && localPeople.isEmpty()) {
         // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -300,96 +312,105 @@ fun PeopleOverview(
         }
         return
     }
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 140.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
-        modifier = modifier.fillMaxSize(),
-    ) {
-        // M6b 阶段 4（D37）：本地人物节（WD14 识别产物；点击暂 Toast——本地人物
-        // 筛选视图未列验收，只保展示）
-        if (localPeople.isNotEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column {
-                    Text(
-                        text = "本地人物",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.textSecondary,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                }
-            }
-            items(
-                count = localPeople.size,
-                key = { i -> "local:${localPeople[i].id}" },
-            ) { i ->
-                val person = localPeople[i]
-                Column(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { }
-                        .padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // 头像：人物无远端缩略图可用，首字符圆形占位（对齐桌面 initials 形制）
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(colors.surface)
-                            .border(1.dp, colors.subtle, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = person.name.take(1),
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.primary,
-                        )
-                    }
-                    Text(
-                        text = person.name,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                    Text(
-                        text = "${person.count} 张",
-                        fontSize = 11.sp,
-                        color = colors.textSecondary,
-                    )
-                }
-            }
-        }
-        if (lanPeople.isNotEmpty()) {
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 140.dp),
+            state = peopleGridState,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            // M6b 阶段 4（D37）：本地人物节（WD14 识别产物；点击暂 Toast——本地人物
+            // 筛选视图未列验收，只保展示）
             if (localPeople.isNotEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        text = "远端人物",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colors.textSecondary,
-                        modifier = Modifier.padding(top = 8.dp),
+                    Column {
+                        Text(
+                            text = "本地人物",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textSecondary,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+                items(
+                    count = localPeople.size,
+                    key = { i -> "local:${localPeople[i].id}" },
+                ) { i ->
+                    val person = localPeople[i]
+                    Column(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { }
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        // 头像：人物无远端缩略图可用，首字符圆形占位（对齐桌面 initials 形制）
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(colors.surface)
+                                .border(1.dp, colors.subtle, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = person.name.take(1),
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = colors.primary,
+                            )
+                        }
+                        Text(
+                            text = person.name,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                        Text(
+                            text = "${person.count} 张",
+                            fontSize = 11.sp,
+                            color = colors.textSecondary,
+                        )
+                    }
+                }
+            }
+            if (lanPeople.isNotEmpty()) {
+                if (localPeople.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            text = "远端人物",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textSecondary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
+                items(
+                    count = lanPeople.size,
+                    key = { i -> lanPeople[i].id },
+                ) { i ->
+                    LanPersonCard(
+                        person = lanPeople[i],
+                        lanAllowEdit = lanAllowEdit,
+                        onClick = { onPersonClick(lanPeople[i]) },
+                        onRename = { onRename(lanPeople[i]) },
+                        onDescribe = { onDescribe(lanPeople[i]) },
+                        onAvatarChange = { onAvatarChange(lanPeople[i]) },
                     )
                 }
             }
-            items(
-                count = lanPeople.size,
-                key = { i -> lanPeople[i].id },
-            ) { i ->
-                LanPersonCard(
-                    person = lanPeople[i],
-                    lanAllowEdit = lanAllowEdit,
-                    onClick = { onPersonClick(lanPeople[i]) },
-                    onRename = { onRename(lanPeople[i]) },
-                    onDescribe = { onDescribe(lanPeople[i]) },
-                    onAvatarChange = { onAvatarChange(lanPeople[i]) },
-                )
-            }
         }
+        GridScrollbar(
+            controller = peopleScrollbar,
+            color = colors.textSecondary,
+            indicatorColor = colors.content,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

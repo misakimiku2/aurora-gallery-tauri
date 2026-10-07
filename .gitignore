@@ -62,3 +62,6 @@ kotlin-app/local.properties
 kotlin-app/keystore.properties
 kotlin-app/keystore/
 release-out/
+
+# 本地诊断产物（模拟器截图/取证的数据库副本等，2026-10-08 起）
+aurora_diag_tmp/

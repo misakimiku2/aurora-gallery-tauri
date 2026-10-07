@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -197,6 +198,8 @@ fun TopicsOverview(
         }
 
         val gridState = rememberLazyGridState()
+        // 页面级拖拽滚动条（2026-10-08）：与文件夹/网格同一条，条目 <100 时自动不显示
+        val scrollbar = rememberLazyScrollbar(gridState)
         var pendingRestore by remember { mutableIntStateOf(initialScrollAnchor) }
         LaunchedEffect(Unit) {
             val anchor = pendingRestore
@@ -220,54 +223,29 @@ fun TopicsOverview(
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val targetContentWidth = screenWidthDp - (if (sidebarVisible) SIDEBAR_WIDTH_DP.value else 0f)
         val cols = ((targetContentWidth + 16f) / (220f + 16f)).toInt().coerceAtLeast(1)
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(cols),
-            state = gridState,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp,
-            ),
-            modifier = Modifier.weight(1f).requiredWidth(targetContentWidth.dp),
-        ) {
-            items(
-                count = topics.size,
-                key = { i -> topics[i].id },
-            ) { i ->
-                val topic = topics[i]
-                // 3.3fix② 三轮：列归属重排（4↔5 列）会让跨行卡片在拍点瞬移——收起时
-                // 第二行首卡直接跳到新列、展开时反向。animateItem 的 placement 动画让
-                // 重排卡片用与侧栏开合同规格的 300ms ease-out 滑到新位置；spec 显式传
-                // tween 与侧栏动画完全同步，fadeIn/Out 关掉（开关场景没有增删条目）。
-                Box(
-                    Modifier.animateItem(
-                        fadeInSpec = null,
-                        placementSpec = tween(durationMillis = PANEL_ANIMATE_MS, easing = EaseOut),
-                        fadeOutSpec = null,
-                    ),
-                ) {
-                    TopicCard(
-                        topic = topic,
-                        cover = topic.coverFileId?.let { coverImages[it] },
-                        totals = totals[topic.id],
-                        thumbnailLoader = thumbnailLoader,
-                        onClick = { onTopicClick(topic) },
-                        onRename = { onRenameTopic(topic) },
-                        onDelete = { onDeleteTopic(topic) },
-                    )
-                }
-            }
-            // —— 远端专题块（M6a 阶段 5，D31 并入口径）：本地卡之后同页追加，通栏
-            // Section 头 + 网络标识卡。key 加 lan: 前缀，与本地 9 位随机 id 永不互撞。
-            if (displayLanTopics.isNotEmpty()) {
-                item(key = "lan:header", span = { GridItemSpan(maxLineSpan) }) {
-                    LanTopicsSectionHeader(count = displayLanTopics.size)
-                }
+        // 两层 Box：外层 = 可用宽度（滚动条贴它的右缘），内层网格仍被 requiredWidth 钉在
+        // 目标宽度上。原来只有一层、requiredWidth 直接钉在包裹层上，滚动条跟着网格一起被
+        // 挤出屏幕右缘（2026-10-08 指挥官截图：滑块只剩半个贴在边上）。
+        Box(modifier = Modifier.weight(1f)) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(cols),
+                state = gridState,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp,
+                ),
+                modifier = Modifier.requiredWidth(targetContentWidth.dp).fillMaxHeight(),
+            ) {
                 items(
-                    count = displayLanTopics.size,
-                    key = { i -> "lan:${displayLanTopics[i].id}" },
+                    count = topics.size,
+                    key = { i -> topics[i].id },
                 ) { i ->
-                    val topic = displayLanTopics[i]
+                    val topic = topics[i]
+                    // 3.3fix② 三轮：列归属重排（4↔5 列）会让跨行卡片在拍点瞬移——收起时
+                    // 第二行首卡直接跳到新列、展开时反向。animateItem 的 placement 动画让
+                    // 重排卡片用与侧栏开合同规格的 300ms ease-out 滑到新位置；spec 显式传
+                    // tween 与侧栏动画完全同步，fadeIn/Out 关掉（开关场景没有增删条目）。
                     Box(
                         Modifier.animateItem(
                             fadeInSpec = null,
@@ -275,14 +253,50 @@ fun TopicsOverview(
                             fadeOutSpec = null,
                         ),
                     ) {
-                        LanTopicCard(
+                        TopicCard(
                             topic = topic,
-                            onClick = { onLanTopicClick(topic) },
-                            onDelete = { onDeleteLanTopic(topic) },
+                            cover = topic.coverFileId?.let { coverImages[it] },
+                            totals = totals[topic.id],
+                            thumbnailLoader = thumbnailLoader,
+                            onClick = { onTopicClick(topic) },
+                            onRename = { onRenameTopic(topic) },
+                            onDelete = { onDeleteTopic(topic) },
                         )
                     }
                 }
+                // —— 远端专题块（M6a 阶段 5，D31 并入口径）：本地卡之后同页追加，通栏
+                // Section 头 + 网络标识卡。key 加 lan: 前缀，与本地 9 位随机 id 永不互撞。
+                if (displayLanTopics.isNotEmpty()) {
+                    item(key = "lan:header", span = { GridItemSpan(maxLineSpan) }) {
+                        LanTopicsSectionHeader(count = displayLanTopics.size)
+                    }
+                    items(
+                        count = displayLanTopics.size,
+                        key = { i -> "lan:${displayLanTopics[i].id}" },
+                    ) { i ->
+                        val topic = displayLanTopics[i]
+                        Box(
+                            Modifier.animateItem(
+                                fadeInSpec = null,
+                                placementSpec = tween(durationMillis = PANEL_ANIMATE_MS, easing = EaseOut),
+                                fadeOutSpec = null,
+                            ),
+                        ) {
+                            LanTopicCard(
+                                topic = topic,
+                                onClick = { onLanTopicClick(topic) },
+                                onDelete = { onDeleteLanTopic(topic) },
+                            )
+                        }
+                    }
+                }
             }
+            GridScrollbar(
+                controller = scrollbar,
+                color = colors.textSecondary,
+                indicatorColor = colors.content,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 }
