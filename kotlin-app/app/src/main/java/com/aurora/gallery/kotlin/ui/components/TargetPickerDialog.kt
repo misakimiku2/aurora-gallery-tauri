@@ -1,17 +1,24 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -26,13 +33,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +56,9 @@ import uniffi.aurora_core.Folder
  * bucket 列表，D18），形制对齐 TopicPickerDialog（列表 + panel 底圆角容器）。底部常驻
  * 「+ 新建相册」入口（1.3 懒创建：不在选择器外提供独立的建空相册入口），点开就地变成
  * 名字输入行；确认后由宿主做重名合并拦截（细则 iii）再落 MediaStore。
+ *
+ * 顶部「搜索相册」框（位置对齐桌面 FolderPickerModal：标题下、列表上）按名字过滤
+ * （[filterFoldersForSearch]，大小写不敏感），仅过滤展示不改选择语义；右侧清词钮。
  *
  * 与查看器的 View 体系 FolderPickerDialog 是两处实现（D13 先例：不强合），但写入路径
  * 只有一条（GalleryViewModel 的写原语）。
@@ -63,12 +77,77 @@ fun TargetPickerDialog(
     val colors = AuroraTheme.colors
     var enteringName by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf(TextFieldValue("")) }
+    var query by remember { mutableStateOf("") }
+    val searchFocus = remember { FocusRequester() }
+    val visibleFolders = filterFoldersForSearch(folders, query)
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (type == "copy") "复制到相册" else "移动到相册") },
         text = {
             Column {
+                // 搜索框（位置对齐桌面 FolderPickerModal：标题下、列表上；形制对齐
+                // CanvasAddImagesDialog 的搜索行）。整行可点唤起键盘（触控目标 48dp），
+                // 有词时描边转主色；清词钮视觉 14dp、命中 48dp。
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.surface)
+                        .border(
+                            1.dp,
+                            if (query.isNotEmpty()) colors.primary else colors.border,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable(onClickLabel = "搜索相册") { searchFocus.requestFocus() }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = TargetPickerIconSearch,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = colors.textPrimary, fontSize = 15.sp),
+                        cursorBrush = SolidColor(colors.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(searchFocus),
+                        decorationBox = { inner ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (query.isEmpty()) {
+                                    Text("搜索相册…", fontSize = 15.sp, color = colors.textSecondary)
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                    if (query.isNotEmpty()) {
+                        Box(
+                            Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .clickable(onClickLabel = "清除搜索") { query = "" },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = TargetPickerIconX,
+                                contentDescription = "清除搜索",
+                                tint = colors.textSecondary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.size(10.dp))
                 Column(
                     Modifier
                         .heightIn(max = 340.dp)
@@ -77,15 +156,15 @@ fun TargetPickerDialog(
                         .padding(6.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    if (folders.isEmpty()) {
+                    if (visibleFolders.isEmpty()) {
                         Text(
-                            "暂无相册",
+                            if (folders.isEmpty()) "暂无相册" else "无匹配相册",
                             fontSize = 14.sp,
                             color = colors.textSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
                         )
                     }
-                    folders.forEach { folder ->
+                    visibleFolders.forEach { folder ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
@@ -218,4 +297,36 @@ private val TargetPickerIconPlus: ImageVector by lazy {
         moveTo(5f, 12f)
         lineTo(19f, 12f)
     }
+}
+
+/** lucide search。 */
+private val TargetPickerIconSearch: ImageVector by lazy {
+    pickerIconBuilder("PickerSearch") {
+        moveTo(3f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
+        close()
+        moveTo(21f, 21f)
+        lineTo(16.65f, 16.65f)
+    }
+}
+
+/** lucide x。 */
+private val TargetPickerIconX: ImageVector by lazy {
+    pickerIconBuilder("PickerX") {
+        moveTo(18f, 6f)
+        lineTo(6f, 18f)
+        moveTo(6f, 6f)
+        lineTo(18f, 18f)
+    }
+}
+
+/**
+ * 搜索过滤纯函数（供 JVM 单测）：名字包含查询即命中（大小写不敏感）；查询 trim 后
+ * 为空 = 原样返回全量。
+ */
+internal fun filterFoldersForSearch(folders: List<Folder>, query: String): List<Folder> {
+    val q = query.trim()
+    if (q.isEmpty()) return folders
+    return folders.filter { it.name.contains(q, ignoreCase = true) }
 }
