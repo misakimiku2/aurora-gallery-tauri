@@ -1579,69 +1579,69 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
         val relPath = targetRelPath.ensureTrailingSlash()
         viewModelScope.launch {
-            val okUris = withContext(Dispatchers.IO) {
-                val out = ArrayList<android.net.Uri>()
+            val okCount = withContext(Dispatchers.IO) {
+                var count = 0
                 for (source in uris) {
                     try {
-                        copyOneWithMetadata(source, relPath)?.let { out += it }
+                        if (copyOneWithMetadata(source, relPath)) count++
                     } catch (e: Exception) {
                         Log.w(TAG, "[FileOp] copy failed $source -> $relPath", e)
                     }
                 }
-                out
+                count
             }
-            Log.i(TAG, "[FileOp] copied=${okUris.size}/${uris.size} -> $relPath")
-            // 与删除/移动同款：onDone 不等对账（副本到当前视图的出现交给后台对账——
+            Log.i(TAG, "[FileOp] copied=$okCount/${uris.size} -> $relPath")
+            // 与删除/移动同款：onDone 不等对账（副本进当前网格的显示交给后台对账——
             // 拿不到「目标 = 当前文件夹」的可靠判定，不做乐观插入）
             refreshAfterWriteAsync()
-            onDone(okUris.size)
+            onDone(okCount)
         }
     }
 
     /**
      * 单文件复制原语：insert 新行（[overrideName] 覆盖名字，改名即「换名复制」）+
-     * 字节流拷贝 + 元数据/标签搬运。返回新 uri（失败 null）。
+     * 字节流拷贝 + 元数据/标签搬运。返回成功与否。
      *
      * 流拷贝失败时回收刚 insert 的行（App 自有行可直接删）——不回收会留 0 字节孤儿，
      * 对账把它当真文件抬进索引（真机踩过）。元数据/标签搬运失败只记日志，不回滚。
+     *
+     * 华为 Q 的 insert 白名单（allowed [DCIM, Pictures]）对 legacy 没豁免：白名单内走
+     * MediaStore insert（新 uri 即刻可用，元数据同步搬）；被拒走 Q 传统视图文件路径
+     * 复制——**副本落盘即成功**，行登记 + 元数据搬运交给 [registerRowAndMigrateAsync]
+     * 后台（EMUI 扫描回调对非标准目录能迟到几十秒，同步等会让「已复制」姗姗来迟）。
      */
     private fun copyOneWithMetadata(
         source: android.net.Uri,
         relPath: String,
         overrideName: String? = null,
-    ): android.net.Uri? {
-        // 华为 Q 的 insert 白名单（allowed [DCIM, Pictures]）对 legacy 没豁免：白名单内
-        // 走 MediaStore insert（App 自有新行、流拷贝），被拒走 Q 传统视图文件路径复制
-        var viaFile = false
+    ): Boolean {
         val uri = try {
-            insertImageCopy(source, relPath, overrideName) ?: return null
+            insertImageCopy(source, relPath, overrideName) ?: return false
         } catch (e: Exception) {
-            viaFile = true
             Log.w(TAG, "[FileOp] insert rejected, fallback to file: $source", e)
             debugLog("copyOne insert rejected, trying file-path copy: $e")
-            legacyCopyViaFile(source, relPath, overrideName) ?: return null
+            val dst = legacyCopyToDir(source, relPath, overrideName) ?: return false
+            registerRowAndMigrateAsync(source, dst, includeTopic = false)
+            return true
         }
-        if (!viaFile) {
-            try {
-                appContext.contentResolver.openInputStream(source)?.use { input ->
-                    appContext.contentResolver.openOutputStream(uri)?.use { output ->
-                        input.copyTo(output)
-                    } ?: throw IllegalStateException("openOutputStream failed: $uri")
-                } ?: throw IllegalStateException("openInputStream failed: $source")
-            } catch (e: Exception) {
-                debugLog("copyOne stream failed $source -> $uri: $e")
-                Log.w(TAG, "[FileOp] copy stream failed $source -> $uri", e)
-                runCatching { appContext.contentResolver.delete(uri, null, null) }
-                return null
-            }
+        try {
+            appContext.contentResolver.openInputStream(source)?.use { input ->
+                appContext.contentResolver.openOutputStream(uri)?.use { output ->
+                    input.copyTo(output)
+                } ?: throw IllegalStateException("openOutputStream failed: $uri")
+            } ?: throw IllegalStateException("openInputStream failed: $source")
+        } catch (e: Exception) {
+            debugLog("copyOne stream failed $source -> $uri: $e")
+            Log.w(TAG, "[FileOp] copy stream failed $source -> $uri", e)
+            runCatching { appContext.contentResolver.delete(uri, null, null) }
+            return false
         }
         // uri 必须重导成扫描管道同款规范形式：insert 返回的是 external_primary 形式，
         // 与 scanMediaStore 拼的 external 形式指向同一行但字符串不同 → generateId 哈希
-        // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。文件路径版的
-        // scanFileSync 已返回规范形式。元数据/标签搬运与 copyFiles 同语义（不含专题——
-        // 副本不自动加入源文件的专题）。
+        // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。元数据/标签搬运
+        // 与 copyFiles 同语义（不含专题——副本不自动加入源文件的专题）。
         try {
-            val canonicalUri = if (viaFile) uri else ContentUris.withAppendedId(
+            val canonicalUri = ContentUris.withAppendedId(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 ContentUris.parseId(uri),
             )
@@ -1649,7 +1649,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
         }
-        return uri
+        return true
     }
 
     /**
@@ -1858,30 +1858,49 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /**
      * 同步扫描新路径拿行 uri：回调缺 uri 时按 _data 现查兜底（EMUI 扫描时序不稳）。
-     * 超时/查不到返回 null——文件变更已落盘，行收尾交给 [refreshAfterWrite] 对账。
+     * EMUI 的 MediaScanner 回调可能迟到/丢失（非标准目录 + 部分 MIME 更慢），这里
+     * 轮询两轮：每轮 scanFile 后按 _data 短间隔查询三次；全部落空返回 null（调用方
+     * 决定回滚/重试——复制场景文件已拷贝，只有确认扫不出才回收）。
      */
     private fun scanFileSync(file: java.io.File): android.net.Uri? {
+        val path = file.absolutePath
         var result: android.net.Uri? = null
-        val latch = java.util.concurrent.CountDownLatch(1)
-        android.media.MediaScannerConnection.scanFile(
-            appContext, arrayOf(file.absolutePath), arrayOf("image/*"),
-        ) { _, uri ->
-            result = uri
-            latch.countDown()
+        for (attempt in 1..2) {
+            val latch2 = java.util.concurrent.CountDownLatch(1)
+            android.media.MediaScannerConnection.scanFile(
+                appContext, arrayOf(path), arrayOf("image/*"),
+            ) { _, uri ->
+                result = uri
+                latch2.countDown()
+            }
+            if (latch2.await(10, java.util.concurrent.TimeUnit.SECONDS) && result != null) {
+                return result
+            }
+            // 回调没来/没带 uri：按 _data 轮询现查（扫描可能已完成只是回调丢了）
+            for (retry in 1..3) {
+                queryRowUriByPath(path)?.let {
+                    return it
+                }
+                Thread.sleep(500)
+            }
+            debugLog("scanFileSync attempt $attempt missed: $path")
+            Log.i(TAG, "[FileOp] scan attempt $attempt missed: $path")
         }
-        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
-        if (result != null) return result
-        return appContext.contentResolver.query(
+        return queryRowUriByPath(path)
+    }
+
+    /** 按 DATA 全路径查行的规范 uri（EMUI 拼的 external 形式）。 */
+    private fun queryRowUriByPath(path: String): android.net.Uri? =
+        appContext.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             arrayOf(MediaStore.Images.Media._ID),
             "${MediaStore.Images.Media.DATA}=?",
-            arrayOf(file.absolutePath), null,
+            arrayOf(path), null,
         )?.use { c ->
             if (c.moveToFirst()) ContentUris.withAppendedId(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(0),
             ) else null
         }
-    }
 
     /**
      * 旧 id 的元数据/标签（[includeTopic]=true 时再加专题成员关系）搬到新 uri。
@@ -1913,7 +1932,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** Q 传统视图改名：File.renameTo + 重扫 + 旧行清理 + 元数据/标签/专题搬家。 */
+    /** Q 传统视图改名：File.renameTo + 元数据搬家；行登记/旧行清理**后台**（EMUI 对
+     *  非标准目录的扫描回调能迟到几十秒，同步等会让 toast/UI 一起卡住）。 */
     private fun legacyRenameViaFile(uri: android.net.Uri, newName: String): Boolean {
         if (!isQLegacyFileStorage()) {
             Log.w(TAG, "[FileOp] legacy rename skipped: not Q legacy storage")
@@ -1934,14 +1954,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.w(TAG, "[FileOp] legacy rename: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
             return false
         }
-        val newUri = scanFileSync(dst)
-        // 旧行指向的旧名文件已不存在，直删旧行避免幽灵索引（Q legacy 下 delete 放行）
-        runCatching { appContext.contentResolver.delete(uri, null, null) }
-        if (newUri != null) migrateMetadataAndTagsToNewUri(uri, newUri, includeTopic = true)
+        registerRowAndMigrateAsync(uri, dst, includeTopic = true)
         return true
     }
 
-    /** Q 传统视图移动：跨目录 renameTo（同卷）+ 重扫 + 旧行清理 + 元数据搬家。 */
+    /** Q 传统视图移动：跨目录 renameTo（同卷）+ 元数据搬家；行登记/旧行清理后台。 */
     private fun legacyMoveViaFile(uri: android.net.Uri, relPath: String): Boolean {
         if (!isQLegacyFileStorage()) {
             Log.w(TAG, "[FileOp] legacy move skipped: not Q legacy storage")
@@ -1970,22 +1987,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.w(TAG, "[FileOp] legacy move: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
             return false
         }
-        val newUri = scanFileSync(dst)
-        runCatching { appContext.contentResolver.delete(uri, null, null) }
-        if (newUri != null) migrateMetadataAndTagsToNewUri(uri, newUri, includeTopic = true)
+        registerRowAndMigrateAsync(uri, dst, includeTopic = true)
         return true
     }
 
-    /** Q 传统视图复制：文件流拷到目标目录 + 重扫；返回新行 uri（复制不涉旧行）。 */
-    private fun legacyCopyViaFile(
+    /** Q 传统视图复制：文件流拷到目标目录；行登记 + 元数据/标签搬运**后台**。 */
+    private fun legacyCopyToDir(
         source: android.net.Uri,
         relPath: String,
         overrideName: String?,
-    ): android.net.Uri? {
-        if (!isQLegacyFileStorage()) {
-            Log.w(TAG, "[FileOp] legacy copy skipped: not Q legacy storage")
-            return null
-        }
+    ): java.io.File? {
         val data = queryDataPath(source)
         if (data == null) {
             Log.w(TAG, "[FileOp] legacy copy: row gone (data null) $source")
@@ -2007,14 +2018,36 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             src.copyTo(dst, overwrite = false)
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] legacy copy: copyTo failed $src -> $dst", e)
-            debugLog("legacyCopy stream failed $src -> $dst: $e")
             return null
         }
-        return scanFileSync(dst) ?: run {
-            Log.w(TAG, "[FileOp] legacy copy: scanFileSync null, remove $dst")
-            debugLog("legacyCopy scan failed, remove $dst")
-            runCatching { dst.delete() }
-            null
+        return dst
+    }
+
+    /**
+     * File 原语的收尾（**后台**）：等 MediaStore 把新路径登记成行（EMUI 对非标准目录的
+     * 扫描回调能迟到几十秒——同步等会把 toast/UI 一起卡住，2026-10-07 真机体感），拿到
+     * 新 uri 后删旧行 + 元数据/标签/专题搬家。登记失败只记日志：文件已落盘，后续系统
+     * 扫描/对账兜底，旧行由对账按死行清出索引。
+     */
+    private fun registerRowAndMigrateAsync(
+        srcUri: android.net.Uri,
+        dstFile: java.io.File,
+        includeTopic: Boolean,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val newUri = try {
+                scanFileSync(dstFile)
+            } catch (e: Exception) {
+                Log.w(TAG, "[FileOp] row register scan threw: ${dstFile.absolutePath}", e)
+                null
+            }
+            if (newUri == null) {
+                Log.w(TAG, "[FileOp] row register failed after retries: ${dstFile.absolutePath}")
+                return@launch
+            }
+            runCatching { appContext.contentResolver.delete(srcUri, null, null) }
+                .onFailure { Log.w(TAG, "[FileOp] old row delete failed: $srcUri", it) }
+            migrateMetadataAndTagsToNewUri(srcUri, newUri, includeTopic)
         }
     }
 
