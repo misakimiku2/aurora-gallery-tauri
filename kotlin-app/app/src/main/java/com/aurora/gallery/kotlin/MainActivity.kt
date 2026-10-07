@@ -1334,14 +1334,21 @@ class MainActivity : ComponentActivity() {
         // 发 createDeleteRequest——已开「管理媒体」时系统不弹窗直接执行，结果经
         // deleteLauncher 回来调 retry（重删幂等，见 GalleryViewModel.deleteConsentFallback）。
         viewModel.deleteConsentFallback = { blocked, retry ->
-            try {
-                pendingDeleteRetry = retry
-                val pi = MediaStore.createDeleteRequest(contentResolver, blocked)
-                deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-            } catch (e: Exception) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                try {
+                    pendingDeleteRetry = retry
+                    val pi = MediaStore.createDeleteRequest(contentResolver, blocked)
+                    deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                } catch (e: Exception) {
+                    pendingDeleteRetry = null
+                    Log.w("AuroraKotlin", "[Delete] createDeleteRequest failed", e)
+                    Toast.makeText(this, "删除请求失败", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                // Q 上没有 createDeleteRequest（该引用在 targetSdk < 30 下若执行会
+                // NoSuchMethodError）；删除被拦只能放弃。当前所有删除入口都经带版本
+                // 守卫的 requestDelete，这条默认兜底链无调用点，防御性收尾而已。
                 pendingDeleteRetry = null
-                Log.w("AuroraKotlin", "[Delete] createDeleteRequest failed", e)
-                Toast.makeText(this, "删除请求失败", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -2087,9 +2094,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 媒体库读权限字符串（API 33+ 为 READ_MEDIA_IMAGES，以下为 READ_EXTERNAL_STORAGE）。 */
+    /** 媒体库读权限字符串：设备 API 33+ **且** targetSdk ≥ 33 才用 READ_MEDIA_IMAGES
+     *  （该权限只对 targetSdk ≥ 33 的应用生效；targetSdk < 33 时走 READ_EXTERNAL_STORAGE
+     *  的媒体映射，声明掐了会拿残缺索引）。须与 GalleryViewModel.hasMediaPermission 一致。 */
     private fun mediaPermission(): String =
-        if (Build.VERSION.SDK_INT >= 33) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            applicationInfo.targetSdkVersion >= 33
+        ) {
             Manifest.permission.READ_MEDIA_IMAGES
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE

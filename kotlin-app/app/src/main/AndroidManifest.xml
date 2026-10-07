@@ -2,11 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- MediaStore 图片读取（Android 13+ 用 READ_MEDIA_IMAGES，更低版本用 READ_EXTERNAL_STORAGE） -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- MediaStore 图片读取（Android 13+ 用 READ_MEDIA_IMAGES，更低版本用 READ_EXTERNAL_STORAGE）。
+         不设 maxSdkVersion：targetSdk < 33 时 Android 13+ 的媒体读走 READ_EXTERNAL_STORAGE
+         映射（READ_MEDIA_IMAGES 只对 targetSdk ≥ 33 的应用生效），声明掐了会拿残缺索引。 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- targetSdk < 33 时系统不生效，留着：将来 targetSdk 升回 33+ 时直接可用 -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <!-- M4b 1.1：API < 30 的重命名/移动兜底（更高版本走 createWriteRequest，不需要这条） -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- 不设 maxSdkVersion：targetSdk 29 在 R+ 上自动拿传统存储视图后，直写共享存储
+         仍以 WRITE_EXTERNAL_STORAGE 为准（运行时由 requestWriteAccess 的 <30 分支请求）。 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- M4b 阶段 5：扫描进度/完成通知（API 33+ 运行时请求，拒绝则仅无通知） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -41,12 +45,15 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ProtectedPermissions" />
 
+    <!-- Android 10（Q）分区存储豁免：配 targetSdk 29 生效传统存储视图，四种文件操作
+         （删除/重命名/移动/复制）直写放行。R+ 上 targetSdk ≤ 29 自动传统视图，本属性被忽略。 -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
+        android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/Theme.AuroraKotlin">
         <activity

@@ -20,8 +20,15 @@ android {
     defaultConfig {
         applicationId = "com.aurora.gallery.kotlin"
         minSdk = 24
-        targetSdk = 36
-        versionCode = 5
+        // 29 而非 36：targetSdk ≥ 30 会在 Android 10 上强制分区存储——相机/微信等他应用
+        // 创建的图直写必被拦（RecoverableSecurityException），而应用的三件授权武器
+        // （createDeleteRequest/createWriteRequest/所有文件访问）都是 API 30+ 的，Q 上
+        // 全不可用；且华为 Q MediaProvider 只允许 insert 进 [DCIM, Pictures]，非标准
+        // 目录的复制/移动直接被拒（2026-10-07 荣耀 TNY-AL00 实测）。targetSdk 29 +
+        // manifest requestLegacyExternalStorage → Q 上拿传统视图，直写全放行；R+ 上
+        // targetSdk ≤ 29 的应用系统自动给传统视图，API 30+ 授权链原样兜底。
+        targetSdk = 29
+        versionCode = 6
         versionName = "2.2.1"
     }
 
@@ -60,6 +67,13 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.15"
+    }
+
+    lint {
+        // 侧载分发，不走 Google Play：targetSdk 29 是刻意的（Q 分区存储豁免，
+        // 见 defaultConfig 注释），ExpiredTargetSdkVersion 不适用，禁掉免得
+        // lintVitalRelease 阻断出包。
+        disable += "ExpiredTargetSdkVersion"
     }
 }
 

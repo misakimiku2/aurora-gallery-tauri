@@ -98,6 +98,7 @@ import uniffi.aurora_core.resumeColorTask
 import uniffi.aurora_core.retryColorErrorFiles
 import uniffi.aurora_core.searchByColor
 import uniffi.aurora_core.setFileTags
+import uniffi.aurora_core.setTopicFiles
 import uniffi.aurora_core.upsertFileMetadata
 import uniffi.aurora_core.upsertMediaImages
 import uniffi.aurora_core.upsertPerson
@@ -1479,7 +1480,15 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     val values = ContentValues().apply {
                         put(MediaStore.Images.Media.DISPLAY_NAME, newName)
                     }
-                    appContext.contentResolver.update(uri, values, null, null) > 0
+                    // 华为 Q 的 update 白名单对 legacy 没豁免：标准目录 MediaStore 成功
+                    // （保 _id），被拒（白名单外）再走 Q 传统视图的文件路径直写
+                    val mediaOk = try {
+                        appContext.contentResolver.update(uri, values, null, null) > 0
+                    } catch (e: Exception) {
+                        if (isWriteConsentRequired(e)) throw e
+                        false
+                    }
+                    mediaOk || legacyRenameViaFile(uri, newName)
                 },
                 onDone = { n ->
                     Log.i(TAG, "[FileOp] renamed=$n/${targets.size}")
@@ -1520,7 +1529,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                         val name = queryDisplayName(uri) ?: return@write false
                         values.put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
                     }
-                    appContext.contentResolver.update(uri, values, null, null) > 0
+                    // 与 renameFiles 同款：MediaStore 被华为 Q 白名单拒绝时走文件路径直写
+                    val mediaOk = try {
+                        appContext.contentResolver.update(uri, values, null, null) > 0
+                    } catch (e: Exception) {
+                        if (isWriteConsentRequired(e)) throw e
+                        false
+                    }
+                    mediaOk || legacyMoveViaFile(uri, relPath)
                 },
                 onDone = { n ->
                     Log.i(TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
@@ -1577,37 +1593,41 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         relPath: String,
         overrideName: String? = null,
     ): android.net.Uri? {
-        val uri = insertImageCopy(source, relPath, overrideName)
-        debugLog("copyOne insert=$uri src=$source override=$overrideName relPath=$relPath")
-        if (uri == null) return null
-        try {
-            appContext.contentResolver.openInputStream(source)?.use { input ->
-                appContext.contentResolver.openOutputStream(uri)?.use { output ->
-                    input.copyTo(output)
-                } ?: throw IllegalStateException("openOutputStream failed: $uri")
-            } ?: throw IllegalStateException("openInputStream failed: $source")
+        // 华为 Q 的 insert 白名单（allowed [DCIM, Pictures]）对 legacy 没豁免：白名单内
+        // 走 MediaStore insert（App 自有新行、流拷贝），被拒走 Q 传统视图文件路径复制
+        var viaFile = false
+        val uri = try {
+            insertImageCopy(source, relPath, overrideName) ?: return null
         } catch (e: Exception) {
-            debugLog("copyOne stream failed $source -> $uri: $e")
-            Log.w(TAG, "[FileOp] copy stream failed $source -> $uri", e)
-            runCatching { appContext.contentResolver.delete(uri, null, null) }
-            return null
+            viaFile = true
+            debugLog("copyOne insert rejected, trying file-path copy: $e")
+            legacyCopyViaFile(source, relPath, overrideName) ?: return null
+        }
+        if (!viaFile) {
+            try {
+                appContext.contentResolver.openInputStream(source)?.use { input ->
+                    appContext.contentResolver.openOutputStream(uri)?.use { output ->
+                        input.copyTo(output)
+                    } ?: throw IllegalStateException("openOutputStream failed: $uri")
+                } ?: throw IllegalStateException("openInputStream failed: $source")
+            } catch (e: Exception) {
+                debugLog("copyOne stream failed $source -> $uri: $e")
+                Log.w(TAG, "[FileOp] copy stream failed $source -> $uri", e)
+                runCatching { appContext.contentResolver.delete(uri, null, null) }
+                return null
+            }
         }
         // uri 必须重导成扫描管道同款规范形式：insert 返回的是 external_primary 形式，
         // 与 scanMediaStore 拼的 external 形式指向同一行但字符串不同 → generateId 哈希
-        // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。
+        // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。文件路径版的
+        // scanFileSync 已返回规范形式。元数据/标签搬运与 copyFiles 同语义（不含专题——
+        // 副本不自动加入源文件的专题）。
         try {
-            val canonicalUri = ContentUris.withAppendedId(
+            val canonicalUri = if (viaFile) uri else ContentUris.withAppendedId(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 ContentUris.parseId(uri),
             )
-            val newId = generateId(canonicalUri.toString())
-            val sourceId = generateId(source.toString())
-            getFileMetadata(sourceId)?.let { meta ->
-                upsertFileMetadata(meta.copy(fileId = newId, path = canonicalUri.toString()))
-            }
-            getAllFileTags().firstOrNull { it.fileId == sourceId }?.tags?.let { tags ->
-                if (tags.isNotEmpty()) setFileTags(newId, tags)
-            }
+            migrateMetadataAndTagsToNewUri(source, canonicalUri, includeTopic = false)
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
         }
@@ -1739,6 +1759,160 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         return "$base/$relPath/$name"
     }
 
+    // ===== Q（Android 10）传统视图文件路径原语 =====
+    //
+    // 华为 Q MediaProvider 的 update/insert 主目录白名单（allowed [DCIM, Pictures]）
+    // 对 legacy 应用**没有豁免**——delete 有（2026-10-07 荣耀 TNY-AL00 实测：legacy 下
+    // delete 直删成功，update/insert 非标准目录抛 IllegalArgumentException: Primary
+    // directory ... not allowed）。标准目录内 MediaStore 原语照常成功且保 _id，所以顺序
+    // 一律「先 MediaStore，被拒才走这里」：Q 传统存储视图下 sdcardfs 对应用全盘可写，
+    // 文件系统变更走 File 直写（Q 传统文件管理器的标准姿势），MediaStore 行靠 MediaScanner
+    // 重扫收尾。_id 必变 → 元数据/标签/专题成员关系搬家（migrateMetadataAndTagsToNewUri）。
+
+    /** 仅 SDK 29 且真拿到传统存储视图（targetSdk 29 + requestLegacyExternalStorage）。 */
+    private fun isQLegacyFileStorage(): Boolean =
+        Build.VERSION.SDK_INT == 29 && android.os.Environment.isExternalStorageLegacy()
+
+    /** 行的 DATA 全路径（传统视图下可读）。 */
+    private fun queryDataPath(uri: android.net.Uri): String? =
+        appContext.contentResolver.query(
+            uri, arrayOf(MediaStore.Images.Media.DATA), null, null, null,
+        )?.use { if (it.moveToFirst()) it.getString(0) else null }
+
+    /** 共享存储根 + RELATIVE_PATH 语义 → 目录 File（legacyDataPath 的 File 版）。 */
+    private fun qRelDir(relPath: String): java.io.File =
+        java.io.File(android.os.Environment.getExternalStorageDirectory(), relPath.trimEnd('/'))
+
+    /** 同名冲突自动后缀（对齐 MediaStore 的 "name (1).ext" 去重行为）。 */
+    private fun resolveConflictName(dir: java.io.File, name: String): java.io.File {
+        var dst = java.io.File(dir, name)
+        if (!dst.exists()) return dst
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (dst.exists()) {
+            dst = java.io.File(dir, "$base ($i)$ext")
+            i++
+        }
+        return dst
+    }
+
+    /**
+     * 同步扫描新路径拿行 uri：回调缺 uri 时按 _data 现查兜底（EMUI 扫描时序不稳）。
+     * 超时/查不到返回 null——文件变更已落盘，行收尾交给 [refreshAfterWrite] 对账。
+     */
+    private fun scanFileSync(file: java.io.File): android.net.Uri? {
+        var result: android.net.Uri? = null
+        val latch = java.util.concurrent.CountDownLatch(1)
+        android.media.MediaScannerConnection.scanFile(
+            appContext, arrayOf(file.absolutePath), arrayOf("image/*"),
+        ) { _, uri ->
+            result = uri
+            latch.countDown()
+        }
+        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        if (result != null) return result
+        return appContext.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DATA}=?",
+            arrayOf(file.absolutePath), null,
+        )?.use { c ->
+            if (c.moveToFirst()) ContentUris.withAppendedId(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(0),
+            ) else null
+        }
+    }
+
+    /**
+     * 旧 id 的元数据/标签（[includeTopic]=true 时再加专题成员关系）搬到新 uri。
+     * copyFiles 副本与 Q 文件路径原语共用；IO 线程调用。
+     */
+    private fun migrateMetadataAndTagsToNewUri(
+        sourceUri: android.net.Uri,
+        newUri: android.net.Uri,
+        includeTopic: Boolean,
+    ) {
+        val newId = generateId(newUri.toString())
+        val sourceId = generateId(sourceUri.toString())
+        if (newId == sourceId) return
+        getFileMetadata(sourceId)?.let { meta ->
+            upsertFileMetadata(meta.copy(fileId = newId, path = newUri.toString()))
+        }
+        getAllFileTags().firstOrNull { it.fileId == sourceId }?.tags?.let { tags ->
+            if (tags.isNotEmpty()) setFileTags(newId, tags)
+        }
+        if (!includeTopic) return
+        // 专题成员表按 file_id 记录，_id 变化后旧成员在对账时会被当孤儿清掉，需同步搬家
+        for (topic in topics.value) {
+            runCatching {
+                val members = getTopicFiles(topic.id)
+                if (sourceId in members) {
+                    setTopicFiles(topic.id, members.map { if (it == sourceId) newId else it })
+                }
+            }.onFailure { Log.w(TAG, "[FileOp] topic migrate failed topic=${topic.id}", it) }
+        }
+    }
+
+    /** Q 传统视图改名：File.renameTo + 重扫 + 旧行清理 + 元数据/标签/专题搬家。 */
+    private fun legacyRenameViaFile(uri: android.net.Uri, newName: String): Boolean {
+        if (!isQLegacyFileStorage()) return false
+        val data = queryDataPath(uri) ?: return false
+        val src = java.io.File(data)
+        if (!src.isFile) return false
+        val dst = resolveConflictName(src.parentFile, newName)
+        if (!src.renameTo(dst)) return false
+        val newUri = scanFileSync(dst)
+        // 旧行指向的旧名文件已不存在，直删旧行避免幽灵索引（Q legacy 下 delete 放行）
+        runCatching { appContext.contentResolver.delete(uri, null, null) }
+        if (newUri != null) migrateMetadataAndTagsToNewUri(uri, newUri, includeTopic = true)
+        return true
+    }
+
+    /** Q 传统视图移动：跨目录 renameTo（同卷）+ 重扫 + 旧行清理 + 元数据搬家。 */
+    private fun legacyMoveViaFile(uri: android.net.Uri, relPath: String): Boolean {
+        if (!isQLegacyFileStorage()) return false
+        val data = queryDataPath(uri) ?: return false
+        val src = java.io.File(data)
+        if (!src.isFile) return false
+        val dstDir = qRelDir(relPath)
+        if (!dstDir.isDirectory && !dstDir.mkdirs()) return false
+        val dst = resolveConflictName(dstDir, src.name)
+        if (!src.renameTo(dst)) return false
+        val newUri = scanFileSync(dst)
+        runCatching { appContext.contentResolver.delete(uri, null, null) }
+        if (newUri != null) migrateMetadataAndTagsToNewUri(uri, newUri, includeTopic = true)
+        return true
+    }
+
+    /** Q 传统视图复制：文件流拷到目标目录 + 重扫；返回新行 uri（复制不涉旧行）。 */
+    private fun legacyCopyViaFile(
+        source: android.net.Uri,
+        relPath: String,
+        overrideName: String?,
+    ): android.net.Uri? {
+        if (!isQLegacyFileStorage()) return null
+        val data = queryDataPath(source) ?: return null
+        val src = java.io.File(data)
+        if (!src.isFile) return null
+        val dstDir = qRelDir(relPath)
+        if (!dstDir.isDirectory && !dstDir.mkdirs()) return null
+        val name = resolveConflictName(dstDir, overrideName ?: src.name).name
+        val dst = java.io.File(dstDir, name)
+        try {
+            src.copyTo(dst, overwrite = false)
+        } catch (e: Exception) {
+            debugLog("legacyCopy stream failed $src -> $dst: $e")
+            return null
+        }
+        return scanFileSync(dst) ?: run {
+            debugLog("legacyCopy scan failed, remove $dst")
+            runCatching { dst.delete() }
+            null
+        }
+    }
+
     private fun String.ensureTrailingSlash(): String =
         if (isEmpty() || endsWith('/')) this else "$this/"
 
@@ -1748,7 +1922,11 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      * 权限字符串须与 MainActivity.requestMediaPermissionIfNeeded 保持一致。
      */
     private fun hasMediaPermission(): Boolean {
-        val permission = if (Build.VERSION.SDK_INT >= 33) {
+        // 设备 API 33+ 且 targetSdk ≥ 33 才用 READ_MEDIA_IMAGES（targetSdk < 33 时系统
+        // 不认该权限，须走 READ_EXTERNAL_STORAGE）。与 MainActivity.mediaPermission 一致。
+        val permission = if (Build.VERSION.SDK_INT >= 33 &&
+            appContext.applicationInfo.targetSdkVersion >= 33
+        ) {
             "android.permission.READ_MEDIA_IMAGES"
         } else {
             android.Manifest.permission.READ_EXTERNAL_STORAGE
