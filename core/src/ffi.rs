@@ -14,8 +14,8 @@
 use crate::collate;
 use crate::db::{self, file_index, AppDbPool};
 use crate::db::file_index::FileIndexEntry;
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 static DB_POOL: OnceLock<AppDbPool> = OnceLock::new();
 
@@ -36,6 +36,39 @@ pub enum AuroraError {
 
 fn db_err(e: rusqlite::Error) -> AuroraError {
     AuroraError::Database(e.to_string())
+}
+
+/// 单行登记台账（M8b 复制即时可见护栏）：`upsert_media_image` 写入的
+/// `file_id -> _data 全路径`。
+///
+/// 为什么需要：全量对账（`upsert_media_images`）是**快照语义**——不在本次 MediaStore
+/// 快照里的 Image 行一律删掉。而 EMUI 实测全量查询的快照固定在查询起点，MediaScanner
+/// 登记新行发生在查询开始之后（复制后 0.1-0.5s），紧随其后的对账会漏掉这行把它删掉，
+/// 副本从索引里凭空消失（真机 2026-10-07：连续三次扫描都漏，隐身约 4 分钟）。
+///
+/// 台账语义（`protected_media_ids` 每次对账时收敛）：
+/// - id 进了本次快照 → 注销登记（此后增删归快照管）；
+/// - 仍未进快照但**文件还在磁盘** → 继续保护（app 就该显示存在的文件）；
+/// - 仍未进快照且文件已不在 → 注销登记，对账照删（不留幽灵）。
+///
+/// 进程内存态即可：app 重启后的首次全量扫描建立真值，漏网窗口不再存在。
+static RECENT_MEDIA_UPSERTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn recent_media_upserts() -> &'static Mutex<HashMap<String, String>> {
+    RECENT_MEDIA_UPSERTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 对账前收敛台账并返回本次受保护的 file_id 列表（语义见 [RECENT_MEDIA_UPSERTS]）。
+/// `snapshot_ids` = 本次快照的全部 file_id（folder + image）。
+fn protected_media_ids(snapshot_ids: &HashSet<String>) -> Vec<String> {
+    let mut recent = recent_media_upserts()
+        .lock()
+        .expect("recent media upserts mutex poisoned");
+    // retain 保留「仍未进快照 且 文件仍在磁盘」的登记；文件已不在的注销（照删）
+    recent.retain(|id, data_path| {
+        !snapshot_ids.contains(id) && std::path::Path::new(data_path).exists()
+    });
+    recent.keys().cloned().collect()
 }
 
 /// 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
@@ -60,6 +93,10 @@ pub struct MediaImage {
 pub struct Folder {
     pub id: String,
     pub name: String,
+    /// 绝对目录路径（索引 Folder 行的 path 列，如 `/storage/emulated/0/Pictures/X`；
+    /// 根目录散图 = 外部存储根）。M8b：复制/移动的目标解析（folder_id → RELATIVE_PATH）
+    /// 直接读它，不再全量遍历 MediaStore（2.6 万行，老机繁忙时实测 4.9s）。
+    pub path: String,
     /// 该文件夹下图片数量（用于卡片角标）。
     pub image_count: i64,
     /// 封面图 content_uri（取该文件夹下最新一张图），无图时为 None。
@@ -414,8 +451,76 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
         })
         .collect();
 
-    file_index::reconcile_mediastore_snapshot(conn, &folder_entries, &image_entries)
-        .map_err(db_err)
+    // 本次快照的全部 file_id（folder + image）：台账收敛时用来注销「已进快照」的登记
+    let snapshot_ids: HashSet<String> = folder_entries
+        .iter()
+        .chain(image_entries.iter())
+        .map(|e| e.file_id.clone())
+        .collect();
+
+    file_index::reconcile_mediastore_snapshot(
+        conn,
+        &folder_entries,
+        &image_entries,
+        &protected_media_ids(&snapshot_ids),
+    )
+    .map_err(db_err)
+}
+
+/// 单张图片的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
+/// 新路径登记成行时调用，把这一行进 `file_index`，让目标文件夹网格**立即**看到副本。
+/// 否则要等下一次全量对账（2.6 万行 MediaStore 快照，老机约 4s，且 MediaStore 变更
+/// 观察者的防抖扫描还会再排一次）才可见——用户体感「复制完好几秒不显示」。
+///
+/// 与 [`upsert_media_images`] 的本质区别：**不做快照对账清理**。后者传入的是设备全量
+/// 快照，`reconcile_mediastore_snapshot` 会把快照外的 Folder/Image 行全部删掉——拿单行
+/// 调它等于把整个索引清成一行。这里只做 `batch_upsert` 同款的
+/// `INSERT ... ON CONFLICT DO UPDATE` 单行写入，陈旧行仍由全量对账负责清。
+/// Folder 行不在这里建：目标文件夹多数已存在；新相册的 Folder 行由后续全量对账补，
+/// 图片行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
+#[uniffi::export]
+pub fn upsert_media_image(image: MediaImage) -> Result<(), AuroraError> {
+    let file_id = db::generate_id(&image.content_uri);
+    let entry = FileIndexEntry {
+        file_id: file_id.clone(),
+        parent_id: Some(db::generate_id(&image.bucket_id)),
+        path: image.content_uri.clone(),
+        name: image.name.clone(),
+        file_type: "Image".into(),
+        size: image.size.max(0) as u64,
+        created_at: image.date_added,
+        modified_at: image.date_modified,
+        width: image.width.map(|v| v as u32),
+        height: image.height.map(|v| v as u32),
+        format: image.mime_type.split('/').nth(1).map(|s| s.to_string()),
+    };
+    let p = pool();
+    let mut guard = p.get_connection();
+    let conn: &mut rusqlite::Connection = &mut *guard;
+    file_index::batch_upsert(conn, &[entry]).map_err(db_err)?;
+    // 登记台账：此后全量对账若漏掉这行（快照固定在查询起点），删前先查文件在不在，
+    // 在就留（见 [RECENT_MEDIA_UPSERTS]）。用 _data 全路径做存在性判据。
+    recent_media_upserts()
+        .lock()
+        .expect("recent media upserts mutex poisoned")
+        .insert(file_id, image.path);
+    Ok(())
+}
+
+/// 按 file_id 从索引删除行（M8b 删除/移动/重命名的即时收尾）。
+///
+/// 为什么需要：全量对账是快照语义，陈旧行（被删/被挪走的文件）要等下一次对账才清，
+/// 而这期间总览卡片还按旧索引聚合（封面/计数/时间戳都是几秒前的）——删除后「卡片
+/// 迟迟不更新」即由此来。删除/移动/重命名成功后立即摘掉旧行，紧接着
+/// `list_folders` 重算卡片（聚合子查询索引覆盖，全量约百毫秒），UI 当帧反映。
+/// 与对账的清理幂等（行已不在，DELETE 空转）；台账登记行文件已不在，对账时同样
+/// 会注销，不会互相打架。
+#[uniffi::export]
+pub fn delete_index_entries(file_ids: Vec<String>) -> Result<(), AuroraError> {
+    let p = pool();
+    let mut guard = p.get_connection();
+    let conn: &mut rusqlite::Connection = &mut *guard;
+    file_index::delete_entries_by_ids(conn, &file_ids).map_err(db_err)
 }
 
 /// 列出所有文件夹（bucket）。
@@ -427,7 +532,7 @@ pub fn list_folders() -> Vec<Folder> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT f.file_id, f.name,
+            "SELECT f.file_id, f.name, f.path,
                     (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
                     (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image' ORDER BY i.modified_at DESC LIMIT 1),
                     (SELECT MAX(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
@@ -440,11 +545,12 @@ pub fn list_folders() -> Vec<Folder> {
             Ok(Folder {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                image_count: row.get(2)?,
-                cover_uri: row.get(3)?,
+                path: row.get(2)?,
+                image_count: row.get(3)?,
+                cover_uri: row.get(4)?,
                 // 无子图的文件夹 MAX 为 NULL → 0（Kotlin 端按「无日期」处理）
-                created_at: row.get::<_, Option<i64>>(4)?.unwrap_or(0),
-                modified_at: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                created_at: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                modified_at: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
             })
         })
         .expect("query list_folders");

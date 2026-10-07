@@ -73,6 +73,7 @@ import uniffi.aurora_core.cancelColorTask
 import uniffi.aurora_core.cleanupColorNonexistent
 import uniffi.aurora_core.colorDbStats
 import uniffi.aurora_core.deleteColorErrorFiles
+import uniffi.aurora_core.deleteIndexEntries
 import uniffi.aurora_core.deleteTopic as deleteTopicFfi
 import uniffi.aurora_core.extractAndSaveColors
 import uniffi.aurora_core.getAllFileMetadata
@@ -100,6 +101,7 @@ import uniffi.aurora_core.searchByColor
 import uniffi.aurora_core.setFileTags
 import uniffi.aurora_core.setTopicFiles
 import uniffi.aurora_core.upsertFileMetadata
+import uniffi.aurora_core.upsertMediaImage
 import uniffi.aurora_core.upsertMediaImages
 import uniffi.aurora_core.upsertPerson
 import uniffi.aurora_core.upsertTopic
@@ -350,19 +352,33 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     private var mediaChangeJob: Job? = null
 
     /**
+     * 合并「写操作后主动刷新」与「MediaStore 变更观察者」两条刷新路径：取消重建同一个
+     * 防抖任务，一次写操作只跑一次全量对账。
+     *
+     * 为什么合并：一次复制会连带 scanner 登记新行、（移动/重命名还有）旧行删除等连发
+     * 多条 MediaStore 通知。旧码里写操作的主动对账立即起跑、观察者的防抖对账另起炉灶，
+     * 互不取消——真机日志实测一次复制串成 **3 次**全量扫描（2.6 万行每次约 2.4s，老机上
+     * 直接把随后几秒的 UI 拖卡，2026-10-07）。合并后通知风暴收敛成一次；副本/新路径的
+     * 即时可见由单行 upsert 负责，不等这次对账。
+     */
+    private fun scheduleHotRefresh() {
+        mediaChangeJob?.cancel()
+        mediaChangeJob = viewModelScope.launch {
+            delay(MEDIA_CHANGE_DEBOUNCE_MS)
+            // 初始扫描若还在跑，等它结束再补一次对账（变更可能落在扫描查询之后，不能丢）
+            initialScanJob?.join()
+            hotRefresh()
+        }
+    }
+
+    /**
      * MediaStore 变更监听（注册/注销跟随 onStart/onStop，见 MainActivity）：应用开着时
      * 外部新增/删除/修改图片（相机、截图、MTP 拷入）也能热更新，不再需要重启应用刷新。
      */
     private val mediaStoreObserver = object : ContentObserver(null) {
         override fun onChange(selfChange: Boolean, uri: Uri?) {
             // 拷入一批文件会连发一串通知：取消重建防抖任务，等通知流平静后合并成一次重扫
-            mediaChangeJob?.cancel()
-            mediaChangeJob = viewModelScope.launch {
-                delay(MEDIA_CHANGE_DEBOUNCE_MS)
-                // 初始扫描若还在跑，等它结束再补一次对账（变更可能落在扫描查询之后，不能丢）
-                initialScanJob?.join()
-                hotRefresh()
-            }
+            scheduleHotRefresh()
         }
     }
 
@@ -1327,7 +1343,21 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                     onDone(n)
                 },
                 onBlocked = onBlocked,
-                optimistic = { okItems -> optimisticRemoveFromGrid(okItems) },
+                optimistic = { okItems ->
+                    optimisticRemoveFromGrid(okItems)
+                    // 索引即时收尾：把实际删掉的这批行从索引摘除 + 重算总览卡片
+                    // （封面回退到剩余最新图、计数-1、时间戳回退、按时间排序的位置
+                    // 归位）——不等全量对账（1s 防抖 + 2.4s 扫描），否则删除后卡片
+                    // 几秒不动甚至计数还没减（索引死行在对账前一直算在内）。
+                    viewModelScope.launch {
+                        val ids = okItems.map { generateId(it.toString()) }
+                        withContext(Dispatchers.IO) {
+                            runCatching { deleteIndexEntries(ids) }
+                                .onFailure { Log.w(TAG, "[Delete] index cleanup failed", it) }
+                        }
+                        refreshFolderCards()
+                    }
+                },
             )
         }
     }
@@ -1578,6 +1608,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             return
         }
         val relPath = targetRelPath.ensureTrailingSlash()
+        debugLog("copyFiles: begin target=$relPath count=${uris.size}")
         viewModelScope.launch {
             val okCount = withContext(Dispatchers.IO) {
                 var count = 0
@@ -1591,6 +1622,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 count
             }
             Log.i(TAG, "[FileOp] copied=$okCount/${uris.size} -> $relPath")
+            debugLog("copyFiles: done ok=$okCount/${uris.size} -> $relPath")
             // 与删除/移动同款：onDone 不等对账（副本进当前网格的显示交给后台对账——
             // 拿不到「目标 = 当前文件夹」的可靠判定，不做乐观插入）
             refreshAfterWriteAsync()
@@ -1616,16 +1648,25 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         overrideName: String? = null,
     ): Boolean {
         val uri = try {
-            insertImageCopy(source, relPath, overrideName) ?: run {
-                debugLog("copyOne: insert null (source query empty)")
-                return false
-            }
+            insertImageCopy(source, relPath, overrideName)
         } catch (e: Exception) {
             Log.w(TAG, "[FileOp] insert rejected, fallback to file: $source", e)
             debugLog("copyOne: insert rejected, fallback to file: $e")
+            null
+        }
+        if (uri == null) {
+            // insert 抛异常（华为 Q 白名单拒绝非标准目录）**或返回 null**（华为对部分
+            // insert 不抛异常直接回 null——2026-10-07 真机 webp 源复制 4/4 死在这里，
+            // 旧码只兜异常不兜 null）都走 Q 传统视图文件复制：副本落盘即成功。
+            debugLog("copyOne: insert null, fallback to file: $source -> $relPath")
             val dst = legacyCopyToDir(source, relPath, overrideName) ?: return false
             // deleteSource=false：复制的 srcUri 是用户的原图，删了就是「复制变移动」
-            registerRowAndMigrateAsync(source, dst, includeTopic = false, deleteSource = false)
+            // optimisticInsertIntoView=true：副本行入库后就地插进目标文件夹视图 +
+            // 总览卡片（桌面同款「扫完即插」，见 [optimisticApplyCopiedRow]）
+            registerRowAndMigrateAsync(
+                source, dst, includeTopic = false, deleteSource = false,
+                optimisticInsertIntoView = true,
+            )
             return true
         }
         try {
@@ -1644,14 +1685,23 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 与 scanMediaStore 拼的 external 形式指向同一行但字符串不同 → generateId 哈希
         // 不同 → 元数据写到索引永远对不上的孤儿 id 上（本轮实测踩过）。元数据/标签搬运
         // 与 copyFiles 同语义（不含专题——副本不自动加入源文件的专题）。
-        try {
-            val canonicalUri = ContentUris.withAppendedId(
+        val canonicalUri = runCatching {
+            ContentUris.withAppendedId(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                 ContentUris.parseId(uri),
             )
-            migrateMetadataAndTagsToNewUri(source, canonicalUri, includeTopic = false)
-        } catch (e: Exception) {
-            Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", e)
+        }.getOrNull()
+        if (canonicalUri != null) {
+            runCatching { migrateMetadataAndTagsToNewUri(source, canonicalUri, includeTopic = false) }
+                .onFailure { Log.w(TAG, "[FileOp] metadata copy failed $source -> $uri", it) }
+            // 与 legacy 分支同口径：新行立即增量 upsert 进索引 + 「扫完即插」进当前
+            // 视图（目标文件夹随后打开即时可见，正停着则原地出现；都不必等全量对账）
+            runCatching {
+                mediaImageOf(canonicalUri)?.let {
+                    upsertMediaImage(it)
+                    optimisticApplyCopiedRow(it)
+                }
+            }.onFailure { Log.w(TAG, "[FileOp] single-row upsert failed: $canonicalUri", it) }
         }
         return true
     }
@@ -1688,47 +1738,83 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
+     * bucket_id → RELATIVE_PATH 缓存（[resolveFolderRelPath] 的查找表）。一次全量遍历
+     * 2.6 万行老机约 300ms，复制/移动选目标时每次都要付一遍；首次查找同一趟遍历顺手
+     * 建表，会话内后续查找零成本。
+     *
+     * 不需要失效逻辑：bucket_id 由目录路径派生、RELATIVE_PATH 就是该目录，两者 1:1——
+     * 目录改名 = 新 bucket_id = 缓存里没有的新 key（查找落空会重建表），已在表里的
+     * bucket_id 的 RELATIVE_PATH 不可能变。
+     */
+    private var bucketRelPathCache: Map<String, String>? = null
+
+    /**
      * 既有相册的 folder_id → RELATIVE_PATH（移动/复制的目标值）。folder.id =
-     * generate_id(bucket_id)（Rust 对账同款），这里现场从 MediaStore 查 (BUCKET_ID,
-     * RELATIVE_PATH) 对并用同一纯函数反查——**不算出来的映射不做缓存**，空相册按 1.3
-     * 的懒创建语义本就不该存在；查不到（理论上只剩 0 图的瞬时态）返回 null 由调用方提示。
+     * generate_id(bucket_id)（Rust 对账同款）。
+     *
+     * 首选本地索引：[folders] 快照里 Folder.path 就是该 bucket 的绝对目录（索引 Folder
+     * 行的 path 列），换个前缀即 RELATIVE_PATH——零成本。旧码全量遍历 MediaStore 的
+     * (BUCKET_ID, RELATIVE_PATH) 反查，2.6 万行老机繁忙时实测 4.9s，选完目标要干等
+     * 这么久才动工（2026-10-07 真机报障「等了很久才出现复制成功通知」）。快照未命中
+     * （理论上的瞬时态）才落 MediaStore 遍历兜底；空相册按 1.3 懒创建语义本就不存在，
+     * 查不到返回 null 由调用方提示。
      */
     fun resolveFolderRelPath(folderId: String, onReady: (String?) -> Unit) {
+        debugLog("resolveFolderRelPath: begin $folderId")
         viewModelScope.launch {
-            val relPath = withContext(Dispatchers.IO) {
-                appContext.contentResolver.query(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    arrayOf(
-                        MediaStore.Images.Media.BUCKET_ID,
-                        MediaStore.Images.Media.RELATIVE_PATH,
-                    ),
-                    null, null, null,
-                )?.use { c ->
-                    val bucketCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
-                    val relCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
-                    while (c.moveToNext()) {
-                        if (generateId(c.getLong(bucketCol).toString()) == folderId) {
-                            return@use c.getString(relCol)
+            // folders 是 Compose state，主线程读（与 saveFileUpdates 读 images.value 同规矩）
+            val fromIndex = folders.value.firstOrNull { it.id == folderId }?.path
+                ?.let { folderAbsPathToRelPath(it) }
+            val relPath = fromIndex ?: withContext(Dispatchers.IO) {
+                bucketRelPathCache?.get(folderId) ?: run {
+                    val map = HashMap<String, String>()
+                    var hit: String? = null
+                    appContext.contentResolver.query(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        arrayOf(
+                            MediaStore.Images.Media.BUCKET_ID,
+                            MediaStore.Images.Media.RELATIVE_PATH,
+                        ),
+                        null, null, null,
+                    )?.use { c ->
+                        val bucketCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
+                        val relCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
+                        while (c.moveToNext()) {
+                            val bucketId = c.getLong(bucketCol).toString()
+                            val rp = c.getString(relCol)
+                            map[bucketId] = rp
+                            if (generateId(bucketId) == folderId) hit = rp
                         }
                     }
-                    null
+                    bucketRelPathCache = map
+                    hit
                 }
             }
+            debugLog("resolveFolderRelPath: done $folderId -> $relPath")
             onReady(relPath)
         }
     }
 
-    /** 逐条写操作后的主动刷新（防抖 observer 只是兜底）——**后台跑**：乐观更新已让 UI
-     *  即时反映，对账的全量扫描（26k 行 ~4s，老机）不再阻塞 onDone/UI 收尾。 */
-    private fun refreshAfterWriteAsync() {
-        viewModelScope.launch {
-            try {
-                scanAndReconcile()
-                reloadImages()
-            } catch (e: Exception) {
-                Log.w(TAG, "[FileOp] post-write refresh failed", e)
-            }
+    /** 索引 Folder.path（绝对目录，如 /storage/emulated/0/Pictures/X）→ 复制/移动用的
+     *  RELATIVE_PATH 语义（Pictures/X/）。根目录（路径即外部存储根）映射成 "/"（与
+     *  MediaStore RELATIVE_PATH 一致）。不在外部存储根下（理论上不可达）返回 null，
+     *  由调用方走 MediaStore 遍历兜底。 */
+    private fun folderAbsPathToRelPath(absPath: String): String? {
+        val root = android.os.Environment.getExternalStorageDirectory().absolutePath
+        val rel = when {
+            absPath == root -> "/"
+            absPath.startsWith("$root/") -> absPath.removePrefix("$root/")
+            else -> return null
         }
+        return rel.ensureTrailingSlash()
+    }
+
+    /** 逐条写操作后的主动刷新——**后台跑**：乐观更新已让 UI 即时反映，副本/新路径的
+     *  单行 upsert 已让网格即时可见；全量对账（26k 行约 2.4s，老机）合并进
+     *  [scheduleHotRefresh] 的防抖窗口，一次写操作只跑一次（旧码立即起跑 + 观察者
+     *  防抖各一次，串成 3 次全量扫描把 UI 拖卡）。 */
+    private fun refreshAfterWriteAsync() {
+        scheduleHotRefresh()
     }
 
     // ===== 写操作的乐观内存更新 =====
@@ -1795,9 +1881,24 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             MediaStore.Images.Media.DATE_ADDED,
             MediaStore.Images.Media.DATE_MODIFIED,
         )
-        resolver.query(source, projection, null, null, null)?.use { c ->
-            if (!c.moveToFirst()) return null
-            val name = overrideName ?: c.getString(0) ?: return null
+        // 诊断：query 返回 null / 空 cursor / DISPLAY_NAME 为 null 三种路径原先都只报
+        // 一句「insert null (source query empty)」，无法区分；insert 返回 null（华为
+        // 对部分 insert 不抛异常直接回 null）也会走到同一句。逐分支落盘定位。
+        val cursor = resolver.query(source, projection, null, null, null)
+        if (cursor == null) {
+            debugLog("insertImageCopy: query NULL source=$source relPath=$relPath")
+            return null
+        }
+        cursor.use { c ->
+            if (!c.moveToFirst()) {
+                debugLog("insertImageCopy: cursor EMPTY source=$source relPath=$relPath")
+                return null
+            }
+            val name = overrideName ?: c.getString(0)
+            if (name == null) {
+                debugLog("insertImageCopy: DISPLAY_NAME null source=$source relPath=$relPath")
+                return null
+            }
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
                 if (!c.isNull(1)) put(MediaStore.Images.Media.MIME_TYPE, c.getString(1))
@@ -1817,9 +1918,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             } else {
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI
             }
-            return resolver.insert(collection, values)
+            val inserted = resolver.insert(collection, values)
+            debugLog(
+                "insertImageCopy: insert source=$source collection=$collection " +
+                    "relPath=$relPath name=$name mime=${values.getAsString(MediaStore.Images.Media.MIME_TYPE)} " +
+                    "result=${inserted ?: "NULL"}",
+            )
+            return inserted
         }
-        return null
     }
 
     /** API < 29 的目标全路径（共享存储根 + RELATIVE_PATH 语义 + 文件名）。 */
@@ -2054,8 +2160,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         dstFile: java.io.File,
         includeTopic: Boolean,
         deleteSource: Boolean,
+        optimisticInsertIntoView: Boolean = false,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
+            val t0 = android.os.SystemClock.elapsedRealtime()
             val newUri = try {
                 scanFileSync(dstFile)
             } catch (e: Exception) {
@@ -2074,12 +2182,165 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 runCatching { appContext.contentResolver.delete(srcUri, null, null) }
                     .onFailure { Log.w(TAG, "[FileOp] old row delete failed: $srcUri", it) }
             }
+            // 增量 upsert 单行进索引：网格读 file_index，等全量对账（2.6 万行约 4s，
+            // 且 MediaStore 观察者的防抖扫描还会再排一次）才可见＝「复制完好几秒不
+            // 显示」。scanner 一登记就地入库，随后打开目标文件夹即时可见；陈旧行仍
+            // 归全量对账清理（upsert_media_image 不做快照清理，见其 doc）。
+            val img = runCatching { mediaImageOf(newUri) }.getOrNull()
+            if (img != null) {
+                runCatching { upsertMediaImage(img) }
+                    .onFailure { Log.w(TAG, "[FileOp] single-row upsert failed: $newUri", it) }
+                if (optimisticInsertIntoView) optimisticApplyCopiedRow(img)
+            } else {
+                Log.w(TAG, "[FileOp] mediaImageOf null: $newUri")
+            }
+            debugLog(
+                "registerRow: ${dstFile.name} scan=${android.os.SystemClock.elapsedRealtime() - t0}ms " +
+                    "upserted=${img != null} uri=$newUri",
+            )
             migrateMetadataAndTagsToNewUri(srcUri, newUri, includeTopic)
+            if (deleteSource) {
+                // move/rename：旧路径的行随 MediaStore 删除已消失，索引里还是死行
+                // （源文件夹计数虚高、封面可能指着死行）——立即摘掉并重算总览卡片，
+                // 当帧回正；对账稍后以权威快照覆盖（幂等）。
+                runCatching { deleteIndexEntries(listOf(generateId(srcUri.toString()))) }
+                    .onFailure { Log.w(TAG, "[FileOp] old index row delete failed: $srcUri", it) }
+                refreshFolderCards()
+            }
+            // 正停在某个本地视图就地刷新（之后才进目标文件夹的场景由 openFolder 首发+重查覆盖）
+            withContext(Dispatchers.Main) { reloadImages() }
+        }
+    }
+
+    /**
+     * 单行查询 → [MediaImage]（[registerRowAndMigrateAsync] 增量 upsert 用）。投影与
+     * [scanMediaStore] 全量扫描逐列一致——file_id（content_uri 的 md5）与 bucket 派生
+     * 口径必须和全量扫描相同，否则同文件会算出两个 id、索引出重复行。
+     */
+    private fun mediaImageOf(uri: android.net.Uri): MediaImage? {
+        val projection = arrayOf(
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME,
+            MediaStore.Images.Media.DATA,
+            MediaStore.Images.Media.SIZE,
+            MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.DATE_MODIFIED,
+            MediaStore.Images.Media.WIDTH,
+            MediaStore.Images.Media.HEIGHT,
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.BUCKET_ID,
+            MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
+        )
+        return appContext.contentResolver.query(uri, projection, null, null, null)?.use { c ->
+            if (!c.moveToFirst()) return@use null
+            val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val dataCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
+            val sizeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val modifiedCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
+            val widthCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
+            val heightCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
+            val mimeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+            val bucketIdCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
+            val bucketNameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+            val id = c.getLong(idCol)
+            MediaImage(
+                id = id,
+                contentUri = ContentUris.withAppendedId(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id,
+                ).toString(),
+                path = c.getString(dataCol) ?: "",
+                name = c.getString(nameCol) ?: "",
+                size = c.getLong(sizeCol),
+                dateAdded = c.getLong(addedCol),
+                dateModified = c.getLong(modifiedCol),
+                width = if (c.isNull(widthCol)) null else c.getInt(widthCol),
+                height = if (c.isNull(heightCol)) null else c.getInt(heightCol),
+                mimeType = c.getString(mimeCol) ?: "",
+                bucketId = c.getLong(bucketIdCol).toString(),
+                // 与 scanMediaStore 同口径：存储根目录散落文件 bucket_display_name 为 NULL
+                bucketName = c.getString(bucketNameCol)?.takeUnless { it.isBlank() }
+                ?: ROOT_FOLDER_DISPLAY_NAME,
+            )
+        }
+    }
+
+    /**
+     * 桌面同款「扫完即插」的完整版：复制落库后（upsert 成功即可调用）做两件事——
+     * 1. **网格**：当前正停在目标文件夹 → 副本行并进 images 内存列表 + 缓存（对齐
+     *    桌面 `useFileOperations.handleCopyFiles` 的 `scanFile(实际路径, 目标文件夹)`
+     *    + `setState`：新节点即时进视图，不等任何重扫）；
+     * 2. **总览卡片**：目标文件夹的 imageCount / 封面 / 时间戳按索引聚合口径就地更新。
+     *
+     * 为什么卡片也要就地更新：封面来自 [folders] 快照（Rust `list_folders` 的聚合
+     * 子查询：封面 = modified_at 最新的子图），而快照只有全量对账才重算——复制后
+     * 干等 1s 防抖 + 2.4s 扫描，总览封面都没反应（2026-10-08 真机反馈：「文件已
+     * 在文件夹里，但文件夹预览缩略图要等几秒」）。副本的 mtime 即复制时刻，恒为
+     * 全文件夹最新 → 换封面。
+     *
+     * 派生规则与 Rust `list_folders` 逐条对齐（count=COUNT、时间=MAX、封面=ORDER
+     * BY modified_at DESC LIMIT 1），下次对账以权威数据覆盖（幂等）。排序交给展示
+     * 管道；新相册（folders 里还没有行）跳过，交给对账建卡。
+     */
+    private fun optimisticApplyCopiedRow(img: MediaImage) {
+        viewModelScope.launch {
+            val row = withContext(Dispatchers.IO) {
+                listImagesByIds(listOf(generateId(img.contentUri))).firstOrNull()
+            } ?: return@launch
+            val folderId = generateId(img.bucketId)
+            val tab = appState.activeTab
+            // 1. 网格：正停在目标文件夹才插（排序由 rememberDisplayImages 重算）
+            if (tab.viewMode == ViewMode.BROWSER && tab.folderId == folderId &&
+                images.value.none { it.id == row.id }
+            ) {
+                val key = sequenceKey(tab.folderId, tab.activeTags, tab.activeTopicId)
+                images.value = images.value + row
+                cachePutImages(key, images.value)
+            }
+            // 2. 总览卡片：按 list_folders 聚合口径就地更新
+            val current = folders.value.firstOrNull { it.id == folderId } ?: return@launch
+            val updated = current.copy(
+                imageCount = current.imageCount + 1,
+                createdAt = maxOf(current.createdAt, row.createdAt),
+                modifiedAt = maxOf(current.modifiedAt, row.modifiedAt),
+                // 封面 = modified_at 最新的子图；副本 mtime 即此刻 >= 当前 MAX 即换封面
+                coverUri = if (row.modifiedAt >= current.modifiedAt) row.contentUri
+                else current.coverUri,
+            )
+            folders.value = folders.value.map { if (it.id == folderId) updated else it }
+            debugLog(
+                "optimisticApply: ${row.name} folder=$folderId " +
+                    "coverSwapped=${updated.coverUri != current.coverUri}",
+            )
         }
     }
 
     private fun String.ensureTrailingSlash(): String =
         if (isEmpty() || endsWith('/')) this else "$this/"
+
+    /** 总览卡片重算的防抖窗口：批量写操作（一次移动 N 个文件）会连发多次刷新请求，
+     *  合并到一次（聚合全量约百毫秒，没必要连跑）。漏掉的少数情况由全量对账兜底。 */
+    private var lastFolderCardsRefreshAt = 0L
+
+    /**
+     * 总览卡片就地刷新（删除/移动/重命名的即时收尾）：重跑 `list_folders` 聚合。
+     *
+     * 删除后卡片为什么不动的根因：封面/计数/时间戳都来自 [folders] 快照，而快照只有
+     * 全量对账才重算；更要命的是索引里被删文件的行还在（对账是快照语义，陈行下次
+     * 对账才清）——所以删除后不光卡片旧，连计数都还没减。这里先摘旧行（见
+     * [deleteIndexEntries] 调用点）再重算：聚合子查询有 (parent_id, file_type,
+     * modified_at) 复合索引覆盖，全量约百毫秒（老机），比等 1s 防抖 + 2.4s 扫描快
+     * 一个量级。与对账幂等（对账稍后以权威数据覆盖同一结果）。
+     */
+    private suspend fun refreshFolderCards() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastFolderCardsRefreshAt < 500) return
+        lastFolderCardsRefreshAt = now
+        val refreshed = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
+        folders.value = refreshed
+        debugLog("refreshFolderCards: n=${refreshed.size}")
+    }
 
     /**
      * 媒体读权限检查。ViewModel 里兜这道闸是因为热刷新的入口（ContentObserver）在本类里：
@@ -2110,6 +2371,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (notifyScan) scanNotifier.progress()
         Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
         withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
+        debugLog(
+            "[Scan] rows=${imgs.size} upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms",
+        )
         // 首发缓存**不**随对账清空（M8b-23 真机反馈二轮：任何应用触碰 MediaStore 都会
         // 触发对账，整表清空等于把「进夹秒开」打回每次都闪空白）。缓存在这里只承担
         // 首帧预览，每次进夹 reloadImages 都会重查对账，已删/已挪的项落地后一帧内
@@ -2651,6 +2915,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 id = lanFolderId(LAN_ROOT_IMAGES_ID),
                 // 与本地根目录散图同一个显示名（sortFolders 的置顶规则按它识别，天然复用）
                 name = ROOT_FOLDER_DISPLAY_NAME,
+                // LAN 虚拟目录没有本地文件系统路径（复制/移动走 LanClient，不经
+                // resolveFolderRelPath），置空
+                path = "",
                 imageCount = roots.size.toLong(),
                 coverUri = roots.firstOrNull()
                     ?.let { session.client.thumbnailUrl(session.base, session.token, it.path) },
@@ -2662,6 +2929,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             out += Folder(
                 id = lanFolderId(f.path),
                 name = f.name,
+                path = "",
                 imageCount = f.imageCount,
                 coverUri = f.previewPath
                     ?.let { session.client.thumbnailUrl(session.base, session.token, it) },
@@ -3919,6 +4187,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             images.value = imgs
             cachePutImages(key, imgs)
             imagesPending.value = false
+            // 诊断（2026-10-07 复制可见性排查）：每次取数落一条，folder + 条数 +
+            // 是否含刚复制的行（由调用方上下文推断）。华为吞 logcat，这是唯一取证面。
+            debugLog("reloadImages: folder=${tab.folderId} tags=$byTag topic=$topicId n=${imgs.size}")
         }
     }
 

@@ -371,7 +371,7 @@ mod reconcile_tests {
             entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
             entry("a2", Some("A"), "uri://a2", "a2.jpg", "Image"),
         ];
-        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("reconcile");
 
         let mut ids: Vec<String> = get_all_entries(&conn)
             .expect("read back")
@@ -383,6 +383,55 @@ mod reconcile_tests {
         assert_eq!(ids, vec!["A".to_string(), "a1".to_string(), "a2".to_string()]);
     }
 
+    /// M8b 复制即时可见护栏：单行登记的快照漏网行（文件仍在磁盘）不被对账删掉；
+    /// 调用方只把「文件还在」的 id 传进来，文件已不在的照删（ffi.rs 负责文件检查）。
+    #[test]
+    fn reconcile_keeps_protected_rows_outside_snapshot() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        crate::db::init_db(&conn).expect("init db");
+
+        // 先铺一个只有 A/a1 的快照，再单行登记 copy1（模拟 upsert_media_image）
+        let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
+        let images = vec![entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image")];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("first run");
+        batch_upsert(
+            &mut conn,
+            &[entry("copy1", Some("A"), "uri://copy1", "copy1.webp", "Image")],
+        )
+        .expect("single-row upsert");
+
+        // 对账快照漏掉 copy1（EMUI 快照固定在查询起点，漏掉刚登记的行）：
+        // 受保护 → 留；未受保护的 ghost → 照删
+        batch_upsert(
+            &mut conn,
+            &[entry("ghost", Some("A"), "uri://ghost", "ghost.jpg", "Image")],
+        )
+        .expect("seed ghost");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &["copy1".to_string()])
+            .expect("reconcile with protection");
+
+        let mut ids: Vec<String> = get_all_entries(&conn)
+            .expect("read back")
+            .into_iter()
+            .map(|e| e.file_id)
+            .collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec!["A".to_string(), "a1".to_string(), "copy1".to_string()],
+            "受保护行留、快照外未受保护行删"
+        );
+
+        // 下一轮快照收编 copy1 后，保护集清空不影响任何东西（幂等）
+        let images2 = vec![
+            entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
+            entry("copy1", Some("A"), "uri://copy1", "copy1.webp", "Image"),
+        ];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images2, &[]).expect("reconcile 2");
+        let count = get_all_entries(&conn).expect("read back").len();
+        assert_eq!(count, 3);
+    }
+
     #[test]
     fn reconcile_repeat_run_is_idempotent() {
         let mut conn = Connection::open_in_memory().expect("open in-memory db");
@@ -391,8 +440,8 @@ mod reconcile_tests {
         let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
         let images = vec![entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image")];
 
-        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("first run");
-        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("second run");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("first run");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("second run");
 
         let count = get_all_entries(&conn).expect("read back").len();
         assert_eq!(count, 2, "重复对账不产生累积或丢失");
@@ -439,7 +488,7 @@ mod reconcile_tests {
             entry("img1", Some("A"), "uri://img1", "a.jpg", "Image"),
             entry("img2", Some("A"), "uri://img2", "b.jpg", "Image"),
         ];
-        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("reconcile");
 
         let topic = topics::Topic {
             id: "t1".into(),
@@ -470,7 +519,7 @@ mod reconcile_tests {
 
         // 新快照里 img2 消失（被删）：对账应清掉它的成员行（ghost 也是），缓存对齐 1
         let images = vec![entry("img1", Some("A"), "uri://img1", "a.jpg", "Image")];
-        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile 2");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("reconcile 2");
 
         let (count, members) = topic_state(&conn, "t1");
         assert_eq!(members, vec!["img1".to_string()], "孤儿成员被清掉");
@@ -569,6 +618,13 @@ mod bench_tests {
 ///    改名即新 id、旧行成幽灵）、已消失的图片。不做对账索引只增不减，总览会留下
 ///    点进去为空的幽灵文件夹。
 ///
+/// `protected_image_ids`（M8b 复制即时可见的护栏）：刚由 `upsert_media_image` 单行
+/// 登记、但**不在本次快照里**的图片行。EMUI 实测全量查询的快照固定在查询起点，而
+/// MediaScanner 登记新行发生在查询开始之后（复制后 0.1-0.5s），紧随其后的对账快照
+/// 会漏掉这行——漏掉即被第 3 步删掉，副本从索引里凭空消失好几秒（真机 2026-10-07
+/// 日志实测：连续三次扫描都漏，文件隐身约 4 分钟）。调用方（ffi.rs）只把「文件仍在
+/// 磁盘上」的登记 id 传进来；文件已不在的照删，不留幽灵。
+///
 /// 单事务保证原子性：任一步失败整体回滚，索引保持上一次一致状态。
 /// 临时表挂在连接上；池只有一个连接，IF NOT EXISTS + 先清空即可重入。
 /// 只触碰 'Folder' / 'Image' 两种类型，其他 file_type 的行不属于 MediaStore 管辖。
@@ -576,6 +632,7 @@ pub fn reconcile_mediastore_snapshot(
     conn: &mut Connection,
     folder_entries: &[FileIndexEntry],
     image_entries: &[FileIndexEntry],
+    protected_image_ids: &[String],
 ) -> Result<()> {
     let tx = conn.transaction()?;
     {
@@ -623,12 +680,25 @@ pub fn reconcile_mediastore_snapshot(
             insert_id.execute(params![entry.file_id])?;
         }
 
+        // 受保护行（单行登记但快照漏掉、文件仍在磁盘）临时表：数量是个位数，逐行插。
+        tx.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS protected_media_ids(id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        tx.execute("DELETE FROM protected_media_ids", [])?;
+        for id in protected_image_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO protected_media_ids(id) VALUES (?1)",
+                params![id],
+            )?;
+        }
+
         tx.execute(
             "DELETE FROM file_index WHERE file_type = 'Folder' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
             [],
         )?;
         tx.execute(
-            "DELETE FROM file_index WHERE file_type = 'Image' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
+            "DELETE FROM file_index WHERE file_type = 'Image' AND file_id NOT IN (SELECT id FROM current_snapshot_ids) AND file_id NOT IN (SELECT id FROM protected_media_ids)",
             [],
         )?;
 

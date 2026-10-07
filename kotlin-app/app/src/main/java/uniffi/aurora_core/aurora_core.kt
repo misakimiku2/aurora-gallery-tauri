@@ -848,6 +848,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_tags_to_files(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_index_entries(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_delete_person(
     ): Int
     external fun uniffi_aurora_core_checksum_func_delete_tags(
@@ -911,6 +913,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_aurora_core_checksum_func_update_person_avatar(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_file_metadata(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_upsert_media_image(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_media_images(
     ): Int
@@ -1016,6 +1020,8 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_aurora_core_fn_func_add_tags_to_files(`fileIds`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_delete_index_entries(`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_aurora_core_fn_func_delete_person(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_delete_tags(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1079,6 +1085,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_update_person_avatar(`personId`: RustBuffer.ByValue,`coverFileId`: RustBuffer.ByValue,`faceBox`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_file_metadata(`metadata`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_upsert_media_image(`image`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_media_images(`images`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1280,6 +1288,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_add_tags_to_files() != 52504) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_delete_index_entries() != 34590) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_delete_person() != 23922) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1374,6 +1385,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_file_metadata() != 37365) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_media_image() != 63107) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 3627) {
@@ -2624,6 +2638,13 @@ data class Folder (
     var `name`: kotlin.String
     , 
     /**
+     * 绝对目录路径（索引 Folder 行的 path 列，如 `/storage/emulated/0/Pictures/X`；
+     * 根目录散图 = 外部存储根）。M8b：复制/移动的目标解析（folder_id → RELATIVE_PATH）
+     * 直接读它，不再全量遍历 MediaStore（2.6 万行，老机繁忙时实测 4.9s）。
+     */
+    var `path`: kotlin.String
+    , 
+    /**
      * 该文件夹下图片数量（用于卡片角标）。
      */
     var `imageCount`: kotlin.Long
@@ -2663,6 +2684,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
         return Folder(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterLong.read(buf),
@@ -2673,6 +2695,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
     override fun allocationSize(value: Folder) = (
             FfiConverterString.allocationSize(value.`id`) +
             FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`path`) +
             FfiConverterLong.allocationSize(value.`imageCount`) +
             FfiConverterOptionalString.allocationSize(value.`coverUri`) +
             FfiConverterLong.allocationSize(value.`createdAt`) +
@@ -2682,6 +2705,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
     override fun write(value: Folder, buf: ByteBuffer) {
             FfiConverterString.write(value.`id`, buf)
             FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`path`, buf)
             FfiConverterLong.write(value.`imageCount`, buf)
             FfiConverterOptionalString.write(value.`coverUri`, buf)
             FfiConverterLong.write(value.`createdAt`, buf)
@@ -4753,6 +4777,27 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
     
 
+        /**
+         * 按 file_id 从索引删除行（M8b 删除/移动/重命名的即时收尾）。
+         *
+         * 为什么需要：全量对账是快照语义，陈旧行（被删/被挪走的文件）要等下一次对账才清，
+         * 而这期间总览卡片还按旧索引聚合（封面/计数/时间戳都是几秒前的）——删除后「卡片
+         * 迟迟不更新」即由此来。删除/移动/重命名成功后立即摘掉旧行，紧接着
+         * `list_folders` 重算卡片（聚合子查询索引覆盖，全量约百毫秒），UI 当帧反映。
+         * 与对账的清理幂等（行已不在，DELETE 空转）；台账登记行文件已不在，对账时同样
+         * 会注销，不会互相打架。
+         */
+    @Throws(AuroraException::class) fun `deleteIndexEntries`(`fileIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_index_entries(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    
+    
+
     @Throws(AuroraException::class) fun `deletePerson`(`id`: kotlin.String)
         = 
     uniffiRustCallWithError(AuroraException) { _status ->
@@ -5192,6 +5237,30 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterTypeFfiFileMetadata.lower(`metadata`),_status)
+}
+    
+    
+
+        /**
+         * 单张图片的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
+         * 新路径登记成行时调用，把这一行进 `file_index`，让目标文件夹网格**立即**看到副本。
+         * 否则要等下一次全量对账（2.6 万行 MediaStore 快照，老机约 4s，且 MediaStore 变更
+         * 观察者的防抖扫描还会再排一次）才可见——用户体感「复制完好几秒不显示」。
+         *
+         * 与 [`upsert_media_images`] 的本质区别：**不做快照对账清理**。后者传入的是设备全量
+         * 快照，`reconcile_mediastore_snapshot` 会把快照外的 Folder/Image 行全部删掉——拿单行
+         * 调它等于把整个索引清成一行。这里只做 `batch_upsert` 同款的
+         * `INSERT ... ON CONFLICT DO UPDATE` 单行写入，陈旧行仍由全量对账负责清。
+         * Folder 行不在这里建：目标文件夹多数已存在；新相册的 Folder 行由后续全量对账补，
+         * 图片行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
+         */
+    @Throws(AuroraException::class) fun `upsertMediaImage`(`image`: MediaImage)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_media_image(
+    
+        
+        FfiConverterTypeMediaImage.lower(`image`),_status)
 }
     
     
