@@ -204,6 +204,13 @@ class NativeGalleryView @JvmOverloads constructor(
     // 查看器是否打开（open 时设 true，close 时设 false）
     private var isOpen = false
 
+    // —— 旋转屏幕（2026-10-07，取代原「旋转图片」钮）——
+    /** 当前钉屏方向（SCREEN_ORIENTATION_SENSOR_*）；null=跟随系统。 */
+    private var pinnedOrientation: Int? = null
+    /** 钉屏前的 requestedOrientation，还原时写回（不假定 UNSPECIFIED，宿主未来若锁向也不破坏）。 */
+    private var savedRequestedOrientation =
+        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+
     // —— 内容区钉扎（2026-10-06 报障：沉浸切换隐藏/恢复系统栏的窗口 resize 分两段落位
     // （avd_honor29 实测底部先收、顶部后收），图片在变高/变矮的容器里各重居中一次，
     // 肉眼可见「先下后上」。把图片双 buffer 与顶栏/缩略图条/底部信息的可用区用锚矩形
@@ -277,9 +284,9 @@ class NativeGalleryView @JvmOverloads constructor(
     lateinit private var titleView: TextView
     lateinit private var moreBtn: ImageView
     lateinit private var slideshowBtn: ImageView
-    // 旋转/图片信息钮提成成员：竖屏收敛（applyTopBarFormFactor）要在 buildTopBar 之外
+    // 旋转屏幕/图片信息钮提成成员：竖屏收敛（applyTopBarFormFactor）要在 buildTopBar 之外
     // 按形制重设可见性，不能停留在 buildTopBar 的局部 val（slideshowBtn/deleteBtn 先例）。
-    lateinit private var rotateBtn: ImageView
+    lateinit private var screenRotateBtn: ImageView
     lateinit private var infoBtn: ImageView
     lateinit private var deleteBtn: ImageView
     private val bottomInfo: LinearLayout
@@ -674,7 +681,7 @@ class NativeGalleryView @JvmOverloads constructor(
         if (!this::slideshowBtn.isInitialized) return
         val collapsed = isCompactPortrait
         slideshowBtn.visibility = if (collapsed) GONE else VISIBLE
-        rotateBtn.visibility = if (collapsed) GONE else VISIBLE
+        screenRotateBtn.visibility = if (collapsed) GONE else VISIBLE
         infoBtn.visibility = if (collapsed) GONE else VISIBLE
     }
 
@@ -857,6 +864,9 @@ class NativeGalleryView @JvmOverloads constructor(
         // 显隐归 updateTitle 一处管，一并重跑；空序列有护栏）。查看器关闭（未
         // attach）时收不到也无需收——open() 末尾的幂等重调兜底。
         applyTopBarFormFactor()
+        // 旋转屏幕钮描述随当前方向刷新（未钉屏时用户转设备：横→竖文案要从
+        // 「竖屏查看」变回「横屏查看」，钉屏态则恒「还原屏幕方向」）
+        updateScreenRotateButtonIcon()
         updateTitle()
         // 抽屉形制跟进（M8b-8）：查看器开着旋转时抽屉直接落位到新形制（右缘抽屉↔底部
         // 面板，不要求动画过渡——用户拍板）；幂等重设，开着时按当前进度重放视觉。
@@ -907,7 +917,11 @@ class NativeGalleryView @JvmOverloads constructor(
             // 定为「幻灯片播放」而非「播放」；播/停两态的图标与描述由
             // updateSlideshowButtonIcon 随播放态同步。
             slideshowBtn = makeIconButton(R.drawable.ic_lucide_play, contentDescription = "幻灯片播放") { toggleSlideshow() }
-            rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "旋转") { rotateCurrent() }
+            // 「旋转图片」→「旋转屏幕」（2026-10-07 用户拍板）：按当前方向翻转（竖进横、
+            // 横进竖），退出/再点还原；图标沿用 rotate_cw（资源库暂无手机横置类图标），
+            // 语义由描述/菜单文案承载——描述随钉屏态在 updateScreenRotateButtonIcon 同步
+            //（updateSlideshowButtonIcon 先例）。
+            screenRotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "横屏查看") { toggleScreenOrientation() }
             infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
             deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
             val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
@@ -916,7 +930,7 @@ class NativeGalleryView @JvmOverloads constructor(
             addView(closeBtn)
             addView(titleView)
             addView(slideshowBtn)
-            addView(rotateBtn)
+            addView(screenRotateBtn)
             addView(infoBtn)
             addView(deleteBtn)
             addView(shareBtn)
@@ -1188,6 +1202,10 @@ class NativeGalleryView @JvmOverloads constructor(
         // 沉浸期间 insets 归零——冻结上一真值：按 0 重算会把顶栏**抽上去**一整个状态栏
         //（真机报障「退出沉浸时标题跳动」的同源坑）。
         if (isChromeHidden()) return
+        // 零尺寸布局（查看器关闭期间父层 relayout 会以 [0,0][0,0] 摆一帧）的几何是垃圾：
+        // 此时 getLocationInWindow 报过屏中位置（1212），need 被错算成 0 烤进冻结值——
+        // 「钉横屏退出还原后重开，顶栏贴进状态栏」即此根因。零尺寸帧不学几何。
+        if (width <= 0 || height <= 0) return
         val insets = androidx.core.view.ViewCompat.getRootWindowInsets(this) ?: return
         val statusTop = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
         val loc = IntArray(2)
@@ -2009,6 +2027,12 @@ class NativeGalleryView @JvmOverloads constructor(
         // 停在滑出位、系统状态栏残留隐藏会全部带进本次（真机报障：重开查看器状态
         // 栏已被隐藏）。isOpen（查看器开着被重入）时不属于残留，不动。
         val staleImmersive = !isOpen && isImmersive
+        // 旋转屏幕残留守卫（staleImmersive 同款）：上次经未走 close() 的路径退出时，
+        // 钉屏方向会把整个应用带歪——重开查看器前先还原。
+        if (!isOpen && pinnedOrientation != null) {
+            Log.w("NativeViewer", "open: stale pinned orientation leaked from previous session, restoring")
+            restoreScreenOrientation()
+        }
         val skipReload = isOpen && startIndex == currentIndex && this.images.size == images.size
         this.images.clear()
         this.images.addAll(images)
@@ -2052,10 +2076,22 @@ class NativeGalleryView @JvmOverloads constructor(
         // 竖屏收敛随形制重算：实例随 Activity 存活（manifest configChanges 不重建），
         // buildTopBar 构造时判的可见性在「关着查看器旋转再打开」后会过期；幂等重设。
         applyTopBarFormFactor()
+        // 旋转屏幕钮描述按打开时的屏幕方向刷新（构造默认「横屏查看」在横屏/平板打开
+        // 时会过期，同 applyTopBarFormFactor 的过期问题）
+        updateScreenRotateButtonIcon()
         // 抽屉形制幂等重设（M8b-8）：同顶栏「构造时判的形制会过期」；竖屏 2/3 高度依赖
         // 根尺寸，首次 open 根视图 GONE 未布局时挂起，onSizeChanged 补应用
         applyDrawerFormFactor()
         updateTitle()
+        // 旋转还原后重开的保底：上一轮钉横屏退出时首帧同步可能落在 Compose 驱动的
+        // 布局 pass 里，margin 修正的 requestLayout 被 AndroidView 宿主吞掉（宿主尺寸
+        // 未变就不向上传播）→ 渲染停在旧 margin。这里 post 到 pass 外再无条件请求一次
+        // 真实布局（setLayoutParams 恒触发 requestLayout，无相等短路），让下一帧
+        // onLayout→syncStatusBarInset 按当前方向落定。
+        mainHandler.post {
+            if (!isOpen) return@post
+            topBar.layoutParams = topBar.layoutParams
+        }
         if (autoStartSlideshow) setSlideshow(true)
     }
 
@@ -2160,6 +2196,9 @@ class NativeGalleryView @JvmOverloads constructor(
         // B2：系统栏由本类按沉浸态自行接管（不再是会话模型），关闭时必须还原——
         // 否则「沉浸中退出查看器」会把隐藏的系统栏带进网格。
         onImmersiveBarsChange?.invoke(false)
+        // 旋转屏幕还原（2026-10-07）：钉横屏只在查看器前台成立，退出写回原方向——
+        // 否则网格/画布会停在查看器钉下的横屏
+        restoreScreenOrientation()
         // drawerOpen 清零仍须在背景色还原之前：横屏抽屉打开不改 isImmersive，
         // 背景色分支依赖最终标志位。
         isImmersive = false
@@ -2410,9 +2449,50 @@ class NativeGalleryView @JvmOverloads constructor(
         }, 240)
     }
 
-    private fun rotateCurrent() {
-        rotationDegrees = (rotationDegrees + 90) % 360
-        activeView.setRotationDegrees(rotationDegrees)
+    /**
+     * 旋转屏幕（2026-10-07 取代「旋转图片」钮）：按点击时刻的屏幕方向**翻转到另一侧**——
+     * 竖屏点进横屏（SENSOR_LANDSCAPE）、横屏点进竖屏（SENSOR_PORTRAIT）。翻转而非单向钉
+     * 横屏，是平板验收报障的修正：平板本就横屏，钉 SENSOR_LANDSCAPE 是视觉无操作
+     *（「平板点了没反应」），翻转后每次点击都有可见的方向切换，平板用户也借此获得
+     * 竖幅图的竖屏查看。查看器顶栏/抽屉形制由 onConfigurationChanged 幂等跟进——
+     * manifest 声明 orientation|screenSize configChanges，旋转不重建。
+     * 只在查看器前台生效：close() 与 open() 残留守卫都会 restoreScreenOrientation()
+     * 写回钉屏前的 requestedOrientation（还原跟随系统，不写死竖屏），应用其余界面
+     * 方向不受影响。
+     */
+    private fun toggleScreenOrientation() {
+        val activity = context as? android.app.Activity ?: return
+        if (pinnedOrientation == null) {
+            savedRequestedOrientation = activity.requestedOrientation
+        }
+        pinnedOrientation =
+            if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            else
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        activity.requestedOrientation = pinnedOrientation!!
+        updateScreenRotateButtonIcon()
+    }
+
+    /** 还原屏幕方向（幂等）：只在钉过屏时写回，避免覆盖宿主/系统的既有取向。 */
+    private fun restoreScreenOrientation() {
+        val pinned = pinnedOrientation ?: return
+        pinnedOrientation = null
+        (context as? android.app.Activity)?.requestedOrientation = savedRequestedOrientation
+        updateScreenRotateButtonIcon()
+    }
+
+    /**
+     * 按钮描述按当前屏幕方向给出点击去向：竖屏点=「横屏查看」、横屏点=「竖屏查看」
+     *（图标共用 rotate_cw；updateSlideshowButtonIcon 先例）。查看器内按钮是纯翻转
+     * 循环、每次点击都有可见方向切换，不区分钉屏态——「还原跟随系统」只发生在
+     * close()/open() 残留守卫，不占按钮语义。
+     */
+    private fun updateScreenRotateButtonIcon() {
+        if (!this::screenRotateBtn.isInitialized) return
+        screenRotateBtn.contentDescription =
+            if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) "竖屏查看"
+            else "横屏查看"
     }
 
     private fun toggleBottomInfo() {
@@ -2651,7 +2731,7 @@ class NativeGalleryView @JvmOverloads constructor(
         val canvasItem = MoreMenuItem("加入画布", colorTextPrimary(), iconRes = R.drawable.ic_lucide_frame) {
             listener?.onAddToCanvas(item.fileId)
         }
-        // 竖屏收敛（applyTopBarFormFactor）收起的三个动作补进菜单头部：幻灯片/旋转/
+        // 竖屏收敛（applyTopBarFormFactor）收起的三个动作补进菜单头部：幻灯片/横屏查看/
         // 图片信息——与顶栏收敛一一对应，播放中文案随态切「幻灯片暂停」（isSlideshowPlaying
         // 与顶栏 updateSlideshowButtonIcon 同源，图标随态切 pause/play）；删除菜单里
         // 本就有（置底），不重复加。非竖屏该列表为空，菜单与原状完全一致。
@@ -2664,7 +2744,7 @@ class NativeGalleryView @JvmOverloads constructor(
                         iconRes = if (isSlideshowPlaying()) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play,
                     ) { toggleSlideshow() }
                 )
-                add(MoreMenuItem("旋转", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_cw) { rotateCurrent() })
+                add(MoreMenuItem("横屏查看", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_cw) { toggleScreenOrientation() })
                 add(MoreMenuItem("图片信息", colorTextPrimary(), iconRes = R.drawable.ic_lucide_info) { toggleDrawer() })
             }
         } else {
