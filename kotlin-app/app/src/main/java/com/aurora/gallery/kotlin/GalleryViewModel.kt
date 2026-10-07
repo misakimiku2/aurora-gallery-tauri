@@ -1624,7 +1624,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.w(TAG, "[FileOp] insert rejected, fallback to file: $source", e)
             debugLog("copyOne: insert rejected, fallback to file: $e")
             val dst = legacyCopyToDir(source, relPath, overrideName) ?: return false
-            registerRowAndMigrateAsync(source, dst, includeTopic = false)
+            // deleteSource=false：复制的 srcUri 是用户的原图，删了就是「复制变移动」
+            registerRowAndMigrateAsync(source, dst, includeTopic = false, deleteSource = false)
             return true
         }
         try {
@@ -1968,7 +1969,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.w(TAG, "[FileOp] legacy rename: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
             return false
         }
-        registerRowAndMigrateAsync(uri, dst, includeTopic = true)
+        registerRowAndMigrateAsync(uri, dst, includeTopic = true, deleteSource = true)
         return true
     }
 
@@ -2001,7 +2002,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             Log.w(TAG, "[FileOp] legacy move: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
             return false
         }
-        registerRowAndMigrateAsync(uri, dst, includeTopic = true)
+        registerRowAndMigrateAsync(uri, dst, includeTopic = true, deleteSource = true)
         return true
     }
 
@@ -2052,6 +2053,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         srcUri: android.net.Uri,
         dstFile: java.io.File,
         includeTopic: Boolean,
+        deleteSource: Boolean,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val newUri = try {
@@ -2064,8 +2066,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 Log.w(TAG, "[FileOp] row register failed after retries: ${dstFile.absolutePath}")
                 return@launch
             }
-            runCatching { appContext.contentResolver.delete(srcUri, null, null) }
-                .onFailure { Log.w(TAG, "[FileOp] old row delete failed: $srcUri", it) }
+            if (deleteSource) {
+                // 只适用于 rename/move：旧路径上的文件已随 renameTo 消失，旧行是死行，
+                // 直删（Q legacy 下 delete 放行）避免幽灵索引。**复制绝不走这里**——
+                // 复制的 srcUri 是用户的原图，删了就是把原图送进回收站（2026-10-07
+                // 真机踩过：三操作统一收尾时把删源带给了 copy）。
+                runCatching { appContext.contentResolver.delete(srcUri, null, null) }
+                    .onFailure { Log.w(TAG, "[FileOp] old row delete failed: $srcUri", it) }
+            }
             migrateMetadataAndTagsToNewUri(srcUri, newUri, includeTopic)
         }
     }
