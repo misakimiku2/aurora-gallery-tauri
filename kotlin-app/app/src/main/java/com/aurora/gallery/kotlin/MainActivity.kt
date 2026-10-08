@@ -2009,7 +2009,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onLoadAvatarCandidates = { personId, onReady ->
                             viewModel.loadLocalPersonMemberImages(personId) { images ->
-                                onReady(images.map { AvatarCandidate(it.id, it.contentUri) })
+                                onReady(images.map { AvatarCandidate(it.id, it.contentUri, it.name) })
                             }
                         },
                         onSaveLocalPersonAvatar = { personId, coverFileId, faceBox, onDone ->

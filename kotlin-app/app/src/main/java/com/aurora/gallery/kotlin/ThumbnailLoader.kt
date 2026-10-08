@@ -16,6 +16,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
+import uniffi.aurora_core.FfiFaceBox
 import uniffi.aurora_core.generateThumbnail
 
 /**
@@ -46,6 +48,9 @@ class ThumbnailLoader(context: Context) {
 
     private val appContext = context.applicationContext
     private val thumbDir = File(appContext.cacheDir, "thumbnails").apply { mkdirs() }
+
+    /** 头像成品磁盘缓存（键含 faceBox，见 [avatarKey]）；换框自然换文件。 */
+    private val avatarDir = File(appContext.cacheDir, "avatars").apply { mkdirs() }
 
     /** URL 缩略图的磁盘缓存（M6a 阶段 4；文件名 = URL 哈希，见 [lanDiskFile]）。 */
     private val lanThumbDir = File(appContext.cacheDir, "lan_thumbs").apply { mkdirs() }
@@ -276,6 +281,59 @@ class ThumbnailLoader(context: Context) {
             withContext(Dispatchers.IO) { decodeSubsampled(uri, targetPx) }
         }
 
+    /** 头像成品是否已在内存（组合阶段取初值用，网格回收重进时不闪占位符）。 */
+    fun peekAvatar(imageId: Long, box: FfiFaceBox?): Bitmap? =
+        memoryCache.get(avatarKey(imageId, box))
+
+    /**
+     * 人物头像成品：按 [FfiFaceBox] 从**降采样原图**里裁出方块，再缩到 [AVATAR_PX]，
+     * 结果单独进内存 + 磁盘缓存。
+     *
+     * 为什么不能拿网格那份缩略图直接裁：fast 结果长边只有 512，而头像框常常只占 15%
+     * 上下，裁出来实际细节约 80px，投到 96dp（204px）就是糊的（2026-10-08 反馈）。
+     * 头像要的是「那一小块」，所以取源得按原图比例解到那一块够像素为止。
+     *
+     * 缓存键带 box：换框 = 换键，不会拿旧框的成品糊弄新框。并发走 [hdSemaphore]——
+     * 人物一多时这里比缩略图更贵（每张都要解一次 1600 级别的原图）。
+     */
+    suspend fun loadAvatar(imageId: Long, box: FfiFaceBox?): Bitmap? {
+        val key = avatarKey(imageId, box)
+        memoryCache.get(key)?.let { return it }
+        val disk = File(avatarDir, key.replace(':', '_') + ".jpg")
+        if (disk.exists()) {
+            BitmapFactory.decodeFile(disk.absolutePath)?.let {
+                memoryCache.put(key, it)
+                return it
+            }
+        }
+        return hdSemaphore.withPermit {
+            withContext(Dispatchers.IO) {
+                buildAvatar(imageId, box)?.also {
+                    memoryCache.put(key, it)
+                    persistToDisk(disk, it)
+                }
+            }
+        }
+    }
+
+    private fun buildAvatar(imageId: Long, box: FfiFaceBox?): Bitmap? {
+        val uri = ContentUris.withAppendedId(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            imageId,
+        )
+        // 解不到降采样原图时退回 fast 缩略图：糊，但比没有头像好
+        val src = decodeSubsampled(uri, CROP_SOURCE_PX) ?: loadFast(imageId) ?: return null
+        val rect = avatarCropRect(src.width, src.height, box)
+        val crop = runCatching {
+            Bitmap.createBitmap(src, rect[0], rect[1], rect[2], rect[3])
+        }.getOrNull() ?: return null
+        if (crop.width <= AVATAR_PX) return crop
+        val small = Bitmap.createScaledBitmap(crop, AVATAR_PX, AVATAR_PX, true)
+        // 裁切区正好等于整幅时 createBitmap 返回的是源图本身，那种情况不能回收
+        if (crop !== src) crop.recycle()
+        return small
+    }
+
     /** 当前位图是否偏小、值得升级为高清。 */
     fun needsUpgrade(bitmap: Bitmap): Boolean =
         minOf(bitmap.width, bitmap.height) < MIN_DIM_THRESHOLD
@@ -363,4 +421,40 @@ class ThumbnailLoader(context: Context) {
         private const val HD_MAX_SOURCE_PIXELS = 40_000_000L // 超过此像素数不走 Rust 全解码
         private const val SLOW_LOG_MS = 200L // 慢解码诊断阈值（只在超阈值时打日志）
     }
+}
+
+/** 头像成品边长：96dp 头像在 3.3 倍密度设备上是 317px，取 320 够到最密的一档。 */
+private const val AVATAR_PX = 320
+
+/** 头像缓存键（内存与磁盘同源）：带 box，换框即换键，不会拿旧框的成品糊弄新框。 */
+internal fun avatarKey(imageId: Long, box: FfiFaceBox?): String = "av:$imageId:" +
+    if (box == null || box.w <= 0.0 || box.h <= 0.0) {
+        "full"
+    } else {
+        "%.1f_%.1f_%.1f".format(box.x, box.y, box.w)
+    }
+
+/**
+ * faceBox（百分比：x/y = 左上角占比，w/h = 宽高占比，0..100）→ 图像像素上的正方形裁切区
+ * `[x, y, side, side]`。口径同桌面 `utils/cropStyle.ts`：裁剪窗是正方形，所以
+ * `w%·imgW == h%·imgH`。
+ *
+ * 无框 / 退化框 → 整图中心正方形（桌面 `centerCrop` 同语义）。框因历史数据或浮点误差
+ * 不是正方形时，取框内最大的**居中**正方形——桌面那套 `cropToImgStyle` 对宽高分别按
+ * `10000/w%`、`10000/h%` 缩放会拉伸变形，这里不跟。
+ *
+ * 单独抽成纯函数是为了能单测：这条换算链上一轮正是「存的头像不是圈里那块」的现场。
+ */
+internal fun avatarCropRect(imgW: Int, imgH: Int, box: FfiFaceBox?): IntArray {
+    val center = minOf(imgW, imgH)
+    val fallback = intArrayOf((imgW - center) / 2, (imgH - center) / 2, center, center)
+    if (box == null || box.w <= 0.0 || box.h <= 0.0) return fallback
+    // 先把左上角收进图内，再按「剩下的空间」夹宽高：历史数据里 x+w 可能超 100%，
+    // 不夹就会算出跑到图外的裁切区（createBitmap 直接抛）
+    val x = (box.x / 100.0 * imgW).roundToInt().coerceIn(0, imgW - 1)
+    val y = (box.y / 100.0 * imgH).roundToInt().coerceIn(0, imgH - 1)
+    val w = (box.w / 100.0 * imgW).roundToInt().coerceIn(1, imgW - x)
+    val h = (box.h / 100.0 * imgH).roundToInt().coerceIn(1, imgH - y)
+    val side = minOf(w, h)
+    return intArrayOf(x + (w - side) / 2, y + (h - side) / 2, side, side)
 }

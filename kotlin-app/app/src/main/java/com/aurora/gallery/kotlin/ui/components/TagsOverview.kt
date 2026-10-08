@@ -877,10 +877,13 @@ private fun LocalPersonCard(
 }
 
 /**
- * 人物头像位图：contentUri → MediaStore id → ThumbnailLoader 取图 → 按 faceBox 裁方形。
+ * 人物头像位图：contentUri → MediaStore id → [ThumbnailLoader.loadAvatar]。
  *
- * 同步取内存缓存做初值（[ThumbnailLoader.peekMemory]），LazyGrid 回收重进时不闪占位符
- * ——形制同 FoldersOverview 的封面加载。裁剪在 [cropSquareToAvatar]。
+ * 裁切与取源都在加载器里（那边按 faceBox 从**降采样原图**裁方、缩到头像尺寸并缓存）——
+ * 之前在这儿拿 512 的网格缩略图现裁，框只占 15% 时细节仅 80px，投到 96dp 就是糊的
+ * （2026-10-08 反馈）。
+ *
+ * 同步读内存缓存做初值，LazyGrid 回收重进时不闪占位符——形制同 FoldersOverview 的封面加载。
  */
 @Composable
 private fun rememberPersonAvatar(
@@ -890,49 +893,13 @@ private fun rememberPersonAvatar(
 ): Bitmap? {
     if (loader == null || coverUri.isNullOrEmpty()) return null
     val imageId = remember(coverUri) { loader.extractImageId(coverUri) }
-    val cached = remember(imageId) { loader.peekMemory(imageId) }
     var bitmap by remember(imageId, faceBox) {
-        mutableStateOf(cached?.let { cropSquareToAvatar(it, faceBox) })
+        mutableStateOf(loader.peekAvatar(imageId, faceBox))
     }
     LaunchedEffect(imageId, faceBox) {
-        val src = cached ?: loader.loadFastLimited(imageId)
-        // 裁剪挪 IO：createBitmap 要复制像素，人物一多全压主线程会掉帧
-        bitmap = src?.let { bmp ->
-            withContext(Dispatchers.IO) { cropSquareToAvatar(bmp, faceBox) }
-        }
+        bitmap = loader.loadAvatar(imageId, faceBox)
     }
     return bitmap
-}
-
-/**
- * 按 faceBox 裁成正方形位图（头像容器是圆，非方形部分露不出来）。
- *
- * faceBox 是**百分比坐标**（x/y = 左上角占比，w/h = 宽高占比，0..100），口径同桌面
- * `utils/cropStyle.ts` 的 CropRect。与桌面有一处刻意不同：桌面的 `cropToImgStyle` 对
- * 宽高分别按 `10000/w%`、`10000/h%` 缩放，非方形框会被**拉伸变形**；这里改成取框内
- * 最大的居中正方形，不变形。无框 / 退化框（w 或 h ≤ 0）→ 整图中心正方形，等价桌面
- * 的 `centerCrop`。
- */
-private fun cropSquareToAvatar(src: Bitmap, faceBox: FfiFaceBox?): Bitmap {
-    val fallbackSide = minOf(src.width, src.height)
-    var x = (src.width - fallbackSide) / 2
-    var y = (src.height - fallbackSide) / 2
-    var side = fallbackSide
-    if (faceBox != null && faceBox.w > 0.0 && faceBox.h > 0.0) {
-        val bw = (faceBox.w / 100.0 * src.width).toInt().coerceIn(1, src.width)
-        val bh = (faceBox.h / 100.0 * src.height).toInt().coerceIn(1, src.height)
-        val bx = (faceBox.x / 100.0 * src.width).toInt().coerceIn(0, src.width - 1)
-        val by = (faceBox.y / 100.0 * src.height).toInt().coerceIn(0, src.height - 1)
-        val s = minOf(bw, bh, src.width - bx, src.height - by)
-        if (s > 0) {
-            side = s
-            x = bx + (bw - s) / 2
-            y = by + (bh - s) / 2
-        }
-    }
-    if (side <= 0 || x < 0 || y < 0 || x + side > src.width || y + side > src.height) return src
-    // 不可变位图上 createBitmap 会抛；缩略图来自解码器一般可变，兜住不崩
-    return runCatching { Bitmap.createBitmap(src, x, y, side, side) }.getOrDefault(src)
 }
 
 /**

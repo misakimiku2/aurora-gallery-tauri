@@ -1,11 +1,13 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,15 +21,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -35,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -45,8 +53,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -60,8 +70,8 @@ import uniffi.aurora_core.FfiFaceBox
 import kotlin.math.max
 import kotlin.math.min
 
-/** 裁剪页的一个候选封面（人物成员图）。 */
-data class AvatarCandidate(val fileId: String, val contentUri: String)
+/** 裁剪页的一个候选封面（人物成员图）。[name] = 文件名，展开成列表时按它过滤。 */
+data class AvatarCandidate(val fileId: String, val contentUri: String, val name: String)
 
 /**
  * 取景窗在图像像素空间里的状态：窗心 + 窗所覆盖的**图像正方形边长**。
@@ -167,6 +177,11 @@ fun PersonAvatarCropDialog(
     var view by remember { mutableStateOf<CropView?>(null) }
     // 取图失败要说话：黑圈圈不解释就是「应用卡住了」的观感
     var loadFailed by remember { mutableStateOf(false) }
+    // 候选区两态：收起 = 底部横条（拇指够得着），展开 = 搜索 + 网格（成员图一多，
+    // 横条就滑不动了）。展开时取景视口被 weight(1f) 压缩，圆圈自然缩小并上移让位——
+    // CropView 存的是图像空间，视口尺寸变化不动取景内容。
+    var expanded by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
 
     // 换封面图 = 重新取位图 + 重置取景窗。initialFaceBox 只用于**首张**：它描述的是
     // 旧封面的构图，套到另一张图上会把新图裁歪。
@@ -206,12 +221,16 @@ fun PersonAvatarCropDialog(
         onDismissRequest = onCancel,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(
+        // BoxWithConstraints 而非 Box：展开候选区时要拿整页高度算面板上限
+        BoxWithConstraints(
             Modifier
                 .fillMaxSize()
                 // 桌面同页是 bg-black/70：压得太死就看不见这是在图库里改头像
                 .background(Color.Black.copy(alpha = 0.7f)),
         ) {
+            // 视口那层还有一个 BoxWithConstraints，maxHeight 会被它遮住（Kotlin 不许隐式
+            // 跨两层接收者取值），所以这里先把整页高度存成局部量
+            val pageHeight = maxHeight
             Column(Modifier.fillMaxSize()) {
                 // 顶栏：标题居中 + 取消/保存在两侧（全屏页自己带操作，不借用系统对话框的按钮位）
                 Row(
@@ -350,29 +369,123 @@ fun PersonAvatarCropDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    textAlign = TextAlign.Center,
                 )
 
-                // 候选封面横条（桌面右侧竖列表的触屏同位）。只有一张时整条不出现——
+                // 候选封面（桌面右侧竖列表的触屏同位）。只有一张时整条不出现——
                 // 一排一个孤零零的圆点没有信息量。
-                if (candidates.size > 1) {
-                    LazyRow(
+                if (candidates.size <= 1) {
+                    Spacer(Modifier.height(20.dp))
+                } else {
+                    val panelHeight by animateDpAsState(
+                        if (expanded) pageHeight * PANEL_EXPANDED else 76.dp,
+                        label = "candidatePanel",
+                    )
+                    // 把手：往上滑（或点一下）展开成「搜索 + 网格」，往下滑收回横条
+                    Box(
                         Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                            .height(30.dp)
+                            .pointerInput(Unit) {
+                                var dragged = 0f
+                                detectVerticalDragGestures(
+                                    onDragEnd = {
+                                        if (dragged < -40f) {
+                                            expanded = true
+                                        } else if (dragged > 40f) {
+                                            expanded = false
+                                        }
+                                        dragged = 0f
+                                    },
+                                ) { _, dy -> dragged += dy }
+                            }
+                            .clickable { expanded = !expanded },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        items(candidates, key = { it.fileId }) { candidate ->
-                            AvatarCandidateChip(
-                                candidate = candidate,
-                                loader = loader,
-                                selected = candidate.fileId == selectedId,
-                                onClick = { selectedId = candidate.fileId },
-                            )
+                        Icon(
+                            imageVector = IconChevronRight,
+                            contentDescription = if (expanded) "收起图片列表" else "展开图片列表",
+                            tint = Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier
+                                .size(18.dp)
+                                .rotate(if (expanded) 90f else -90f),
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(panelHeight)
+                            .padding(bottom = 12.dp),
+                    ) {
+                        if (expanded) {
+                            val filtered = remember(candidates, query) {
+                                val q = query.trim()
+                                if (q.isEmpty()) {
+                                    candidates
+                                } else {
+                                    candidates.filter { it.name.contains(q, ignoreCase = true) }
+                                }
+                            }
+                            Column(Modifier.fillMaxSize()) {
+                                OutlinedTextField(
+                                    value = query,
+                                    onValueChange = { query = it },
+                                    placeholder = {
+                                        Text("搜索文件名", color = Color.White.copy(alpha = 0.45f))
+                                    },
+                                    singleLine = true,
+                                    textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = colors.primary,
+                                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
+                                        cursorColor = Color.White,
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 72.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .padding(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    items(filtered, key = { it.fileId }) { candidate ->
+                                        AvatarCandidateChip(
+                                            candidate = candidate,
+                                            loader = loader,
+                                            selected = candidate.fileId == selectedId,
+                                            size = 72.dp,
+                                            onClick = { selectedId = candidate.fileId },
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            LazyRow(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    10.dp,
+                                    Alignment.CenterHorizontally,
+                                ),
+                            ) {
+                                items(candidates, key = { it.fileId }) { candidate ->
+                                    AvatarCandidateChip(
+                                        candidate = candidate,
+                                        loader = loader,
+                                        selected = candidate.fileId == selectedId,
+                                        onClick = { selectedId = candidate.fileId },
+                                    )
+                                }
+                            }
                         }
                     }
-                } else {
-                    Spacer(Modifier.height(20.dp))
                 }
             }
         }
@@ -381,6 +494,9 @@ fun PersonAvatarCropDialog(
 
 /** 取景圆占视口边长的比例 = 桌面 CropAvatarModal 的 CROP_SIZE / VIEWPORT_SIZE（250 / 400）。 */
 private const val CROP_TO_VIEWPORT = 0.625f
+
+/** 候选区展开时占整页高度的比例：再多给就会把取景圆挤得太小，再少则列表看不到几行。 */
+private const val PANEL_EXPANDED = 0.42f
 
 /**
  * 最大放大倍率（与桌面那颗滑杆同量级）。换成取原图之后这颗上限不再由马赛克决定，而由
@@ -409,13 +525,14 @@ internal fun CropView.clampedTo(imgW: Int, imgH: Int): CropView {
     )
 }
 
-/** 候选图小圆点（56dp，选中带主色环）。 */
+/** 候选图小圆点（收起态 56dp、展开网格 72dp，选中带主色环）。 */
 @Composable
 private fun AvatarCandidateChip(
     candidate: AvatarCandidate,
     loader: ThumbnailLoader,
     selected: Boolean,
     onClick: () -> Unit,
+    size: Dp = 56.dp,
 ) {
     val colors = AuroraTheme.colors
     var bmp by remember(candidate.contentUri) {
@@ -426,7 +543,7 @@ private fun AvatarCandidateChip(
     }
     Box(
         Modifier
-            .size(56.dp)
+            .size(size)
             .clip(CircleShape)
             .background(colors.surface)
             .border(
