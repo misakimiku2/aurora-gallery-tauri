@@ -1,7 +1,9 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -26,15 +29,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,14 +45,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -177,10 +181,18 @@ fun PersonAvatarCropDialog(
     var view by remember { mutableStateOf<CropView?>(null) }
     // 取图失败要说话：黑圈圈不解释就是「应用卡住了」的观感
     var loadFailed by remember { mutableStateOf(false) }
-    // 候选区两态：收起 = 底部横条（拇指够得着），展开 = 搜索 + 网格（成员图一多，
-    // 横条就滑不动了）。展开时取景视口被 weight(1f) 压缩，圆圈自然缩小并上移让位——
-    // CropView 存的是图像空间，视口尺寸变化不动取景内容。
-    var expanded by remember { mutableStateOf(false) }
+    // 候选抽屉：progress 0 = 收起（横条）、1 = 展开（搜索 + 网格）。拖拽期间由手势逐帧写，
+    // 松手交给 animateFloatAsState 吸到最近一端 —— 与查看器底部抽屉同一套手感
+    //（NativeGalleryView 的 applyDrawerProgress / animateDrawerTo：280ms 缓动 +
+    //  ±500px/s 的甩动速度否决位置判断）。
+    var drawerTarget by remember { mutableFloatStateOf(0f) }
+    var dragProgress by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    val drawerAnimated by animateFloatAsState(
+        targetValue = drawerTarget,
+        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+        label = "candidateDrawer",
+    )
     var query by remember { mutableStateOf("") }
 
     // 换封面图 = 重新取位图 + 重置取景窗。initialFaceBox 只用于**首张**：它描述的是
@@ -372,52 +384,69 @@ fun PersonAvatarCropDialog(
                     textAlign = TextAlign.Center,
                 )
 
-                // 候选封面（桌面右侧竖列表的触屏同位）。只有一张时整条不出现——
+                // 候选封面抽屉（桌面右侧竖列表的触屏同位）。只有一张时整条不出现——
                 // 一排一个孤零零的圆点没有信息量。
                 if (candidates.size <= 1) {
                     Spacer(Modifier.height(20.dp))
                 } else {
-                    val panelHeight by animateDpAsState(
-                        if (expanded) pageHeight * PANEL_EXPANDED else 76.dp,
-                        label = "candidatePanel",
-                    )
-                    // 把手：往上滑（或点一下）展开成「搜索 + 网格」，往下滑收回横条
+                    val collapsedH = 76.dp
+                    val expandedH = pageHeight * PANEL_EXPANDED
+                    val travelPx = with(LocalDensity.current) {
+                        (expandedH - collapsedH).toPx().coerceAtLeast(1f)
+                    }
+                    val progress = if (dragging) dragProgress else drawerAnimated
+                    // 把手：整行 48dp 命中区（视觉只是中间那条小横杠），跟手拖 + 点一下切换
+                    // ——拖动之外必须留非拖拽替代（触屏适配规范）。
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(30.dp)
-                            .pointerInput(Unit) {
-                                var dragged = 0f
+                            .height(48.dp)
+                            .pointerInput(travelPx) {
+                                var lastT = 0L
+                                var vel = 0f
                                 detectVerticalDragGestures(
-                                    onDragEnd = {
-                                        if (dragged < -40f) {
-                                            expanded = true
-                                        } else if (dragged > 40f) {
-                                            expanded = false
-                                        }
-                                        dragged = 0f
+                                    onDragStart = {
+                                        dragging = true
+                                        dragProgress = drawerTarget
+                                        lastT = 0L
+                                        vel = 0f
                                     },
-                                ) { _, dy -> dragged += dy }
+                                    onVerticalDrag = { change, dy ->
+                                        val t = change.uptimeMillis
+                                        if (lastT != 0L) {
+                                            vel = dy * 1000f / (t - lastT).coerceAtLeast(1L)
+                                        }
+                                        lastT = t
+                                        dragProgress = (dragProgress - dy / travelPx).coerceIn(0f, 1f)
+                                    },
+                                    onDragEnd = {
+                                        dragging = false
+                                        drawerTarget = when {
+                                            vel > 500f -> 0f
+                                            vel < -500f -> 1f
+                                            else -> if (dragProgress > 0.5f) 1f else 0f
+                                        }
+                                    },
+                                    onDragCancel = { dragging = false },
+                                )
                             }
-                            .clickable { expanded = !expanded },
+                            .clickable { drawerTarget = if (drawerTarget > 0.5f) 0f else 1f },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = IconChevronRight,
-                            contentDescription = if (expanded) "收起图片列表" else "展开图片列表",
-                            tint = Color.White.copy(alpha = 0.6f),
-                            modifier = Modifier
-                                .size(18.dp)
-                                .rotate(if (expanded) 90f else -90f),
+                        Box(
+                            Modifier
+                                .size(width = 32.dp, height = 4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(Color.White.copy(alpha = 0.35f)),
                         )
                     }
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(panelHeight)
+                            .height(collapsedH + (expandedH - collapsedH) * progress)
                             .padding(bottom = 12.dp),
                     ) {
-                        if (expanded) {
+                        if (progress > 0.5f) {
                             val filtered = remember(candidates, query) {
                                 val q = query.trim()
                                 if (q.isEmpty()) {
@@ -427,30 +456,81 @@ fun PersonAvatarCropDialog(
                                 }
                             }
                             Column(Modifier.fillMaxSize()) {
-                                OutlinedTextField(
-                                    value = query,
-                                    onValueChange = { query = it },
-                                    placeholder = {
-                                        Text("搜索文件名", color = Color.White.copy(alpha = 0.45f))
-                                    },
-                                    singleLine = true,
-                                    textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = colors.primary,
-                                        unfocusedBorderColor = Color.White.copy(alpha = 0.3f),
-                                        cursorColor = Color.White,
-                                    ),
-                                    modifier = Modifier
+                                // 搜索框形制照顶栏那颗搜索胶囊（SearchPill）：40dp 高、圆角 50、
+                                // surface 底 + subtle 描边、放大镜 + 占位文字 + 尾部清空 X，
+                                // 连「平板上不撑满、封顶 500dp」一起照抄（顶栏那条就是被反馈
+                                // 横屏上搜索框太长才加的）。外面再垫到 48dp 高保证命中区够触屏。
+                                Box(
+                                    Modifier
                                         .fillMaxWidth()
+                                        .height(48.dp)
                                         .padding(horizontal = 16.dp),
-                                )
-                                Spacer(Modifier.height(8.dp))
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Row(
+                                        Modifier
+                                            .widthIn(max = 500.dp)
+                                            .fillMaxWidth()
+                                            .height(40.dp)
+                                            .background(colors.surface, RoundedCornerShape(50))
+                                            .border(1.dp, colors.subtle, RoundedCornerShape(50))
+                                            .padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            imageVector = CropIconSearch,
+                                            contentDescription = null,
+                                            tint = colors.textSecondary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.size(8.dp))
+                                        BasicTextField(
+                                            value = query,
+                                            onValueChange = { query = it },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f),
+                                            textStyle = TextStyle(
+                                                color = colors.textPrimary,
+                                                fontSize = 14.sp,
+                                            ),
+                                            cursorBrush = SolidColor(colors.primary),
+                                            decorationBox = { inner ->
+                                                Box(contentAlignment = Alignment.CenterStart) {
+                                                    if (query.isEmpty()) {
+                                                        Text(
+                                                            text = "搜索文件名",
+                                                            color = colors.textSecondary,
+                                                            fontSize = 14.sp,
+                                                        )
+                                                    }
+                                                    inner()
+                                                }
+                                            },
+                                        )
+                                        if (query.isNotEmpty()) {
+                                            Box(
+                                                Modifier
+                                                    .size(40.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable { query = "" },
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    imageVector = CropIconX,
+                                                    contentDescription = "清空搜索",
+                                                    tint = colors.textSecondary,
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                                 LazyVerticalGrid(
                                     columns = GridCells.Adaptive(minSize = 72.dp),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .weight(1f)
-                                        .padding(horizontal = 16.dp),
+                                        .padding(horizontal = 16.dp, vertical = 4.dp),
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
@@ -562,5 +642,29 @@ private fun AvatarCandidateChip(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+    }
+}
+
+/**
+ * 搜索胶囊里的放大镜与清空 X（lucide 同款字形）。顶栏 SearchPill 用的是它自己那份
+ * private 图标，这里就近自绘一份同样的路径——字形一致，样式才算「和顶部工具栏一样」。
+ */
+private val CropIconSearch: ImageVector by lazy {
+    auroraIcon("CropSearch") {
+        moveTo(3f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
+        close()
+        moveTo(21f, 21f)
+        lineTo(16.65f, 16.65f)
+    }
+}
+
+private val CropIconX: ImageVector by lazy {
+    auroraIcon("CropX") {
+        moveTo(18f, 6f)
+        lineTo(6f, 18f)
+        moveTo(6f, 6f)
+        lineTo(18f, 18f)
     }
 }
