@@ -402,6 +402,23 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
      */
     val settings = mutableStateOf(settingsStore.load())
 
+    /**
+     * 本地总览封面重选结果（folderId → 封面 contentUri）。Compose state：宿主组合直接
+     * `.value` 读，重算落地即触发重组。无直接子图 / FFI 失败的文件夹**缺项**——消费方
+     * 回退该文件夹的原 cover_uri（「根目录图片」等虚拟目录同样走缺项回退）。
+     *
+     * **必须声明在下面 init 之前**：init 里那条 snapshotFlow 订阅会在构造期就同步跑到
+     * `localCoverOverrides.value = ...`，Kotlin 按声明顺序初始化属性，晚声明就是 null ——
+     * 实测启动崩过一次（NPE at refreshLocalOverviewCovers，GalleryViewModel.kt:4881）。
+     */
+    val localCoverOverrides = mutableStateOf<Map<String, String>>(emptyMap())
+
+    /** 上次封面重算的口径 key（排序 + 文件夹列表指纹）；不变则跳过重算。 */
+    private var localCoverKey: String? = null
+
+    /** 在跑的封面重算协程（新口径到来时取消旧的，防乱序落地）。 */
+    private var localCoverJob: Job? = null
+
     init {
         // 初始化 Rust 数据库（filesDir 下）；DB_POOL 已初始化时 Rust 侧 set 幂等忽略
         initDb(File(appContext.filesDir, "aurora.db").absolutePath)
@@ -4842,19 +4859,6 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // 在这里逐文件夹 list_images 取直接子图，按当前 (sortBy, sortDirection) 内存排序
     // 取第一张（比较语义与 GridModels.sortImages 一致：name 不区分大小写 / date=createdAt
     // / size=字节；排序稳定，同键保持 modified DESC 原序）。
-
-    /**
-     * 本地总览封面重选结果（folderId → 封面 contentUri）。Compose state：宿主组合直接
-     * `.value` 读，重算落地即触发重组。无直接子图 / FFI 失败的文件夹**缺项**——消费方
-     * 回退该文件夹的原 cover_uri（「根目录图片」等虚拟目录同样走缺项回退）。
-     */
-    val localCoverOverrides = mutableStateOf<Map<String, String>>(emptyMap())
-
-    /** 上次封面重算的口径 key（排序 + 文件夹列表指纹）；不变则跳过重算。 */
-    private var localCoverKey: String? = null
-
-    /** 在跑的封面重算协程（新口径到来时取消旧的，防乱序落地）。 */
-    private var localCoverJob: Job? = null
 
     /**
      * 按当前排序口径重算总览封面（IO 协程；仅在排序方式或文件夹列表变化时执行一次，
