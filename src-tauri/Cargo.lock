@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "aurora-gallery"
-version = "2.1.0"
+version = "2.2.1"
 dependencies = [
  "ab_glyph",
  "ab_glyph_rasterizer",

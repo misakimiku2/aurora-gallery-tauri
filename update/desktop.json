@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "platform": "desktop",
-  "version": "2.1.0",
-  "release_name": "v2.1.0",
-  "release_notes": "2.1 首次启动体验补齐（与安卓同步升级）：\n\n【全新】\n· 欢迎向导从 2 步扩到 4 步：新增 AI 服务步（服务商/接口/密钥 + 测试连接）与设备互联步（当场开启共享、出地址与访问码）\n· 「扫码下载安卓端」二维码直连当前版本安装包，手机扫码即下载，不再跳发行页\n· 桌面二维码放大到 144px 并提高出图分辨率，加载期间转圈占位\n· 设置 → 局域网共享未开启时新增「获取安卓端」卡片（二维码 + 可复制地址）\n· 文件夹图标默认改为 Canvas 版（已显式选过样式的仍按存档）\n\n【修复】二维码命中缓存时转圈收不起来、欢迎页第 3 步输入框把按钮挤出卡片、Logo 投影画成方形、失效的主色调提示与撑变形底栏等。\n\n完整清单见 Release 页。",
-  "published_at": "2026-09-29",
+  "version": "2.2.1",
+  "release_name": "v2.2.1",
+  "release_notes": "2.2.1 第三方图库迁移主线（与安卓同步升级）：\n\n【全新】\n· PixCall 库迁移：快照解码 / 层级重建 / 导入记录落库，欢迎页与设置-存储两个入口\n· Eagle 库导入：智能夹按条件自算成员、硬链接优先连文件接管、专题层级压到二级、重跑幂等\n· 资源根旁新增「历史」按钮，一键切回用过的根目录；导入库时可直接切根（切根统一走确认弹窗）\n· 库不在资源根下时提前给出命中率预警，不用导完才发现没匹配上\n· 来源网址改多值（JSON 数组，旧单值自动兼容），可就地编辑，导入从「让位」改「追加」\n· 文件夹时间排序改为取内容最新时间，封面缩略图随排序变化\n· 复制 / 移动目标选择器顶部新增相册搜索框；查看器顶栏旋转钮改为钉屏方向切换\n\n【修复】外部链接在 Tauri 下唤不起浏览器、翻页后永远停在缩略图、切根后局域网共享根路径不更新、只建空专题也算「有东西可迁」等。\n\n完整清单见 Release 页。",
+  "published_at": "2026-10-09",
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "installer",
-      "name": "Aurora.Gallery_2.1.0_x64-setup.exe",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.1.0/Aurora.Gallery_2.1.0_x64-setup.exe",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.0.0/Aurora.Gallery_2.0.0_x64-setup.exe",
-      "size": 12595219,
-      "size_text": "12.0 MB",
-      "sha256": "91e607d9993a948e53920d8468d8a37cefbab7971a865af779b2545c23b8d1ff"
+      "name": "Aurora.Gallery_2.2.1_x64-setup.exe",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.2.1/Aurora.Gallery_2.2.1_x64-setup.exe",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.2.1/Aurora.Gallery_2.2.1_x64-setup.exe",
+      "size": 12776063,
+      "size_text": "12.2 MB",
+      "sha256": "b58ad838e75a5333294a324b374fc5f4bbf10ae45cd7402c9c225d9f7cb76435"
     }
   ]
 }

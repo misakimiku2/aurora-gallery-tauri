@@ -1,22 +1,22 @@
 {
   "schema": 1,
   "platform": "android",
-  "version": "2.1",
-  "version_code": 3,
-  "release_name": "v2.1",
-  "release_notes": "2.1 首次启动体验补齐（安卓与桌面同步升级）：\n\n【全新】\n· 四步欢迎向导：媒体权限 → 个性化偏好 → AI 服务 → 设备互联，走完才进主界面\n· 权限被拒有兜底页，可跳系统设置补授权，不再拒绝一次就卡在空网格\n· 手机/平板两种排版、深浅两档配色、中英随应用语言切换，关键按钮不小于 48dp\n· 互联步新增「下载桌面端」卡片（说明 + 链接 + 一键复制），与桌面侧扫码下载对映\n· 平板欢迎页二维码重做：加大到与桌面同物理尺寸、补齐白边、整数倍逐模块绘制\n· 老用户（已授权）升级不被向导打断\n\n【修复】平板二维码扫不出、手机竖屏内容被挤出屏幕、步骤条不能点回退、AI 步填写不生效、平板内容贴边等十余项。\n\n与 v2.0 同一把签名，直接覆盖安装即可。完整清单见 Release 页。",
-  "published_at": "2026-09-29",
+  "version": "2.2.1",
+  "version_code": 6,
+  "release_name": "v2.2.1",
+  "release_notes": "2.2.1 第三方图库迁移 + 人物栏补齐（安卓与桌面同步升级）：\n\n【全新】\n· PixCall / Eagle 库迁移：连文件夹层级、专题（智能夹）、封面与来源网址一起接管，导入前先看命中率预警\n· 资源根旁新增「历史」按钮，一键切回用过的根目录；导入库时可切到该库再导入\n· 来源网址改多值，可就地编辑（回车保存 / Esc 放弃），导入从「让位」改「追加」\n· 人物栏移植桌面手动那一半：真头像 / 筛选 / 排序分组 + 全新的头像裁剪页（原图裁剪、双指缩放、候选区上滑展开）\n· 查看器系统栏改会话模型：进出零位移、状态栏常驻，EMUI 三处观感问题收官\n· 文件夹 / 标签 / 专题 / 人物四页新增页面级拖拽滚动条，人物快照启动即加载\n\n【修复】复制误删原图、国产 ROM 上复制与移动失败、来源网址整行写回丢数据、启动崩溃、候选抽屉弹回与内容跳出等二十余项。\n\n【性能】file_index 增加复合索引，大库冷启动到文件夹列表可见的时间大幅缩短。\n\n与 v2.1 同一把签名，直接覆盖安装即可。完整清单见 Release 页。",
+  "published_at": "2026-10-09",
   "min_version_code": 1,
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "apk",
-      "name": "AuroraGallery-v2.1.0.apk",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.1.0/AuroraGallery-v2.1.0.apk",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.1.0/AuroraGallery-v2.1.0.apk",
-      "size": 37665191,
-      "size_text": "35.9 MB",
-      "sha256": "864081ae501bdf4cc34838fa3603edd824f19e92937bb58d62bbeb641395db95"
+      "name": "AuroraGallery-v2.2.1.apk",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.2.1/AuroraGallery-v2.2.1.apk",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.2.1/AuroraGallery-v2.2.1.apk",
+      "size": 37435835,
+      "size_text": "35.7 MB",
+      "sha256": "574a72ab4fa346c2626ba12c02776f8cb15fe0f4b2fe291b2f58258435a7df1e"
     }
   ]
 }
