@@ -61,6 +61,11 @@ curl.exe -s "https://raw.githubusercontent.com/misakimiku2/aurora-gallery-tauri/
    Gitee 会 302 到真实文件、GitHub 直接返回内容，两者都应输出上面那份 JSON。
    若 Gitee 返回 HTML 登录页，说明仓库变成了私有——公开 raw 才免鉴权。
 
+   **Release 正文也要回读**（写进去 ≠ 写得对）：`scripts/publish-gitee.mjs` 跑完会自己比对
+   正文首行，不符就中止报错。手工核对时注意——PowerShell 的 `Invoke-RestMethod` 按单字节
+   解码 Gitee 的响应，中文一律显示成乱码（`发布于` → `åå¸äº`），**这是假警报**；
+   用脚本或 Node 的 `fetch` 读 `repos/{repo}/releases/tags/<tag>` 的 `body` 才作准。
+
 ## 三、已知坑
 
 - **分支名**：两个清单 URL 里写死了分支。换默认分支只改代码常量即可，别忘同步这个文档。
