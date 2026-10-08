@@ -2029,6 +2029,9 @@ class NativeGalleryView @JvmOverloads constructor(
     /** 打开查看器，显示 [startIndex] 位置的图片。 */
     fun open(images: List<ImageItem>, startIndex: Int, options: JSONObject?) {
         Log.i("NativeViewer", "open called: images=${images.size}, startIndex=$startIndex, options=$options, alreadyOpen=$isOpen, currentIdx=$currentIndex")
+        // 主线程占用计时：进出过渡那 320ms 里覆盖层要靠这条链活着，open() 的同步重活
+        // （缩略图条 submit / 抽屉重建 / 发图）压进动画窗口就会把帧数打掉（真机报「只有两帧」）
+        val openStartedAt = android.os.SystemClock.uptimeMillis()
         // 上次会话的沉浸态残留检测：实例跨打开复用（Coil 缓存随实例走），若上次经
         // 兜底 BackHandler 之外任何未走 close() 的路径退出，isImmersive=true、顶栏
         // 停在滑出位、系统状态栏残留隐藏会全部带进本次（真机报障：重开查看器状态
@@ -2105,6 +2108,11 @@ class NativeGalleryView @JvmOverloads constructor(
             topBar.layoutParams = topBar.layoutParams
         }
         if (autoStartSlideshow) setSlideshow(true)
+        Log.i(
+            "NativeViewer",
+            "open() 同步耗时=${android.os.SystemClock.uptimeMillis() - openStartedAt}ms " +
+                "heldForTransition=$holdHiddenForTransition",
+        )
     }
 
     /**

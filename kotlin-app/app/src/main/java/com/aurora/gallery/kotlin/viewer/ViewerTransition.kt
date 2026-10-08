@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
@@ -52,7 +53,6 @@ const val PHOTO_COVER_RADIUS_DP = 12f
 
 private const val ENTER_DURATION_MS = 320L
 private const val EXIT_DURATION_MS = 260L
-
 /**
  * 展开到位后最多再等多久让高清图上屏（超时照样揭幕，等于今天的行为）。
  *
@@ -65,7 +65,12 @@ private const val ENTER_HOLD_MS = 900L
 /** 揭幕时覆盖层那张图的淡出时长。 */
 private const val ENTER_FADE_MS = 110L
 
-private val ENTER_EASING = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
+/**
+ * 进入节奏。起步就用足行程、尾段慢慢收，但**不能**用 Material emphasized 那条
+ * `cubic-bezier(0.05, 0.7, 0.1, 1)`：它 20% 时间就走完 78% 的形变，一旦有掉帧就退化成
+ * 「卡片 → 大图」两格（真机报障的成因之一，另一半见 [Spec.onExpansionDone]）。
+ */
+private val ENTER_EASING = PathInterpolator(0.2f, 0f, 0f, 1f)
 private val EXIT_EASING = PathInterpolator(0.3f, 0f, 0.8f, 0.15f)
 
 /**
@@ -109,6 +114,18 @@ internal class Spec(
     val holdMs: Long = 0L,
     /** 收尾动作之后，覆盖层的图再淡出多久（进入动画揭幕时给真图让位）。 */
     val fadeOutMs: Long = 0L,
+    /**
+     * **展开动画跑完那一刻**（进入）：宿主在这里才去挂载查看器。
+     *
+     * 为什么必须错开这一段：写「打开查看器」状态会让 Compose 重组 + 挂载整棵查看器视图树 +
+     * [NativeGalleryView.open]（缩略图条 submit、抽屉重建、发 Coil 请求、首轮 measure/layout），
+     * 这一串是主线程同步活——模拟器实测 190ms、真机更长。压在展开动画那 320ms 里，动画就只剩
+     * 两三帧（实测 frames=7 / maxGap=191ms，用户报「只有 2 个阶段」）。放到展开之后，同样的
+     * 开销藏在覆盖层那张放大到位的图底下，一帧都不丢。
+     */
+    val onExpansionDone: (() -> Unit)? = null,
+    /** 展开期是否吞掉触摸（进入=是：底下还是网格，别让人误点第二张；退出=否：网格照常可点）。 */
+    val swallowTouches: Boolean = false,
     val onEnd: () -> Unit,
 )
 
@@ -135,11 +152,19 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
      * [NativeGalleryView.holdHiddenForTransition] 再打开查看器——否则真图会在底色还透明的
      * 那几帧里直接顶掉网格，动画等于白做。
      */
+    /**
+     * 进入：卡片封面放大成全屏查看器里那张图。
+     *
+     * 返回 false = 条件不满足（系统关了动画 / 卡片上还没有位图 / 落点算不出来），调用方按
+     * 老样子立刻打开查看器。返回 true 时覆盖层已经挂上，**查看器此时还不该挂载**：宿主把
+     * 「写打开状态」留到 [onExpansionDone]（理由见该字段），并在揭幕回调里显形。
+     */
     fun startEnter(
         cover: ImageView,
         scrimColor: Int,
         predictedEnd: RectF,
         liveEnd: (RectF) -> Boolean,
+        onExpansionDone: () -> Unit,
         onReveal: () -> Unit,
     ): Boolean {
         val drawable = cover.drawable ?: return false
@@ -161,6 +186,8 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
                 liveEnd = liveEnd,
                 holdMs = ENTER_HOLD_MS,
                 fadeOutMs = ENTER_FADE_MS,
+                onExpansionDone = onExpansionDone,
+                swallowTouches = true,
                 onEnd = onReveal,
             ),
         )
@@ -201,12 +228,22 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
         overlay?.forceFinish()
     }
 
+    /**
+     * **不作废式取消**：一个回调都不跑地把覆盖层摘掉，屏幕回到这次过渡开始之前。
+     *
+     * 给「展开窗口期里用户按了返回」用——那次「点开图片」被撤回，既不该挂载查看器
+     * （[Spec.onExpansionDone]）也不该揭幕（[Spec.onEnd]），只是动画到此为止。
+     */
+    fun cancel() {
+        overlay?.abandon()
+    }
+
     private fun run(spec: Spec): Boolean {
         if (!animationsEnabled()) return false
         if (!spec.drawable.showsContent()) return false
         if (spec.endRect.width() <= 0f || spec.endRect.height() <= 0f) return false
         finishNow()
-        val o = Overlay(spec) { removeOverlay() }
+        val o = Overlay(spec)
         overlay = o
         Log.i(
             "AuroraViewer",
@@ -225,9 +262,8 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
         return true
     }
 
-    private fun removeOverlay() {
-        val o = overlay ?: return
-        overlay = null
+    private fun removeOverlay(o: Overlay) {
+        if (overlay === o) overlay = null
         if (o.parent === contentRoot) contentRoot.removeView(o)
     }
 
@@ -260,13 +296,27 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
      */
     private inner class Overlay(
         private val spec: Spec,
-        private val onGone: () -> Unit,
     ) : View(contentRoot.context) {
 
         private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
         private val clipPath = Path()
         private val rect = RectF()
         private val live = RectF()
+        private val savedBounds = Rect()
+
+        /**
+         * 真正拿去画的 drawable——**必须是副本**。
+         *
+         * 画之前要 setBounds/setAlpha，而进入动画的源就是网格那张卡片的 drawable 本体：
+         * 直接改它，ImageView 只在 setImageDrawable/onSizeChanged 里重设 bounds，动画结束后
+         * 那张卡片会照着我们留下的那个巨大矩形继续画（真机报障「缩回去之后图变了样、像被
+         * 挪出去了」就是这个）。`constantState.newDrawable` 与它共享位图、各自一套
+         * bounds/alpha，零拷贝；没有 constantState 的（GIF 的 AnimatedImageDrawable）只能
+         * 借原物体画，那就逐帧还原（[sharedSource]）。
+         */
+        private val source: Drawable =
+            spec.drawable.constantState?.newDrawable(resources) ?: spec.drawable
+        private val sharedSource: Boolean = source === spec.drawable
 
         /** 起止矩形已换算到覆盖层自己的坐标系（= contentRoot 坐标系）。 */
         private val from = RectF()
@@ -277,6 +327,13 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
         private var handedOff = false
         private var startedAt = 0L
         private var phaseAt = 0L
+        // 逐帧记账（排查「动画只剩两帧」）：跑了多少帧、相邻两帧最大间隔、第一帧迟到多久
+        private var frames = 0
+        private var lastFrameAt = 0L
+        private var maxGapMs = 0L
+        private var firstDelayMs = 0L
+        private var runFrames = 0
+        private var runMaxGapMs = 0L
         private var eased = 0f
         private var endResolved = spec.liveEnd == null
         private var scrimAlpha = spec.scrimFrom
@@ -285,13 +342,13 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
         private var phase = PHASE_RUN
 
         init {
-            // 覆盖层只画不吃事件：触摸穿透到下面的层（进入期查看器 INVISIBLE 不接触摸，
-            // 退出期网格照常可点——中途点另一张就是打断这段、起下一段）。
-            isClickable = false
+            // 退出期不吞事件：底下网格照常可点，中途点另一张 = 打断这段、起下一段。
+            // 进入期反过来要吞掉——那 320ms 里底下还是网格，误点会开出第二个查看器。
+            isClickable = spec.swallowTouches
             isFocusable = false
             isFocusableInTouchMode = false
             // 放大的是卡片那张小位图，缩放比远超 1，不做双线性过滤就是一坨锯齿块
-            (spec.drawable as? BitmapDrawable)?.isFilterBitmap = true
+            (source as? BitmapDrawable)?.isFilterBitmap = true
             // 换算基准取**父容器**（contentRoot，已在窗口里）的窗口位置：本视图此刻还没
             // attach，对自己 getLocationInWindow 只会拿到 (0,0)，等于没换算。
             contentRoot.getLocationInWindow(rootLoc)
@@ -315,18 +372,27 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             stopDrawing()
         }
 
+        /** 撤回这次过渡：不跑任何回调，只把自己摘掉（见 [cancel]）。 */
+        fun abandon() {
+            running = false
+            phase = PHASE_IDLE
+            restoreShared()
+            removeOverlay(this)
+        }
+
         /**
          * 停画并摘掉自己。
          *
-         * 必须把 drawable 的 alpha 还原成 255 再走：绘制源是**网格那张卡片的 drawable 本体**
-         * （不是副本），淡出阶段把它留在了半透明或全透明上，不还原的话那张卡片之后就一直
-         * 透明地挂在网格里。
+         * 借用原物体画的那条路（GIF）在这里也要把 alpha 还原——淡出阶段把它留在了半透明或
+         * 全透明上，不还原的话那张卡片之后就一直透明地挂在网格里。副本那条路无所谓（宿主
+         * 根本不认识它），逐帧还原已经在 [onDraw] 里做了。
          */
         private fun stopDrawing() {
             running = false
             phase = PHASE_IDLE
-            spec.drawable.alpha = 255
-            onGone()
+            restoreShared()
+            source.alpha = 255
+            removeOverlay(this)
         }
 
         // 显式标类型：这个 Runnable 在自己的初始化表达式里被引用（repost 下一帧），
@@ -335,12 +401,25 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             override fun run() {
                 if (!running) return
                 val now = SystemClock.uptimeMillis()
+                frames++
+                if (lastFrameAt > 0L) {
+                    val gap = now - lastFrameAt
+                    if (gap > maxGapMs) maxGapMs = gap
+                } else {
+                    firstDelayMs = now - startedAt
+                }
+                lastFrameAt = now
                 when (phase) {
                     PHASE_RUN -> {
                         val t = ((now - startedAt).toFloat() / spec.durationMs).coerceIn(0f, 1f)
                         eased = spec.easing.getInterpolation(t)
                         refreshEnd()
                         if (t >= 1f) {
+                            // 展开段收尾记账：这几个数才是用户眼里的「卡不卡」——HOLD 期的卡顿
+                            // 藏在放大到位的图底下，看不见，不该混进总账里
+                            runFrames = frames
+                            runMaxGapMs = maxGapMs
+                            deliverExpansion()
                             // 到位：落点已实测到（或压根不需要实测）就立刻交接，否则 HOLD 等图
                             if (endResolved) arrive() else { phase = PHASE_HOLD; phaseAt = now }
                         }
@@ -413,7 +492,8 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             Log.i(
                 "AuroraViewer",
                 "[Tx] arrive liveResolved=$endResolved rect=${rect.toShortString()} " +
-                    "elapsed=${SystemClock.uptimeMillis() - startedAt}ms",
+                    "elapsed=${SystemClock.uptimeMillis() - startedAt}ms " +
+                    "frames=$frames/${runFrames}run maxGap=${maxGapMs}ms/${runMaxGapMs}ms run firstFrame=${firstDelayMs}ms",
             )
             applyFrame()
             handOff()
@@ -425,9 +505,22 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             }
         }
 
+        private var expansionDelivered = false
+
+        /**
+         * 展开到位（见 [Spec.onExpansionDone]）。被打断时 [handOff] 也会补跑一次——跳过它
+         * 就等于这一整次「点开图片」从来没挂载过查看器，屏幕上只剩一张盖着的放大缩略图。
+         */
+        private fun deliverExpansion() {
+            if (expansionDelivered) return
+            expansionDelivered = true
+            spec.onExpansionDone?.invoke()
+        }
+
         private fun handOff() {
             if (handedOff) return
             handedOff = true
+            deliverExpansion()
             spec.onEnd()
         }
 
@@ -464,7 +557,7 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
             }
             if (imageAlpha <= 0 || rect.width() <= 0f || rect.height() <= 0f) return
-            val d = spec.drawable
+            val d = source
             val saved = canvas.save()
             if (radius > 0.5f) {
                 clipPath.reset()
@@ -473,6 +566,7 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             } else {
                 canvas.clipRect(rect)
             }
+            if (sharedSource) d.copyBounds(savedBounds)
             // center-crop：卡片本来就是 CENTER_CROP，起点那帧与网格逐位重合；
             // 放大过程中裁剪量逐渐松开，落到终点就是整图可见。
             val sw = d.intrinsicWidth.toFloat()
@@ -496,6 +590,14 @@ class ViewerTransition(private val contentRoot: ViewGroup) {
             d.alpha = imageAlpha
             d.draw(canvas)
             canvas.restoreToCount(saved)
+            if (sharedSource) restoreShared()
+        }
+
+        /** 见 [source]：借用原物体画完就得把 bounds/alpha 还回去，不然宿主视图照着脏值画。 */
+        private fun restoreShared() {
+            if (!sharedSource) return
+            source.setBounds(savedBounds)
+            source.alpha = 255
         }
     }
 

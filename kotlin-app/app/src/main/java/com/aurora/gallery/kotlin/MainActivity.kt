@@ -15,6 +15,7 @@ import android.util.Log
 import android.widget.Toast
 import org.json.JSONArray
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
@@ -876,28 +877,63 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 从网格点开一张图：先起进入过渡，再写「打开查看器」状态。
+     * 从网格点开一张图：先只起覆盖层的展开动画，**查看器等展开到位再挂载**。
      *
-     * 顺序很要紧。覆盖层必须在同一帧挂上、且查看器先被挂起（INVISIBLE）再进组合——反过来
-     * 就先看到真图把网格顶掉、再放大，动画等于白做。挂起位也必须在 [AppState.openViewer]
-     * 之前置：组合层里那次 `open()` 发生在更晚的帧，晚于这里才读得到它。
+     * 为什么不当场挂载：写「打开查看器」状态 = 一次 Compose 重组 + 挂载整棵查看器视图树 +
+     * `open()`（缩略图条 submit、抽屉重建、发图、首轮 measure/layout），全是主线程同步活。
+     * 模拟器实测这一段 190ms、真机更长——压在 320ms 的展开动画里，动画就只剩两三帧，
+     * 用户看到的就是「点一下，图跳一下变大」（真机报障原话：只有 2 个阶段）。错开之后同样
+     * 的开销藏在覆盖层那张已经放大到位的图底下，一帧不丢。
      */
     private fun openViewerFromGrid(image: Image, cover: ImageView) {
         val view = ensureViewer()
         val predicted = predictedViewerRect(image)
+        // 起点快照：退出时网格查不到落点的兜底（只在 fileId 还对得上时用）
+        viewerEnterAnchor = viewerTransition.windowRectOf(cover)?.let { image.id to it }
         val started = predicted != null && viewerTransition.startEnter(
             cover = cover,
             scrimColor = view.transitionScrimColor(),
             predictedEnd = predicted,
             liveEnd = { out -> view.currentImageRect(out) },
+            onExpansionDone = { mountViewer(view, image.id) },
             onReveal = { view.revealAfterTransition() },
         )
-        // 起点快照：退出时网格查不到落点的兜底（只在 fileId 还对得上时用）
-        viewerEnterAnchor = viewerTransition.windowRectOf(cover)?.let { image.id to it }
-        // 没起动画时必须把挂起位清干净——它是跨会话复用的实例字段，留着就把下一次 open
-        // 也一起藏进 INVISIBLE 里了（黑屏，且这次没有动画会来揭幕）
-        view.holdHiddenForTransition = started
-        viewModel.appState.openViewer(image.id)
+        if (started) {
+            armPendingOpenGuard()
+        } else {
+            view.holdHiddenForTransition = false
+            viewModel.appState.openViewer(image.id)
+        }
+    }
+
+    /** 展开到位：这一刻才真正挂载查看器（先置挂起位，[NativeGalleryView.open] 读它）。 */
+    private fun mountViewer(view: NativeGalleryView, fileId: String) {
+        disarmPendingOpenGuard()
+        view.holdHiddenForTransition = true
+        viewModel.appState.openViewer(fileId)
+    }
+
+    /**
+     * 展开窗口期（查看器还没挂载、`viewingFileId` 还是空）的返回拦截。
+     *
+     * 不拦的话这 320ms 里按返回会落到网格那条 4.3 导航链上——退掉当前文件夹，然后回调照跑、
+     * 查看器在别的视图上冒出来。拦下来 = 撤回这次「点开」，覆盖层无声退场，屏幕回到点之前。
+     */
+    private var pendingOpenGuard: OnBackPressedCallback? = null
+
+    private fun armPendingOpenGuard() {
+        disarmPendingOpenGuard()
+        pendingOpenGuard = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                viewerTransition.cancel()
+                disarmPendingOpenGuard()
+            }
+        }.also { onBackPressedDispatcher.addCallback(it) }
+    }
+
+    private fun disarmPendingOpenGuard() {
+        pendingOpenGuard?.remove()
+        pendingOpenGuard = null
     }
 
     /**
