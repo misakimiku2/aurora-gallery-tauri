@@ -26,7 +26,7 @@
  * 而桌面二维码里的 APK 直链是实时从 Gitee 那份清单取的。
  */
 import { readFileSync, existsSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { request } from "node:https";
 
@@ -43,7 +43,17 @@ const repo = arg("repo") || "misakimiku2/aurora_gallery";
 const tag = arg("tag");
 const notesPath = arg("notes");
 const files = all("file").map(f => ({ abs: toAbs(f), name: basename(f) }));
-const manifests = all("manifest").map(toAbs);
+/**
+ * 清单在发布仓里的路径必须是 `update/xxx.json`，不能是光秃秃的文件名：
+ * 客户端 raw 直链读的就是 update/ 下那份（实测 Gitee `update/android.json` 302、根目录
+ * `android.json` 404），早期版本把 basename 传给 contents API 会静默写错位置。
+ * `repo-root` 用来把传入路径折算成相对发布仓的路径，默认取当前工作目录。
+ */
+const REPO_ROOT = toAbs(arg("repo-root") || ".");
+const manifests = all("manifest").map(p => ({
+  abs: toAbs(p),
+  repo: relative(REPO_ROOT, toAbs(p)).split("\\").join("/"),
+}));
 
 const tokenFile = `${process.env.USERPROFILE || process.env.HOME}/.gitee_token`;
 const token = (process.env.GITEE_TOKEN || (existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "")).trim();
@@ -107,14 +117,14 @@ for (const f of files) {
   const buf = readFileSync(f.abs);
   local[f.name] = { size: buf.length, sha256: createHash("sha256").update(buf).digest("hex") };
 }
-for (const mPath of manifests) {
-  const m = JSON.parse(readFileSync(mPath, "utf8"));
+for (const { abs, repo: rel } of manifests) {
+  const m = JSON.parse(readFileSync(abs, "utf8"));
   for (const asset of m.assets ?? []) {
     const l = local[asset.name];
     if (!l) continue; // 该清单没声明本次上传的资产，跳过
-    if (asset.size !== l.size) throw new Error(`${basename(mPath)} 的 ${asset.name} size=${asset.size}，本地实为 ${l.size}`);
-    if (asset.sha256 && asset.sha256 !== l.sha256) throw new Error(`${basename(mPath)} 的 ${asset.name} sha256 与本地字节不符`);
-    if (!asset.url.includes(`/releases/download/${tag}/`)) throw new Error(`${basename(mPath)} 的 ${asset.name} url 没指向 ${tag}：${asset.url}`);
+    if (asset.size !== l.size) throw new Error(`${rel} 的 ${asset.name} size=${asset.size}，本地实为 ${l.size}`);
+    if (asset.sha256 && asset.sha256 !== l.sha256) throw new Error(`${rel} 的 ${asset.name} sha256 与本地字节不符`);
+    if (!asset.url.includes(`/releases/download/${tag}/`)) throw new Error(`${rel} 的 ${asset.name} url 没指向 ${tag}：${asset.url}`);
   }
 }
 const me = await api("鉴权", "user");
@@ -153,24 +163,23 @@ for (const f of files) {
 }
 
 /* ---------- 3) 附件都可达了，才提交清单 ---------- */
-for (const mPath of manifests) {
-  const cur = await api(`读远端 ${basename(mPath)}`, `repos/${repo}/contents/${basename(mPath)}?ref=${meta.default_branch}`);
-  const put = await api(`更新 ${basename(mPath)}`, `repos/${repo}/contents/${basename(mPath)}`, {
+for (const { abs, repo: rel } of manifests) {
+  const cur = await api(`读远端 ${rel}`, `repos/${repo}/contents/${rel}?ref=${meta.default_branch}`);
+  const put = await api(`更新 ${rel}`, `repos/${repo}/contents/${rel}`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      access_token: token, content: readFileSync(mPath).toString("base64"),
+      access_token: token, content: readFileSync(abs).toString("base64"),
       sha: cur.sha, branch: meta.default_branch, message: `release: ${tag} 更新清单`,
     }),
   });
-  console.log(`✓ ${basename(mPath)} → commit ${String(put.commit?.sha ?? "").slice(0, 8)}`);
+  console.log(`✓ ${rel} → commit ${String(put.commit?.sha ?? "").slice(0, 8)}`);
 }
 
 /* ---------- 4) 回读校验：raw 上的清单要指向本次 tag，直链体积/哈希要对 ---------- */
-for (const mPath of manifests) {
-  const rel = basename(mPath);
-  const raw = await (await fetch(`https://gitee.com/${repo}/raw/${meta.default_branch}/update/${rel}?t=${Date.now()}`, { redirect: "follow" })).text();
+for (const { abs, repo: rel } of manifests) {
+  const raw = await (await fetch(`https://gitee.com/${repo}/raw/${meta.default_branch}/${rel}?t=${Date.now()}`, { redirect: "follow" })).text();
   const remote = JSON.parse(raw);
-  const want = JSON.parse(readFileSync(mPath, "utf8"));
+  const want = JSON.parse(readFileSync(abs, "utf8"));
   if (remote.version !== want.version) throw new Error(`update/${rel} 远端版本 ${remote.version} ≠ 本地 ${want.version}`);
   for (const asset of remote.assets ?? []) {
     if (!local[asset.name]) continue;
@@ -181,7 +190,7 @@ for (const mPath of manifests) {
       console.log(`  ${asset.name} 整包回读哈希一致`);
     }
   }
-  console.log(`✓ update/${rel}：远端 version ${remote.version}，资产直链可达`);
+  console.log(`✓ ${rel}：远端 version ${remote.version}，资产直链可达`);
 }
 console.log(`Gitee 发布完成：${repo} · ${tag}`);
 
