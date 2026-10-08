@@ -1,7 +1,6 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
-import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -9,15 +8,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -36,14 +34,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -74,16 +79,20 @@ internal data class CropView(val sidePx: Float, val cx: Float, val cy: Float)
  * 每帧手势归约（纯函数，可测）。锚点口径：**图像上落在手指中点下的那点，缩放过程中
  * 始终留在指尖下**（真机报障是「基准点跑到右下角」，这就是它的反面）。
  *
- * [detectTransformGestures] 每帧给的是**当前**手指中点 [centroid]（窗口坐标）与它的位移
- * [pan]，所以上一帧的中点 c0 = c1 − pan。窗口位置 p 与图像坐标的双向换算都是
- * `ix = cx + (p − w/2)·sidePx / windowPx`，把它在缩放前后各写一次、令两者相等即得：
+ * [detectTransformGestures] 每帧给的是**当前**手指中点 [centroid]（手势节点的本地坐标）与
+ * 它的位移 [pan]，所以上一帧的中点 c0 = c1 − pan。窗口位置 p 与图像坐标的双向换算都是
+ * `ix = cx + (p − center)·sidePx / cropPx`，把它在缩放前后各写一次、令两者相等即得：
  *
- *     cx' = cx + (c0 − w/2)·side/w − (c1 − w/2)·side'/w
+ *     cx' = cx + (c0 − center)·side/crop − (c1 − center)·side'/crop
+ *
+ * [cropPx] 是取景圆在屏幕上的直径（= sidePx 个图像像素映射到这么多屏幕像素），
+ * [center] 是取景圆圆心在 centroid 同一坐标空间里的位置——视口比取景圆大时两者不相等，
+ * 这正是渲染端与手势端必须共用同一组数的原因。
  *
  * 两个退化情形说明这一条式子同时覆盖了桌面那两种操作、且**不把中点位移算两遍**：
- *  - zoom = 1（单指拖）：side' = side，式子塌成 `cx − pan·side/w`，与原平移逐字相等，
+ *  - zoom = 1（单指拖）：side' = side，式子塌成 `cx − pan·side/crop`，与原平移逐字相等，
  *    且与 centroid 无关——指尖走到哪，图就跟到哪；
- *  - pan = 0（指尖不动的纯捏合）：塌成绕指尖缩放，指尖在窗心时窗心不动（原语义）。
+ *  - pan = 0（指尖不动的纯捏合）：塌成绕指尖缩放，指尖在圆心时圆心不动（原语义）。
  *
  * 原先的实现是「绕窗心缩放 + 另加 pan」：中点位移既进了 pan、缩放又没跟住中点，两笔
  * 口径不一致，捏合时看起来就是基准点飘走。
@@ -93,20 +102,20 @@ internal fun reduceCropGesture(
     centroid: Offset,
     pan: Offset,
     zoom: Float,
-    windowPx: Float,
+    cropPx: Float,
+    center: Float,
     maxSide: Float,
     minSide: Float,
 ): CropView {
     // 捏合放大 = 取景窗在图像上覆盖的边长变小
     val side = (view.sidePx / zoom).coerceIn(minSide, maxSide)
     // 每图像像素占多少屏幕像素（渲染端与这里必须用同一个换算，否则跟不住指尖）
-    val kOld = view.sidePx / windowPx
-    val kNew = side / windowPx
-    val half = windowPx / 2f
+    val kOld = view.sidePx / cropPx
+    val kNew = side / cropPx
     return CropView(
         sidePx = side,
-        cx = view.cx + (centroid.x - pan.x - half) * kOld - (centroid.x - half) * kNew,
-        cy = view.cy + (centroid.y - pan.y - half) * kOld - (centroid.y - half) * kNew,
+        cx = view.cx + (centroid.x - pan.x - center) * kOld - (centroid.x - center) * kNew,
+        cy = view.cy + (centroid.y - pan.y - center) * kOld - (centroid.y - center) * kNew,
     )
 }
 
@@ -117,6 +126,9 @@ internal fun reduceCropGesture(
  *  - 滚轮缩放 + 底部滑杆 → **双指捏合**（绕指尖，口径见 [reduceCropGesture]），滑杆删除；
  *  - 鼠标拖拽平移 → **单指拖**；
  *  - 右侧竖排候选图列表 → 底部横滑条（拇指够得着，且给取景窗让出竖向空间）。
+ *  - 桌面那套「400 视口 + 250 取景圆 + 圆外压暗」原样搬过来（[CROP_TO_VIEWPORT]）：只留
+ *    一枚黑底圆窗时看不见整张图，也就无从判断「是不是已经拖到边了」；手势区同样放到整个
+ *    视口上，不必精确按在那枚圆里。
  *
  * 写回的 faceBox 口径与桌面逐字一致：**相对原图的百分比**，x/y = 左上角，w/h = 裁剪区
  * 宽高占比。桌面那个 250px 正方形窗在图像上截出的也是正方形，所以 w%·natW == h%·natH；
@@ -155,8 +167,6 @@ fun PersonAvatarCropDialog(
     var view by remember { mutableStateOf<CropView?>(null) }
     // 取图失败要说话：黑圈圈不解释就是「应用卡住了」的观感
     var loadFailed by remember { mutableStateOf(false) }
-    val density = LocalDensity.current
-    val windowPx = with(density) { 300.dp.toPx() }
 
     // 换封面图 = 重新取位图 + 重置取景窗。initialFaceBox 只用于**首张**：它描述的是
     // 旧封面的构图，套到另一张图上会把新图裁歪。
@@ -176,8 +186,6 @@ fun PersonAvatarCropDialog(
             return@LaunchedEffect
         }
         bitmap = bmp
-        // 一次性诊断（拿完就删）：确认裁剪页拿到的是降采样原图而不是 512 缩略图
-        Log.d("AuroraCrop", "source=${bmp.width}x${bmp.height}")
         val side = min(bmp.width, bmp.height).toFloat()
         view = if (initialFaceBox != null && selectedId == initialCoverFileId &&
             initialFaceBox.w > 0.0 && initialFaceBox.h > 0.0
@@ -201,10 +209,11 @@ fun PersonAvatarCropDialog(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f)),
+                // 桌面同页是 bg-black/70：压得太死就看不见这是在图库里改头像
+                .background(Color.Black.copy(alpha = 0.7f)),
         ) {
             Column(Modifier.fillMaxSize()) {
-                // 顶栏：标题 + 取消/保存（全屏页自己带操作，不借用系统对话框的按钮位）
+                // 顶栏：标题居中 + 取消/保存在两侧（全屏页自己带操作，不借用系统对话框的按钮位）
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -219,6 +228,7 @@ fun PersonAvatarCropDialog(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(
@@ -245,97 +255,92 @@ fun PersonAvatarCropDialog(
                         .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        Modifier
-                            .size(300.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1A1A1A))
-                            .pointerInput(bitmap) {
-                                val bmp = bitmap ?: return@pointerInput
-                                detectTransformGestures { centroid, pan, zoom, _ ->
-                                    val v = view ?: return@detectTransformGestures
-                                    val maxSide = min(bmp.width, bmp.height).toFloat()
-                                    val minSide = maxSide / MAX_AVATAR_ZOOM
-                                    val next = reduceCropGesture(
-                                        v, centroid, pan, zoom, windowPx, maxSide, minSide,
-                                    ).clampedTo(bmp.width, bmp.height)
-                                    view = next
-                                    // 一次性诊断（拿到真机数据、确认指尖锚点后删）：指尖下的
-                                    // 图像点缩放前后必须还是同一个点
-                                    Log.d(
-                                        "AuroraCrop",
-                                        (
-                                            "c=(%.0f,%.0f) pan=(%.1f,%.1f) z=%.3f side:%.1f→%.1f " +
-                                                "cx:%.1f→%.1f cy:%.1f→%.1f"
-                                            ).format(
-                                                centroid.x, centroid.y, pan.x, pan.y, zoom,
-                                                v.sidePx, next.sidePx, v.cx, next.cx, v.cy, next.cy,
+                    BoxWithConstraints {
+                        // 视口 = 当前可用空间里放得下的最大正方形（手机受宽限、平板受高限），
+                        // 取景圆取视口的 5/8 —— 桌面 CropAvatarModal 的 250 / 400 同比例。
+                        val side = minOf(minOf(maxWidth, maxHeight), 420.dp)
+                        val viewportPx = with(LocalDensity.current) { side.toPx() }
+                        val cropPx = viewportPx * CROP_TO_VIEWPORT
+                        val center = viewportPx / 2f
+                        // 圆外压暗的遮罩（EvenOdd：矩形挖掉取景圆），圆心与渲染共用同一个数
+                        val mask = remember(viewportPx, cropPx) {
+                            val r = cropPx / 2f
+                            Path().apply {
+                                addRect(Rect(0f, 0f, viewportPx, viewportPx))
+                                addOval(Rect(center - r, center - r, center + r, center + r))
+                                fillType = PathFillType.EvenOdd
+                            }
+                        }
+                        val image = remember(bitmap) { bitmap?.asImageBitmap() }
+                        Box(
+                            Modifier
+                                .size(side)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1A1A1A))
+                                // 图、遮罩、取景环全在同一个 DrawScope 里按**同一套换算**画。
+                                // 之前是 offset + requiredSize 的 Image 节点：节点比父级大得多时
+                                // 被按居中对齐放置，画出来的区域和模型保存的区域差了半个视口
+                                // （2026-10-08 实测：圈里是人物，存完头像却是左上角的 logo）。
+                                .drawBehind {
+                                    val bmp = bitmap
+                                    val v = view
+                                    if (bmp != null && v != null && image != null) {
+                                        val k = cropPx / v.sidePx
+                                        drawImage(
+                                            image = image,
+                                            dstOffset = IntOffset(
+                                                (center - v.cx * k).roundToInt(),
+                                                (center - v.cy * k).roundToInt(),
                                             ),
-                                    )
-                                }
-                            },
-                        // **必须 TopStart**：图比窗大得多，默认的 Center 会先把图居中，
-                        // 再叠上我们按「左上角为原点」算的 translationX/Y，两笔位移叠加
-                        // 直接把图推出窗外（2026-10-08 实测：圆里全黑、什么也没有）。
-                        contentAlignment = Alignment.TopStart,
-                    ) {
-                        val bmp = bitmap
-                        val v = view
-                        if (bmp != null && v != null) {
-                            val k = windowPx / v.sidePx
-                            // offset 必须在尺寸之前（外层）才挪的是整个节点；
-                            // **requiredSize 而非 size**：size 会被父 Box 的 300dp 上限夹住，
-                            // 节点实际只有窗大，而平移量是按放大后的真实尺寸算的，
-                            // 结果图被整幅推出窗外（2026-10-08 实测：圆里全黑）。
-                            Image(
-                                bitmap = bmp.asImageBitmap(),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .offset {
-                                        IntOffset(
-                                            (windowPx / 2f - v.cx * k).roundToInt(),
-                                            (windowPx / 2f - v.cy * k).roundToInt(),
+                                            dstSize = IntSize(
+                                                (bmp.width * k).roundToInt(),
+                                                (bmp.height * k).roundToInt(),
+                                            ),
+                                        )
+                                        drawPath(mask, Color.Black.copy(alpha = 0.6f))
+                                        drawCircle(
+                                            color = Color.White.copy(alpha = 0.85f),
+                                            radius = cropPx / 2f,
+                                            center = Offset(center, center),
+                                            style = Stroke(width = 2.dp.toPx()),
                                         )
                                     }
-                                    .requiredSize(
-                                        width = with(density) { (bmp.width * k).toDp() },
-                                        height = with(density) { (bmp.height * k).toDp() },
-                                    ),
-                            )
-                        } else if (selected == null) {
-                            // 候选拉回来是空的（人物还没有成员图）——也不能只留一个黑圈
-                            Text(
-                                text = "这个人还没有成员图\n先在网格里选图「添加到人物」",
-                                fontSize = 13.sp,
-                                color = Color.White.copy(alpha = 0.7f),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .padding(24.dp),
-                            )
-                        } else if (loadFailed) {
-                            Text(
-                                text = "这张图取不到\n换一张试试",
-                                fontSize = 13.sp,
-                                color = Color.White.copy(alpha = 0.7f),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .padding(24.dp),
-                            )
-                        } else if (selected != null) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                modifier = Modifier.align(Alignment.Center),
-                            )
+                                }
+                                .pointerInput(bitmap) {
+                                    val bmp = bitmap ?: return@pointerInput
+                                    detectTransformGestures { centroid, pan, zoom, _ ->
+                                        val v = view ?: return@detectTransformGestures
+                                        val maxSide = min(bmp.width, bmp.height).toFloat()
+                                        val minSide = maxSide / MAX_AVATAR_ZOOM
+                                        view = reduceCropGesture(
+                                            v, centroid, pan, zoom, cropPx, center, maxSide, minSide,
+                                        ).clampedTo(bmp.width, bmp.height)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (image == null || view == null) {
+                                when {
+                                    // 候选拉回来是空的（人物还没有成员图）——也不能只留一个黑圈
+                                    selected == null -> Text(
+                                        text = "这个人还没有成员图\n先在网格里选图「添加到人物」",
+                                        fontSize = 13.sp,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(24.dp),
+                                    )
+                                    loadFailed -> Text(
+                                        text = "这张图取不到\n换一张试试",
+                                        fontSize = 13.sp,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.padding(24.dp),
+                                    )
+                                    else -> CircularProgressIndicator(color = Color.White)
+                                }
+                            }
                         }
                     }
-                    // 圆形取景框描边（在裁剪窗之上，不参与手势）
-                    Box(
-                        Modifier
-                            .size(300.dp)
-                            .border(2.dp, Color.White.copy(alpha = 0.75f), CircleShape),
-                    )
                 }
 
                 Text(
@@ -373,6 +378,9 @@ fun PersonAvatarCropDialog(
         }
     }
 }
+
+/** 取景圆占视口边长的比例 = 桌面 CropAvatarModal 的 CROP_SIZE / VIEWPORT_SIZE（250 / 400）。 */
+private const val CROP_TO_VIEWPORT = 0.625f
 
 /**
  * 最大放大倍率（与桌面那颗滑杆同量级）。换成取原图之后这颗上限不再由马赛克决定，而由

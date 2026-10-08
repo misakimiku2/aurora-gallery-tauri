@@ -30,7 +30,7 @@ class PersonCropGestureTest {
         // 指尖在右上、左下、窗外（图比窗大时 centroid 会落在 300dp 之外）都验一遍
         for (centroid in listOf(Offset(260f, 60f), Offset(40f, 250f), Offset(470f, -80f))) {
             for (zoom in listOf(1.2f, 2f, 4f, 0.8f)) {
-                val next = reduceCropGesture(start, centroid, Offset.Zero, zoom, windowPx, maxSide, minSide)
+                val next = reduceCropGesture(start, centroid, Offset.Zero, zoom, windowPx, windowPx / 2f, maxSide, minSide)
                 assertEquals(start.imageAt(centroid.x), next.imageAt(centroid.x), 0.01f)
                 assertEquals(imageAtY(start, centroid.y), imageAtY(next, centroid.y), 0.01f)
             }
@@ -39,9 +39,9 @@ class PersonCropGestureTest {
 
     @Test
     fun `边长收在上下限内时不被夹住`() {
-        val big = reduceCropGesture(CropView(600f, 500f, 500f), Offset(10f, 10f), Offset.Zero, 0.01f, windowPx, maxSide, minSide)
+        val big = reduceCropGesture(CropView(600f, 500f, 500f), Offset(10f, 10f), Offset.Zero, 0.01f, windowPx, windowPx / 2f, maxSide, minSide)
         assertEquals(maxSide, big.sidePx, 0.001f)
-        val small = reduceCropGesture(CropView(600f, 500f, 500f), Offset(10f, 10f), Offset.Zero, 100f, windowPx, maxSide, minSide)
+        val small = reduceCropGesture(CropView(600f, 500f, 500f), Offset(10f, 10f), Offset.Zero, 100f, windowPx, windowPx / 2f, maxSide, minSide)
         assertEquals(minSide, small.sidePx, 0.001f)
     }
 
@@ -51,7 +51,7 @@ class PersonCropGestureTest {
         val pan = Offset(35f, -20f)
         // 纯平移时结果与指尖在哪无关：换三个 centroid 都该给同一个窗心
         for (centroid in listOf(Offset(150f, 210f), Offset(20f, 280f), Offset(600f, 600f))) {
-            val next = reduceCropGesture(start, centroid, pan, 1f, windowPx, maxSide, minSide)
+            val next = reduceCropGesture(start, centroid, pan, 1f, windowPx, windowPx / 2f, maxSide, minSide)
             val legacyX = start.cx - pan.x * start.sidePx / windowPx
             val legacyY = start.cy - pan.y * start.sidePx / windowPx
             assertEquals(start.sidePx, next.sidePx, 0.001f)
@@ -64,7 +64,7 @@ class PersonCropGestureTest {
     fun `在窗心捏合时窗心不动（老语义的兼容面）`() {
         val start = CropView(sidePx = 600f, cx = 480f, cy = 520f)
         val next = reduceCropGesture(
-            start, Offset(windowPx / 2f, windowPx / 2f), Offset.Zero, 2f, windowPx, maxSide, minSide,
+            start, Offset(windowPx / 2f, windowPx / 2f), Offset.Zero, 2f, windowPx, windowPx / 2f, maxSide, minSide,
         )
         assertEquals(300f, next.sidePx, 0.001f)
         assertEquals(start.cx, next.cx, 0.001f)
@@ -74,7 +74,7 @@ class PersonCropGestureTest {
     @Test
     fun `捏近边界时窗心仍被收进图内`() {
         // 竖图：min(宽,高) 决定最大正方形；窗心贴边时 clamp 会接手
-        val next = reduceCropGesture(CropView(200f, 60f, 90f), Offset(290f, 290f), Offset.Zero, 4f, windowPx, maxSide, minSide)
+        val next = reduceCropGesture(CropView(200f, 60f, 90f), Offset(290f, 290f), Offset.Zero, 4f, windowPx, windowPx / 2f, maxSide, minSide)
         val clamped = next.clampedTo(imgW = 500, imgH = 1000)
         val half = clamped.sidePx / 2f
         assertTrue("cx=${clamped.cx} half=$half", clamped.cx in half..500f - half)
