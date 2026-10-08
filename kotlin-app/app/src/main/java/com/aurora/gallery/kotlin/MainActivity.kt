@@ -64,6 +64,9 @@ import com.aurora.gallery.kotlin.ui.components.WelcomeFlow
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
+import com.aurora.gallery.kotlin.ui.components.PersonPickerDialog
+import com.aurora.gallery.kotlin.ui.components.AvatarCandidate
+import com.aurora.gallery.kotlin.ui.components.PersonAvatarCropDialog
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SelectionMoreAction
 import com.aurora.gallery.kotlin.ui.components.IconClipboard
@@ -71,6 +74,7 @@ import com.aurora.gallery.kotlin.ui.components.IconCopy
 import com.aurora.gallery.kotlin.ui.components.IconFolderInput
 import com.aurora.gallery.kotlin.ui.components.IconFrame
 import com.aurora.gallery.kotlin.ui.components.IconImage
+import com.aurora.gallery.kotlin.ui.components.IconBrain
 import com.aurora.gallery.kotlin.ui.components.IconLayout
 import com.aurora.gallery.kotlin.ui.components.IconPencil
 import com.aurora.gallery.kotlin.ui.components.IconScanSearch
@@ -112,14 +116,18 @@ import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.isCompactWidth
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
+import android.graphics.RectF
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
 import com.aurora.gallery.kotlin.canvas.CanvasScreen
 import com.aurora.gallery.kotlin.canvas.AddResult
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
+import com.aurora.gallery.kotlin.viewer.PhotoRectQuery
 import com.aurora.gallery.kotlin.viewer.ViewerLayerHost
+import com.aurora.gallery.kotlin.viewer.ViewerTransition
 import com.aurora.gallery.kotlin.viewer.applyViewerTheme
 import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
 import com.aurora.gallery.kotlin.state.AppState
@@ -134,6 +142,8 @@ import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
 import com.aurora.gallery.kotlin.state.lanTopicIdOrNull
 import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.lanTagFilterOrNull
+import com.aurora.gallery.kotlin.state.localPersonFolderId
+import com.aurora.gallery.kotlin.state.localPersonIdOrNull
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.ui.components.ColorDbStatsUi as PanelColorStats
 import com.aurora.gallery.kotlin.ui.components.ColorTaskState as PanelColorTask
@@ -819,10 +829,146 @@ class MainActivity : ComponentActivity() {
         viewer = it
     }
 
+    // —— 查看器进出过渡（2026-10-08）：网格卡片 ⇄ 全屏图，贝塞尔节奏的放大/收缩 ——
+
+    /**
+     * 覆盖层挂在 `android.R.id.content` 的**末尾**：它是 ComposeView（以及 M8b-15 那层 pre-IME
+     * 拦截壳）的兄弟节点且在其后，所以同一段动画能同时盖住网格层与查看器层——这两层在
+     * Compose 里是父子 Box，从组合内部没法把动画画到它们之上。
+     */
+    private val viewerTransition: ViewerTransition by lazy {
+        ViewerTransition(findViewById(android.R.id.content))
+    }
+
+    /** 退出动画落点的查询通道：由当前存活的那个 [FileGrid] 注册（见 PhotoRectQuery）。 */
+    private val viewerPhotoRectQuery = PhotoRectQuery()
+
+    /**
+     * 进入动画的起点快照（fileId + 当时的封面矩形，窗口坐标）。
+     *
+     * 退出时先按 fileId 回查网格**当前**可见矩形（用户可能翻过页、网格也可能滚过），
+     * 查不到才退回这份快照——而且只在它仍对应同一张图时用，否则会把图飞回另一张卡片上。
+     */
+    private var viewerEnterAnchor: Pair<String, RectF>? = null
+
+    /** 内容根（覆盖层所在的容器）在窗口坐标系里的矩形；过渡动画的坐标都从这里起算。 */
+    private fun contentWindowRect(): RectF? =
+        viewerTransition.windowRectOf(findViewById<ViewGroup>(android.R.id.content))
+
+    /**
+     * 进入动画的预测落点：按库里记的宽高把图 fit-center 到整个窗口。
+     *
+     * 只是**兜底**。真图一上屏，覆盖层就逐帧改用实测矩形（`ViewerTransition.liveEnd`），
+     * 因为元数据的宽高可能被 EXIF 旋转反过来，纯预测会落歪、揭幕那一帧会看到图跳一下。
+     */
+    private fun predictedViewerRect(image: Image): RectF? {
+        val win = contentWindowRect() ?: return null
+        val iw = image.width?.toInt() ?: 0
+        val ih = image.height?.toInt() ?: 0
+        // 元数据没记宽高（个别 LAN/异常行）：先按整屏铺，真图上屏后由实测矩形改写
+        if (iw <= 0 || ih <= 0) return win
+        val s = kotlin.math.min(win.width() / iw, win.height() / ih)
+        val w = iw * s
+        val h = ih * s
+        val left = win.left + (win.width() - w) / 2f
+        val top = win.top + (win.height() - h) / 2f
+        return RectF(left, top, left + w, top + h)
+    }
+
+    /**
+     * 从网格点开一张图：先起进入过渡，再写「打开查看器」状态。
+     *
+     * 顺序很要紧。覆盖层必须在同一帧挂上、且查看器先被挂起（INVISIBLE）再进组合——反过来
+     * 就先看到真图把网格顶掉、再放大，动画等于白做。挂起位也必须在 [AppState.openViewer]
+     * 之前置：组合层里那次 `open()` 发生在更晚的帧，晚于这里才读得到它。
+     */
+    private fun openViewerFromGrid(image: Image, cover: ImageView) {
+        val view = ensureViewer()
+        val predicted = predictedViewerRect(image)
+        val started = predicted != null && viewerTransition.startEnter(
+            cover = cover,
+            scrimColor = view.transitionScrimColor(),
+            predictedEnd = predicted,
+            liveEnd = { out -> view.currentImageRect(out) },
+            onReveal = { view.revealAfterTransition() },
+        )
+        // 起点快照：退出时网格查不到落点的兜底（只在 fileId 还对得上时用）
+        viewerEnterAnchor = viewerTransition.windowRectOf(cover)?.let { image.id to it }
+        // 没起动画时必须把挂起位清干净——它是跨会话复用的实例字段，留着就把下一次 open
+        // 也一起藏进 INVISIBLE 里了（黑屏，且这次没有动画会来揭幕）
+        view.holdHiddenForTransition = started
+        viewModel.appState.openViewer(image.id)
+    }
+
+    /**
+     * 退出：图片缩回网格卡片，动画跑完才真的关查看器、收组合层。
+     *
+     * 落点三级：① 网格当前可见的同 id 卡片；② 进入时那份起点快照（仍对应同一张才用）；
+     * ③ 都没有 = 缩到窗口中央并淡出（用户翻过页、网格滚过之后就是这个，比硬切有交代，
+     * 也不会飞到一个编出来的位置上）。
+     */
+    private fun closeViewerWithTransition(view: NativeGalleryView) {
+        // 已经有一段在跑：先把它跑完（进入=揭幕、退出=真关），再决定要不要接着做退出动画。
+        // 连点两次返回 = 第二段直接落定，不并发起第二个覆盖层，也不把同一段收尾跑两遍。
+        if (viewerTransition.isRunning) {
+            viewerTransition.finishNow()
+            if (!view.isOpen()) return
+        }
+        val fileId = view.transitionFileId()
+        val drawable = view.currentImageDrawable()
+        val start = RectF()
+        if (fileId == null || drawable == null || !view.currentImageRect(start)) {
+            closeViewerNow(view)
+            return
+        }
+        val target = RectF()
+        var anchored = viewerPhotoRectQuery.query?.invoke(fileId, target) == true
+        if (!anchored) {
+            val anchor = viewerEnterAnchor
+            if (anchor != null && anchor.first == fileId && anchor.second.width() > 0f) {
+                target.set(anchor.second)
+                anchored = true
+            }
+        }
+        if (!anchored) {
+            val win = contentWindowRect()
+            if (win == null) {
+                closeViewerNow(view)
+                return
+            }
+            val w = (start.width() * 0.35f).coerceAtLeast(1f)
+            val h = (start.height() * 0.35f).coerceAtLeast(1f)
+            val cx = win.centerX()
+            val cy = win.centerY()
+            target.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+        }
+        view.hideForTransition()
+        val started = viewerTransition.startExit(
+            startRect = start,
+            drawable = drawable,
+            endRect = target,
+            scrimColor = view.transitionScrimColor(),
+            fadeImage = !anchored,
+            onFinish = { closeViewerNow(view) },
+        )
+        if (!started) {
+            // 覆盖层没起来（系统「移除动画」被打开等）：可见性得自己补回来再硬关，
+            // 否则整层停在 INVISIBLE，而动画永远不会来揭幕
+            view.visibility = View.VISIBLE
+            closeViewerNow(view)
+        }
+    }
+
+    private fun closeViewerNow(view: NativeGalleryView) {
+        view.close()
+        viewModel.appState.closeViewer()
+    }
+
     private fun viewerListener(view: NativeGalleryView) = object : NativeGalleryView.Listener {
-        override fun onClose() {
-            view.close()
-            viewModel.appState.closeViewer()
+        override fun onClose(animate: Boolean) {
+            // 用户主动退出 = 图片缩回网格卡片（2026-10-08）；animate=false 是删除/移出到空之后
+            // 的连带关闭，那张图在网格里已经没了，直接硬关。
+            if (animate) closeViewerWithTransition(view) else closeViewerNow(view)
         }
 
         /**
@@ -1467,6 +1613,9 @@ class MainActivity : ComponentActivity() {
                         coverImagesById = viewModel.coverImagesById.value,
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
+                        // 2026-10-08 查看器进出过渡：开图走带覆盖层的那条路，落点通道交给网格注册
+                        onOpenViewer = ::openViewerFromGrid,
+                        viewerPhotoRectQuery = viewerPhotoRectQuery,
                         // M6a 阶段 3：LAN 连接快照（网络 Section）
                         lanSnapshot = lanSnapshot,
                         onFolderClick = { viewModel.openFolder(it) },
@@ -1798,6 +1947,37 @@ class MainActivity : ComponentActivity() {
                         // M6b 阶段 5（D36）：LAN 态搜索提交（App 内按 inLanBrowser 分流给 TopBar）
                         onLanSearchSubmit = { query -> viewModel.performLanSearch(query) },
                         localPeople = viewModel.localPeople.value,
+                        language = viewModel.settings.value.language,
+                        // 本地人物（手动那一半）：封面 uri / 创建时间摊平 + 写操作直转 VM
+                        personCoverUris = viewModel.personCoverImagesById.value
+                            .mapValues { it.value.contentUri },
+                        personCoverCreatedAt = viewModel.personCoverImagesById.value
+                            .mapValues { it.value.createdAt },
+                        onOpenLocalPersonFilter = { personId -> viewModel.openLocalPersonFilter(personId) },
+                        onCreateLocalPerson = { name, onDone -> viewModel.createLocalPerson(name, onDone) },
+                        onRenameLocalPerson = { person, name, onDone ->
+                            viewModel.renameLocalPerson(person.id, name, onDone)
+                        },
+                        onDescribeLocalPerson = { person, description, onDone ->
+                            viewModel.describeLocalPerson(person.id, description, onDone)
+                        },
+                        onDeleteLocalPerson = { person, onDone ->
+                            viewModel.deleteLocalPerson(person.id, onDone)
+                        },
+                        onAddFilesToLocalPersons = { personIds, fileIds, onDone ->
+                            viewModel.addFilesToLocalPersons(personIds, fileIds, onDone)
+                        },
+                        onClearPersonsFromFiles = { personIds, fileIds, onDone ->
+                            viewModel.clearPersonsFromFiles(personIds, fileIds, onDone)
+                        },
+                        onLoadAvatarCandidates = { personId, onReady ->
+                            viewModel.loadLocalPersonMemberImages(personId) { images ->
+                                onReady(images.map { AvatarCandidate(it.id, it.contentUri) })
+                            }
+                        },
+                        onSaveLocalPersonAvatar = { personId, coverFileId, faceBox, onDone ->
+                            viewModel.setLocalPersonAvatar(personId, coverFileId, faceBox, onDone)
+                        },
                     )
                 // 查看器叠在主内容之上，且不随网格的「扫描中」分支被拆掉（见 ViewerLayerHost）
                 // M6b 阶段 3：查看器打开第一张的自动提取触发（翻页由 onNavigate 负责；
@@ -2214,8 +2394,23 @@ fun App(
     topics: List<uniffi.aurora_core.FfiTopic>,
     /** coverFileId → Image（专题卡片封面）。 */
     coverImagesById: Map<String, Image>,
+    /** 界面语言（人物拼音分组要用，与标签分组同一个 locale）。 */
+    language: String = "zh",
+    /** 本地人物 coverFileId → 封面创建时间（秒），人物总览「按创建时间」排序用。 */
+    personCoverCreatedAt: Map<String, Long> = emptyMap(),
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
+    /**
+     * 点开一张图 = 带过渡地打开查看器（2026-10-08）。第二参是那张卡片的封面视图，
+     * 进入动画拿它的矩形与已解码缩略图当动画源。选择模式让位给勾选，判断在下方
+     * [onImageClick] 里，宿主只管开。
+     */
+    onOpenViewer: (Image, ImageView) -> Unit,
+    /**
+     * 查看器退出动画的落点通道（2026-10-08）：本网格把「按 id 取可见卡片封面矩形」注册进来，
+     * Activity 侧在关闭那一刻读它。身份由 Activity 持有，跨重组稳定（见 PhotoRectQuery）。
+     */
+    viewerPhotoRectQuery: PhotoRectQuery,
     /** M6a 阶段 3：LAN 连接快照（网络 Section 消费；宿主 setContent 里 collect）。 */
     lanSnapshot: LanSnapshot,
     onFolderClick: (Folder) -> Unit,
@@ -2323,8 +2518,32 @@ fun App(
     ai: AiUiHooks,
     // —— M6b 阶段 3：颜色搜索（TopBar 取色入口；hex 非 null=颜色过滤态）——
     colorSearchHex: String? = null,
-    /** 本地人物快照（M6b 阶段 4，D37：WD14 识别产物；PeopleOverview/侧栏渲染）。 */
+    /** 本地人物快照（手动维护 + 历史 WD14 产物；PeopleOverview/侧栏渲染）。 */
     localPeople: List<uniffi.aurora_core.FfiPerson> = emptyList(),
+    // —— 本地人物：桌面 usePeople 手动那一半的移植（宿主执行在 VM，弹窗状态在本组合）——
+    /** 本地人物封面：coverFileId → contentUri（真头像用；宿主从 VM personCoverImagesById 摊平）。 */
+    personCoverUris: Map<String, String> = emptyMap(),
+    /** 点本地人物卡 = 进该人物的筛选视图（宿主转 openLocalPersonFilter）。 */
+    onOpenLocalPersonFilter: (personId: String) -> Unit = {},
+    /** 页头「新建人物」提交（宿主转 createLocalPerson；回调 ok 供 Toast）。 */
+    onCreateLocalPerson: (name: String, onDone: (Boolean) -> Unit) -> Unit = { _, cb -> cb(false) },
+    /** 本地人物重命名 / 改描述 / 删除（宿主转 VM 同名方法）。 */
+    onRenameLocalPerson: (uniffi.aurora_core.FfiPerson, String, (Boolean) -> Unit) -> Unit = { _, _, cb -> cb(false) },
+    onDescribeLocalPerson: (uniffi.aurora_core.FfiPerson, String, (Boolean) -> Unit) -> Unit = { _, _, cb -> cb(false) },
+    onDeleteLocalPerson: (uniffi.aurora_core.FfiPerson, (Boolean) -> Unit) -> Unit = { _, cb -> cb(false) },
+    /**
+     * 网格选中集「添加到人物…」（personIds = 弹窗勾选的人物；fileIds = 选中图）。
+     * 回调 (成功张数, 失败张数) 供宿主拼 Toast。
+     */
+    onAddFilesToLocalPersons: (List<String>, List<String>, (Int, Int) -> Unit) -> Unit = { _, _, cb -> cb(0, 0) },
+    /** 网格选中集「清除人物信息…」（桌面文件右键同位）：解绑所选人物与这些图的关系。 */
+    onClearPersonsFromFiles: (List<String>, List<String>, (Int, Int) -> Unit) -> Unit = { _, _, cb -> cb(0, 0) },
+    /** 取该人物的成员图作裁剪页的换封面候选（宿主转 VM localPersonMemberImages）。 */
+    onLoadAvatarCandidates: (personId: String, onReady: (List<AvatarCandidate>) -> Unit) -> Unit =
+        { _, cb -> cb(emptyList()) },
+    /** 保存头像（封面图 id + faceBox 百分比；宿主转 VM setLocalPersonAvatar）。 */
+    onSaveLocalPersonAvatar: (String, String, uniffi.aurora_core.FfiFaceBox?, (Boolean) -> Unit) -> Unit =
+        { _, _, _, cb -> cb(false) },
     onColorSearch: (String) -> Unit = {},
     onClearColorSearch: () -> Unit = {},
     /** M6b 阶段 5（D36）：LAN 态搜索提交（文件名/CLIP 按 AI 开关在 VM 内分流）。 */
@@ -2367,6 +2586,10 @@ fun App(
     var showCreateLanTopic by remember { mutableStateOf(false) }
     // M4a 3.2 专题选择弹窗（选择模式「更多」→「加入专题…」触发）
     var showTopicPicker by remember { mutableStateOf(false) }
+    // 「添加到人物…」的人物多选弹窗（本地人物；形制同 showTopicPicker）
+    var showPersonPicker by remember { mutableStateOf(false) }
+    // 「清除人物信息…」复用同一个多选弹窗，只是语义反过来（勾=要解绑的人物）
+    var showPersonUnpicker by remember { mutableStateOf(false) }
     // M6a 阶段 5 远端专题选择弹窗（LAN 目录网格「加入专题…」触发）
     var showLanTopicPicker by remember { mutableStateOf(false) }
     // M4a 4.3 「更多」菜单开合（受控）：长按已选中项时从网格侧打开
@@ -2380,6 +2603,14 @@ fun App(
     var deleteLanTopicState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanTopic?>(null) }
     var renameLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
     var describeLanPersonState by remember { mutableStateOf<com.aurora.gallery.kotlin.LanPerson?>(null) }
+    // 本地人物的弹窗目标（新建 / 重命名 / 改描述 / 删除确认），形制同上面两条远端人物态
+    var createPersonOpen by remember { mutableStateOf(false) }
+    var renameLocalPersonState by remember { mutableStateOf<uniffi.aurora_core.FfiPerson?>(null) }
+    var describeLocalPersonState by remember { mutableStateOf<uniffi.aurora_core.FfiPerson?>(null) }
+    var deleteLocalPersonState by remember { mutableStateOf<uniffi.aurora_core.FfiPerson?>(null) }
+    // 头像裁剪页的目标人物 + 它的换封面候选（开页时按成员图现拉，见 onLoadAvatarCandidates）
+    var cropAvatarPerson by remember { mutableStateOf<uniffi.aurora_core.FfiPerson?>(null) }
+    var cropAvatarCandidates by remember { mutableStateOf<List<AvatarCandidate>>(emptyList()) }
     // M6a 阶段 6 互联态文件操作的弹窗目标：重命名的远端 path、目录选择器的模式
     // （移动/复制/换头像）与换头像的目标人物（AVATAR 模式提交流程要用）
     var lanRenamePath by remember { mutableStateOf<String?>(null) }
@@ -2423,6 +2654,12 @@ fun App(
     // 标签视图（M4a 4.1）走的也是 BROWSER + 网格，只是序列源换成「标签命中的全库图片」，
     // 所以这里不能只看 currentFolder 是否存在——在总览直接点标签时 folderId 为 null。
     val tagFilterTitle = tab.activeTags.joinToString("、") { it }
+    // 本地人物筛选虚拟目录（`__person__:<id>`）的标题，形制同 lanPersonTitle：从本地
+    // 人物快照查名。查不到（人物刚被删/快照还没落）退「人物」，不留空标题。
+    // 声明必须在 inBrowser 之前——inBrowser 的准入条件要用它。
+    val localPersonTitle = tab.folderId?.localPersonIdOrNull()?.let { id ->
+        localPeople.firstOrNull { it.id == id }?.name ?: "人物"
+    }
     // M6a 阶段 4：LAN 目录网格 = BROWSER + folderId 带 lan 前缀（序列源分流在 reloadImages）
     // M6b 阶段 5：搜索结果/人物成员/专题成员三个人工目录同属 LAN 浏览态（数据源=会话缓存过滤）
     val inLanBrowser = tab.viewMode == ViewMode.BROWSER &&
@@ -2431,7 +2668,12 @@ fun App(
             tab.folderId?.lanPersonIdOrNull() != null ||
             tab.folderId?.lanTopicIdOrNull() != null)
     val inBrowser =
-        tab.viewMode == ViewMode.BROWSER && (currentFolder != null || tagFilterTitle.isNotEmpty() || inLanBrowser)
+        tab.viewMode == ViewMode.BROWSER &&
+            // 本地人物筛选虚拟目录（__person__:<id>）与标签筛选/LAN 虚拟目录同性质：
+            // 不是 MediaStore 真文件夹（currentFolder 查不到），漏在这里会掉进 else 的
+            // 文件夹总览——2026-10-08 实测点人物卡后整页变回文件夹列表就是这个。
+            (currentFolder != null || tagFilterTitle.isNotEmpty() || inLanBrowser ||
+                localPersonTitle != null)
     // M4a 3.2 总览：侧栏人物/标签/专题 Section 头部进入；专题详情 = TOPICS_OVERVIEW + activeTopicId
     val inTagsOverview = tab.viewMode == ViewMode.TAGS_OVERVIEW
     val inPeopleOverview = tab.viewMode == ViewMode.PEOPLE_OVERVIEW
@@ -2475,12 +2717,20 @@ fun App(
     // 排序：桌面 localStorage `aurora_topic_sort_mode/order` 同语义。M4b 2.1 起并入
     // SettingsStore（旧 `aurora_topics` 键只读迁移）。比较逻辑在 sortTopicsForDisplay。
     val topicSortStore = remember { com.aurora.gallery.kotlin.state.SettingsStore(context) }
+    // 人物排序/分组借用同一个 store（SettingsStore 只是 SharedPreferences 的薄壳），
+    // 换个变量名只为别把「topic」读进人物的键上
+    val personSortStore = topicSortStore
     var topicSort by remember {
         mutableStateOf(
             if (topicSortStore.loadTopicSortByName()) TopicSortOption.NAME else TopicSortOption.TIME,
         )
     }
     var topicSortAscending by remember { mutableStateOf(topicSortStore.loadTopicSortAscending()) }
+    // 人物总览的排序/分组（桌面 personSortBy/personSortDirection/personGroupBy 的安卓同位；
+    // 默认按数量降序，与桌面 PersonGrid 的 sortBy='count' 一致）
+    var personSort by remember { mutableStateOf(personSortStore.loadPersonSortBy()) }
+    var personSortAscending by remember { mutableStateOf(personSortStore.loadPersonSortAscending()) }
+    var personGroup by remember { mutableStateOf(personSortStore.loadPersonGroupBy()) }
     // 总览搜索：按名称过滤根专题（桌面 topics-overview 的顶栏搜索同款）
     val topicQuery = tab.searchQuery.trim()
     val visibleRootTopics = remember(rootTopics, topicQuery) {
@@ -2541,6 +2791,12 @@ fun App(
                 })
             }
             add(SelectionMoreAction("加入专题…", IconLayout) { showTopicPicker = true })
+            // 「添加到人物…」= 桌面文件右键「添加到人物」的触屏同位（多选弹窗 → 写
+            // aiData.faces + 人物 count）。紧跟「加入专题…」：两者同为「把选中图归到某个
+            // 集合」，相邻好找。WD14 那项保留在下面不动（连桌面时仍可用）。
+            add(SelectionMoreAction("添加到人物…", IconBrain) { showPersonPicker = true })
+            // 「清除人物信息…」= 桌面文件右键同名项的触屏同位（勾中的人物从这些图上解绑）
+            add(SelectionMoreAction("清除人物信息…", IconBrain) { showPersonUnpicker = true })
             if (tab.selectedFileIds.size == 1) {
                 add(SelectionMoreAction("编辑标签…", IconTag) { editTagsFileId = tab.selectedFileIds.first() })
                 add(SelectionMoreAction("复制标签", IconCopy) { onCopyTags(tab.selectedFileIds) })
@@ -2647,8 +2903,9 @@ fun App(
 
     // —— 4.1 编辑模式的操作语义（对齐 React useFileSelection 的安卓分支 + App.tsx 的
     //    handleFolder* 系列；框选按 2026-09-20 用户决定平板不做）——
-    val onImageClick: (Image) -> Unit = { img ->
-        if (state.selectionMode) state.toggleSelectedInMode(img.id) else state.openViewer(img.id)
+    val onImageClick: (Image, ImageView) -> Unit = { img, cover ->
+        // 编辑模式里点击=勾选，没有查看器可开；正常点击走带过渡的入口
+        if (state.selectionMode) state.toggleSelectedInMode(img.id) else onOpenViewer(img, cover)
     }
     val onImageLongPress: (Image) -> Unit = { img ->
         when {
@@ -2835,8 +3092,13 @@ fun App(
                 ai.onOpenLanPersonFilter(person.id, person.name)
                 if (isPhone) closeDrawer()
             },
-            // M6b 阶段 4（D37）：侧栏人物 Section 的本地人物行
+            // 侧栏人物 Section 的本地人物行：点击进本地成员筛选虚拟目录（形制同上面
+            // 远端人物行，但不发网络请求）；手机抽屉下同样点完即收抽屉。
             localPeople = localPeople,
+            onLocalPersonClick = { person ->
+                onOpenLocalPersonFilter(person.id)
+                if (isPhone) closeDrawer()
+            },
             browserActive = inBrowser,
             // 面板宽度档（M8b 1.2）：手机抽屉=屏宽 82% 封顶 420dp（与抽屉宿主同源）；
             // 平板推挤沿用 SIDEBAR_WIDTH_DP（256dp）现状
@@ -2894,6 +3156,7 @@ fun App(
                         lanTopicTitle != null -> "专题 · $lanTopicTitle"
                         inLanSearchResults -> "搜索结果"
                         inLanBrowser -> lanBrowserTitle ?: "局域网"
+                        localPersonTitle != null -> "人物 · $localPersonTitle"
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
                         inTagsOverview -> "标签"
                         inPeopleOverview -> "人物"
@@ -3030,6 +3293,23 @@ fun App(
                     lanConnected = lanSnapshot.state == LanState.CONNECTED,
                     lanAllowEdit = lanAllowEdit,
                     localPeople = localPeople,
+                    personCoverUris = personCoverUris,
+                    thumbnailLoader = thumbnailLoader,
+                    personCoverCreatedAt = personCoverCreatedAt,
+                    language = language,
+                    sortBy = personSort,
+                    sortAscending = personSortAscending,
+                    groupBy = personGroup,
+                    topics = topics,
+                    onSortChange = { option, ascending ->
+                        personSort = option
+                        personSortAscending = ascending
+                        personSortStore.savePersonSort(option, ascending, personGroup)
+                    },
+                    onGroupChange = { group ->
+                        personGroup = group
+                        personSortStore.savePersonSort(personSort, personSortAscending, group)
+                    },
                     onPersonClick = { person ->
                         ai.onOpenLanPersonFilter(person.id, person.name)
                     },
@@ -3039,6 +3319,13 @@ fun App(
                         lanAvatarPersonId = person.id
                         lanPickerMode = LanPickerMode.AVATAR
                     },
+                    // 本地人物：单击进筛选视图，长按出编辑菜单，页头「新建人物」
+                    onLocalPersonClick = { person -> onOpenLocalPersonFilter(person.id) },
+                    onLocalRename = { renameLocalPersonState = it },
+                    onLocalDescribe = { describeLocalPersonState = it },
+                    onLocalDelete = { deleteLocalPersonState = it },
+                    onLocalSetAvatar = { cropAvatarPerson = it },
+                    onCreatePerson = { createPersonOpen = true },
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
                 // 专题总览列表（3.2 落地；3.3 页头排序 + 搜索对齐桌面；3.3fix 列数预测防跳档）
@@ -3175,6 +3462,7 @@ fun App(
                                         selectedIds = tab.selectedFileIds,
                                         thumbnailLoader = thumbnailLoader,
                                         onItemClick = onImageClick,
+                                        photoRectQuery = viewerPhotoRectQuery,
                                         onItemLongClick = onImageLongPress,
                                         layoutMode = tab.layoutMode,
                                         // 桌面专题图片区无分组（TopicFileGrid 无分组概念）
@@ -3218,6 +3506,9 @@ fun App(
                             val emptyText = when {
                                 hasCondition -> "无匹配图片"
                                 tagFilterTitle.isNotEmpty() -> "标签「$tagFilterTitle」下没有图片"
+                                // 本地人物筛选虚拟目录：文案照标签那条形制（「文件夹为空」
+                                // 在这儿是假话——这不是文件夹，是这个人还没加图）
+                                localPersonTitle != null -> "人物「$localPersonTitle」下没有图片"
                                 // M6a 阶段 4：远端目录（browse 返回的 images 过滤视频后）为空
                                 inLanBrowser -> "远端目录为空"
                                 else -> "文件夹为空"
@@ -3231,6 +3522,7 @@ fun App(
                                 selectedIds = tab.selectedFileIds,
                                 thumbnailLoader = thumbnailLoader,
                                 onItemClick = onImageClick,
+                                photoRectQuery = viewerPhotoRectQuery,
                                 onItemLongClick = onImageLongPress,
                                 layoutMode = tab.layoutMode,
                                 groupBy = state.groupBy,
@@ -3452,6 +3744,55 @@ fun App(
         )
     }
 
+    // 「添加到人物…」：本地人物多选弹窗（桌面 AddToPersonModal 的触屏同位）
+    if (showPersonPicker) {
+        PersonPickerDialog(
+            people = localPeople,
+            onDismiss = { showPersonPicker = false },
+            onPick = { personIds ->
+                showPersonPicker = false
+                val fileIds = tab.selectedFileIds.toList()
+                onAddFilesToLocalPersons(personIds, fileIds) { ok, failed ->
+                    Toast.makeText(
+                        context,
+                        when {
+                            failed == 0 -> "已加入 $ok 张"
+                            ok == 0 -> "加入失败（$failed 张）"
+                            else -> "已加入 $ok 张（$failed 张失败）"
+                        },
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+
+    // 「清除人物信息…」：同一个多选弹窗，确认文案与空态换成解绑语义
+    if (showPersonUnpicker) {
+        PersonPickerDialog(
+            people = localPeople,
+            title = "清除人物信息",
+            confirmLabel = "解绑",
+            emptyHint = "暂无人物。",
+            onDismiss = { showPersonUnpicker = false },
+            onPick = { personIds ->
+                showPersonUnpicker = false
+                val fileIds = tab.selectedFileIds.toList()
+                onClearPersonsFromFiles(personIds, fileIds) { ok, failed ->
+                    Toast.makeText(
+                        context,
+                        when {
+                            failed == 0 -> "已解绑 $ok 张"
+                            ok == 0 -> "解绑失败（$failed 张）"
+                            else -> "已解绑 $ok 张（$failed 张失败）"
+                        },
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+
     // M6a 阶段 5 远端专题选择弹窗（LAN 目录网格「加入专题…」最后一跳）；
     // 选中项身份 = Image.id = 远端 path（阶段 4 铁律），直接作为 paths 传数据层
     if (showLanTopicPicker) {
@@ -3550,6 +3891,112 @@ fun App(
             onConfirm = { description ->
                 describeLanPersonState = null
                 onDescribeLanPerson(person, description)
+            },
+        )
+    }
+
+    // —— 本地人物：新建 / 重命名 / 改描述 / 删除确认（桌面 usePeople 手动那一半；
+    //    输入弹窗复用 LanPersonEditDialog 形制，确认弹窗复用上面网络专题的形制）——
+    if (createPersonOpen) {
+        LanPersonEditDialog(
+            title = "新建人物",
+            initialText = "",
+            placeholder = "人物名称",
+            confirmLabel = "创建",
+            onDismiss = { createPersonOpen = false },
+            onConfirm = { name ->
+                createPersonOpen = false
+                onCreateLocalPerson(name) { ok ->
+                    Toast.makeText(
+                        context,
+                        if (ok) "已创建「$name」" else "创建失败",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+    renameLocalPersonState?.let { person ->
+        LanPersonEditDialog(
+            title = "重命名人物",
+            initialText = person.name,
+            placeholder = "人物名称",
+            confirmLabel = "重命名",
+            onDismiss = { renameLocalPersonState = null },
+            onConfirm = { name ->
+                renameLocalPersonState = null
+                onRenameLocalPerson(person, name) { ok ->
+                    Toast.makeText(context, if (ok) "已重命名" else "重命名失败", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+    }
+    describeLocalPersonState?.let { person ->
+        LanPersonEditDialog(
+            title = "编辑人物描述",
+            initialText = person.description.orEmpty(),
+            placeholder = "人物描述（留空 = 清空）",
+            confirmLabel = "保存",
+            // 空串 = 显式清空描述（口径同远端人物）
+            allowEmpty = true,
+            onDismiss = { describeLocalPersonState = null },
+            onConfirm = { description ->
+                describeLocalPersonState = null
+                onDescribeLocalPerson(person, description) { ok ->
+                    Toast.makeText(context, if (ok) "已保存" else "保存失败", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
+    }
+    deleteLocalPersonState?.let { person ->
+        AlertDialog(
+            onDismissRequest = { deleteLocalPersonState = null },
+            title = { Text("删除人物") },
+            text = {
+                Text(
+                    "确定删除人物「${person.name}」吗？其 ${person.count} 张图的关联将一并解除，图片本身不受影响。",
+                    color = AuroraTheme.colors.textPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteLocalPersonState = null
+                    onDeleteLocalPerson(person) { ok ->
+                        Toast.makeText(context, if (ok) "已删除" else "删除失败", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text("删除", color = Color(0xFFEF4444))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteLocalPersonState = null }) {
+                    Text("取消", color = AuroraTheme.colors.textPrimary)
+                }
+            },
+        )
+    }
+
+    // 头像裁剪页（桌面 CropAvatarModal 的触屏同位）：开页时拉一次成员图当候选
+    cropAvatarPerson?.let { person ->
+        LaunchedEffect(person.id) {
+            onLoadAvatarCandidates(person.id) { cropAvatarCandidates = it }
+        }
+        PersonAvatarCropDialog(
+            personName = person.name,
+            candidates = cropAvatarCandidates,
+            initialCoverFileId = person.coverFileId,
+            initialFaceBox = person.faceBox,
+            loader = thumbnailLoader,
+            onCancel = { cropAvatarPerson = null },
+            onSave = { fileId, faceBox ->
+                cropAvatarPerson = null
+                onSaveLocalPersonAvatar(person.id, fileId, faceBox) { ok ->
+                    Toast.makeText(
+                        context,
+                        if (ok) "头像已更新" else "头像保存失败",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
             },
         )
     }

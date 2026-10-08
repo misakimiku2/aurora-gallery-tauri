@@ -12,7 +12,17 @@ import uniffi.aurora_core.Folder
  */
 class TargetPickerSearchTest {
 
-    private fun folder(id: String, name: String) = Folder(id, name, 0, null, 0, 0)
+    // 命名实参而非位置实参：Folder 在 M8b 加过 path、2026-10 排序改造加过 createdAt/
+    // modifiedAt，位置写法每次加字段都会静默错位到别的类型上（这次编译期就炸是运气好）。
+    private fun folder(id: String, name: String) = Folder(
+        id = id,
+        name = name,
+        path = "",
+        imageCount = 0L,
+        coverUri = null,
+        createdAt = 0L,
+        modifiedAt = 0L,
+    )
 
     private val folders = listOf(
         folder("a", "Camera"),

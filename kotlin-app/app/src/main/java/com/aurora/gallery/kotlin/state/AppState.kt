@@ -119,11 +119,42 @@ fun String.lanPersonIdOrNull(): String? =
 fun String.lanTopicIdOrNull(): String? =
     takeIf { startsWith(LAN_TOPIC_PREFIX) }?.removePrefix(LAN_TOPIC_PREFIX)
 
+/**
+ * **本地**人物筛选虚拟目录前缀（folderId 形如 `__person__:<personId>`，见
+ * [localPersonFolderId]）。形制照 [LAN_PERSON_PREFIX]，但两点必须不同：
+ *  - **不带 `lan:` 段**——带上就会被 GalleryViewModel.reloadImages 的 LAN 分流接走，
+ *    去查远端会话缓存（本地人物在那儿根本不存在），网格恒空；
+ *  - 用 `__x__:` 双下划线形制（同 [LAN_SEARCH_FOLDER_ID]）——本地 folderId 是
+ *    MediaStore bucket id，双下划线前缀不与那个命名空间相交。
+ *
+ * 序列取数在 GalleryViewModel.reloadImages 的本地人物分支：按 metadataById 里
+ * `aiData.faces[].personId` 过滤**全库**（口径同桌面的 activePersonId 筛选——人物是
+ * 全库概念，不是当前文件夹的子集），命中 id 走 list_images_by_ids。
+ */
+const val LOCAL_PERSON_PREFIX = "__person__:"
+
+/** 本地人物 id → folderId（[LOCAL_PERSON_PREFIX] 形态）。 */
+fun localPersonFolderId(personId: String) = LOCAL_PERSON_PREFIX + personId
+
+/** folderId → 本地人物 id（去 [LOCAL_PERSON_PREFIX] 前缀，非本形态 null）。 */
+fun String.localPersonIdOrNull(): String? =
+    takeIf { startsWith(LOCAL_PERSON_PREFIX) }?.removePrefix(LOCAL_PERSON_PREFIX)
+
 /** 搜索范围（对齐 React `SearchScope`，`src/types.ts:455`）。 */
 enum class SearchScope { ALL, FILE, TAG, FOLDER }
 
 /** 排序字段与方向（对齐 React `SortOption` / `SortDirection`，`src/types.ts:456-457`）。 */
 enum class SortOption { NAME, DATE, SIZE }
+
+/**
+ * 人物总览的排序字段（对齐桌面 `PersonSortOption`，`src/types.ts:466`）。
+ * CREATED 取封面文件的创建时间——桌面同款（`PersonGrid.tsx:240-247` 读
+ * `files[coverFileId].meta.created`），没有封面图时按 0 处理排在最后。
+ */
+enum class PersonSortOption { NAME, COUNT, CREATED }
+
+/** 人物总览的分组方式（对齐桌面 `PersonGroupBy`，`src/types.ts:467`）。 */
+enum class PersonGroupBy { NONE, NAME, TOPIC }
 
 enum class SortDirection { ASC, DESC }
 
@@ -204,6 +235,15 @@ data class TabState(
     val folderId: String? = null,
     /** 全屏查看的图片；M3 查看器并入后消费（返回链「退全屏」判断依据）。 */
     val viewingFileId: String? = null,
+    /**
+     * 「打开查看器」的代纪（2026-10-08，进出过渡动画配套）：每次 [openViewer] +1，
+     * [com.aurora.gallery.kotlin.viewer.NativeViewerLayer] 用它当 `open()` 的 LaunchedEffect
+     * 键。为什么不能只看 [viewingFileId]：退出动画被中途打断时，同一帧里会发生
+     * 「关闭 → 立刻打开另一张」，字段从非空写回非空，组合层压根没离开过组合——
+     * 一次性进入动画就不会重跑，用户点开的那张变成空白。代纪变了就一定重跑。
+     * 翻页（[viewerNavigated]）**不**递增：那还是同一次查看会话。
+     */
+    val viewerSession: Int = 0,
     val viewMode: ViewMode = ViewMode.FOLDERS_OVERVIEW,
     val layoutMode: LayoutMode = LayoutMode.GRID,
     val searchQuery: String = "",
@@ -666,9 +706,12 @@ class AppState(
     /**
      * 打开全屏查看器。写 [TabState.viewingFileId] 既是返回链「关查看器」的判断依据
      * （4.3 链），也是关闭后让网格停在原来那张图的锚点（2.3）。
+     *
+     * 同时递增 [TabState.viewerSession]：查看器的 `open()` 挂在「本次打开会话」上而不是挂在
+     * 字段非空上，理由见该字段的 KDoc（退出过渡被打断时同帧关→开会漏掉重开）。
      */
     fun openViewer(fileId: String) {
-        updateActiveTab { it.copy(viewingFileId = fileId) }
+        updateActiveTab { it.copy(viewingFileId = fileId, viewerSession = it.viewerSession + 1) }
     }
 
     fun closeViewer() {

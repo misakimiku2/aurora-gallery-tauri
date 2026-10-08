@@ -277,8 +277,10 @@ fun TreeSidebar(
     lanPeople: List<com.aurora.gallery.kotlin.LanPerson> = emptyList(),
     /** 远端人物行点击（M6b 阶段 5 / D40：宿主 openLanPersonFilter 进成员筛选虚拟目录）。 */
     onLanPersonClick: (com.aurora.gallery.kotlin.LanPerson) -> Unit = {},
-    /** 本地人物（M6b 阶段 4，D37：WD14 识别写本地库；行渲染在远端人物之前）。 */
+    /** 本地人物（本机库 persons 行；行渲染在远端人物之前）。 */
     localPeople: List<uniffi.aurora_core.FfiPerson> = emptyList(),
+    /** 本地人物行点击（宿主 openLocalPersonFilter 进本地成员筛选虚拟目录）。 */
+    onLocalPersonClick: (uniffi.aurora_core.FfiPerson) -> Unit = {},
     /**
      * 面板宽度（M8b 1.2）：平板/推挤路径沿用 [SIDEBAR_WIDTH_DP]（256dp，默认值零改动）；
      * 手机抽屉（PhoneSidebarDrawerHost）传入面板宽（屏宽 82% 封顶 420dp），六 Section
@@ -450,7 +452,9 @@ fun TreeSidebar(
                 title = "人物",
                 icon = IconBrain,
                 iconTint = SECTION_PURPLE,
-                count = 0,
+                // 计数口径同标签 Section（只数本地，见 tagCount）：远端人物断线即消失，
+                // 混进来会让这个数字随连接状态跳动。
+                count = localPeople.size,
                 expanded = activeSection == SidebarSection.PEOPLE,
                 // 行主体点击 = 进人物总览（3.2，对齐桌面 onNavigateAllPeople）；展开只走 chevron
                 onClick = onPeopleOverviewClick,
@@ -465,9 +469,8 @@ fun TreeSidebar(
                     // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
                     EmptyHint("暂无人物")
                 } else {
-                    // M6b 阶段 4（D37）：本地人物行（WD14 识别写本地库的 person_{tag}；点击
-                    // 暂无动作——本地人物筛选未列验收）+ 远端人物行（M6a 阶段 5；M6b 阶段 5
-                    // 起点击 = 成员筛选虚拟目录）。
+                    // 本地人物行（本机库 persons 行）在前、远端人物行在后；两者点击都进
+                    // 各自的成员筛选虚拟目录（本地 = `__person__:<id>`，远端 = `lan:person:<id>`）。
                     Column(
                         Modifier
                             .weight(1f, fill = false)
@@ -478,7 +481,7 @@ fun TreeSidebar(
                             LanPersonRow(
                                 name = person.name,
                                 count = person.count,
-                                onClick = {},
+                                onClick = { onLocalPersonClick(person) },
                             )
                         }
                         lanPeople.forEach { person ->
@@ -1193,8 +1196,11 @@ private val IconChevronDown: ImageVector by lazy {
 /**
  * lucide Brain（人物 Section；两个对称脑叶 + 中缝细节，lucide 的 8 段小弧在 16dp 下
  * 并入轮廓——贝塞尔近似脑叶云形，观感对齐桌面）。
+ *
+ * internal 而非 private：MainActivity 的选中集菜单「添加到人物…」复用同一颗图标
+ * （同一个语义就该同一颗图标，别处再画一颗只会画歪）。
  */
-private val IconBrain: ImageVector by lazy {
+internal val IconBrain: ImageVector by lazy {
     iconBuilder("Brain") {
         // 左脑叶：顶 → 左上凸 → 左缘 → 左下凸 → 底 → 回中缝
         moveTo(12f, 5f)

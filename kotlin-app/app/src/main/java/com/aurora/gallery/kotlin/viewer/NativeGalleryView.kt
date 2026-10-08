@@ -3,6 +3,7 @@ package com.aurora.gallery.kotlin.viewer
 import com.aurora.gallery.kotlin.R
 import android.content.Context
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.text.method.ScrollingMovementMethod
 import android.os.Build
@@ -67,8 +68,14 @@ class NativeGalleryView @JvmOverloads constructor(
 ) : FrameLayout(context), DialogTheme {
 
     interface Listener {
-        /** 用户点击了关闭按钮。 */
-        fun onClose()
+        /**
+         * 用户请求关闭查看器。
+         *
+         * [animate]（2026-10-08）：true = 用户主动退出（返回键 / 顶栏返回），宿主可以据此做
+         * 「图片缩回网格卡片」的退出过渡；false = 删除、移出之后的连带关闭——那一张在网格里
+         * 已经没了，缩回一张不存在的卡片是假动作，必须直接硬关。
+         */
+        fun onClose(animate: Boolean = true)
         /** 当前图片索引变化（用户操作或幻灯片）。 */
         fun onNavigate(index: Int)
         /**
@@ -2055,8 +2062,13 @@ class NativeGalleryView @JvmOverloads constructor(
 
         thumbnailAdapter.submit(images, currentIndex)
 
-        visibility = VISIBLE
+        // 过渡挂起位（2026-10-08）：宿主在打开查看器前置了 holdHiddenForTransition，这一段
+        // 整层先 INVISIBLE（不是 GONE——照样测量/布局、照常取图），由覆盖层的放大动画
+        // 到位后经 [revealAfterTransition] 揭幕。chrome 同步归零，揭幕时淡入——顶栏/缩略图条
+        // 若跟着图片一起就位，会出现「工具栏先闪一下再没」的杂乱感。
         alpha = 1f
+        applyTransitionChrome(held = holdHiddenForTransition)
+        visibility = if (holdHiddenForTransition) INVISIBLE else VISIBLE
         requestFocus()
         if (staleImmersive) {
             Log.w("NativeViewer", "open: stale immersive state leaked from previous session, restoring chrome")
@@ -2160,6 +2172,77 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         // 重新刷新当前图片的抽屉内容（标题色块等会用到主题色）
         images.getOrNull(currentIndex)?.let { updateDrawer(it) }
+    }
+
+    // —— 进出过渡动画（2026-10-08，覆盖层本体见 [ViewerTransition]）——
+
+    /**
+     * 过渡挂起位：true 时 [open] 把整层置 INVISIBLE，等覆盖层的放大动画到位后由
+     * [revealAfterTransition] 揭幕。宿主在写「打开查看器」状态**之前**置位（open 由组合层
+     * 在稍后的帧里触发，晚于这里），本类只读它一次、揭幕时清零。
+     */
+    var holdHiddenForTransition = false
+
+    /**
+     * 当前这张图在**窗口坐标系**里的显示矩形（覆盖层的进入落点 / 退出口起点）。
+     * 图还没上屏或还没布局时返回 false，由调用方退回预测矩形或干脆硬切。
+     */
+    fun currentImageRect(out: RectF): Boolean = activeView.windowDisplayRect(out)
+
+    /** 当前显示的 drawable——覆盖层要画的就是它。空壳位图按没有处理（见 [showsContent]）。 */
+    fun currentImageDrawable(): Drawable? = activeView.drawable?.takeIf { isOpen && it.showsContent() }
+
+    /** 当前这张的 fileId（宿主拿它回查网格卡片矩形，作为退出动画的落点）。 */
+    fun transitionFileId(): String? = images.getOrNull(currentIndex)?.fileId
+
+    /**
+     * 覆盖层底色：取查看器自己的背景色值。收尾那一刻两层交接，颜色必须逐位相同才看不出来
+     * ——沉浸态下本类把背景涂黑（[applyTheme] 的 isImmersive 分支），这里也就跟着黑。
+     */
+    fun transitionScrimColor(): Int =
+        (background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.BLACK
+
+    /**
+     * 揭幕（进入动画到位时由覆盖层调）：显形 + 重夺焦点 + chrome 淡入。
+     *
+     * 焦点要在这里再要一次：INVISIBLE 的视图拿不到焦点（`requestFocus` 内部要求
+     * visibility==VISIBLE），而 [open] 那次请求正好落在挂起期——错过它就没有按键梯子，
+     * 返回键只能走 [NativeViewerLayer] 的兜底 BackHandler。
+     */
+    fun revealAfterTransition() {
+        holdHiddenForTransition = false
+        if (!isOpen) return
+        visibility = VISIBLE
+        requestFocus()
+        for (v in transitionChrome()) {
+            if (v.alpha < 1f) {
+                v.animate().alpha(1f)
+                    .setDuration(TRANSITION_CHROME_MS)
+                    .setInterpolator(TRANSITION_CHROME_EASING)
+                    .start()
+            }
+        }
+    }
+
+    /**
+     * 退出动画起步：整层藏起来，屏幕交给覆盖层那张飞回卡片的图。
+     *
+     * 用 INVISIBLE 不用 GONE：几何、当前 index、已解码的图全部留在原地，动画结束才真的
+     * [close]——中途被打断（用户又点了一张）也只需要 close 一次，不存在半程脏状态。
+     */
+    fun hideForTransition() {
+        holdHiddenForTransition = false
+        if (!isOpen) return
+        visibility = INVISIBLE
+    }
+
+    /** 参与揭幕淡入的 chrome（图片本体不淡：它已经和覆盖层逐位对齐了）。 */
+    private fun transitionChrome(): List<View> = listOf(topBar, thumbnailStrip, bottomInfo)
+
+    /** 过渡挂起期把 chrome 压成全透明，揭幕时淡回；非挂起路径恒复位成 1（防上次残留）。 */
+    private fun applyTransitionChrome(held: Boolean) {
+        val a = if (held) 0f else 1f
+        for (v in transitionChrome()) v.alpha = a
     }
 
     fun close() {
@@ -2656,7 +2739,8 @@ class NativeGalleryView @JvmOverloads constructor(
         // 通知 JS 端真正删除文件（不再弹 ConfirmModal）
         listener?.onDelete(fileId, isLan)
         if (images.isEmpty()) {
-            listener?.onClose()
+            // 序列空了的连带关闭：这张在网格里已经没了，退出过渡没有落点，硬关（animate=false）
+            listener?.onClose(animate = false)
             return
         }
         // 调整 currentIndex
@@ -2680,7 +2764,8 @@ class NativeGalleryView @JvmOverloads constructor(
         if (idx < 0) return
         images.removeAt(idx)
         if (images.isEmpty()) {
-            listener?.onClose()
+            // 同 confirmDelete：图已被移出当前序列，退出动画没有落点，硬关
+            listener?.onClose(animate = false)
             return
         }
         if (currentIndex >= images.size) {
@@ -3039,6 +3124,9 @@ class NativeGalleryView @JvmOverloads constructor(
         private const val TAG = "NativeGalleryView"
         /** 翻页动画贝塞尔曲线插值器：快速进场 → 接近中心时平滑减速 */
         private val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
+        /** 进出过渡揭幕时 chrome 的淡入时长与节奏（见 [revealAfterTransition]） */
+        private const val TRANSITION_CHROME_MS = 140L
+        private val TRANSITION_CHROME_EASING = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
         /** 翻页触发距离阈值（dp），固定值不受横竖屏影响 */
         private const val SWIPE_THRESHOLD_DP = 32f
         /** 翻页触发速度阈值 */

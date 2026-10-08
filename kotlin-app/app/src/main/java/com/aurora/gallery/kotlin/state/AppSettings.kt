@@ -177,6 +177,30 @@ class SettingsStore(context: Context) {
             .apply()
     }
 
+    /**
+     * 人物总览的排序 + 分组（桌面 `personSortBy` / `personSortDirection` /
+     * `personGroupBy` 三份 localStorage 的安卓同位）。存枚举名，读回认不出就落默认值——
+     * 枚举将来加档位不会让老存档崩，只会退回默认。
+     */
+    fun loadPersonSortBy(): PersonSortOption =
+        enumFromNameOrDefault(prefs.getString(KEY_PERSON_SORT_BY, null), PersonSortOption.COUNT)
+
+    fun loadPersonSortAscending(): Boolean = prefs.getBoolean(KEY_PERSON_SORT_ASC, false)
+
+    fun loadPersonGroupBy(): PersonGroupBy =
+        enumFromNameOrDefault(prefs.getString(KEY_PERSON_GROUP_BY, null), PersonGroupBy.NONE)
+
+    fun savePersonSort(sortBy: PersonSortOption, ascending: Boolean, groupBy: PersonGroupBy) {
+        prefs.edit()
+            .putString(KEY_PERSON_SORT_BY, sortBy.name)
+            .putBoolean(KEY_PERSON_SORT_ASC, ascending)
+            .putString(KEY_PERSON_GROUP_BY, groupBy.name)
+            .apply()
+    }
+
+    private inline fun <reified T : Enum<T>> enumFromNameOrDefault(name: String?, default: T): T =
+        name?.let { n -> enumValues<T>().firstOrNull { it.name == n } } ?: default
+
     private fun layoutFromName(name: String): LayoutMode =
         LayoutMode.entries.firstOrNull { it.name == name } ?: LayoutMode.GRID
 
@@ -328,6 +352,10 @@ class SettingsStore(context: Context) {
         const val KEY_GROUP_BY = "defaultGroupBy"
         const val KEY_TOPIC_SORT_BY_NAME = "topicSortByName"
         const val KEY_TOPIC_SORT_ASC = "topicSortAscending"
+        // 人物总览的排序/分组（桌面 localStorage 的 person 同语义，存枚举名）
+        const val KEY_PERSON_SORT_BY = "personSortBy"
+        const val KEY_PERSON_SORT_ASC = "personSortAscending"
+        const val KEY_PERSON_GROUP_BY = "personGroupBy"
         const val KEY_AI = "ai"
         const val KEY_AI_SEARCH_ENABLED = "aiSearchEnabled"
         const val KEY_AUTO_EXTRACT_PALETTE = "autoExtractPalette"

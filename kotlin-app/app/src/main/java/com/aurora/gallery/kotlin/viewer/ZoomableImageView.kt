@@ -595,4 +595,23 @@ class ZoomableImageView @JvmOverloads constructor(
     companion object {
         private const val MAX_SCALE = 8f
     }
+
+    /**
+     * 图片当前在**窗口坐标系**里的显示矩形（含缩放/平移/旋转后的实际位置）。
+     *
+     * 给 [ViewerTransition] 用：进入动画的落点、退出动画的起点都要拿真图的实测几何，
+     * 而不是按元数据宽高再算一遍（元数据可能被 EXIF 旋转反一反，算出来就落歪了）。
+     *
+     * 值来自 [applyMatrix] 维护的 [displayRect]（视图坐标，逻辑已旋转尺寸 × 总缩放 +
+     * 平移），再叠上本视图的窗口偏移。没有图、还没布局、或矩阵尚未应用过时返回 false。
+     */
+    fun windowDisplayRect(out: RectF): Boolean {
+        if (drawable == null || width <= 0 || height <= 0) return false
+        if (displayRect.isEmpty || displayRect.width() <= 0f || displayRect.height() <= 0f) return false
+        val loc = IntArray(2)
+        getLocationInWindow(loc)
+        out.set(displayRect)
+        out.offset(loc[0].toFloat(), loc[1].toFloat())
+        return true
+    }
 }

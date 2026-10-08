@@ -2,6 +2,7 @@ package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Outline
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
@@ -38,6 +39,7 @@ import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import androidx.recyclerview.widget.StaggeredSpanAccess
 import com.aurora.gallery.kotlin.ThumbnailLoader
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.aurora.gallery.kotlin.viewer.PhotoRectQuery
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,7 +74,11 @@ fun FileGrid(
     images: List<Image>,
     selectedIds: Set<String>,
     thumbnailLoader: ThumbnailLoader,
-    onItemClick: (Image) -> Unit,
+    /**
+     * 点击一张图。第二个参数是那张卡片的**封面视图**（[PhotoRefs.cover]）——查看器进出过渡
+     * 要拿它的屏幕矩形和上面已经解码好的缩略图当动画源（2026-10-08，见 ViewerTransition）。
+     */
+    onItemClick: (Image, ImageView) -> Unit,
     /**
      * 长按回调（4.1 编辑模式入口）。语义在宿主侧决定：非编辑模式 → 进选择模式；
      * 编辑模式内长按未选中项 → 范围选择；已选中项 → 预留 M2 上下文菜单（当前无操作）。
@@ -101,6 +107,12 @@ fun FileGrid(
     topInsetPx: Int = 0,
     /** 整页滚动联动：RV 实际滚动增量（OnScrollListener 的 dy）原样回传宿主。 */
     onScrolled: ((Int) -> Unit)? = null,
+    /**
+     * 查看器退出动画的落点通道（2026-10-08，见
+     * [com.aurora.gallery.kotlin.viewer.PhotoRectQuery]）：本网格把「按图片 id 取可见卡片封面
+     * 矩形」注册进来、离开组合时摘掉。null = 不提供（退出动画退回淡出兜底）。
+     */
+    photoRectQuery: PhotoRectQuery? = null,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -303,6 +315,27 @@ fun FileGrid(
 
     DisposableEffect(adapter) {
         onDispose { adapter.cancel() }
+    }
+
+    // 查看器退出动画的落点查询（2026-10-08）：注册放 DisposableEffect 而不是 RV factory——
+    // 查询只在「关查看器那一刻」执行，那时 RV 早已建好；而 factory 里注册要处理「网格换实例
+    // 但 holder 是同一个」的覆盖顺序。令牌比对让每次 dispose 只摘自己那一份，不误擦新格子的。
+    val rectQueryToken = remember { Any() }
+    DisposableEffect(photoRectQuery, rvHolder) {
+        val holder = photoRectQuery
+        if (holder != null) {
+            holder.owner = rectQueryToken
+            holder.query = { id, out ->
+                val rv = rvHolder.rv
+                rv != null && adapter.photoCoverRectInWindow(rv, id, out)
+            }
+        }
+        onDispose {
+            if (holder != null && holder.owner === rectQueryToken) {
+                holder.owner = null
+                holder.query = null
+            }
+        }
     }
 
     // 滚动条叠在网格上层（Box）：只有按在拇指上才吃事件，其余全部放行给 RV。
@@ -1589,7 +1622,7 @@ private class FileGridAdapter(
     private var textSecondaryColor: Int,
     private var primaryColor: Int,
     private var contentColor: Int,
-    private val onClick: (Image) -> Unit,
+    private val onClick: (Image, ImageView) -> Unit,
     private val onLongClick: (Image) -> Unit,
     private val onToggleGroup: (String) -> Unit,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -1770,6 +1803,32 @@ private class FileGridAdapter(
         }
     }
 
+    /**
+     * 查看器退出动画的落点：可见卡片里该 id 的**封面**矩形（窗口坐标）。
+     *
+     * 只查已挂载的可见 child（`rv.children`），不在视口内就返回 false——退出过渡宁可退回
+     * 别的落点，也不能拿一个编出来的矩形去飞。用封面而不是 itemView：卡片底下还挂着文件名
+     * 一行，落到整行矩形上就和进入动画的起点（同样是封面）不是同一块。
+     */
+    fun photoCoverRectInWindow(rv: RecyclerView, id: String, out: RectF): Boolean {
+        for (i in 0 until rv.childCount) {
+            val child = rv.getChildAt(i)
+            val pos = rv.getChildAdapterPosition(child)
+            if (pos == RecyclerView.NO_POSITION) continue
+            if ((items.getOrNull(pos) as? GridItem.Photo)?.image?.id != id) continue
+            val cover = (rv.getChildViewHolder(child) as? PhotoVH)?.refs?.cover ?: continue
+            if (cover.width <= 0 || cover.height <= 0) continue
+            val loc = IntArray(2)
+            cover.getLocationInWindow(loc)
+            out.set(
+                loc[0].toFloat(), loc[1].toFloat(),
+                (loc[0] + cover.width).toFloat(), (loc[1] + cover.height).toFloat(),
+            )
+            return true
+        }
+        return false
+    }
+
     fun updateSelection(selection: Set<String>) {
         val old = selectedIds
         selectedIds = selection
@@ -1837,7 +1896,8 @@ private class FileGridAdapter(
                 val vh = PhotoVH(refs)
                 refs.root.setOnClickListener {
                     val item = items.getOrNull(vh.bindingAdapterPosition) as? GridItem.Photo
-                    if (item != null) onClick(item.image)
+                    // 封面视图一起交出去：查看器的进入过渡要拿它的矩形 + 已经解码好的缩略图
+                    if (item != null) onClick(item.image, refs.cover)
                 }
                 // 4.1 长按：进入编辑模式 / 范围选择的触发器。RV 手指落在 item 上时事件由
                 // 子 view 消费，pinch 监听器的 OnTouchListener 路径不参与，长按照常触发。

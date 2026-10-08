@@ -89,6 +89,7 @@ fun ViewerLayerHost(
         viewer = viewer,
         items = items,
         startIndex = startIndex,
+        openToken = state.activeTab.viewerSession,
         lanAllowEdit = lanAllowEdit,
         autoExtractPalette = autoExtractPalette,
         onRequestClose = { state.closeViewer() },
@@ -101,15 +102,23 @@ fun ViewerLayerHost(
  * 只在有图在看时进入组合；[viewer] 实例由 Activity 持有、在其生命周期内复用——Coil 的
  * 内存/磁盘缓存跟着实例走，随进出组合重建会把缓存整体丢掉（4.2 压测要盯的内存台阶正来自这里）。
  *
- * `open()` 只在**进入组合时**跑一次：后台重扫会让 [items] 换一份，若把它作为
- * `LaunchedEffect` 的键，用户刚删掉一张图就会触发重新 open、被拉回进入的那一张
- * （3.2 的验收要的正是「删完停在下一张」）。序列在打开时已拷进查看器自己的列表。
+ * `open()` 只在**进入组合或换了一次打开会话**时跑一次（键 = [openToken]，不是 items）：后台
+ * 重扫会让 [items] 换一份，若把它作为 `LaunchedEffect` 的键，用户刚删掉一张图就会触发重新
+ * open、被拉回进入的那一张（3.2 的验收要的正是「删完停在下一张」）。序列在打开时已拷进
+ * 查看器自己的列表。会话键是过渡动画打断路径的补偿：退出动画中途点另一张时，同一帧里
+ * 「关 → 立刻开」，组合层从没离开过，只按进入组合触发就会漏掉这次 open。
  */
 @Composable
 fun NativeViewerLayer(
     viewer: NativeGalleryView,
     items: List<NativeGalleryView.ImageItem>,
     startIndex: Int,
+    /**
+     * 打开会话代纪（[com.aurora.gallery.kotlin.state.TabState.viewerSession]）：`open()` 的
+     * LaunchedEffect 键。用「会话变了没有」判要不要重开，而不是「进没进组合」——退出过渡
+     * 被打断时同一帧里会「关 → 立刻开另一张」，组合层不会离开，一次性进入动画就不跑了。
+     */
+    openToken: Int = 0,
     /** LAN 编辑门禁位（M6a 阶段 6）：同步到查看器实例，删除入口的显隐在现读时生效。 */
     lanAllowEdit: Boolean = false,
     /** 浏览时自动提取主色调开关（M6b 阶段 3）：抽屉 loading/按钮态由查看器现读。 */
@@ -125,7 +134,7 @@ fun NativeViewerLayer(
     // 门禁位推进查看器实例（key = 值本身：浏览中门禁变化也即时生效，菜单构建时现读）
     LaunchedEffect(lanAllowEdit) { viewer.lanAllowEdit = lanAllowEdit }
     LaunchedEffect(autoExtractPalette) { viewer.autoExtractPalette = autoExtractPalette }
-    LaunchedEffect(Unit) { viewer.open(latestItems, latestStart, viewerOptions) }
+    LaunchedEffect(openToken) { viewer.open(latestItems, latestStart, viewerOptions) }
     // 查看器自己实现了 dispatchKeyEvent（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层消化；
     // 这条 BackHandler 是拿不到焦点时的兜底，兜底也要走同一把梯子，否则会一次 back 关掉整个查看器。
     BackHandler {

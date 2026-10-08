@@ -1,6 +1,8 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -11,11 +13,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -37,10 +42,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
@@ -48,9 +56,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.LanPerson
+import com.aurora.gallery.kotlin.ThumbnailLoader
+import com.aurora.gallery.kotlin.state.PersonGroupBy
+import com.aurora.gallery.kotlin.state.PersonSortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import java.text.Collator
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import uniffi.aurora_core.FfiFaceBox
 import uniffi.aurora_core.FfiPerson
+import uniffi.aurora_core.FfiTopic
+import uniffi.aurora_core.RemoteTagCount
 import uniffi.aurora_core.TagGroup
+import uniffi.aurora_core.groupRemoteTagCounts
 
 /**
  * 标签总览（M4a 3.2，对齐桌面 `TagsList.tsx` 的标签卡片网格）。
@@ -249,16 +268,258 @@ private suspend fun snapshotFlowScrollIndex(
     androidx.compose.runtime.snapshotFlow { state.firstVisibleItemIndex }.collect { onIndex(it) }
 }
 
+// ===== 人物总览的排序与分组（桌面 PersonGrid.tsx:226-313 的安卓同位）=====
+//
+// 三块都是纯函数，刻意不 @Composable：排序/组序是「看着不对但很难截图证明」的那类
+// 逻辑，抽成函数才能拿单测钉住（组序的 0-9 最前 / # 与未分类最后就是典型）。
+
 /**
- * 人物总览。远端人物卡网格（M6a 阶段 5，D31 并入口径）：connected 且有远端人物时渲染
- * 卡片（首字符圆底头像占位——契约 §3.1 无人脸头像可用——+ 名 + 计数 + 网络标识）；
- * 断线/无远端人物维持既有静态占位（逐像素一致）。
+ * 人物展示排序（桌面 `PersonGrid.tsx:226-254` 同语义）：NAME 按 locale 比较、
+ * COUNT 按张数、CREATED 取**封面文件**的创建时间（桌面读 `files[coverFileId].meta.created`，
+ * 这里由宿主把 Image.createdAt 摊成表传进来；没封面就按 0 落尾）。
+ * 与 [sortTopicsForDisplay] 同一把 Collator，别在 UI 里排第二遍。
+ */
+fun sortPeopleForDisplay(
+    people: List<FfiPerson>,
+    option: PersonSortOption,
+    ascending: Boolean,
+    createdAtByFileId: Map<String, Long>,
+): List<FfiPerson> {
+    val sorted = when (option) {
+        PersonSortOption.NAME -> {
+            val collator = Collator.getInstance(Locale.CHINA)
+            people.sortedWith(compareBy(collator) { it.name })
+        }
+        PersonSortOption.COUNT -> people.sortedBy { it.count }
+        PersonSortOption.CREATED -> people.sortedBy { createdAtByFileId[it.coverFileId] ?: 0L }
+    }
+    return if (ascending) sorted else sorted.asReversed()
+}
+
+/**
+ * 人名的拼音组键表（name → 组键，如「初音」→ C）。
  *
- * 编辑入口（同位原则收在总览页，不放侧栏）：长按卡片 → 「重命名」「改描述」；
- * 「换头像」（M6a 阶段 6 起，[lanAllowEdit] 直通时）→ LanFolderPickerDialog 选远端图
- * （宿主把选中 path 交给 renameLanPerson 的 avatarPath）；403 门禁态不出现
- *（M4a「不适用的项不出现」先例）。点击卡片 = 宿主 Toast 占位（契约无成员枚举端点，
- * 不做假筛选）。
+ * 复用 core 的 `group_remote_tag_counts`：它和标签分组走**同一个** `collate::group_tags`
+ * （边界表、组键、组序一套规则），所以人物的字母组和标签的字母组口径必然一致——在
+ * Kotlin 侧另写一份边界表，迟早会和标签对不上而没人发现。该函数是纯函数、不碰库，
+ * 传人名不会污染词表（D31 数据层铁律对它零风险）。
+ *
+ * 重名人物先 distinct，自然拿到同一个组键。FFI 异常回空表 → 调用方一律落「#」组：
+ * 分组是锦上添花，不该把整页带崩。
+ */
+fun pinyinGroupKeysByCollate(names: List<String>, language: String): Map<String, String> {
+    if (names.isEmpty()) return emptyMap()
+    return runCatching {
+        names.distinct()
+            .let { list -> groupRemoteTagCounts(list.map { RemoteTagCount(it, 0L) }, language) }
+            .flatMap { group -> group.tags.map { it.tag to group.key } }
+            .toMap()
+    }.getOrDefault(emptyMap())
+}
+
+/** 一个分组（组键 + 标题 + 组内人物 id；桌面 `PersonGroup` 同形）。 */
+data class PersonGroup(val id: String, val title: String, val personIds: List<String>)
+
+/**
+ * 人物分组（桌面 `PersonGrid.tsx:257-313` 同语义）：
+ *  - NONE = 单组「所有人物」；
+ *  - NAME = 拼音组键（[pinyinGroupKeysByCollate]），查不到落「#」；
+ *  - TOPIC = 首个 `peopleIds` 含该人物的专题名，没有则「未分类」——桌面同款取舍：
+ *    一个人物属于多个专题时只进第一个，不重复出现。
+ *
+ * 组序（桌面 `:303-312` 原样）：`0-9` 最前，`#` 与「未分类」垫底，其余按组名 locale 升序。
+ */
+fun buildPersonGroups(
+    people: List<FfiPerson>,
+    groupBy: PersonGroupBy,
+    groupKeyByName: Map<String, String>,
+    topics: List<FfiTopic>,
+    ungroupedTitle: String = "未分类",
+): List<PersonGroup> {
+    if (groupBy == PersonGroupBy.NONE) {
+        return listOf(PersonGroup(id = "all", title = "所有人物", personIds = people.map { it.id }))
+    }
+    val grouped = LinkedHashMap<String, MutableList<String>>()
+    people.forEach { person ->
+        val key = when (groupBy) {
+            PersonGroupBy.NAME -> groupKeyByName[person.name] ?: "#"
+            PersonGroupBy.TOPIC ->
+                topics.firstOrNull { person.id in it.peopleIds }?.name ?: ungroupedTitle
+            PersonGroupBy.NONE -> "all"
+        }
+        grouped.getOrPut(key) { mutableListOf() }.add(person.id)
+    }
+    // 档位而非字符串比较：0-9 顶、# 与未分类垫底，中间按 locale 升序
+    fun rank(key: String): Int = when (key) {
+        "0-9" -> 0
+        "#" -> 2
+        ungroupedTitle -> 3
+        else -> 1
+    }
+    val collator = Collator.getInstance(Locale.CHINA)
+    return grouped.entries
+        .map { (key, ids) -> PersonGroup(id = key, title = key, personIds = ids) }
+        .sortedWith(Comparator { a, b ->
+            val byRank = rank(a.id).compareTo(rank(b.id))
+            if (byRank != 0) byRank else collator.compare(a.title, b.title)
+        })
+}
+
+/**
+ * 人物总览的排序菜单（形制照 [TopicSortMenu] 那颗：48dp 方钮 + AuroraDropdown）。
+ * 桌面把人物排序放在 TopBar（`TopBar.tsx:1196-1254`），安卓的专题排序已经在页头，
+ * 人物跟着走页头——同一层视图同一颗位置，别一处顶栏一处页头。
+ */
+@Composable
+private fun PersonSortMenu(
+    sortBy: PersonSortOption,
+    ascending: Boolean,
+    groupBy: PersonGroupBy,
+    onSortChange: (PersonSortOption, Boolean) -> Unit,
+    onGroupChange: (PersonGroupBy) -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    var open by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    Box(Modifier.onGloballyPositioned { anchor = it.boundsInWindow() }) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { open = !open },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IconSortArrows,
+                contentDescription = "排序",
+                tint = if (open) colors.primary else colors.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        AuroraDropdown(
+            expanded = open,
+            anchorBoundsInWindow = anchor,
+            onDismissRequest = { open = false },
+        ) {
+            AuroraMenuHeader("排序方式")
+            AuroraMenuItem(
+                text = "按名称",
+                checked = sortBy == PersonSortOption.NAME,
+                onClick = { onSortChange(PersonSortOption.NAME, ascending) },
+            )
+            AuroraMenuItem(
+                text = "按数量",
+                checked = sortBy == PersonSortOption.COUNT,
+                onClick = { onSortChange(PersonSortOption.COUNT, ascending) },
+            )
+            AuroraMenuItem(
+                text = "按创建时间",
+                checked = sortBy == PersonSortOption.CREATED,
+                onClick = { onSortChange(PersonSortOption.CREATED, ascending) },
+            )
+            AuroraMenuDivider()
+            AuroraMenuItem(
+                text = if (ascending) "升序" else "降序",
+                onClick = { onSortChange(sortBy, !ascending) },
+                trailing = {
+                    Icon(
+                        imageVector = IconSortArrows,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier
+                            .size(14.dp)
+                            .rotate(if (ascending) 180f else 0f),
+                    )
+                },
+            )
+            AuroraMenuDivider()
+            AuroraMenuHeader("分组")
+            AuroraMenuItem(
+                text = "不分组",
+                checked = groupBy == PersonGroupBy.NONE,
+                onClick = { onGroupChange(PersonGroupBy.NONE) },
+            )
+            AuroraMenuItem(
+                text = "按名称",
+                checked = groupBy == PersonGroupBy.NAME,
+                onClick = { onGroupChange(PersonGroupBy.NAME) },
+            )
+            AuroraMenuItem(
+                text = "按专题",
+                checked = groupBy == PersonGroupBy.TOPIC,
+                onClick = { onGroupChange(PersonGroupBy.TOPIC) },
+            )
+        }
+    }
+}
+
+/**
+ * 可折叠组头（桌面 `PersonGrid.tsx:163-176` 的 GroupHeader 触屏同位：组名 + 数量药丸 +
+ * 折叠箭头）。桌面的 hover 阴影与 sticky 不还原；整行都是触点（≥48dp），不只在箭头上——
+ * 触屏上「只有 16dp 箭头可点」等于点不到。
+ */
+@Composable
+private fun PersonGroupHeader(
+    title: String,
+    count: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IconChevronRight,
+            contentDescription = if (collapsed) "展开" else "折叠",
+            tint = colors.textSecondary,
+            modifier = Modifier
+                .size(16.dp)
+                .rotate(if (collapsed) 0f else 90f),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary,
+        )
+        Spacer(Modifier.size(8.dp))
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(colors.surface)
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+        ) {
+            Text(
+                text = count.toString(),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+            )
+        }
+    }
+}
+
+/**
+ * 人物总览。页头（标题 + 「新建人物」）+ 两节卡片网格：**本地人物**（本机库 persons 行）
+ * 在前、**远端人物**（GET /api/people 会话缓存）在后；两节都空才是空态。
+ *
+ * 本地人物是桌面 `usePeople.ts` **手动那一半**的移植：真头像（封面缩略图 + faceBox 圆形
+ * 裁剪，取不到图退回首字符占位）、单击进该人物的筛选视图、长按「重命名 / 改描述 /
+ * 删除」、页头「新建人物」。桌面的智能那一半（SmartCreatePersonModal /
+ * SmartAddToPersonModal，走 `clipSearchByCharacterTag`）**不移植**——本机没有 WD14/CLIP。
+ *
+ * 远端人物维持既有口径（M6a 阶段 5/6）：首字符圆底占位（契约 §3.1 无人脸头像可用）+
+ * 名 + 计数 + 网络标识；长按「重命名 / 改描述」，[lanAllowEdit] 直通时加「换头像」
+ * （403 门禁态不出现，M4a「不适用的项不出现」先例）；单击 = 成员筛选虚拟目录。
+ *
+ * 编辑入口同位原则：收在总览页卡片上，不放侧栏（侧栏行只负责导航）。
  */
 @Composable
 fun PeopleOverview(
@@ -269,12 +530,25 @@ fun PeopleOverview(
     lanConnected: Boolean = false,
     /** 编辑门禁位（allow_edit；false 时长按菜单不含「换头像」）。 */
     lanAllowEdit: Boolean = false,
-    /**
-     * 本地人物（M6b 阶段 4，D37：WD14 互联态识别写本地库的 `person_{tag}` 行）。
-     * 非空时在远端人物之前插「本地人物」节；空则不渲染该节（空态文案维持）。
-     */
+    /** 本地人物（本机库 persons 行：手动建的 + 历史 WD14 产物，同列不分家）。 */
     localPeople: List<FfiPerson> = emptyList(),
-    /** 卡片点击（M6b 阶段 5 / D40：远端成员筛选视图；本地人物宿主暂 Toast）。 */
+    /** 本地人物封面：coverFileId → contentUri（宿主从 VM `personCoverImagesById` 摊平）。 */
+    personCoverUris: Map<String, String> = emptyMap(),
+    /** 缩略图加载器（真头像用；与文件网格同一内存池/并发信号量）。null = 一律走占位。 */
+    thumbnailLoader: ThumbnailLoader? = null,
+    /** coverFileId → 封面图创建时间（秒）；「按创建时间」排序用（桌面读 meta.created 同语义）。 */
+    personCoverCreatedAt: Map<String, Long> = emptyMap(),
+    /** 界面语言（透给 collate 做拼音分组，与标签分组同一个 locale）。 */
+    language: String = "zh",
+    /** 排序字段 / 升降 / 分组（宿主持态并持久化，默认按数量降序 = 桌面默认）。 */
+    sortBy: PersonSortOption = PersonSortOption.COUNT,
+    sortAscending: Boolean = false,
+    groupBy: PersonGroupBy = PersonGroupBy.NONE,
+    onSortChange: (PersonSortOption, Boolean) -> Unit = { _, _ -> },
+    onGroupChange: (PersonGroupBy) -> Unit = {},
+    /** 本地专题（「按专题」分组用，消费 `FfiTopic.peopleIds`；不传则该档退化成全进未分类）。 */
+    topics: List<FfiTopic> = emptyList(),
+    /** 远端卡片点击（M6b 阶段 5 / D40：成员筛选虚拟目录）。 */
     onPersonClick: (LanPerson) -> Unit = {},
     /** 长按菜单「重命名」（宿主弹输入框 → renameLanPerson(id, name, null)）。 */
     onRename: (LanPerson) -> Unit = {},
@@ -282,136 +556,453 @@ fun PeopleOverview(
     onDescribe: (LanPerson) -> Unit = {},
     /** 长按菜单「换头像」（宿主开 AVATAR 模式的 LanFolderPickerDialog 选远端图）。 */
     onAvatarChange: (LanPerson) -> Unit = {},
+    /** 本地卡片点击 = 进该人物的筛选视图（宿主 openLocalPersonFilter）。 */
+    onLocalPersonClick: (FfiPerson) -> Unit = {},
+    /** 本地卡片长按「重命名」/「改描述」/「删除」（宿主弹窗 → VM 写库）。 */
+    onLocalRename: (FfiPerson) -> Unit = {},
+    onLocalDescribe: (FfiPerson) -> Unit = {},
+    onLocalDelete: (FfiPerson) -> Unit = {},
+    /** 本地卡片长按「换头像」= 开头像裁剪页（桌面 CropAvatarModal 的同位入口）。 */
+    onLocalSetAvatar: (FfiPerson) -> Unit = {},
+    /** 页头「新建人物」（宿主弹输入框 → createLocalPerson）。 */
+    onCreatePerson: () -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val peopleGridState = rememberLazyGridState()
     val peopleScrollbar = rememberLazyScrollbar(peopleGridState)
-    if (lanPeople.isEmpty() && localPeople.isEmpty()) {
-        // 无本地人物且无远端人物：空态（M6b 起语义=连桌面识别人物）
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = IconBrainBig,
-                    contentDescription = null,
-                    tint = colors.textSecondary.copy(alpha = 0.3f),
-                    modifier = Modifier.size(64.dp),
-                )
-                Text(
-                    text = "暂无人物",
-                    fontSize = 16.sp,
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-                Text(
-                    text = "连接桌面端后，选中图片即可识别人物（AI 视觉）",
-                    fontSize = 12.sp,
-                    color = colors.textSecondary.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-        }
-        return
+    // 折叠的组（组键；桌面 collapsedGroups 同语义）。不随排序/分组切换清空——
+    // 用户刚收起来的组不该因为换个排序档又弹开。
+    var collapsedGroups by remember { mutableStateOf(setOf<String>()) }
+
+    // 排序 → 组键 → 分组三步都在 UI 层算（纯函数，见文件头的三块），Rust 不参与人物排序
+    val sortedPeople = remember(
+        localPeople, sortBy, sortAscending, personCoverCreatedAt, language,
+    ) {
+        sortPeopleForDisplay(localPeople, sortBy, sortAscending, personCoverCreatedAt)
     }
-    Box(modifier = modifier.fillMaxSize()) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 140.dp),
-            state = peopleGridState,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
-            modifier = Modifier.fillMaxSize(),
+    val groupKeyByName = remember(sortedPeople, groupBy, language) {
+        if (groupBy != PersonGroupBy.NAME) {
+            emptyMap()
+        } else {
+            pinyinGroupKeysByCollate(sortedPeople.map { it.name }, language)
+        }
+    }
+    val personGroups = remember(sortedPeople, groupBy, groupKeyByName, topics) {
+        buildPersonGroups(sortedPeople, groupBy, groupKeyByName, topics)
+    }
+    val personById = remember(sortedPeople) { sortedPeople.associateBy { it.id } }
+
+    Column(modifier.fillMaxSize()) {
+        // 页头（形制对齐 TopicsOverview：图标 + 标题 + 右侧排序/实心新建钮；触点 ≥48dp）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // M6b 阶段 4（D37）：本地人物节（WD14 识别产物；点击暂 Toast——本地人物
-            // 筛选视图未列验收，只保展示）
-            if (localPeople.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Column {
-                        Text(
-                            text = "本地人物",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textSecondary,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                    }
-                }
-                items(
-                    count = localPeople.size,
-                    key = { i -> "local:${localPeople[i].id}" },
-                ) { i ->
-                    val person = localPeople[i]
-                    Column(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { }
-                            .padding(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        // 头像：人物无远端缩略图可用，首字符圆形占位（对齐桌面 initials 形制）
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(colors.surface)
-                                .border(1.dp, colors.subtle, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = person.name.take(1),
-                                fontSize = 24.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = colors.primary,
-                            )
-                        }
-                        Text(
-                            text = person.name,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                        Text(
-                            text = "${person.count} 张",
-                            fontSize = 11.sp,
-                            color = colors.textSecondary,
-                        )
-                    }
-                }
-            }
-            if (lanPeople.isNotEmpty()) {
-                if (localPeople.isNotEmpty()) {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            text = "远端人物",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = colors.textSecondary,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                }
-                items(
-                    count = lanPeople.size,
-                    key = { i -> lanPeople[i].id },
-                ) { i ->
-                    LanPersonCard(
-                        person = lanPeople[i],
-                        lanAllowEdit = lanAllowEdit,
-                        onClick = { onPersonClick(lanPeople[i]) },
-                        onRename = { onRename(lanPeople[i]) },
-                        onDescribe = { onDescribe(lanPeople[i]) },
-                        onAvatarChange = { onAvatarChange(lanPeople[i]) },
+            Icon(
+                imageVector = IconBrainBig,
+                contentDescription = null,
+                tint = colors.primary,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                text = "人物",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.weight(1f))
+            PersonSortMenu(
+                sortBy = sortBy,
+                ascending = sortAscending,
+                groupBy = groupBy,
+                onSortChange = onSortChange,
+                onGroupChange = onGroupChange,
+            )
+            Spacer(Modifier.size(4.dp))
+            NewPersonButton(onClick = onCreatePerson)
+        }
+
+        if (lanPeople.isEmpty() && localPeople.isEmpty()) {
+            // 两节都空才是空态。文案随数据模型改口径：人物现在是**手动**维护的，
+            // 不再承诺「连桌面就能识别」（那条 WD14 线已按指挥官指示砍掉）。
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = IconBrainBig,
+                        contentDescription = null,
+                        tint = colors.textSecondary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(64.dp),
+                    )
+                    Text(
+                        text = "暂无人物",
+                        fontSize = 16.sp,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                    Text(
+                        text = "点「新建人物」建一个，再在网格里选图加进去",
+                        fontSize = 12.sp,
+                        color = colors.textSecondary.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
+        } else {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 140.dp),
+                    state = peopleGridState,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    // 本地人物节：真头像卡片（点击进筛选、长按出编辑菜单）。
+                    // 不分组时维持移植前的单条节标题；分组时才逐组插可折叠组头
+                    // （桌面 PersonGrid 也是 groupBy==='none' 走无组分支）。
+                    if (localPeople.isNotEmpty()) {
+                        if (groupBy == PersonGroupBy.NONE) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column {
+                                    Text(
+                                        text = "本地人物",
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = colors.textSecondary,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                }
+                            }
+                            items(
+                                count = sortedPeople.size,
+                                key = { i -> "local:${sortedPeople[i].id}" },
+                            ) { i ->
+                                val person = sortedPeople[i]
+                                LocalPersonCard(
+                                    person = person,
+                                    coverUri = personCoverUris[person.coverFileId],
+                                    loader = thumbnailLoader,
+                                    onClick = { onLocalPersonClick(person) },
+                                    onRename = { onLocalRename(person) },
+                                    onDescribe = { onLocalDescribe(person) },
+                                    onSetAvatar = { onLocalSetAvatar(person) },
+                                    onDelete = { onLocalDelete(person) },
+                                )
+                            }
+                        } else {
+                            personGroups.forEach { group ->
+                                val isCollapsed = group.id in collapsedGroups
+                                item(
+                                    key = "pg:${groupBy.name}:${group.id}",
+                                    span = { GridItemSpan(maxLineSpan) },
+                                ) {
+                                    PersonGroupHeader(
+                                        title = group.title,
+                                        count = group.personIds.size,
+                                        collapsed = isCollapsed,
+                                        onToggle = {
+                                            collapsedGroups = if (isCollapsed) {
+                                                collapsedGroups - group.id
+                                            } else {
+                                                collapsedGroups + group.id
+                                            }
+                                        },
+                                    )
+                                }
+                                if (!isCollapsed) {
+                                    items(
+                                        count = group.personIds.size,
+                                        key = { i -> "local:${group.personIds[i]}" },
+                                    ) { i ->
+                                        // 组是刚从 sortedPeople 算出来的，查不到只可能是
+                                        // 快照在组合中途被换掉——跳过这一格，不拿 null 崩页面
+                                        personById[group.personIds[i]]?.let { person ->
+                                            LocalPersonCard(
+                                                person = person,
+                                                coverUri = personCoverUris[person.coverFileId],
+                                                loader = thumbnailLoader,
+                                                onClick = { onLocalPersonClick(person) },
+                                                onRename = { onLocalRename(person) },
+                                                onDescribe = { onLocalDescribe(person) },
+                                                onSetAvatar = { onLocalSetAvatar(person) },
+                                                onDelete = { onLocalDelete(person) },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (lanPeople.isNotEmpty()) {
+                        if (localPeople.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "远端人物",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = colors.textSecondary,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            }
+                        }
+                        items(
+                            count = lanPeople.size,
+                            key = { i -> lanPeople[i].id },
+                        ) { i ->
+                            LanPersonCard(
+                                person = lanPeople[i],
+                                lanAllowEdit = lanAllowEdit,
+                                onClick = { onPersonClick(lanPeople[i]) },
+                                onRename = { onRename(lanPeople[i]) },
+                                onDescribe = { onDescribe(lanPeople[i]) },
+                                onAvatarChange = { onAvatarChange(lanPeople[i]) },
+                            )
+                        }
+                    }
+                }
+                GridScrollbar(
+                    controller = peopleScrollbar,
+                    color = colors.textSecondary,
+                    indicatorColor = colors.content,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
-        GridScrollbar(
-            controller = peopleScrollbar,
-            color = colors.textSecondary,
-            indicatorColor = colors.content,
-            modifier = Modifier.fillMaxSize(),
+    }
+}
+
+/**
+ * 「新建人物」入口（形制照 TopicsOverview 的 `NewTopicButton`：实心主色 + 加号 + 文案，
+ * 触点 ≥48dp）。桌面是「总览页空白处右键 → 新建人物」，触屏没有右键，收进页头常驻钮。
+ */
+@Composable
+private fun NewPersonButton(onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Row(
+        Modifier
+            .defaultMinSize(minHeight = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.primaryDeep)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IconPlus,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.size(8.dp))
+        Text(
+            "新建人物",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
         )
     }
+}
+
+/**
+ * 本地人物卡：圆形真头像 + 名 + 计数。点击 = 进筛选视图，长按 = 编辑菜单。
+ *
+ * 头像取不到（没有封面 / 图已删 / 加载失败 / 没给 loader）时退回**首字符圆形占位**，
+ * 即移植前的形态——占位不是错误态，是正常兜底。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LocalPersonCard(
+    person: FfiPerson,
+    coverUri: String?,
+    loader: ThumbnailLoader?,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onDescribe: () -> Unit,
+    onSetAvatar: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    var menuOpen by remember { mutableStateOf(false) }
+    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
+    val avatar = rememberPersonAvatar(loader, coverUri, person.faceBox)
+    Column(
+        modifier = Modifier
+            // fillMaxWidth 必须有：LazyGrid 的格子宽是定值，Column 不设就按最宽子项裹起
+            // 来、贴在格子左边，名字短的人物卡看着就是歪的（LanPersonCard 同理）
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+            .onGloballyPositioned { anchor = it.boundsInWindow() }
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        AuroraDropdown(
+            expanded = menuOpen,
+            anchorBoundsInWindow = anchor,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            AuroraMenuItem(
+                text = "重命名",
+                leading = {
+                    Icon(
+                        imageVector = IconPencil,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    menuOpen = false
+                    onRename()
+                },
+            )
+            AuroraMenuItem(
+                text = "改描述",
+                leading = {
+                    Icon(
+                        imageVector = IconType,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    menuOpen = false
+                    onDescribe()
+                },
+            )
+            AuroraMenuItem(
+                text = "换头像",
+                leading = {
+                    Icon(
+                        imageVector = IconImage,
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    menuOpen = false
+                    onSetAvatar()
+                },
+            )
+            AuroraMenuItem(
+                text = "删除",
+                textColor = Color(0xFFEF4444),
+                leading = {
+                    Icon(
+                        imageVector = IconTrash2,
+                        contentDescription = null,
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+                onClick = {
+                    menuOpen = false
+                    onDelete()
+                },
+            )
+        }
+        // 头像：96dp 圆（桌面 PersonCard 的 avatarSize ≈ 卡宽，格子 140dp 下的同量级观感）
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(colors.surface)
+                .border(1.dp, colors.subtle, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (avatar != null) {
+                Image(
+                    bitmap = avatar.asImageBitmap(),
+                    contentDescription = person.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    text = person.name.take(1),
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.primary,
+                )
+            }
+        }
+        Text(
+            text = person.name,
+            fontSize = 13.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            text = "${person.count} 张",
+            fontSize = 11.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+/**
+ * 人物头像位图：contentUri → MediaStore id → ThumbnailLoader 取图 → 按 faceBox 裁方形。
+ *
+ * 同步取内存缓存做初值（[ThumbnailLoader.peekMemory]），LazyGrid 回收重进时不闪占位符
+ * ——形制同 FoldersOverview 的封面加载。裁剪在 [cropSquareToAvatar]。
+ */
+@Composable
+private fun rememberPersonAvatar(
+    loader: ThumbnailLoader?,
+    coverUri: String?,
+    faceBox: FfiFaceBox?,
+): Bitmap? {
+    if (loader == null || coverUri.isNullOrEmpty()) return null
+    val imageId = remember(coverUri) { loader.extractImageId(coverUri) }
+    val cached = remember(imageId) { loader.peekMemory(imageId) }
+    var bitmap by remember(imageId, faceBox) {
+        mutableStateOf(cached?.let { cropSquareToAvatar(it, faceBox) })
+    }
+    LaunchedEffect(imageId, faceBox) {
+        val src = cached ?: loader.loadFastLimited(imageId)
+        // 裁剪挪 IO：createBitmap 要复制像素，人物一多全压主线程会掉帧
+        bitmap = src?.let { bmp ->
+            withContext(Dispatchers.IO) { cropSquareToAvatar(bmp, faceBox) }
+        }
+    }
+    return bitmap
+}
+
+/**
+ * 按 faceBox 裁成正方形位图（头像容器是圆，非方形部分露不出来）。
+ *
+ * faceBox 是**百分比坐标**（x/y = 左上角占比，w/h = 宽高占比，0..100），口径同桌面
+ * `utils/cropStyle.ts` 的 CropRect。与桌面有一处刻意不同：桌面的 `cropToImgStyle` 对
+ * 宽高分别按 `10000/w%`、`10000/h%` 缩放，非方形框会被**拉伸变形**；这里改成取框内
+ * 最大的居中正方形，不变形。无框 / 退化框（w 或 h ≤ 0）→ 整图中心正方形，等价桌面
+ * 的 `centerCrop`。
+ */
+private fun cropSquareToAvatar(src: Bitmap, faceBox: FfiFaceBox?): Bitmap {
+    val fallbackSide = minOf(src.width, src.height)
+    var x = (src.width - fallbackSide) / 2
+    var y = (src.height - fallbackSide) / 2
+    var side = fallbackSide
+    if (faceBox != null && faceBox.w > 0.0 && faceBox.h > 0.0) {
+        val bw = (faceBox.w / 100.0 * src.width).toInt().coerceIn(1, src.width)
+        val bh = (faceBox.h / 100.0 * src.height).toInt().coerceIn(1, src.height)
+        val bx = (faceBox.x / 100.0 * src.width).toInt().coerceIn(0, src.width - 1)
+        val by = (faceBox.y / 100.0 * src.height).toInt().coerceIn(0, src.height - 1)
+        val s = minOf(bw, bh, src.width - bx, src.height - by)
+        if (s > 0) {
+            side = s
+            x = bx + (bw - s) / 2
+            y = by + (bh - s) / 2
+        }
+    }
+    if (side <= 0 || x < 0 || y < 0 || x + side > src.width || y + side > src.height) return src
+    // 不可变位图上 createBitmap 会抛；缩略图来自解码器一般可变，兜住不崩
+    return runCatching { Bitmap.createBitmap(src, x, y, side, side) }.getOrDefault(src)
 }
 
 /**
@@ -590,6 +1181,143 @@ fun LanPersonEditDialog(
                 Text(
                     confirmLabel,
                     color = if (allowEmpty || text.isNotBlank()) colors.primaryDeep else colors.textSecondary,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = colors.textPrimary)
+            }
+        },
+    )
+}
+
+/**
+ * 「添加到人物」选择弹窗（桌面 `AddToPersonModal` 的触屏同位）：搜索框 + **多选**人物
+ * 列表 + 底部「添加」。多选而非单选是照桌面口径——一批图往往同属几个人物，一次勾完
+ * 比来回点 N 次少 N-1 步（VM `addFilesToLocalPersons` 本来就吃 id 列表）。
+ *
+ * 形制（AlertDialog + 48dp 行 + 圆角面板列表）沿用同仓 `TopicPickerDialog`，不新造视觉。
+ * 行首是首字符圆点而非真头像：弹窗里人物量级小、且这一层的任务是「认名字」不是「认脸」。
+ */
+@Composable
+fun PersonPickerDialog(
+    people: List<FfiPerson>,
+    onDismiss: () -> Unit,
+    onPick: (List<String>) -> Unit,
+    /** 标题与确认文案（宿主按「加入 / 解绑」两种语义给）。 */
+    title: String = "添加到人物",
+    confirmLabel: String = "添加",
+    emptyHint: String = "暂无人物。先在人物页点「新建人物」建一个，再把图加进来。",
+) {
+    val colors = AuroraTheme.colors
+    var query by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    val filtered = remember(people, query) {
+        val q = query.trim()
+        if (q.isEmpty()) people else people.filter { it.name.contains(q, ignoreCase = true) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            if (people.isEmpty()) {
+                Text(emptyHint, color = colors.textSecondary)
+            } else {
+                Column {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        placeholder = { Text("搜索人物", color = colors.textSecondary) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (filtered.isEmpty()) {
+                        Text(
+                            "没有匹配「$query」的人物",
+                            color = colors.textSecondary,
+                            modifier = Modifier.padding(vertical = 12.dp),
+                        )
+                    } else {
+                        LazyColumn(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 340.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(colors.panel),
+                        ) {
+                            items(
+                                count = filtered.size,
+                                key = { i -> filtered[i].id },
+                            ) { i ->
+                                val person = filtered[i]
+                                val checked = person.id in selected
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .defaultMinSize(minHeight = 48.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            selected = if (checked) selected - person.id
+                                            else selected + person.id
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Spacer(Modifier.size(4.dp))
+                                    Box(
+                                        Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(colors.surface)
+                                            .border(1.dp, colors.subtle, CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            person.name.take(1),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = colors.primary,
+                                        )
+                                    }
+                                    Spacer(Modifier.size(10.dp))
+                                    Text(
+                                        person.name,
+                                        fontSize = 15.sp,
+                                        color = colors.textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    Text(
+                                        "${person.count}",
+                                        fontSize = 12.sp,
+                                        color = colors.textSecondary,
+                                    )
+                                    Spacer(Modifier.size(10.dp))
+                                    Text(
+                                        if (checked) "✓" else "",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colors.primaryDeep,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selected.isNotEmpty(),
+                onClick = { onPick(selected.toList()) },
+            ) {
+                Text(
+                    if (selected.isEmpty()) confirmLabel else "$confirmLabel（${selected.size}）",
+                    color = if (selected.isNotEmpty()) colors.primaryDeep else colors.textSecondary,
                 )
             }
         },
