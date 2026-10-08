@@ -1,6 +1,7 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
+import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -64,14 +65,56 @@ data class AvatarCandidate(val fileId: String, val contentUri: String)
  *  1. 保存时直接换算成 faceBox 百分比，不需要反推桌面那套 OFFSET/position 数学；
  *  2. 换一张候选图时状态可解释（重置成整图内切正方形），不会出现「新图沿用旧图缩放」
  *     那种看着像 bug 的观感。
+ *
+ * internal 而非 private：手势归约抽成了纯函数（[reduceCropGesture]）以便单测锚点不变量。
  */
-private data class CropView(val sidePx: Float, val cx: Float, val cy: Float)
+internal data class CropView(val sidePx: Float, val cx: Float, val cy: Float)
+
+/**
+ * 每帧手势归约（纯函数，可测）。锚点口径：**图像上落在手指中点下的那点，缩放过程中
+ * 始终留在指尖下**（真机报障是「基准点跑到右下角」，这就是它的反面）。
+ *
+ * [detectTransformGestures] 每帧给的是**当前**手指中点 [centroid]（窗口坐标）与它的位移
+ * [pan]，所以上一帧的中点 c0 = c1 − pan。窗口位置 p 与图像坐标的双向换算都是
+ * `ix = cx + (p − w/2)·sidePx / windowPx`，把它在缩放前后各写一次、令两者相等即得：
+ *
+ *     cx' = cx + (c0 − w/2)·side/w − (c1 − w/2)·side'/w
+ *
+ * 两个退化情形说明这一条式子同时覆盖了桌面那两种操作、且**不把中点位移算两遍**：
+ *  - zoom = 1（单指拖）：side' = side，式子塌成 `cx − pan·side/w`，与原平移逐字相等，
+ *    且与 centroid 无关——指尖走到哪，图就跟到哪；
+ *  - pan = 0（指尖不动的纯捏合）：塌成绕指尖缩放，指尖在窗心时窗心不动（原语义）。
+ *
+ * 原先的实现是「绕窗心缩放 + 另加 pan」：中点位移既进了 pan、缩放又没跟住中点，两笔
+ * 口径不一致，捏合时看起来就是基准点飘走。
+ */
+internal fun reduceCropGesture(
+    view: CropView,
+    centroid: Offset,
+    pan: Offset,
+    zoom: Float,
+    windowPx: Float,
+    maxSide: Float,
+    minSide: Float,
+): CropView {
+    // 捏合放大 = 取景窗在图像上覆盖的边长变小
+    val side = (view.sidePx / zoom).coerceIn(minSide, maxSide)
+    // 每图像像素占多少屏幕像素（渲染端与这里必须用同一个换算，否则跟不住指尖）
+    val kOld = view.sidePx / windowPx
+    val kNew = side / windowPx
+    val half = windowPx / 2f
+    return CropView(
+        sidePx = side,
+        cx = view.cx + (centroid.x - pan.x - half) * kOld - (centroid.x - half) * kNew,
+        cy = view.cy + (centroid.y - pan.y - half) * kOld - (centroid.y - half) * kNew,
+    )
+}
 
 /**
  * 人物头像裁剪页（桌面 `CropAvatarModal` 的触屏同位）。
  *
  * 桌面 → 触屏的三处适配（desktop-to-android 适配表）：
- *  - 滚轮缩放 + 底部滑杆 → **双指捏合**（绕窗心，和桌面滚轮同一个语义），滑杆删除；
+ *  - 滚轮缩放 + 底部滑杆 → **双指捏合**（绕指尖，口径见 [reduceCropGesture]），滑杆删除；
  *  - 鼠标拖拽平移 → **单指拖**；
  *  - 右侧竖排候选图列表 → 底部横滑条（拇指够得着，且给取景窗让出竖向空间）。
  *
@@ -79,8 +122,11 @@ private data class CropView(val sidePx: Float, val cx: Float, val cy: Float)
  * 宽高占比。桌面那个 250px 正方形窗在图像上截出的也是正方形，所以 w%·natW == h%·natH；
  * 本地图非正方形时 w% 与 h% 不相等是**正确的**，别在读取端把它们当同一个数。
  *
- * 取的是 ThumbnailLoader 的缩略图而非原图：faceBox 存的是百分比，缩略图与原图同比例，
- * 换算结果一致，而原图解码在安卓侧是已知雷区（见 ImageSource.kt 的三星事故注释）。
+ * 取图走 [ThumbnailLoader.loadCropSource]：按长边降采样解**原图**，线性分辨率约是缩略图
+ * 的四倍——这一页是全 App 唯一会把图放大到远超原始像素的界面，用缩略图就是满屏马赛克
+ * （2026-10-08 真机报障）。faceBox 存百分比、与原图/缩略图同比例，所以换源不影响已存的
+ * 头像框，存量数据不用迁移；解不出来才退回缩略图。雷区是「把 URI 丢给系统解码器」而不是
+ * 「解原图」本身（见 ImageSource.kt 的三星事故注释），这条路自己开流喂 BitmapFactory。
  */
 @Composable
 fun PersonAvatarCropDialog(
@@ -120,12 +166,18 @@ fun PersonAvatarCropDialog(
         view = null
         loadFailed = false
         if (uri == null) return@LaunchedEffect
-        val bmp = loader.loadFastLimited(loader.extractImageId(uri))
+        val id = loader.extractImageId(uri)
+        // 优先按长边降采样解**原图**（#6）：裁剪页是全 App 里唯一会把图放大到远超原始像素
+        // 的界面，512 的缩略图在这儿就是马赛克。解不出来退回缩略图——取景至少还能用，
+        // 别把裁剪页变成崩溃面。faceBox 存百分比，换源不影响已存的头像框。
+        val bmp = loader.loadCropSource(id) ?: loader.loadFastLimited(id)
         if (bmp == null) {
             loadFailed = true
             return@LaunchedEffect
         }
         bitmap = bmp
+        // 一次性诊断（拿完就删）：确认裁剪页拿到的是降采样原图而不是 512 缩略图
+        Log.d("AuroraCrop", "source=${bmp.width}x${bmp.height}")
         val side = min(bmp.width, bmp.height).toFloat()
         view = if (initialFaceBox != null && selectedId == initialCoverFileId &&
             initialFaceBox.w > 0.0 && initialFaceBox.h > 0.0
@@ -200,16 +252,26 @@ fun PersonAvatarCropDialog(
                             .background(Color(0xFF1A1A1A))
                             .pointerInput(bitmap) {
                                 val bmp = bitmap ?: return@pointerInput
-                                detectTransformGestures { _, pan, zoom, _ ->
+                                detectTransformGestures { centroid, pan, zoom, _ ->
                                     val v = view ?: return@detectTransformGestures
                                     val maxSide = min(bmp.width, bmp.height).toFloat()
                                     val minSide = maxSide / MAX_AVATAR_ZOOM
-                                    // 捏合放大 = 取景窗在图像上覆盖的边长变小
-                                    val side = (v.sidePx / zoom).coerceIn(minSide, maxSide)
-                                    // 屏幕位移换图像位移（k = 每图像像素占多少屏幕像素）
-                                    val k = windowPx / v.sidePx
-                                    val next = CropView(side, v.cx - pan.x / k, v.cy - pan.y / k)
-                                    view = next.clampedTo(bmp.width, bmp.height)
+                                    val next = reduceCropGesture(
+                                        v, centroid, pan, zoom, windowPx, maxSide, minSide,
+                                    ).clampedTo(bmp.width, bmp.height)
+                                    view = next
+                                    // 一次性诊断（拿到真机数据、确认指尖锚点后删）：指尖下的
+                                    // 图像点缩放前后必须还是同一个点
+                                    Log.d(
+                                        "AuroraCrop",
+                                        (
+                                            "c=(%.0f,%.0f) pan=(%.1f,%.1f) z=%.3f side:%.1f→%.1f " +
+                                                "cx:%.1f→%.1f cy:%.1f→%.1f"
+                                            ).format(
+                                                centroid.x, centroid.y, pan.x, pan.y, zoom,
+                                                v.sidePx, next.sidePx, v.cx, next.cx, v.cy, next.cy,
+                                            ),
+                                    )
                                 }
                             },
                         // **必须 TopStart**：图比窗大得多，默认的 Center 会先把图居中，
@@ -312,7 +374,11 @@ fun PersonAvatarCropDialog(
     }
 }
 
-/** 最大放大倍率（桌面那颗滑杆的上限同量级；再大就是在放大缩略图的马赛克了）。 */
+/**
+ * 最大放大倍率（与桌面那颗滑杆同量级）。换成取原图之后这颗上限不再由马赛克决定，而由
+ * 像素比决定：1600 目标长边下放大到 8 倍时取景窗只覆盖约 200 图像像素，投到手机上
+ * ~790 屏像素的窗是 4 倍插值——会软，但不出块。
+ */
 private const val MAX_AVATAR_ZOOM = 8f
 
 /** 取景窗 → faceBox 百分比（口径见 [PersonAvatarCropDialog] 的 KDoc）。 */
@@ -323,8 +389,11 @@ private fun CropView.toFaceBox(imgW: Int, imgH: Int): FfiFaceBox = FfiFaceBox(
     h = sidePx / imgH * 100.0,
 )
 
-/** 把窗心收进图内：正方形边长恒 ≤ min(图宽高)，所以 half 不会越过对侧边界。 */
-private fun CropView.clampedTo(imgW: Int, imgH: Int): CropView {
+/**
+ * 把窗心收进图内：正方形边长恒 ≤ min(图宽高)，所以 half 不会越过对侧边界。
+ * internal 是为了让 [reduceCropGesture] 的单测连着 clamp 一起验。
+ */
+internal fun CropView.clampedTo(imgW: Int, imgH: Int): CropView {
     val half = sidePx / 2f
     return copy(
         cx = cx.coerceIn(half, imgW - half),

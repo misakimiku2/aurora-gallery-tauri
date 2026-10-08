@@ -256,6 +256,26 @@ class ThumbnailLoader(context: Context) {
     suspend fun loadFastLimited(imageId: Long): Bitmap? =
         fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFast(imageId) } }
 
+    /**
+     * 头像裁剪页的取图源（#6）：按长边 [targetPx] 降采样解**原图**，比 512 的缩略图锐利
+     * 四倍以上——裁剪页是全 App 里唯一会把图放大到远超原始像素的界面，用缩略图就是马赛克。
+     *
+     * 走 [decodeSubsampled]：自己 `openInputStream` 喂 BitmapFactory，URI 根本不进系统解码器，
+     * 所以 M1 §7 1.3 那颗三星 `MediaRecoveryDatabase_Impl` 的雷在这条路上物理存在不了
+     * （雷的是「把 URI 丢给解码器」，不是「解原图」本身）。
+     *
+     * **不进 [memoryCache]、不落盘**：一次性大图，塞进缩略图缓存会把整屏网格的缩略图挤出
+     * LRU；它由裁剪页持有，退页即回收。失败返回 null，由调用方退回 [loadFastLimited]。
+     */
+    suspend fun loadCropSource(imageId: Long, targetPx: Int = CROP_SOURCE_PX): Bitmap? =
+        fastSemaphore.withPermit {
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                imageId,
+            )
+            withContext(Dispatchers.IO) { decodeSubsampled(uri, targetPx) }
+        }
+
     /** 当前位图是否偏小、值得升级为高清。 */
     fun needsUpgrade(bitmap: Bitmap): Boolean =
         minOf(bitmap.width, bitmap.height) < MIN_DIM_THRESHOLD
@@ -328,6 +348,15 @@ class ThumbnailLoader(context: Context) {
         private const val MEMORY_CACHE_SIZE_KB = 128 * 1024 // 128 MB
         private const val FAST_MAX_CONCURRENCY = 4 // 快速缩略图并发上限
         private const val THUMB_SIZE = 512
+        /**
+         * 裁剪页取图源的目标长边（#6）。
+         *
+         * 取 1600 而不是 2048 是因为 [sampleSizeFor] 只取 2 的幂：手机默认 12MP 图的长边
+         * 正好 4032，目标给 2048 时 `4032/2=2016 < 2048` 不成立 → sample=1 → **整幅原图解进
+         * 内存（48MB）**。目标 1600 让这类图稳定落到 1/2（2016×1512 ≈ 12MB），同时线性分辨率
+         * 仍是 512 缩略图的近四倍，够裁剪页放大用。
+         */
+        private const val CROP_SOURCE_PX = 1600
         private const val THUMB_JPEG_QUALITY = 82
         private const val MIN_DIM_THRESHOLD = 200 // 最小边低于此值视为太糊，触发高清升级
         private const val HD_MAX_CONCURRENCY = 2 // 高清生成并发上限
