@@ -59,6 +59,16 @@ const tokenFile = `${process.env.USERPROFILE || process.env.HOME}/.gitee_token`;
 const token = (process.env.GITEE_TOKEN || (existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "")).trim();
 const safe = s => String(s).split(token).join("<redacted>");
 
+/**
+ * Gitee 的 release 接口把 JSON 体按单字节编码解析：UTF-8 的中文会落成 mojibake
+ * （实测 2026-10-09 v2.2.1：正文里的「发布于」在 Release 页显示成「åå¸äº」）。
+ * 把所有非 ASCII 转成 \uXXXX 转义后再发，服务端按什么编码解都能还原出正确字符。
+ */
+const asciiJson = obj => JSON.stringify(obj).replace(
+  /[\u007F-\uFFFF]/g,
+  c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+);
+
 if (!token || !tag || files.length === 0 || manifests.length === 0) {
   console.error("缺参数：需要 --tag、至少一个 --file、至少一个 --manifest，以及 GITEE_TOKEN 或 ~/.gitee_token");
   process.exit(1);
@@ -141,8 +151,8 @@ if (existing) {
 }
 const notes = notesPath ? readFileSync(toAbs(notesPath), "utf8") : tag;
 const created = await api(`创建 release ${tag}`, `repos/${repo}/releases`, {
-  method: "POST", headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
+  method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" },
+  body: asciiJson({
     access_token: token, tag_name: tag,
     name: arg("release-name") || tag, body: notes, target_commitish: meta.default_branch,
   }),
@@ -191,6 +201,16 @@ for (const { abs, repo: rel } of manifests) {
     }
   }
   console.log(`✓ ${rel}：远端 version ${remote.version}，资产直链可达`);
+}
+
+/* ---------- 5) 正文回读：写进去 ≠ 写得对——编码被按单字节吃掉的正文照样是 200 ---------- */
+if (notesPath) {
+  const wantHead = readFileSync(toAbs(notesPath), "utf8").split("\n")[0].trim();
+  const remote = await api(`读 release 正文`, `repos/${repo}/releases/tags/${tag}`);
+  if (!(remote.body ?? "").includes(wantHead)) {
+    throw new Error(`${tag} 正文回读不符：远端没有「${wantHead}」（多半是中文被按单字节编码吃了），请到 Release 页确认`);
+  }
+  console.log(`✓ ${tag} 正文回读一致（${remote.body.length} 字符）`);
 }
 console.log(`Gitee 发布完成：${repo} · ${tag}`);
 
