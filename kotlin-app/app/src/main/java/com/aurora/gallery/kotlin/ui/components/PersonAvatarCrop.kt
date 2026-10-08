@@ -1,15 +1,14 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.EaseOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,7 +39,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,8 +55,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -181,18 +186,30 @@ fun PersonAvatarCropDialog(
     var view by remember { mutableStateOf<CropView?>(null) }
     // 取图失败要说话：黑圈圈不解释就是「应用卡住了」的观感
     var loadFailed by remember { mutableStateOf(false) }
-    // 候选抽屉：progress 0 = 收起（横条）、1 = 展开（搜索 + 网格）。拖拽期间由手势逐帧写，
-    // 松手交给 animateFloatAsState 吸到最近一端 —— 与查看器底部抽屉同一套手感
-    //（NativeGalleryView 的 applyDrawerProgress / animateDrawerTo：280ms 缓动 +
-    //  ±500px/s 的甩动速度否决位置判断）。
-    var drawerTarget by remember { mutableFloatStateOf(0f) }
-    var dragProgress by remember { mutableFloatStateOf(0f) }
-    var dragging by remember { mutableStateOf(false) }
-    val drawerAnimated by animateFloatAsState(
-        targetValue = drawerTarget,
-        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-        label = "candidateDrawer",
-    )
+    // 候选抽屉：0 = 收起（横条）、1 = 展开（搜索 + 网格）。骨架照 PhoneSidebarDrawer——
+    // progress 由手势直写，settleTarget 驱动唯一动画执行器；被 pointerInput 重启等异常
+    // 打断的拖拽，下一次手势开头兜底**收敛到当前进度附近**，绝不放回拖前位置
+    //（2026-10-09 反馈「操作时突然弹回去」，就是取消时放回起点造成的）。
+    var drawerProgress by remember { mutableFloatStateOf(0f) }
+    var drawerSettle by remember { mutableStateOf<Float?>(null) }
+    var drawerDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(drawerSettle) {
+        val target = drawerSettle ?: return@LaunchedEffect
+        val from = drawerProgress
+        if (kotlin.math.abs(target - from) < 0.0001f) {
+            drawerSettle = null
+            return@LaunchedEffect
+        }
+        val durationNanos = PANEL_ANIMATE_MS * 1_000_000L
+        val startNanos = withFrameNanos { it }
+        while (true) {
+            val linear = ((withFrameNanos { it } - startNanos).toFloat() / durationNanos)
+                .coerceIn(0f, 1f)
+            if (!drawerDragging) drawerProgress = from + (target - from) * EaseOut.transform(linear)
+            if (linear >= 1f) break
+        }
+        drawerSettle = null
+    }
     var query by remember { mutableStateOf("") }
 
     // 换封面图 = 重新取位图 + 重置取景窗。initialFaceBox 只用于**首张**：它描述的是
@@ -243,7 +260,76 @@ fun PersonAvatarCropDialog(
             // 视口那层还有一个 BoxWithConstraints，maxHeight 会被它遮住（Kotlin 不许隐式
             // 跨两层接收者取值），所以这里先把整页高度存成局部量
             val pageHeight = maxHeight
-            Column(Modifier.fillMaxSize()) {
+            // 页高的**历史最大值**：输入法一弹，窗口变矮、实时页高跟着缩，若抽屉展开高按
+            // 实时页高算，点搜索框那一刻抽屉会自己缩回去（2026-10-09 反馈「操作时突然弹回」）
+            var pageHeightMax by remember { mutableStateOf(pageHeight) }
+            LaunchedEffect(pageHeight) {
+                if (pageHeight > pageHeightMax) pageHeightMax = pageHeight
+            }
+            // 抽屉行程挂在 Column 这一层，所以把手高/展开高/行程都提到这里算
+            val drawerCollapsedH = 76.dp
+            val drawerExpandedH = pageHeightMax * PANEL_EXPANDED
+            val travelNow by rememberUpdatedState(
+                with(LocalDensity.current) {
+                    (drawerExpandedH - drawerCollapsedH).toPx().coerceAtLeast(1f)
+                },
+            )
+            val snapVelocityPx = with(LocalDensity.current) { DRAWER_SNAP_VELOCITY_DP.dp.toPx() }
+            // 把手在窗口里的位置（由把手自己上报）：只有按在这条带上才接管拖拽
+            var handleBand by remember { mutableStateOf(Rect.Zero) }
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    // 抽屉手势挂在这一层——它是**不随抽屉移动**的稳定节点。挂在把手上时，
+                    // 把手会随展开一路往上走，手指半路就「离开」了那个节点、收到 Cancel，
+                    // 抽屉随即弹回原位（2026-10-09 实测：400px 的行程只收到 -199px）。
+                    // key 必须是 Unit：换成会变的值就等于每次布局都重建检测器 = 一次打断。
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            // 按下点不在把手带上就原样放行（列表滚动、取景捏合都不受影响）
+                            if (!handleBand.contains(down.position)) return@awaitEachGesture
+                            // 上一次拖拽被打断留下的状态：先按当前进度收敛，不停在「拖拽中」
+                            if (drawerDragging) {
+                                drawerDragging = false
+                                drawerSettle = if (drawerProgress >= 0.5f) 1f else 0f
+                            }
+                            val startProgress = drawerProgress
+                            val trackedId = down.id
+                            val tracker = VelocityTracker().apply {
+                                addPosition(down.uptimeMillis, down.position)
+                            }
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val tracked = event.changes.firstOrNull { it.id == trackedId }
+                                    ?: break
+                                tracker.addPosition(tracked.uptimeMillis, tracked.position)
+                                drawerDragging = true
+                                drawerSettle = null
+                                // 用**窗口坐标**、且用相对按下点的绝对位移：local 坐标会被
+                                // 节点自身的移动吃掉，累加 dy 会随丢帧漂移
+                                drawerProgress = (
+                                    startProgress -
+                                        (tracked.position.y - down.position.y) / travelNow
+                                    ).coerceIn(0f, 1f)
+                                tracked.consume()
+                                // !pressed 兜底：合成事件流的 Release 帧 changedToUp 可能为
+                                // false（同 PhoneSidebarDrawer 的实测结论）
+                                if (tracked.changedToUp() || !tracked.pressed) {
+                                    // y 轴向下为正：往上甩 = 展开
+                                    val velocity = tracker.calculateVelocity().y
+                                    drawerSettle = when {
+                                        velocity < -snapVelocityPx -> 1f
+                                        velocity > snapVelocityPx -> 0f
+                                        else -> if (drawerProgress >= 0.5f) 1f else 0f
+                                    }
+                                    drawerDragging = false
+                                    break
+                                }
+                            }
+                        }
+                    },
+            ) {
                 // 顶栏：标题居中 + 取消/保存在两侧（全屏页自己带操作，不借用系统对话框的按钮位）
                 Row(
                     Modifier
@@ -389,48 +475,17 @@ fun PersonAvatarCropDialog(
                 if (candidates.size <= 1) {
                     Spacer(Modifier.height(20.dp))
                 } else {
-                    val collapsedH = 76.dp
-                    val expandedH = pageHeight * PANEL_EXPANDED
-                    val travelPx = with(LocalDensity.current) {
-                        (expandedH - collapsedH).toPx().coerceAtLeast(1f)
-                    }
-                    val progress = if (dragging) dragProgress else drawerAnimated
-                    // 把手：整行 48dp 命中区（视觉只是中间那条小横杠），跟手拖 + 点一下切换
-                    // ——拖动之外必须留非拖拽替代（触屏适配规范）。
+                    // 把手：整行 48dp 命中区（视觉只是中间那条小横杠）。拖拽由 Column 那层
+                    // 统一接管，这里只上报自己的位置，并提供点一下切换的非拖拽替代
+                    //（触屏适配规范：拖动把手必须配一个不靠拖的路径）。
                     Box(
                         Modifier
                             .fillMaxWidth()
                             .height(48.dp)
-                            .pointerInput(travelPx) {
-                                var lastT = 0L
-                                var vel = 0f
-                                detectVerticalDragGestures(
-                                    onDragStart = {
-                                        dragging = true
-                                        dragProgress = drawerTarget
-                                        lastT = 0L
-                                        vel = 0f
-                                    },
-                                    onVerticalDrag = { change, dy ->
-                                        val t = change.uptimeMillis
-                                        if (lastT != 0L) {
-                                            vel = dy * 1000f / (t - lastT).coerceAtLeast(1L)
-                                        }
-                                        lastT = t
-                                        dragProgress = (dragProgress - dy / travelPx).coerceIn(0f, 1f)
-                                    },
-                                    onDragEnd = {
-                                        dragging = false
-                                        drawerTarget = when {
-                                            vel > 500f -> 0f
-                                            vel < -500f -> 1f
-                                            else -> if (dragProgress > 0.5f) 1f else 0f
-                                        }
-                                    },
-                                    onDragCancel = { dragging = false },
-                                )
-                            }
-                            .clickable { drawerTarget = if (drawerTarget > 0.5f) 0f else 1f },
+                            .onGloballyPositioned { handleBand = it.boundsInWindow() }
+                            .clickable {
+                                drawerSettle = if (drawerProgress >= 0.5f) 0f else 1f
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(
@@ -443,10 +498,10 @@ fun PersonAvatarCropDialog(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .height(collapsedH + (expandedH - collapsedH) * progress)
+                            .height(drawerCollapsedH + (drawerExpandedH - drawerCollapsedH) * drawerProgress)
                             .padding(bottom = 12.dp),
                     ) {
-                        if (progress > 0.5f) {
+                        if (drawerProgress > 0.5f) {
                             val filtered = remember(candidates, query) {
                                 val q = query.trim()
                                 if (q.isEmpty()) {
@@ -577,6 +632,9 @@ private const val CROP_TO_VIEWPORT = 0.625f
 
 /** 候选区展开时占整页高度的比例：再多给就会把取景圆挤得太小，再少则列表看不到几行。 */
 private const val PANEL_EXPANDED = 0.42f
+
+/** 抽屉松手吸附的速度门槛（dp/s），与侧栏抽屉 SNAP_VELOCITY_DP_PER_S 同档。 */
+private const val DRAWER_SNAP_VELOCITY_DP = 350f
 
 /**
  * 最大放大倍率（与桌面那颗滑杆同量级）。换成取原图之后这颗上限不再由马赛克决定，而由
