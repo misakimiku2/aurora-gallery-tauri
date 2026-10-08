@@ -1,6 +1,7 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Bitmap
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -501,7 +503,33 @@ fun PersonAvatarCropDialog(
                             .height(drawerCollapsedH + (drawerExpandedH - drawerCollapsedH) * drawerProgress)
                             .padding(bottom = 12.dp),
                     ) {
-                        if (drawerProgress > 0.5f) {
+                        // 交叉淡入淡出，不再在 0.5 处硬切——那样图片和搜索框是「啪」地跳出来
+                        // 的。展开侧除淡入外再带 24dp 上移，收侧同步淡出。两端各留一段不重叠
+                        // 的余量：完全收起时不组网格（省一轮缩略图加载），完全展开时横条已经
+                        // 退出组合。
+                        val openFrac = ((drawerProgress - 0.35f) / 0.4f).coerceIn(0f, 1f)
+                        if (openFrac < 1f) {
+                            LazyRow(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .graphicsLayer { alpha = 1f - openFrac }
+                                    .padding(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    10.dp,
+                                    Alignment.CenterHorizontally,
+                                ),
+                            ) {
+                                items(candidates, key = { it.fileId }) { candidate ->
+                                    AvatarCandidateChip(
+                                        candidate = candidate,
+                                        loader = loader,
+                                        selected = candidate.fileId == selectedId,
+                                        onClick = { selectedId = candidate.fileId },
+                                    )
+                                }
+                            }
+                        }
+                        if (openFrac > 0f) {
                             val filtered = remember(candidates, query) {
                                 val q = query.trim()
                                 if (q.isEmpty()) {
@@ -510,7 +538,14 @@ fun PersonAvatarCropDialog(
                                     candidates.filter { it.name.contains(q, ignoreCase = true) }
                                 }
                             }
-                            Column(Modifier.fillMaxSize()) {
+                            Column(
+                                Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        alpha = openFrac
+                                        translationY = (1f - openFrac) * 24.dp.toPx()
+                                    },
+                            ) {
                                 // 搜索框形制照顶栏那颗搜索胶囊（SearchPill）：40dp 高、圆角 50、
                                 // surface 底 + subtle 描边、放大镜 + 占位文字 + 尾部清空 X，
                                 // 连「平板上不撑满、封顶 500dp」一起照抄（顶栏那条就是被反馈
@@ -600,25 +635,6 @@ fun PersonAvatarCropDialog(
                                     }
                                 }
                             }
-                        } else {
-                            LazyRow(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp),
-                                horizontalArrangement = Arrangement.spacedBy(
-                                    10.dp,
-                                    Alignment.CenterHorizontally,
-                                ),
-                            ) {
-                                items(candidates, key = { it.fileId }) { candidate ->
-                                    AvatarCandidateChip(
-                                        candidate = candidate,
-                                        loader = loader,
-                                        selected = candidate.fileId == selectedId,
-                                        onClick = { selectedId = candidate.fileId },
-                                    )
-                                }
-                            }
                         }
                     }
                 }
@@ -692,13 +708,16 @@ private fun AvatarCandidateChip(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        bmp?.let {
-            Image(
-                bitmap = it.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
+        // 缩略图是异步来的，直接上屏会「啪」地跳出一张图；淡入让它跟着抽屉的节奏到位
+        Crossfade(targetState = bmp, label = "chipThumb") { shown ->
+            shown?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 }
