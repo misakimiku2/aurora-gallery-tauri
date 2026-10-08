@@ -236,6 +236,13 @@ fun TopBar(
     showSearch: Boolean,
     /** 是否显示排序菜单（总览也提供，字段经 [sortChoices] 收窄）。 */
     showSortMenu: Boolean,
+    /**
+     * 排序菜单**体**的注入位（2026-10-08 指挥官：进入人物界面时顶栏那颗钮要换成当前
+     * 视图对应的排序语义，而不是各留一颗）。null = 图片排序那套（排序方式 + 升降序 +
+     * 分组方式）；非 null 时横屏那颗钮和手机竖屏「更多 → 排序方式」二级都渲染它——
+     * 两处都要接，否则手机上人物排序会整个丢掉入口。
+     */
+    sortMenuContent: (@Composable ColumnScope.() -> Unit)? = null,
     /** 是否显示视图循环按钮（仅文件夹内部视图；总览暂只支持网格）。 */
     showViewMode: Boolean,
     /** 是否显示日期筛选（2026-09-17 起总览也提供：按 Folder 的代表日期筛文件夹）。 */
@@ -416,46 +423,51 @@ fun TopBar(
                     anchorBoundsInWindow = sortAnchor,
                     onDismissRequest = { sortMenuOpen = false },
                 ) {
-                    AuroraMenuHeader("排序方式")
-                    sortChoices.forEach { opt ->
-                        AuroraMenuItem(
-                            text = when (opt) {
-                                SortOption.NAME -> "按名称"
-                                SortOption.DATE -> "按时间"
-                                SortOption.SIZE -> "按大小"
-                            },
-                            checked = sortBy == opt,
-                            onClick = { onSortChange(opt) },
-                        )
-                    }
-                    AuroraMenuDivider()
-                    AuroraMenuItem(
-                        text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
-                        onClick = onSortDirectionToggle,
-                        // 升序 = 箭头朝上（React 同款 rotate）
-                        trailing = {
-                            Icon(
-                                imageVector = IconArrowDownUp,
-                                contentDescription = null,
-                                tint = AuroraTheme.colors.textSecondary,
-                                modifier = Modifier.size(14.dp).rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
-                            )
-                        },
-                    )
-                    if (showGroupBy) {
-                        AuroraMenuDivider()
-                        AuroraMenuHeader("分组方式")
-                        val groupLabels = mapOf(
-                            GroupBy.NONE to "无",
-                            GroupBy.TYPE to "类型",
-                            GroupBy.DATE to "日期",
-                        )
-                        groupLabels.forEach { (opt, label) ->
+                    // 视图自带排序语义时（人物总览）整节换成注入的菜单体；否则走图片排序
+                    if (sortMenuContent != null) {
+                        sortMenuContent()
+                    } else {
+                        AuroraMenuHeader("排序方式")
+                        sortChoices.forEach { opt ->
                             AuroraMenuItem(
-                                text = label,
-                                checked = groupBy == opt,
-                                onClick = { onGroupByChange(opt) },
+                                text = when (opt) {
+                                    SortOption.NAME -> "按名称"
+                                    SortOption.DATE -> "按时间"
+                                    SortOption.SIZE -> "按大小"
+                                },
+                                checked = sortBy == opt,
+                                onClick = { onSortChange(opt) },
                             )
+                        }
+                        AuroraMenuDivider()
+                        AuroraMenuItem(
+                            text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
+                            onClick = onSortDirectionToggle,
+                            // 升序 = 箭头朝上（React 同款 rotate）
+                            trailing = {
+                                Icon(
+                                    imageVector = IconArrowDownUp,
+                                    contentDescription = null,
+                                    tint = AuroraTheme.colors.textSecondary,
+                                    modifier = Modifier.size(14.dp).rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
+                                )
+                            },
+                        )
+                        if (showGroupBy) {
+                            AuroraMenuDivider()
+                            AuroraMenuHeader("分组方式")
+                            val groupLabels = mapOf(
+                                GroupBy.NONE to "无",
+                                GroupBy.TYPE to "类型",
+                                GroupBy.DATE to "日期",
+                            )
+                            groupLabels.forEach { (opt, label) ->
+                                AuroraMenuItem(
+                                    text = label,
+                                    checked = groupBy == opt,
+                                    onClick = { onGroupByChange(opt) },
+                                )
+                            }
                         }
                     }
                 }
@@ -562,31 +574,36 @@ fun TopBar(
                         // 排序方式二级（M8b 验收反馈：从扁平菜单拆出；含升降序切换）
                         1 -> {
                             AuroraSubmenuHeader("排序方式") { moreSubmenu = 0 }
-                            sortChoices.forEach { opt ->
+                            // 竖屏同样接注入位：不接的话人物总览在手机上会整个没有排序入口
+                            if (sortMenuContent != null) {
+                                sortMenuContent()
+                            } else {
+                                sortChoices.forEach { opt ->
+                                    AuroraMenuItem(
+                                        text = when (opt) {
+                                            SortOption.NAME -> "按名称"
+                                            SortOption.DATE -> "按时间"
+                                            SortOption.SIZE -> "按大小"
+                                        },
+                                        checked = sortBy == opt,
+                                        onClick = { onSortChange(opt) },
+                                    )
+                                }
+                                AuroraMenuDivider()
                                 AuroraMenuItem(
-                                    text = when (opt) {
-                                        SortOption.NAME -> "按名称"
-                                        SortOption.DATE -> "按时间"
-                                        SortOption.SIZE -> "按大小"
+                                    text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
+                                    onClick = onSortDirectionToggle,
+                                    trailing = {
+                                        Icon(
+                                            imageVector = IconArrowDownUp,
+                                            contentDescription = null,
+                                            tint = AuroraTheme.colors.textSecondary,
+                                            modifier = Modifier.size(14.dp)
+                                                .rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
+                                        )
                                     },
-                                    checked = sortBy == opt,
-                                    onClick = { onSortChange(opt) },
                                 )
                             }
-                            AuroraMenuDivider()
-                            AuroraMenuItem(
-                                text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
-                                onClick = onSortDirectionToggle,
-                                trailing = {
-                                    Icon(
-                                        imageVector = IconArrowDownUp,
-                                        contentDescription = null,
-                                        tint = AuroraTheme.colors.textSecondary,
-                                        modifier = Modifier.size(14.dp)
-                                            .rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
-                                    )
-                                },
-                            )
                         }
                         // 分组方式二级
                         2 -> {

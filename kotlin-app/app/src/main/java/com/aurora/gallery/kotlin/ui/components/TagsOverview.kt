@@ -366,12 +366,15 @@ fun buildPersonGroups(
 }
 
 /**
- * 人物总览的排序菜单（形制照 [TopicSortMenu] 那颗：48dp 方钮 + AuroraDropdown）。
- * 桌面把人物排序放在 TopBar（`TopBar.tsx:1196-1254`），安卓的专题排序已经在页头，
- * 人物跟着走页头——同一层视图同一颗位置，别一处顶栏一处页头。
+ * 人物总览的排序菜单**体**（排序方式 + 升降序 + 分组三节），渲染在顶栏那颗排序钮的
+ * AuroraDropdown 里（[TopBar] 的 sortMenuContent 注入位），自身不带触发钮。
+ *
+ * 2026-10-08 指挥官定：进入人物界面时顶栏那颗钮换成当前视图对应的排序语义，页头不再留
+ * 第二颗——这一档向桌面 `TopBar.tsx:1196-1254`（人物排序本就在顶栏）靠。
+ * 专题/标签总览的页头那颗本轮没动，三个总览统一口径另开一轮。
  */
 @Composable
-private fun PersonSortMenu(
+fun PersonSortMenuContent(
     sortBy: PersonSortOption,
     ascending: Boolean,
     groupBy: PersonGroupBy,
@@ -379,78 +382,54 @@ private fun PersonSortMenu(
     onGroupChange: (PersonGroupBy) -> Unit,
 ) {
     val colors = AuroraTheme.colors
-    var open by remember { mutableStateOf(false) }
-    var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
-    Box(Modifier.onGloballyPositioned { anchor = it.boundsInWindow() }) {
-        Box(
-            Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { open = !open },
-            contentAlignment = Alignment.Center,
-        ) {
+    AuroraMenuHeader("排序方式")
+    AuroraMenuItem(
+        text = "按名称",
+        checked = sortBy == PersonSortOption.NAME,
+        onClick = { onSortChange(PersonSortOption.NAME, ascending) },
+    )
+    AuroraMenuItem(
+        text = "按数量",
+        checked = sortBy == PersonSortOption.COUNT,
+        onClick = { onSortChange(PersonSortOption.COUNT, ascending) },
+    )
+    AuroraMenuItem(
+        text = "按创建时间",
+        checked = sortBy == PersonSortOption.CREATED,
+        onClick = { onSortChange(PersonSortOption.CREATED, ascending) },
+    )
+    AuroraMenuDivider()
+    AuroraMenuItem(
+        text = if (ascending) "升序" else "降序",
+        onClick = { onSortChange(sortBy, !ascending) },
+        trailing = {
             Icon(
                 imageVector = IconSortArrows,
-                contentDescription = "排序",
-                tint = if (open) colors.primary else colors.textSecondary,
-                modifier = Modifier.size(18.dp),
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier
+                    .size(14.dp)
+                    .rotate(if (ascending) 180f else 0f),
             )
-        }
-        AuroraDropdown(
-            expanded = open,
-            anchorBoundsInWindow = anchor,
-            onDismissRequest = { open = false },
-        ) {
-            AuroraMenuHeader("排序方式")
-            AuroraMenuItem(
-                text = "按名称",
-                checked = sortBy == PersonSortOption.NAME,
-                onClick = { onSortChange(PersonSortOption.NAME, ascending) },
-            )
-            AuroraMenuItem(
-                text = "按数量",
-                checked = sortBy == PersonSortOption.COUNT,
-                onClick = { onSortChange(PersonSortOption.COUNT, ascending) },
-            )
-            AuroraMenuItem(
-                text = "按创建时间",
-                checked = sortBy == PersonSortOption.CREATED,
-                onClick = { onSortChange(PersonSortOption.CREATED, ascending) },
-            )
-            AuroraMenuDivider()
-            AuroraMenuItem(
-                text = if (ascending) "升序" else "降序",
-                onClick = { onSortChange(sortBy, !ascending) },
-                trailing = {
-                    Icon(
-                        imageVector = IconSortArrows,
-                        contentDescription = null,
-                        tint = colors.textSecondary,
-                        modifier = Modifier
-                            .size(14.dp)
-                            .rotate(if (ascending) 180f else 0f),
-                    )
-                },
-            )
-            AuroraMenuDivider()
-            AuroraMenuHeader("分组")
-            AuroraMenuItem(
-                text = "不分组",
-                checked = groupBy == PersonGroupBy.NONE,
-                onClick = { onGroupChange(PersonGroupBy.NONE) },
-            )
-            AuroraMenuItem(
-                text = "按名称",
-                checked = groupBy == PersonGroupBy.NAME,
-                onClick = { onGroupChange(PersonGroupBy.NAME) },
-            )
-            AuroraMenuItem(
-                text = "按专题",
-                checked = groupBy == PersonGroupBy.TOPIC,
-                onClick = { onGroupChange(PersonGroupBy.TOPIC) },
-            )
-        }
-    }
+        },
+    )
+    AuroraMenuDivider()
+    AuroraMenuHeader("分组")
+    AuroraMenuItem(
+        text = "不分组",
+        checked = groupBy == PersonGroupBy.NONE,
+        onClick = { onGroupChange(PersonGroupBy.NONE) },
+    )
+    AuroraMenuItem(
+        text = "按名称",
+        checked = groupBy == PersonGroupBy.NAME,
+        onClick = { onGroupChange(PersonGroupBy.NAME) },
+    )
+    AuroraMenuItem(
+        text = "按专题",
+        checked = groupBy == PersonGroupBy.TOPIC,
+        onClick = { onGroupChange(PersonGroupBy.TOPIC) },
+    )
 }
 
 /**
@@ -507,16 +486,18 @@ private fun PersonGroupHeader(
 }
 
 /**
- * 人物总览。页头（标题 + 「新建人物」）+ 两节卡片网格：**本地人物**（本机库 persons 行）
- * 在前、**远端人物**（GET /api/people 会话缓存）在后；两节都空才是空态。
+ * 人物总览。页头（标题 + 「新建人物」；**排序在顶栏那颗钮里**，页头不留第二颗）+ 一个
+ * 卡片网格：**本地人物**（本机库 persons 行）在前、**远端人物**（GET /api/people 会话缓存）
+ * 在后，同一个网格混排、**不写节标题**（2026-10-08 指挥官要求：本地是默认态、不需要名字
+ * 标识，远端靠头像右下角的网络角标区分）；两套都空才是空态。
  *
  * 本地人物是桌面 `usePeople.ts` **手动那一半**的移植：真头像（封面缩略图 + faceBox 圆形
  * 裁剪，取不到图退回首字符占位）、单击进该人物的筛选视图、长按「重命名 / 改描述 /
  * 删除」、页头「新建人物」。桌面的智能那一半（SmartCreatePersonModal /
  * SmartAddToPersonModal，走 `clipSearchByCharacterTag`）**不移植**——本机没有 WD14/CLIP。
  *
- * 远端人物维持既有口径（M6a 阶段 5/6）：首字符圆底占位（契约 §3.1 无人脸头像可用）+
- * 名 + 计数 + 网络标识；长按「重命名 / 改描述」，[lanAllowEdit] 直通时加「换头像」
+ * 远端人物与本地卡同一个形（[LanPersonCard]）：首字符占位（契约 §3.1 无人脸头像可用）+
+ * 名 + 计数 + [LanBadge] 网络角标；长按「重命名 / 改描述」，[lanAllowEdit] 直通时加「换头像」
  * （403 门禁态不出现，M4a「不适用的项不出现」先例）；单击 = 成员筛选虚拟目录。
  *
  * 编辑入口同位原则：收在总览页卡片上，不放侧栏（侧栏行只负责导航）。
@@ -540,12 +521,11 @@ fun PeopleOverview(
     personCoverCreatedAt: Map<String, Long> = emptyMap(),
     /** 界面语言（透给 collate 做拼音分组，与标签分组同一个 locale）。 */
     language: String = "zh",
-    /** 排序字段 / 升降 / 分组（宿主持态并持久化，默认按数量降序 = 桌面默认）。 */
+    /** 排序字段 / 升降 / 分组（宿主持态并持久化，默认按数量降序 = 桌面默认）。
+     *  改档位走顶栏那颗钮（[PersonSortMenuContent]），这里只消费状态做排布。 */
     sortBy: PersonSortOption = PersonSortOption.COUNT,
     sortAscending: Boolean = false,
     groupBy: PersonGroupBy = PersonGroupBy.NONE,
-    onSortChange: (PersonSortOption, Boolean) -> Unit = { _, _ -> },
-    onGroupChange: (PersonGroupBy) -> Unit = {},
     /** 本地专题（「按专题」分组用，消费 `FfiTopic.peopleIds`；不传则该档退化成全进未分类）。 */
     topics: List<FfiTopic> = emptyList(),
     /** 远端卡片点击（M6b 阶段 5 / D40：成员筛选虚拟目录）。 */
@@ -614,14 +594,8 @@ fun PeopleOverview(
                 color = colors.textPrimary,
             )
             Spacer(Modifier.weight(1f))
-            PersonSortMenu(
-                sortBy = sortBy,
-                ascending = sortAscending,
-                groupBy = groupBy,
-                onSortChange = onSortChange,
-                onGroupChange = onGroupChange,
-            )
-            Spacer(Modifier.size(4.dp))
+            // 页头不放排序钮：人物总览时顶栏那颗就是人物排序（走 TopBar 的 sortMenuContent
+            // 注入位）。两颗都叫「排序」同时在场，用户不知道哪颗管当前视图（2026-10-08 报障）。
             NewPersonButton(onClick = onCreatePerson)
         }
 
@@ -660,22 +634,12 @@ fun PeopleOverview(
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(24.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    // 本地人物节：真头像卡片（点击进筛选、长按出编辑菜单）。
-                    // 不分组时维持移植前的单条节标题；分组时才逐组插可折叠组头
+                    // 本地人物在前、远端在后，同一个网格混排、**不分节**（2026-10-08 指挥官
+                    // 要求：本地是默认态、不需要名字标识；远端靠头像右下角的网络角标区分）。
+                    // 分组只作用于本地人物：不分组时平铺，分组时逐组插可折叠组头
                     // （桌面 PersonGrid 也是 groupBy==='none' 走无组分支）。
                     if (localPeople.isNotEmpty()) {
                         if (groupBy == PersonGroupBy.NONE) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Column {
-                                    Text(
-                                        text = "本地人物",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = colors.textSecondary,
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                }
-                            }
                             items(
                                 count = sortedPeople.size,
                                 key = { i -> "local:${sortedPeople[i].id}" },
@@ -737,17 +701,6 @@ fun PeopleOverview(
                         }
                     }
                     if (lanPeople.isNotEmpty()) {
-                        if (localPeople.isNotEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Text(
-                                    text = "远端人物",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = colors.textSecondary,
-                                    modifier = Modifier.padding(top = 8.dp),
-                                )
-                            }
-                        }
                         items(
                             count = lanPeople.size,
                             key = { i -> lanPeople[i].id },
@@ -906,41 +859,18 @@ private fun LocalPersonCard(
                 },
             )
         }
-        // 头像：96dp 圆（桌面 PersonCard 的 avatarSize ≈ 卡宽，格子 140dp 下的同量级观感）
-        Box(
-            modifier = Modifier
-                .size(96.dp)
-                .clip(CircleShape)
-                .background(colors.surface)
-                .border(1.dp, colors.subtle, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (avatar != null) {
-                Image(
-                    bitmap = avatar.asImageBitmap(),
-                    contentDescription = person.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Text(
-                    text = person.name.take(1),
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.primary,
-                )
-            }
-        }
+        PersonCardAvatar(name = person.name, avatar = avatar)
         Text(
             text = person.name,
-            fontSize = 13.sp,
+            fontSize = 15.sp,
+            color = colors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 6.dp),
         )
         Text(
             text = "${person.count} 张",
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             color = colors.textSecondary,
         )
     }
@@ -1006,8 +936,10 @@ private fun cropSquareToAvatar(src: Bitmap, faceBox: FfiFaceBox?): Bitmap {
 }
 
 /**
- * 远端人物卡（形制对齐 [TagCard] 的白底卡 + 细边框）：头像占位 + 名称 + 计数行（带
- * 网络标识）。长按弹「重命名/改描述」；[lanAllowEdit] 直通时再加「换头像」（阶段 6，
+ * 远端人物卡：与 [LocalPersonCard] **同一个形**（96dp 圆头像 + 名 + 张数），差别只有头像
+ * 右下角那枚 [LanBadge] 网络角标——远端没有可用的人脸框（契约 §3.1），一律首字符占位。
+ * 去节标题后两套数据混排在一个网格里，形制必须一致才不像两张清单拼起来。
+ * 长按弹「重命名/改描述」；[lanAllowEdit] 直通时再加「换头像」（阶段 6，
  * 见 [PeopleOverview] 注释）。
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -1024,14 +956,13 @@ private fun LanPersonCard(
     var menuOpen by remember { mutableStateOf(false) }
     var anchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(colors.content)
-            .border(1.dp, colors.subtle, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
             .onGloballyPositioned { anchor = it.boundsInWindow() }
-            .padding(14.dp),
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // 长按菜单：「重命名」「改描述」；「换头像」仅编辑门禁位直通时出现（阶段 6 起接
         // LanFolderPickerDialog 选远端图；403 门禁态不出现——M4a「不适用的项不出现」先例）
@@ -1088,62 +1019,98 @@ private fun LanPersonCard(
                 )
             }
         }
-        PersonAvatar(name = person.name, size = 56.dp)
-        Spacer(Modifier.size(10.dp))
+        PersonCardAvatar(
+            name = person.name,
+            avatar = null,
+            badge = { LanBadge() },
+        )
         Text(
-            person.name,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
+            text = person.name,
+            fontSize = 15.sp,
             color = colors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 6.dp),
         )
-        Spacer(Modifier.size(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = IconWifi,
-                contentDescription = null,
-                tint = SECTION_EMERALD,
-                modifier = Modifier.size(12.dp),
-            )
-            Spacer(Modifier.size(4.dp))
-            Text(
-                person.count.toString(),
-                fontSize = 11.sp,
-                color = colors.textSecondary,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(colors.subtle)
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            )
+        Text(
+            text = "${person.count} 张",
+            fontSize = 12.sp,
+            color = colors.textSecondary,
+        )
+    }
+}
+
+/**
+ * 人物卡的圆头像位（96dp，本地/远端同一个形）：有封面时上按 faceBox 裁好的真头像，
+ * 取不到图与远端人物一律走首字符占位。[badge] 叠在右下角、不参与圆形裁剪——
+ * 远端人物用它标识网络来源，替代原先的「远端人物」文字节标题。
+ */
+@Composable
+private fun PersonCardAvatar(
+    name: String,
+    avatar: Bitmap?,
+    badge: (@Composable () -> Unit)? = null,
+) {
+    val colors = AuroraTheme.colors
+    Box {
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(colors.surface)
+                .border(1.dp, colors.subtle, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (avatar != null) {
+                Image(
+                    bitmap = avatar.asImageBitmap(),
+                    contentDescription = name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    text = name.take(1).ifEmpty { "?" },
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.primary,
+                )
+            }
+        }
+        if (badge != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+                contentAlignment = Alignment.Center,
+            ) { badge() }
         }
     }
 }
 
 /**
- * 人物头像占位（首字符 + 人物紫圆底；侧栏与总览同源，色值取自 TreeSidebar 的
- * SECTION_PURPLE）。[size] 侧栏 28dp、总览卡 56dp。
+ * 网络来源角标：翡翠绿圆片 + Wifi 字形（色值取自侧栏远端 Section 的 SECTION_EMERALD，
+ * 与侧栏远端行的 12dp Wifi 前缀同一套标识）。外圈描内容底色，压在照片上才不会糊成一团。
  */
 @Composable
-private fun PersonAvatar(name: String, size: androidx.compose.ui.unit.Dp) {
+private fun LanBadge() {
+    val colors = AuroraTheme.colors
     Box(
         Modifier
-            .size(size)
-            .clip(RoundedCornerShape(50))
-            .background(PEOPLE_ACCENT.copy(alpha = 0.18f)),
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(SECTION_EMERALD)
+            .border(1.5.dp, colors.content, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            name.firstOrNull()?.uppercase() ?: "?",
-            fontSize = (size.value / 2.6f).sp,
-            fontWeight = FontWeight.Bold,
-            color = PEOPLE_ACCENT,
+        Icon(
+            imageVector = IconWifi,
+            contentDescription = "网络人物",
+            tint = Color.White,
+            modifier = Modifier.size(12.dp),
         )
     }
 }
-
-/** 人物紫（对齐侧栏人物 Section 的 purple-500；总览卡的头像/标识用色同源）。 */
-private val PEOPLE_ACCENT = Color(0xFFA855F7)
 
 /**
  * 远端人物输入弹窗（M6a 阶段 5）：复用 [CreateTopicDialog] 的形制（AlertDialog +

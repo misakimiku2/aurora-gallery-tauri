@@ -66,6 +66,7 @@ import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
 import com.aurora.gallery.kotlin.ui.components.PeopleOverview
 import com.aurora.gallery.kotlin.ui.components.PersonPickerDialog
+import com.aurora.gallery.kotlin.ui.components.PersonSortMenuContent
 import com.aurora.gallery.kotlin.ui.components.AvatarCandidate
 import com.aurora.gallery.kotlin.ui.components.PersonAvatarCropDialog
 import com.aurora.gallery.kotlin.ui.components.SelectionBar
@@ -3280,6 +3281,26 @@ fun App(
                     // 在 topics-overview 隐藏排序/日期/标签，专题自己的排序在页头菜单里）；
                     // 视图切换（grid/adaptive/masonry）= 文件夹网格与专题详情共用
                     showSortMenu = !inTopicsOverview,
+                    // 顶栏那颗钮随视图切换排序语义（2026-10-08 指挥官定：进人物界面时顶部
+                    // 工具栏按钮要有相应变化）：人物总览给**人物**排序菜单体（按名称/数量/
+                    // 创建时间 + 升降 + 分组），页头不再留第二颗；其余视图传 null = 图片排序
+                    // 那套。人物总览本来没有图片可排，顶栏沿用图片语义在那儿本就是错的。
+                    sortMenuContent = if (inPeopleOverview) ({
+                        PersonSortMenuContent(
+                            sortBy = personSort,
+                            ascending = personSortAscending,
+                            groupBy = personGroup,
+                            onSortChange = { option, ascending ->
+                                personSort = option
+                                personSortAscending = ascending
+                                personSortStore.savePersonSort(option, ascending, personGroup)
+                            },
+                            onGroupChange = { group ->
+                                personGroup = group
+                                personSortStore.savePersonSort(personSort, personSortAscending, group)
+                            },
+                        )
+                    }) else null,
                     showViewMode = inBrowser || inTopicDetail,
                     // LAN 视图隐藏日期/标签筛选（远端项无时间字段；标签弹层是本地词表）
                     showDateFilter = !inTopicsOverview && !inLanOverview && !inLanBrowser,
@@ -3337,15 +3358,7 @@ fun App(
                     sortAscending = personSortAscending,
                     groupBy = personGroup,
                     topics = topics,
-                    onSortChange = { option, ascending ->
-                        personSort = option
-                        personSortAscending = ascending
-                        personSortStore.savePersonSort(option, ascending, personGroup)
-                    },
-                    onGroupChange = { group ->
-                        personGroup = group
-                        personSortStore.savePersonSort(personSort, personSortAscending, group)
-                    },
+                    // 排序/分组的改档入口在顶栏（sortMenuContent 注入位），这里只消费状态
                     onPersonClick = { person ->
                         ai.onOpenLanPersonFilter(person.id, person.name)
                     },
