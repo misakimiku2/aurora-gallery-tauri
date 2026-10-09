@@ -349,7 +349,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     private var lanFetchJob: Job? = null
 
     /** 扫描通知（阶段 5，D17 基础版：初始扫描与手动刷新上进度/完成通知）。 */
-    private val scanNotifier = ScanNotifier(appContext)
+    // internal 而非 private：颜色库簇已拆到 GalleryViewModelColors.kt（扩展函数）里要用（进度通知栏）
+    internal val scanNotifier = ScanNotifier(appContext)
 
     val thumbnailLoader = ThumbnailLoader(appContext)
 
@@ -543,7 +544,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         settingsStore.save(settings.value)
     }
 
-    private fun aiToast(msg: String) {
+    // internal 而非 private：颜色库簇已拆到 GalleryViewModelColors.kt（扩展函数）里要用
+    internal fun aiToast(msg: String) {
         android.widget.Toast.makeText(appContext, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
@@ -820,320 +822,24 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     val colorSearchBusy = mutableStateOf(false)
 
-    private val colorDbMutex = Mutex()
+    // internal 而非 private：颜色库簇已拆到 GalleryViewModelColors.kt（扩展函数）里要用
+    internal val colorDbMutex = Mutex()
 
+    // internal 而非 private：同上，颜色库簇在 GalleryViewModelColors.kt（扩展函数）里要用
     @Volatile
-    private var colorDbReady = false
+    internal var colorDbReady = false
 
-    private var colorTaskId: String? = null
+    // internal 而非 private：同上，颜色库簇在 GalleryViewModelColors.kt（扩展函数）里要用
+    internal var colorTaskId: String? = null
 
     /** 颜色搜索进行中到达的最新请求色（HSV 面板防抖连发时补跑用，见 startColorSearch）。 */
+    // internal 而非 private：同上，颜色库簇在 GalleryViewModelColors.kt（扩展函数）里要用
     @Volatile
-    private var pendingColorHex: String? = null
-
-    /** 颜色库幂等初始化（FFI 进程级单槽；首次建库，重复 init=switch 幂等）。 */
-    private suspend fun ensureColorDb() {
-        if (colorDbReady) return
-        colorDbMutex.withLock {
-            if (!colorDbReady) {
-                withContext(Dispatchers.IO) { initColorDb(File(appContext.filesDir, "colors.db").absolutePath) }
-                colorDbReady = true
-            }
-        }
-    }
-
-    /** 颜色库文件本体（面板「数据库大小」也按此路径统计）。 */
-    private fun colorDbFile(): File = File(appContext.filesDir, "colors.db")
-
-    /**
-     * colors.db + WAL + SHM 的磁盘占用字节数（对齐桌面 StoragePanel 的
-     * `dbSize + walSize`：SQLite 写入大多先落在 WAL，只算主库会严重低估）。
-     */
-    private fun colorDbSizeBytes(): Long {
-        val base = colorDbFile()
-        return listOf(base, File(base.parentFile, "colors.db-wal"), File(base.parentFile, "colors.db-shm"))
-            .sumOf { runCatching { it.length() }.getOrDefault(0L) }
-    }
-
-    /**
-     * content URI → 下采样 RGBA 像素（最长边 ≈256px，core 提取算法不再缩放）。
-     * null = 非本地 content URI（LAN 项的 http URL）/开流失败/解码失败。
-     * getPixels 逐像素装包（ARGB→RGBA）；半透明 PNG 受 Bitmap premultiplied 影响有
-     * 轻微色偏——照片主色调语义下可忽略（登记）。
-     */
-    private fun decodeRgba(contentUri: String, maxSide: Int = 256): ColorPixels? {
-        if (!contentUri.startsWith("content:")) return null
-        return runCatching {
-            val resolver = appContext.contentResolver
-            val uri = android.net.Uri.parse(contentUri)
-            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
-            val w = bounds.outWidth
-            val h = bounds.outHeight
-            if (w <= 0 || h <= 0) return null
-            var sample = 1
-            while (maxOf(w, h) / sample > maxSide) sample *= 2
-            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
-            val bmp = resolver.openInputStream(uri)?.use {
-                android.graphics.BitmapFactory.decodeStream(it, null, opts)
-            } ?: return null
-            val iw = bmp.width
-            val ih = bmp.height
-            val pixels = IntArray(iw * ih)
-            bmp.getPixels(pixels, 0, iw, 0, 0, iw, ih)
-            bmp.recycle()
-            val rgba = ByteArray(iw * ih * 4)
-            for (i in pixels.indices) {
-                val p = pixels[i]
-                rgba[i * 4] = ((p shr 16) and 0xFF).toByte()
-                rgba[i * 4 + 1] = ((p shr 8) and 0xFF).toByte()
-                rgba[i * 4 + 2] = (p and 0xFF).toByte()
-                rgba[i * 4 + 3] = ((p shr 24) and 0xFF).toByte()
-            }
-            ColorPixels(width = iw.toUInt(), height = ih.toUInt(), rgba = rgba)
-        }.getOrNull()
-    }
+    internal var pendingColorHex: String? = null
 
     /** 提取中的 file_id 集（自动提取翻页连发与手动按钮同 id 并发防重）。 */
-    private val inFlightPalettes = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-
-    /** 单张提取主色调并落库（查看器手动按钮/自动提取共用）。成功增量进 [colorPalettesById]；失败回调 null。 */
-    fun extractPalette(fileId: String, contentUri: String, onDone: (List<String>?) -> Unit = {}) {
-        if (!inFlightPalettes.add(fileId)) return
-        viewModelScope.launch {
-            val hexes: List<String>? = try {
-                ensureColorDb()
-                withContext(Dispatchers.IO) {
-                    val px = decodeRgba(contentUri) ?: throw IllegalStateException("无法读取图像像素")
-                    extractAndSaveColors(fileId, px.width, px.height, px.rgba)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "[Color] extract failed fileId=$fileId", e)
-                null
-            } finally {
-                inFlightPalettes.remove(fileId)
-            }
-            if (hexes != null) {
-                colorPalettesById.value = colorPalettesById.value + (fileId to hexes)
-            }
-            onDone(hexes)
-        }
-    }
-
-    /** 全库批读主色调进 [colorPalettesById]（查看器打开前的暖缓存；只补缺不覆盖已有）。 */
-    fun refreshPaletteCache() {
-        viewModelScope.launch {
-            runCatching {
-                ensureColorDb()
-                withContext(Dispatchers.IO) {
-                    val ids = allImageIds()
-                    if (ids.isEmpty()) return@withContext
-                    val rows = getColorsByFilePaths(ids)
-                    val map = colorPalettesById.value.toMutableMap()
-                    ids.forEachIndexed { i, id -> rows.getOrNull(i)?.let { map[id] = it } }
-                    colorPalettesById.value = map
-                }
-            }.onFailure { Log.w(TAG, "[Color] palette cache refresh failed", it) }
-        }
-    }
-
-    /** 全库 file id 清单（相册枚举去重；与 performAiSearch 的全库惯用法同源）。 */
-    private fun allImageIds(): List<String> =
-        folders.value
-            .flatMap { f -> runCatching { listImages(f.id) }.getOrDefault(emptyList()) }
-            .map { it.id }
-            .distinct()
-
-    /** 按颜色搜索（查看器色块/TopBar 取色器共用）：命中集顶替文本过滤（AI 搜索同管线，互斥清理）。 */
-    fun startColorSearch(hex: String) {
-        // 搜索进行中又来新色（HSV 面板防抖连发）：只记下最新色，本轮收尾后补跑一次——
-        // 直接丢弃会让「面板上停下来的颜色」与实际过滤色不一致（末次调用被吞）。
-        if (colorSearchBusy.value) {
-            pendingColorHex = hex
-            return
-        }
-        viewModelScope.launch {
-            colorSearchBusy.value = true
-            clearAiSearch() // 与 AI 命中集互斥：颜色命中顶替 AI 命中（反向互斥见 performAiSearch）
-            try {
-                ensureColorDb()
-                val ids = withContext(Dispatchers.IO) { searchByColor(hex) }
-                colorSearchIds.value = ids.toSet()
-                colorSearchHex.value = hex
-                colorSearchResultImages.value =
-                    if (ids.isEmpty()) emptyList() else withContext(Dispatchers.IO) { listImagesByIds(ids) }
-                aiToast("按颜色搜索命中 ${ids.size} 张")
-            } catch (e: Exception) {
-                Log.w(TAG, "[Color] search failed hex=$hex", e)
-                aiToast("颜色搜索失败：${e.message ?: "未知错误"}")
-            } finally {
-                colorSearchBusy.value = false
-                // 补跑搜索期间到达的最新色（见函数头的 pendingColorHex 说明）
-                val next = pendingColorHex?.also { pendingColorHex = null }
-                if (next != null && !next.equals(hex, ignoreCase = true)) startColorSearch(next)
-            }
-        }
-    }
-
-    /** 颜色过滤态清理（清搜索词/关搜索胶囊共用）。 */
-    fun clearColorSearch() {
-        colorSearchIds.value = null
-        colorSearchHex.value = null
-        colorSearchResultImages.value = emptyList()
-    }
-
-    /**
-     * 主色调节刷新：先清一次磁盘上已不存在的路径残留（桌面同语义；file_id 键保留），
-     * 再读统计 + 错误数 + 图库总数 + 库文件占用（后两项供面板的「数据库大小」与
-     * 「尚未入库图片数」——桌面取当前目录图片数，安卓的提取面向全库，故取全库量）。
-     */
-    fun refreshColorPanel() {
-        viewModelScope.launch {
-            runCatching {
-                ensureColorDb()
-                withContext(Dispatchers.IO) {
-                    cleanupColorNonexistent()
-                    val s = colorDbStats()
-                    colorStats.value = ColorDbStatsUi(
-                        total = s.total.toInt(),
-                        pending = s.pending.toInt(),
-                        extracted = s.extracted.toInt(),
-                        error = s.error.toInt(),
-                        libraryImages = allImageIds().size,
-                        dbSizeBytes = colorDbSizeBytes(),
-                    )
-                    colorErrorCount.value = getColorErrorFiles().size
-                }
-            }.onFailure { Log.w(TAG, "[Color] panel refresh failed", it) }
-        }
-    }
-
-    /**
-     * 批量提取全库主色调（StoragePanel「开始提取」）：逐张 请求像素→提取→落库，
-     * 锁步泵在本协程的 IO 线程驱动回调；单张失败只记日志（行标 error 供错误文件管理）。
-     * 进度/终态同步通知栏（ScanNotifier.colorProgress/colorDone，暂停/恢复由通知按钮
-     * 与面板双入口控制）。
-     */
-    fun startColorBatchExtract() {
-        if (colorTaskState.value != null) {
-            aiToast("提取任务进行中")
-            return
-        }
-        viewModelScope.launch {
-            val imagesById = withContext(Dispatchers.IO) {
-                folders.value
-                    .flatMap { f -> runCatching { listImages(f.id) }.getOrDefault(emptyList()) }
-                    .distinctBy { it.id }
-                    .associateBy { it.id }
-            }
-            if (imagesById.isEmpty()) {
-                aiToast("没有可提取的图片")
-                return@launch
-            }
-            try {
-                ensureColorDb()
-            } catch (e: Exception) {
-                Log.w(TAG, "[Color] batch init db failed", e)
-                aiToast("颜色库初始化失败：${e.message ?: "未知错误"}")
-                return@launch
-            }
-            val taskId = "color-batch-${System.currentTimeMillis()}"
-            colorTaskId = taskId
-            colorTaskState.value = ColorTaskState(0, imagesById.size, false)
-            scanNotifier.colorProgress(0, imagesById.size, false)
-            var finished = "completed" to ""
-            try {
-                withContext(Dispatchers.IO) {
-                    batchExtractColors(imagesById.keys.toList(), taskId, object : ColorBatchCallback {
-                        override fun readPixels(fileId: String): ColorPixels? =
-                            imagesById[fileId]?.let { decodeRgba(it.contentUri) }
-
-                        override fun onProgress(current: UInt, total: UInt) {
-                            colorTaskState.value =
-                                colorTaskState.value?.copy(current = current.toInt(), total = total.toInt())
-                            scanNotifier.colorProgress(
-                                current.toInt(),
-                                total.toInt(),
-                                colorTaskState.value?.paused ?: false,
-                            )
-                        }
-
-                        override fun onFileDone(fileId: String, ok: Boolean, note: String) {
-                            if (!ok) Log.w(TAG, "[Color] batch file failed fileId=$fileId: $note")
-                        }
-
-                        override fun onFinished(state: String, message: String) {
-                            finished = state to message
-                        }
-                    })
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "[Color] batch extract crashed", e)
-                finished = "error" to (e.message ?: "未知错误")
-            }
-            colorTaskId = null
-            colorTaskState.value = null
-            refreshColorPanel()
-            refreshPaletteCache()
-            val doneMessage = when (finished.first) {
-                "completed" -> "提取完成（${finished.second}）"
-                "cancelled" -> "已取消（${finished.second}）"
-                else -> "失败：${finished.second}"
-            }
-            scanNotifier.colorDone(doneMessage)
-            aiToast("主色调$doneMessage")
-        }
-    }
-
-    /** 暂停批量提取（下一张迭代边界生效；paused 为本层状态机标志，通知按钮组随之刷新）。 */
-    fun pauseColorBatch() {
-        val id = colorTaskId ?: return
-        if (pauseColorTask(id)) {
-            colorTaskState.value = colorTaskState.value?.copy(paused = true)
-            colorTaskState.value?.let { scanNotifier.colorProgress(it.current, it.total, true) }
-        }
-    }
-
-    fun resumeColorBatch() {
-        val id = colorTaskId ?: return
-        if (resumeColorTask(id)) {
-            colorTaskState.value = colorTaskState.value?.copy(paused = false)
-            colorTaskState.value?.let { scanNotifier.colorProgress(it.current, it.total, false) }
-        }
-    }
-
-    /** 取消批量提取（在途一张跑完；终态经 onFinished 清任务态）。 */
-    fun cancelColorBatch() {
-        colorTaskId?.let { cancelColorTask(it) }
-    }
-
-    /** 错误文件三操作（重试=重新入队/删除=移除记录/清理=清磁盘上已不存在的路径记录）。 */
-    fun retryColorErrors() = colorErrorOp { retryColorErrorFiles() }
-
-    fun deleteColorErrors() = colorErrorOp { deleteColorErrorFiles() }
-
-    fun cleanupColorRecords() = colorErrorOp { cleanupColorNonexistent() }
-
-    private fun colorErrorOp(op: () -> UInt) {
-        viewModelScope.launch {
-            runCatching {
-                ensureColorDb()
-                withContext(Dispatchers.IO) { op() }
-            }.onSuccess { n ->
-                aiToast("操作完成（$n 条）")
-                refreshColorPanel()
-            }.onFailure {
-                Log.w(TAG, "[Color] error-file op failed", it)
-                aiToast("操作失败：${it.message ?: "未知错误"}")
-            }
-        }
-    }
-
-    /** 自动提取开关（查看器翻图自动提取；设置持久化，UI 在存储面板主色调节）。 */
-    fun setAutoExtractPalette(enabled: Boolean) {
-        settings.value = settings.value.copy(autoExtractPalette = enabled)
-        settingsStore.save(settings.value)
-    }
+    // internal 而非 private：同上，颜色库簇在 GalleryViewModelColors.kt（扩展函数）里要用
+    internal val inFlightPalettes = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     // —— M5 画布数据助手（3.1/3.2/3.3 入口共用的取数口；id/宽高一律以 FFI 索引为准）——
 
