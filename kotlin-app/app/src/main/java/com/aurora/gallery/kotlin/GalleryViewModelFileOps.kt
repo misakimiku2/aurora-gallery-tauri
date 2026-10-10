@@ -201,6 +201,11 @@ fun GalleryViewModel.renameFiles(
  * （既有相册的 RELATIVE_PATH 或新相册的 `Pictures/<名字>`，见 resolveFolderRelPath /
  * MainActivity 的新建相册分支）。与 [renameFiles] 同款：直写 + 被拦时经 [onBlocked]
  * 走 createWriteRequest 申请（授权持久），不复制不删源。
+ *
+ * 收尾：成功 n>0 时先把移动的行按 MediaStore 现值 upsert 一遍（索引里的归属才跟得上
+ * 这次跨 bucket，否则卡片要等全量对账才变），再重算总览卡片并 bump 涉及的文件夹活动
+ * 时间，与 Q 路径移动（[GalleryViewModelQPaths.registerRowAndMigrateAsync]）一致 ——
+ * 「操作过就排前面」的排序语义对移动同样成立。
  */
 fun GalleryViewModel.moveFiles(
     uris: List<android.net.Uri>,
@@ -214,6 +219,10 @@ fun GalleryViewModel.moveFiles(
     }
     val relPath = targetRelPath.ensureTrailingSlash()
     viewModelScope.launch {
+        // 「操作过就排前面」的卡片基准快照：[bumpActivityForChangedFolders] 拿它与写后
+        // 重算的卡片做 diff（移动使源计数减、目标计数加，双端都命中）来挑该 bump 的
+        // 文件夹——所以必须在写之前抓。
+        val beforeFolders = folders.value
         writeWithConsentFallback(
             items = uris,
             uriOf = { it },
@@ -240,6 +249,36 @@ fun GalleryViewModel.moveFiles(
             },
             onDone = { n ->
                 Log.i(GalleryViewModel.TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
+                if (n > 0) {
+                    // 与 Q 路径移动的收尾同款（GalleryViewModelQPaths.registerRowAndMigrateAsync
+                    // 的 deleteSource 分支）：把涉及的文件夹活动时间刷为当前，让「操作过就排
+                    // 前面」对移动同样成立。补上前只有删除 / 复制 / Q 路径移动三条写路径会
+                    // bump，MediaStore 直写的移动（R+ 主路径）缺这一步——自 3a0effd77 上线起
+                    // 就有，后果是移动后目标文件夹不会被顶到排序前面。
+                    viewModelScope.launch {
+                        // 移动改的是行的**归属**，而索引里这条行仍挂在旧 parent_id 上（要等
+                        // 下一次全量对账才刷新）——不先修正，list_folders 算出的聚合与写前
+                        // 一致，下面的 diff 挑不出任何变化、bump 空转。这里照 registerRow 的
+                        // 做法按 MediaStore 现值单行 upsert：移动前后 _id 与 content_uri 不变
+                        // （file_id 由 content_uri 算出），所以是覆盖同一行，不留重复行。
+                        withContext(Dispatchers.IO) {
+                            for (uri in uris) {
+                                val img = runCatching { mediaImageOf(uri) }.getOrNull() ?: continue
+                                runCatching { upsertMediaImage(img) }
+                                    .onFailure {
+                                        Log.w(
+                                            GalleryViewModel.TAG,
+                                            "[FileOp] single-row upsert after move failed: $uri",
+                                            it,
+                                        )
+                                    }
+                            }
+                        }
+                        // force=true 同删除路径：走防抖会跳过重算，那样 diff 还是拿不到新卡片
+                        refreshFolderCards(force = true)
+                        bumpActivityForChangedFolders(beforeFolders)
+                    }
+                }
                 onDone(n)
             },
             onBlocked = onBlocked,
