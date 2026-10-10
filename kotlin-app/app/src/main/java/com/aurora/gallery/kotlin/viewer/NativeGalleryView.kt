@@ -184,9 +184,12 @@ class NativeGalleryView @JvmOverloads constructor(
         SharedCoil.get(context)
     }
 
-    private val images = mutableListOf<ImageItem>()
-    private var currentIndex = 0
-    private var isAnimating = AtomicBoolean(false)
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal val images = mutableListOf<ImageItem>()
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var currentIndex = 0
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var isAnimating = AtomicBoolean(false)
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var isImmersive = false
     /**
@@ -209,7 +212,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private var slideshowZoom = false
     /** 当前挂载的幻灯片全屏覆盖层；非 null 表示幻灯片正在播放。 */
     private var slideshowView: SlideshowView? = null
-    private var rotationDegrees = 0
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var rotationDegrees = 0
     // 主题：true=深色，false=浅色。开关来自宿主传入的 options("isDark")，与 Compose 侧
     // AuroraTheme(darkTheme=) 同一个值；颜色一律走 AuroraPalette 那张唯一的表。
     private var isDarkTheme = false
@@ -220,7 +224,8 @@ class NativeGalleryView @JvmOverloads constructor(
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var palette: AuroraPalette = AuroraPalettes.of(isDarkTheme)
     // 查看器是否打开（open 时设 true，close 时设 false）
-    private var isOpen = false
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var isOpen = false
 
     // —— 旋转屏幕（2026-10-07，取代原「旋转图片」钮）——
     /** 当前钉屏方向（SCREEN_ORIENTATION_SENSOR_*）；null=跟随系统。 */
@@ -309,7 +314,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private val bottomInfoText: TextView
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal val thumbnailStrip: RecyclerView
-    private val thumbnailAdapter: ThumbnailStripAdapter
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal val thumbnailAdapter: ThumbnailStripAdapter
     // 抽屉引用
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal val metadataDrawer: LinearLayout
@@ -338,7 +344,8 @@ class NativeGalleryView @JvmOverloads constructor(
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var drawerOpen = false
     /** 正在提取主色调的 fileId，非 null 时抽屉显示 loading 占位 */
-    private var loadingPaletteFileId: String? = null
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var loadingPaletteFileId: String? = null
     /**
      * 用户设置：浏览时自动提取主色调。开启时 palette 为空显示 loading 而非按钮。
      * 提取本身由宿主（ViewerLayerHost/MainActivity）驱动——查看器只表达显示态。
@@ -356,9 +363,11 @@ class NativeGalleryView @JvmOverloads constructor(
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var drawerWidthAnimator: android.animation.ValueAnimator? = null
     /** 垂直跟手开始时抽屉是否打开 */
-    private var drawerDragStartOpen = false
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var drawerDragStartOpen = false
     /** 垂直跟手开始时的抽屉进度（0=关闭, 1=打开） */
-    private var drawerDragStartProgress = 0f
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var drawerDragStartProgress = 0f
     /** 抽屉打开前的沉浸状态，抽屉关闭时恢复（确保沉浸模式下开关抽屉仍回到沉浸） */
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var immersiveBeforeDrawer = false
@@ -379,15 +388,20 @@ class NativeGalleryView @JvmOverloads constructor(
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var drawerFormFactorPending = false
     /** 翻页拖动中，邻接视图（上一张/下一张）是否已加载并可见 */
-    private var swipeAdjacentPrepared = false
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var swipeAdjacentPrepared = false
     /** 邻接视图方向：-1 = 上一张（左侧），1 = 下一张（右侧） */
-    private var swipeAdjacentDirection = 0
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var swipeAdjacentDirection = 0
     /** 滑动期间缓存的屏幕宽度，避免每帧调用 width.toFloat() */
-    private var swipeCachedWidth = 0f
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var swipeCachedWidth = 0f
     /** 滑动期间缓存的邻接视图引用，避免每帧调用 adjacentView() */
-    private var swipeCachedAdjacentView: ZoomableImageView? = null
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var swipeCachedAdjacentView: ZoomableImageView? = null
 
-    private var activeView: ZoomableImageView
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal var activeView: ZoomableImageView
         get() = if (primaryView.tag == "active") primaryView else secondaryView
         set(value) {
             primaryView.tag = if (value === primaryView) "active" else "idle"
@@ -395,7 +409,8 @@ class NativeGalleryView @JvmOverloads constructor(
         }
 
     /** 获取非活跃视图（用于翻页拖动时显示邻接图） */
-    private fun adjacentView(): ZoomableImageView = if (primaryView.tag == "active") secondaryView else primaryView
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal fun adjacentView(): ZoomableImageView = if (primaryView.tag == "active") secondaryView else primaryView
 
     init {
         setBackgroundColor(colorBg())
@@ -1290,260 +1305,8 @@ class NativeGalleryView @JvmOverloads constructor(
         }.getOrDefault(iso)
     }
 
-    private fun setupZoomableListeners(view: ZoomableImageView) {
-        view.swipeOutListener = object : ZoomableImageView.OnSwipeOutListener {
-            override fun onSwipeOut(direction: Int, dx: Float) {}
-            override fun onSwipeDrag(dx: Float) {
-                if (isAnimating.get()) return
-                if (dx == 0f) return
-                val actView = activeView
-                actView.translationX = dx
-                val dir = if (dx > 0) -1 else 1
-                val adjacentIndex = currentIndex + dir
-                if (adjacentIndex < 0 || adjacentIndex >= images.size) return
-                if (!swipeAdjacentPrepared || swipeAdjacentDirection != dir) {
-                    prepareSwipeAdjacent(dir)
-                }
-                val adj = swipeCachedAdjacentView
-                if (adj != null && swipeAdjacentPrepared && swipeAdjacentDirection == dir) {
-                    adj.translationX = dx + dir * swipeCachedWidth
-                }
-            }
-            override fun onSwipeEnd(dx: Float, velocityX: Float) {
-                if (isAnimating.get()) return
-                val threshold = resources.displayMetrics.density * SWIPE_THRESHOLD_DP
-                val shouldNavigate = abs(dx) > threshold || (abs(velocityX) > SWIPE_VELOCITY_THRESHOLD && abs(dx) > touchSlopForSwipe)
-                val dir = if (dx > 0) -1 else 1
-                // 切换成功路径不放触觉反馈（M8b-11 用户报真机每切一张震一下）：翻页是
-                // 高频手势，系统相册类应用也不在切换处振动；模拟器无振动马达复现不了，
-                // 代码路径两端一致。长按的 LONG_PRESS 触觉保留（低频手势确认，见
-                // onLongPressConfirmed）。React 版移植时就带这声振动（M3 284d90113），
-                // 模拟器验收从未暴露。
-                if (shouldNavigate && dx != 0f) {
-                    val adjacentIndex = currentIndex + dir
-                    if (swipeAdjacentPrepared && swipeAdjacentDirection == dir && adjacentIndex in 0 until images.size) {
-                        navigateFromSwipe(dir)
-                    } else if (adjacentIndex in 0 until images.size) {
-                        cleanupSwipeAdjacentImmediate()
-                        navigate(dir)
-                    } else {
-                        bounceBackSwipe(dir)
-                    }
-                } else {
-                    if (swipeAdjacentPrepared) {
-                        bounceBackSwipe(dir)
-                    } else {
-                        activeView.animate()
-                            .translationX(0f)
-                            .setDuration(250)
-                            .setInterpolator(SWIPE_INTERPOLATOR)
-                            .withEndAction { setSwipeHardwareLayers(false) }
-                            .start()
-                    }
-                }
-            }
-            override fun onTouchDown() {
-                if (isAnimating.get()) return
-                val actView = activeView
-                actView.animate().cancel()
-                actView.translationX = 0f
-                cleanupSwipeAdjacentImmediate()
-                // 取消正在进行的抽屉动画，跟手接管——取消后必须按权威进度回写
-                // drawerOpen：松手判定（onVerticalSwipeEnd/把手拖拽/toggleDrawer）先把
-                // drawerOpen 置为目标值再起 280ms 动画，动画若在这里被下一次触摸取消，
-                // onAnimationEnd 因 cancelled 早退、面板停在取消时刻的 progress，标志与
-                // 视觉就此脱钩（面板视觉已关而 drawerOpen 恒 true），此后所有单击被
-                // onSingleTapConfirmed/toggleImmersive 的 drawerOpen 护栏静默吞掉——
-                // 真机「点击图片不进全屏且零反应」的根因（2026-10-06 荣耀/华为报障）
-                drawerWidthAnimator?.cancel()
-                drawerWidthAnimator = null
-                drawerOpen = drawerPanelProgress > 0.5f
-                // 记录抽屉跟手起始状态，供 onVerticalSwipeDrag/End 使用。
-                // 进度读 drawerPanelProgress（面板进度权威值）：竖屏 drawerFillProgress
-                // 恒 0，读它会让松手后的继续拖动被方向限制钳在 0 跟丢手指
-                drawerDragStartOpen = drawerOpen
-                drawerDragStartProgress = drawerPanelProgress
-                if (!drawerOpen) {
-                    // 可能即将通过垂直手势打开抽屉——保存沉浸状态
-                    immersiveBeforeDrawer = isImmersive
-                }
-            }
-            override fun onSingleTapConfirmed() {
-                Log.i("NativeViewer", "onSingleTapConfirmed: drawerOpen=$drawerOpen isImmersive=$isImmersive isOpen=$isOpen")
-                if (drawerOpen) return
-                // 幻灯片播放时本视图被 SlideshowView 覆盖，不会收到此回调
-                toggleImmersive()
-            }
-            override fun onVerticalSwipeDrag(dy: Float) {
-                if (isAnimating.get()) return
-                // 行程随形制（M8b-8）：横屏=320dp（右缘抽屉），竖屏=根高 2/3（底部面板）。
-                // 轴向虽不同，progress 语义一致：上滑（dy<0）→ progress 增大 → 抽屉打开，
-                // 下滑（dy>0）→ 关闭——竖屏面板从屏底外上滑，方向天然成立
-                var progress = (drawerDragStartProgress - dy / drawerExtentPx).coerceIn(0f, 1f)
-                // 方向限制：抽屉打开时只允许向关闭方向（progress 减小），
-                // 抽屉关闭时只允许向打开方向（progress 增大），反向滑动无效果
-                if (drawerDragStartOpen) {
-                    progress = progress.coerceAtMost(drawerDragStartProgress)
-                } else {
-                    progress = progress.coerceAtLeast(drawerDragStartProgress)
-                }
-                applyDrawerProgress(progress)
-            }
-            override fun onVerticalSwipeEnd(dy: Float, velocityY: Float) {
-                if (isAnimating.get()) return
-                var currentProgress = (drawerDragStartProgress - dy / drawerExtentPx).coerceIn(0f, 1f)
-                // 应用与 drag 相同的方向限制
-                if (drawerDragStartOpen) {
-                    currentProgress = currentProgress.coerceAtMost(drawerDragStartProgress)
-                } else {
-                    currentProgress = currentProgress.coerceAtLeast(drawerDragStartProgress)
-                }
-                // 判断目标状态：根据当前进度和速度
-                val targetOpen = if (drawerDragStartOpen) {
-                    !(currentProgress < 0.5f || velocityY > 500f)
-                } else {
-                    currentProgress > 0.5f || velocityY < -500f
-                }
-                drawerOpen = targetOpen
-                animateDrawerTo(targetOpen, fromProgress = currentProgress)
-            }
-            override fun onLongPressConfirmed() {
-                // M4b 6.1 收口：长按仅保留触感反馈——查看器的全部操作已在「⋮」菜单
-                // 承载（删除/重命名/复制到/移动到/幻灯片），无独立的上下文菜单需求
-                //（桌面查看器也无长按菜单同位项）。
-                performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            }
-        }
-    }
-
-    /** 滑动期间启用/禁用硬件层，将视图渲染缓存为 GPU 纹理，使 translationX 变为纯纹理位移。 */
-    private fun setSwipeHardwareLayers(enabled: Boolean) {
-        val layerType = if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
-        primaryView.setLayerType(layerType, null)
-        secondaryView.setLayerType(layerType, null)
-    }
-
-    /**
-     * 返回当前图片视图的实际宽度。抽屉打开时 primaryView/secondaryView 宽度被压缩，
-     * 翻页滑动需基于压缩后的宽度计算邻接图位置，否则图片会滑出错误的距离。
-     * 视图未测量时回退到 NativeGalleryView 自身宽度。
-     */
-    private fun effectiveViewWidth(): Float {
-        val pw = primaryView.width
-        return if (pw > 0) pw.toFloat() else width.toFloat()
-    }
-
-    private fun prepareSwipeAdjacent(dir: Int) {
-        val adjacentIndex = currentIndex + dir
-        if (adjacentIndex < 0 || adjacentIndex >= images.size) return
-        val cw = effectiveViewWidth()
-        val span = cw + swipeGapPx
-        val adj = adjacentView()
-        adj.animate().cancel()
-        loadIntoView(adj, adjacentIndex, rotation = 0, showProgress = false)
-        adj.translationX = dir * span
-        adj.visibility = VISIBLE
-        swipeAdjacentPrepared = true
-        swipeAdjacentDirection = dir
-        swipeCachedWidth = span
-        swipeCachedAdjacentView = adj
-        setSwipeHardwareLayers(true)
-    }
-
-    private fun navigateFromSwipe(direction: Int) {
-        val newIndex = currentIndex + direction
-        if (newIndex < 0 || newIndex >= images.size) {
-            bounceBackSwipe(direction)
-            return
-        }
-        currentIndex = newIndex
-        rotationDegrees = 0
-        // 切换图片时清除主色调 loading 状态（与 navigateTo 一致）
-        loadingPaletteFileId = null
-
-        isAnimating.set(true)
-        val outgoing = activeView
-        val incoming = adjacentView()
-        activeView = incoming
-
-        val cw = effectiveViewWidth() + swipeGapPx
-        val duration = 280L
-        outgoing.animate()
-            .translationX(-direction * cw)
-            .setDuration(duration)
-            .setInterpolator(SWIPE_INTERPOLATOR)
-            .withEndAction {
-                outgoing.translationX = 0f
-                outgoing.visibility = GONE
-                outgoing.setImageDrawable(null)
-            }
-            .start()
-        incoming.animate()
-            .translationX(0f)
-            .setDuration(duration)
-            .setInterpolator(SWIPE_INTERPOLATOR)
-            .withEndAction {
-                isAnimating.set(false)
-                swipeAdjacentPrepared = false
-                swipeAdjacentDirection = 0
-                swipeCachedAdjacentView = null
-                swipeCachedWidth = 0f
-                setSwipeHardwareLayers(false)
-                listener?.onNavigate(currentIndex)
-                preloadNeighbors()
-                thumbnailAdapter.highlight(currentIndex)
-            }
-            .start()
-
-        updateTitle()
-    }
-
-    private fun bounceBackSwipe(dir: Int) {
-        val cw = swipeCachedWidth
-        val duration = 280L
-        activeView.animate()
-            .translationX(0f)
-            .setDuration(duration)
-            .setInterpolator(SWIPE_INTERPOLATOR)
-            .withEndAction {
-                setSwipeHardwareLayers(false)
-            }
-            .start()
-        if (swipeAdjacentPrepared) {
-            val adj = swipeCachedAdjacentView ?: adjacentView()
-            adj.animate()
-                .translationX(dir * cw)
-                .setDuration(duration)
-                .setInterpolator(SWIPE_INTERPOLATOR)
-                .withEndAction {
-                    adj.translationX = 0f
-                    adj.visibility = GONE
-                    adj.setImageDrawable(null)
-                    swipeAdjacentPrepared = false
-                    swipeAdjacentDirection = 0
-                    swipeCachedAdjacentView = null
-                    swipeCachedWidth = 0f
-                }
-                .start()
-        }
-    }
-
-    private fun cleanupSwipeAdjacentImmediate() {
-        if (swipeAdjacentPrepared) {
-            val adj = swipeCachedAdjacentView ?: adjacentView()
-            adj.animate().cancel()
-            adj.translationX = 0f
-            adj.visibility = GONE
-            adj.setImageDrawable(null)
-            swipeAdjacentPrepared = false
-            swipeAdjacentDirection = 0
-        }
-        swipeCachedAdjacentView = null
-        swipeCachedWidth = 0f
-        setSwipeHardwareLayers(false)
-    }
-
-    private val touchSlopForSwipe = android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal val touchSlopForSwipe = android.view.ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     /** 处理返回键：优先收起抽屉，其次关闭查看器。 */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -1963,7 +1726,8 @@ class NativeGalleryView @JvmOverloads constructor(
         preloadNeighbors()
     }
 
-    private fun loadIntoView(view: ZoomableImageView, index: Int, rotation: Int = rotationDegrees, showProgress: Boolean = true) {
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal fun loadIntoView(view: ZoomableImageView, index: Int, rotation: Int = rotationDegrees, showProgress: Boolean = true) {
         val item = images.getOrNull(index) ?: return
         if (showProgress) progressBar.visibility = VISIBLE
         Log.i(TAG, "loadIntoView: index=$index, name=${item.name}, isLan=${item.isLan}, path=${item.path}, thumbUrl=${item.thumbnailUrl}")
@@ -2029,7 +1793,8 @@ class NativeGalleryView @JvmOverloads constructor(
         imageLoader.enqueue(request)
     }
 
-    private fun preloadNeighbors() {
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal fun preloadNeighbors() {
         // 预加载当前 ±1 张到 memory cache
         for (offset in intArrayOf(1, -1, 2, -2)) {
             val idx = currentIndex + offset
@@ -2079,7 +1844,8 @@ class NativeGalleryView @JvmOverloads constructor(
         return -(loc[1] + topBar.bottom) * progress
     }
 
-    private fun toggleImmersive() {
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal fun toggleImmersive() {
         // 抽屉打开时不允许进入/退出沉浸
         if (drawerOpen) return
         Log.i("NativeViewer", "toggleImmersive: isImmersive=$isImmersive -> ${!isImmersive}")
@@ -2714,14 +2480,11 @@ class NativeGalleryView @JvmOverloads constructor(
     companion object {
         private const val TAG = "NativeGalleryView"
         /** 翻页动画贝塞尔曲线插值器：快速进场 → 接近中心时平滑减速 */
-        private val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
+        // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+        internal val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
         /** 进出过渡揭幕时 chrome 的淡入时长与节奏（见 [revealAfterTransition]） */
         private const val TRANSITION_CHROME_MS = 140L
         private val TRANSITION_CHROME_EASING = PathInterpolator(0.05f, 0.7f, 0.1f, 1f)
-        /** 翻页触发距离阈值（dp），固定值不受横竖屏影响 */
-        private const val SWIPE_THRESHOLD_DP = 32f
-        /** 翻页触发速度阈值 */
-        private const val SWIPE_VELOCITY_THRESHOLD = 200f
         /** 翻页时两张图片之间的视觉间隔（dp），避免竖屏下图片紧贴 */
         private const val SWIPE_GAP_DP = 16f
         /** 元数据抽屉宽度（dp）。文件信息格子按它算列宽，见 [buildDetailCell]。 */
@@ -2742,5 +2505,6 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     /** 翻页间隔的像素值 */
-    private val swipeGapPx: Float get() = resources.displayMetrics.density * SWIPE_GAP_DP
+    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
+    internal val swipeGapPx: Float get() = resources.displayMetrics.density * SWIPE_GAP_DP
 }
