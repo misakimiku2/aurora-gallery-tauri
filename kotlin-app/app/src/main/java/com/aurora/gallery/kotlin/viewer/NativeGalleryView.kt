@@ -178,7 +178,8 @@ class NativeGalleryView @JvmOverloads constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val imageLoader: ImageLoader by lazy {
+    // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
+    internal val imageLoader: ImageLoader by lazy {
         // M5 1.2 起与画布共享进程级实例（D25：同内存缓存 + 同磁盘缓存 journal；
         // 配置原样搬进 SharedCoil，行为不变）
         SharedCoil.get(context)
@@ -265,7 +266,8 @@ class NativeGalleryView @JvmOverloads constructor(
      * 回调比对视图上的 [ZoomableImageView.boundLoadGeneration]，代号不符整体作废，
      * 防止旧图被画到新图上。
      */
-    private var loadGeneration = 0
+    // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
+    internal var loadGeneration = 0
 
     /**
      * LAN 编辑门禁位（M6a 阶段 6，allow_edit）：直通时 LAN 项才出现删除入口（顶栏删除键
@@ -297,7 +299,8 @@ class NativeGalleryView @JvmOverloads constructor(
     internal val primaryView: ZoomableImageView
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal val secondaryView: ZoomableImageView // 用于切换动画时的另一张
-    private val progressBar: ProgressBar
+    // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
+    internal val progressBar: ProgressBar
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal val topBar: LinearLayout
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
@@ -1447,15 +1450,6 @@ class NativeGalleryView @JvmOverloads constructor(
         visibility = INVISIBLE
     }
 
-    /** 参与揭幕淡入的 chrome（图片本体不淡：它已经和覆盖层逐位对齐了）。 */
-    private fun transitionChrome(): List<View> = listOf(topBar, thumbnailStrip, bottomInfo)
-
-    /** 过渡挂起期把 chrome 压成全透明，揭幕时淡回；非挂起路径恒复位成 1（防上次残留）。 */
-    private fun applyTransitionChrome(held: Boolean) {
-        val a = if (held) 0f else 1f
-        for (v in transitionChrome()) v.alpha = a
-    }
-
     fun close() {
         cleanupSlideshow()
         cleanupSwipeAdjacentImmediate()
@@ -1578,99 +1572,6 @@ class NativeGalleryView @JvmOverloads constructor(
             .start()
 
         updateTitle()
-    }
-
-    /**
-     * 大图数据源（D8 A 案）。本地 `content://` 一律由宿主开流喂给 Coil，
-     * 不让 URI 进解码器——理由见 [imageSourceFor]。
-     */
-    private fun coilSourceOf(item: ImageItem, variant: String = "full"): CoilSource =
-        imageSourceFor(item, context.contentResolver, variant)
-
-    private fun loadCurrent(animateIn: Boolean) {
-        loadIntoView(activeView, currentIndex)
-        preloadNeighbors()
-    }
-
-    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
-    internal fun loadIntoView(view: ZoomableImageView, index: Int, rotation: Int = rotationDegrees, showProgress: Boolean = true) {
-        val item = images.getOrNull(index) ?: return
-        if (showProgress) progressBar.visibility = VISIBLE
-        Log.i(TAG, "loadIntoView: index=$index, name=${item.name}, isLan=${item.isLan}, path=${item.path}, thumbUrl=${item.thumbnailUrl}")
-
-        // 本轮请求代号：写进视图，迟到的过期回调（上一张图的缩略图/高清图）据此作废
-        val generation = ++loadGeneration
-        view.boundLoadGeneration = generation
-        view.isFullResShown = false
-
-        // 先加载缩略图（如果有），再加载原图
-        val thumbUrl = item.thumbnailUrl
-        if (!thumbUrl.isNullOrEmpty()) {
-            val thumbRequest = ImageRequest.Builder(context)
-                .data(thumbUrl)
-                // lambda target + 守卫，不再用 .target(view)（ImageViewTarget 会绕过守卫
-                // 直接上屏）：预加载已把高清图送进内存缓存时，高清图先到、缩略图后到，
-                // 迟到的缩略图会把已显示的高清图覆盖回低清——就是「切页后永远停在缩略图」
-                .target(
-                    onSuccess = { drawable ->
-                        if (view.boundLoadGeneration != generation) {
-                            Log.i(TAG, "discard stale thumbnail: index=$index name=${item.name}")
-                            return@target
-                        }
-                        if (view.isFullResShown) {
-                            Log.i(TAG, "skip late thumbnail: index=$index name=${item.name}")
-                            return@target
-                        }
-                        view.setImageDrawable(drawable)
-                    },
-                )
-                .precision(Precision.INEXACT)
-                .build()
-            imageLoader.enqueue(thumbRequest)
-        }
-
-        val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
-            .target(
-                onSuccess = { drawable ->
-                    if (view.boundLoadGeneration != generation) {
-                        Log.i(TAG, "discard stale full: index=$index name=${item.name} (view now on gen ${view.boundLoadGeneration})")
-                        return@target
-                    }
-                    view.isFullResShown = true
-                    if (showProgress) progressBar.visibility = GONE
-                    Log.i(TAG, "full ready: index=$index name=${item.name} ${drawable.intrinsicWidth}x${drawable.intrinsicHeight}")
-                    view.setImageDrawable(drawable)
-                    view.setRotationDegrees(rotation)
-                },
-                onError = { _ ->
-                    if (view.boundLoadGeneration != generation) {
-                        Log.i(TAG, "discard stale full error: index=$index name=${item.name}")
-                        return@target
-                    }
-                    if (showProgress) progressBar.visibility = GONE
-                    // 失败原因由 Coil 的 logger 以堆栈形式打出（见 imageLoader 的 .logger(...)）：
-                    // 这个 target 重载拿不到 throwable，只记「加载失败」在真机上等于查不了
-                    Log.e(TAG, "failed to load index=$index name=${item.name} path=${item.path}")
-                    Toast.makeText(context, "Failed to load ${item.name}", Toast.LENGTH_SHORT).show()
-                }
-            )
-            .precision(Precision.INEXACT)
-            .build()
-        imageLoader.enqueue(request)
-    }
-
-    // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
-    internal fun preloadNeighbors() {
-        // 预加载当前 ±1 张到 memory cache
-        for (offset in intArrayOf(1, -1, 2, -2)) {
-            val idx = currentIndex + offset
-            if (idx < 0 || idx >= images.size) continue
-            val item = images[idx]
-            val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
-                .precision(Precision.INEXACT)
-                .build()
-            imageLoader.enqueue(request)
-        }
     }
 
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
@@ -2345,7 +2246,8 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     companion object {
-        private const val TAG = "NativeGalleryView"
+        // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
+        internal const val TAG = "NativeGalleryView"
         /** 翻页动画贝塞尔曲线插值器：快速进场 → 接近中心时平滑减速 */
         // internal：手势翻图簇已拆到 NativeGalleryViewGestures.kt（第 23 刀）
         internal val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
