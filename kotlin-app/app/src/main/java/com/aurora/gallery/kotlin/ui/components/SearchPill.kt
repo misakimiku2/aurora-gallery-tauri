@@ -113,7 +113,7 @@ internal fun SearchPill(
                     )
                     Spacer(Modifier.size(4.dp))
                     Icon(
-                        imageVector = ScopeIconChevronDown,
+                        imageVector = IconChevronDown,
                         contentDescription = null,
                         tint = colors.textSecondary.copy(alpha = 0.7f),
                         modifier = Modifier.size(12.dp),
@@ -267,28 +267,6 @@ private fun scopeLabelOf(scope: SearchScope): String = when (scope) {
     SearchScope.FOLDER -> "文件夹"
 }
 
-/** scope 按钮的 chevron（lucide chevron-down，本文件就近自绘一份）。 */
-private val ScopeIconChevronDown: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "ScopeChevronDown",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).apply {
-        path(
-            stroke = SolidColor(Color.Black),
-            strokeLineWidth = 2f,
-            strokeLineCap = StrokeCap.Round,
-            strokeLineJoin = StrokeJoin.Round,
-        ) {
-            moveTo(6f, 9f)
-            lineTo(12f, 15f)
-            lineTo(18f, 9f)
-        }
-    }.build()
-}
-
 /** lucide file-text：文件页 + 折角 + 两行文字（scope=文件名；桌面 TopBar getScopeIcon 同款）。 */
 private val IconFileText: ImageVector by lazy {
     auroraIcon("FileText") {
@@ -313,24 +291,5 @@ private val IconFileText: ImageVector by lazy {
         lineTo(8f, 17f)
         moveTo(10f, 9f)
         lineTo(8f, 9f)
-    }
-}
-
-/** lucide folder：档案夹（scope=文件夹；与 TreeSidebar 同 path，本文件就近自绘一份）。 */
-private val IconFolder: ImageVector by lazy {
-    auroraIcon("Folder") {
-        moveTo(20f, 20f)
-        arcTo(2f, 2f, 0f, false, false, 22f, 18f)
-        lineTo(22f, 8f)
-        arcTo(2f, 2f, 0f, false, false, 20f, 6f)
-        lineTo(12.1f, 6f)
-        arcTo(2f, 2f, 0f, false, true, 10.41f, 5.1f)
-        lineTo(9.6f, 3.9f)
-        arcTo(2f, 2f, 0f, false, false, 7.93f, 3f)
-        lineTo(4f, 3f)
-        arcTo(2f, 2f, 0f, false, false, 2f, 5f)
-        lineTo(2f, 18f)
-        arcTo(2f, 2f, 0f, false, false, 4f, 20f)
-        close()
     }
 }

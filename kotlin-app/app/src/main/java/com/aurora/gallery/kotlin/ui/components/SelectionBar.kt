@@ -90,7 +90,7 @@ fun SelectionBar(
     ) {
         SelBarButton(onClick = onExit) {
             Icon(
-                imageVector = SelIconX,
+                imageVector = IconX,
                 contentDescription = "退出选择",
                 tint = colors.textSecondary,
                 modifier = Modifier.size(20.dp),
@@ -136,7 +136,7 @@ fun SelectionBar(
         ) {
             SelBarButton(onClick = { if (moreActions.isEmpty()) onMore() else onMoreExpandedChange(true) }) {
                 Icon(
-                    imageVector = SelIconMore,
+                    imageVector = IconMoreVertical,
                     contentDescription = "更多",
                     tint = colors.textSecondary,
                     modifier = Modifier.size(20.dp),
@@ -199,27 +199,7 @@ private fun SelBarButton(
     }
 }
 
-// ---- 自绘图标：lucide 线性风格（同 TopBar.kt 的 iconBuilder，按文件就近持有一份）----
-
-private const val SEL_STROKE = 2f
-
-private fun selIconBuilder(
-    name: String,
-    block: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
-): ImageVector = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = SEL_STROKE,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) { block() }
-}.build()
+// ---- 自绘图标：选择栏专属的几颗（lucide 线性风格；共享图标已上移 AuroraIcons.kt，第 20 刀收编）----
 
 private fun selCircle(cx: Float, cy: Float, r: Float): androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit = {
     moveTo(cx - r, cy)
@@ -228,19 +208,9 @@ private fun selCircle(cx: Float, cy: Float, r: Float): androidx.compose.ui.graph
     close()
 }
 
-/** lucide X：退出选择（React onClearSelection 的同款图标）。 */
-private val SelIconX: ImageVector by lazy {
-    selIconBuilder("SelX") {
-        moveTo(18f, 6f)
-        lineTo(6f, 18f)
-        moveTo(6f, 6f)
-        lineTo(18f, 18f)
-    }
-}
-
 /** lucide check-check：全选。 */
 private val SelIconCheckCheck: ImageVector by lazy {
-    selIconBuilder("SelCheckCheck") {
+    auroraIcon("SelCheckCheck") {
         moveTo(18f, 6f)
         lineTo(7f, 17f)
         lineTo(2f, 12f)
@@ -252,7 +222,7 @@ private val SelIconCheckCheck: ImageVector by lazy {
 
 /** lucide circle-x：取消全选。 */
 private val SelIconXCircle: ImageVector by lazy {
-    selIconBuilder("SelXCircle") {
+    auroraIcon("SelXCircle") {
         selCircle(12f, 12f, 10f)()
         moveTo(15f, 9f)
         lineTo(9f, 15f)
@@ -263,7 +233,7 @@ private val SelIconXCircle: ImageVector by lazy {
 
 /** lucide trash-2：删除（红色）。 */
 private val SelIconTrash: ImageVector by lazy {
-    selIconBuilder("SelTrash") {
+    auroraIcon("SelTrash") {
         moveTo(3f, 6f)
         lineTo(21f, 6f)
         moveTo(19f, 6f)
@@ -288,7 +258,7 @@ private val SelIconTrash: ImageVector by lazy {
 
 /** lucide share-2：分享。 */
 private val SelIconShare: ImageVector by lazy {
-    selIconBuilder("SelShare") {
+    auroraIcon("SelShare") {
         selCircle(18f, 5f, 3f)()
         selCircle(6f, 12f, 3f)()
         selCircle(18f, 19f, 3f)()
@@ -297,32 +267,4 @@ private val SelIconShare: ImageVector by lazy {
         moveTo(15.41f, 6.51f)
         lineTo(8.59f, 10.49f)
     }
-}
-
-/** lucide ellipsis-vertical：更多。 */
-// M4b 反馈：原先三个点用「0.01 单位线段 + 圆头笔帽」画（同 Tag 铆点技法），直径只有
-// ≈2 视口单位，在 20dp 图标上渲染出 ≈1.7dp 的点，和同排其他线性图标相比明显偏小。
-// 改为 r=2 的实心圆（直径 4 视口单位 ≈3.3dp），视觉重量与 2f 笔画相当。
-private val SelIconMore: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "SelMore",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).apply {
-        path(fill = SolidColor(Color.Black)) {
-            selDot(12f, 5f)
-            selDot(12f, 12f)
-            selDot(12f, 19f)
-        }
-    }.build()
-}
-
-/** 圆点子路径：实心圆（NonZero 填充下多个子路径互不干扰）。 */
-private fun androidx.compose.ui.graphics.vector.PathBuilder.selDot(cx: Float, cy: Float, r: Float = 2f) {
-    moveTo(cx - r, cy)
-    arcTo(r, r, 0f, false, true, cx + r, cy)
-    arcTo(r, r, 0f, false, true, cx - r, cy)
-    close()
 }

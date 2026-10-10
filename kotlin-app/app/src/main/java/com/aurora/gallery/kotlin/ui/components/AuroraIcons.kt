@@ -900,3 +900,98 @@ internal val IconImage: ImageVector by lazy {
         lineTo(6f, 21f)
     }
 }
+
+// —— 第二批共享图标（拆分清单第 20 刀收编）：原 TopBar / TreeSidebar / SelectionBar /
+// TargetPickerDialog「就近各持一份」的重复定义，几何逐字一致的并入此处；
+// 画法不同的（CheckMark vs IconCheck、新旧两种 folder、sliders 两种刻点）保留各自版本。
+
+/** lucide chevron-down（TopBar 搜索胶囊 scope 钮 / TreeSidebar 各处展开指示）。 */
+internal val IconChevronDown: ImageVector by lazy {
+    auroraIcon("ChevronDown") {
+        moveTo(6f, 9f)
+        lineTo(12f, 15f)
+        lineTo(18f, 9f)
+    }
+}
+
+/** lucide folder（TopBar 搜索胶囊 scope / TreeSidebar 本地相册 Section，同 path 并图）。 */
+internal val IconFolder: ImageVector by lazy {
+    auroraIcon("Folder") {
+        moveTo(20f, 20f)
+        arcTo(2f, 2f, 0f, false, false, 22f, 18f)
+        lineTo(22f, 8f)
+        arcTo(2f, 2f, 0f, false, false, 20f, 6f)
+        lineTo(12.1f, 6f)
+        arcTo(2f, 2f, 0f, false, true, 10.41f, 5.1f)
+        lineTo(9.6f, 3.9f)
+        arcTo(2f, 2f, 0f, false, false, 7.93f, 3f)
+        lineTo(4f, 3f)
+        arcTo(2f, 2f, 0f, false, false, 2f, 5f)
+        lineTo(2f, 18f)
+        arcTo(2f, 2f, 0f, false, false, 4f, 20f)
+        close()
+    }
+}
+
+/** lucide x（TopBar 清词/筛选清除 / SelectionBar 退出选择 / TargetPickerDialog 清空）。 */
+internal val IconX: ImageVector by lazy {
+    auroraIcon("X") {
+        moveTo(18f, 6f)
+        lineTo(6f, 18f)
+        moveTo(6f, 6f)
+        lineTo(18f, 18f)
+    }
+}
+
+/** lucide search（TopBar 搜索钮与胶囊 / TargetPickerDialog 搜索框）。 */
+internal val IconSearch: ImageVector by lazy {
+    auroraIcon("Search") {
+        // circle(11, 11, r=8)
+        moveTo(3f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
+        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
+        close()
+        moveTo(21f, 21f)
+        lineTo(16.65f, 16.65f)
+    }
+}
+
+/** lucide arrow-down-up（TopBar 排序钮 / TreeSidebar 侧栏排序循环钮）。 */
+internal val IconArrowDownUp: ImageVector by lazy {
+    auroraIcon("ArrowDownUp") {
+        // lucide arrow-down-up：左列向下箭头 + 右列向上箭头
+        moveTo(3f, 16f)
+        lineTo(7f, 20f)
+        lineTo(11f, 16f)
+        moveTo(7f, 20f)
+        lineTo(7f, 4f)
+        moveTo(21f, 8f)
+        lineTo(17f, 4f)
+        lineTo(13f, 8f)
+        moveTo(17f, 4f)
+        lineTo(17f, 20f)
+    }
+}
+
+/** lucide more-vertical：竖排三点（TopBar「更多」钮 / SelectionBar「更多」钮）。
+ *  M8b/M4b 两处同轮反馈并图：三点用 r=2 实心圆（直径 4 视口单位 ≈3.3dp），
+ *  对齐同排线性图标的视觉重量；原「0.01 单位线段+圆头笔帽」画法偏小已弃。 */
+internal val IconMoreVertical: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "MoreVertical",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).apply {
+        path(fill = SolidColor(Color.Black)) {
+            listOf(5f, 12f, 19f).forEach { cy ->
+                // 实心圆 r=2：两个 arcTo 半圆拼整圆（NonZero 填充下互不干扰）
+                moveTo(10f, cy)
+                arcTo(2f, 2f, 0f, false, true, 14f, cy)
+                arcTo(2f, 2f, 0f, false, true, 10f, cy)
+                close()
+            }
+        }
+    }.build()
+}

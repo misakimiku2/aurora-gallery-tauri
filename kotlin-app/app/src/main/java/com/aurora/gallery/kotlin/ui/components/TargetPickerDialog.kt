@@ -105,7 +105,7 @@ fun TargetPickerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        imageVector = TargetPickerIconSearch,
+                        imageVector = IconSearch,
                         contentDescription = null,
                         tint = colors.textSecondary,
                         modifier = Modifier.size(16.dp),
@@ -139,7 +139,7 @@ fun TargetPickerDialog(
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                imageVector = TargetPickerIconX,
+                                imageVector = IconX,
                                 contentDescription = "清除搜索",
                                 tint = colors.textSecondary,
                                 modifier = Modifier.size(14.dp),
@@ -218,7 +218,7 @@ fun TargetPickerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            imageVector = TargetPickerIconPlus,
+                            imageVector = IconPlus,
                             contentDescription = null,
                             tint = colors.primary,
                             modifier = Modifier.size(16.dp),
@@ -251,29 +251,9 @@ fun TargetPickerDialog(
     )
 }
 
-// ---- 自绘图标：lucide 线性风格（同 SelectionBar.kt 的 selIconBuilder，按文件就近持有一份）----
-
-private fun pickerIconBuilder(
-    name: String,
-    block: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
-): ImageVector = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) { block() }
-}.build()
-
-/** lucide folder。 */
+// ---- 自绘图标：Picker 专属的旧画法 folder（lucide 线性风格；共享图标已上移 AuroraIcons.kt，第 20 刀收编）----
 private val TargetPickerIconFolder: ImageVector by lazy {
-    pickerIconBuilder("PickerFolder") {
+    auroraIcon("PickerFolder") {
         moveTo(20f, 20f)
         lineTo(4f, 20f)
         arcTo(2f, 2f, 0f, false, true, 2f, 18f)
@@ -286,38 +266,6 @@ private val TargetPickerIconFolder: ImageVector by lazy {
         lineTo(22f, 18f)
         arcTo(2f, 2f, 0f, false, true, 20f, 20f)
         close()
-    }
-}
-
-/** lucide plus。 */
-private val TargetPickerIconPlus: ImageVector by lazy {
-    pickerIconBuilder("PickerPlus") {
-        moveTo(12f, 5f)
-        lineTo(12f, 19f)
-        moveTo(5f, 12f)
-        lineTo(19f, 12f)
-    }
-}
-
-/** lucide search。 */
-private val TargetPickerIconSearch: ImageVector by lazy {
-    pickerIconBuilder("PickerSearch") {
-        moveTo(3f, 11f)
-        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
-        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
-        close()
-        moveTo(21f, 21f)
-        lineTo(16.65f, 16.65f)
-    }
-}
-
-/** lucide x。 */
-private val TargetPickerIconX: ImageVector by lazy {
-    pickerIconBuilder("PickerX") {
-        moveTo(18f, 6f)
-        lineTo(6f, 18f)
-        moveTo(6f, 6f)
-        lineTo(18f, 18f)
     }
 }
 

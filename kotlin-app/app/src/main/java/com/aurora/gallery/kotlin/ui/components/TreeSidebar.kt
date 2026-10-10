@@ -1120,7 +1120,7 @@ private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit, selected: Boo
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = IconArrowUpDown,
+            imageVector = IconArrowDownUp,
             contentDescription = "排序：${sort.label}${if (descending) "降序" else "升序"}",
             tint = when {
                 selected -> Color.White.copy(alpha = 0.8f)
@@ -1132,7 +1132,7 @@ private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit, selected: Boo
     }
 }
 
-// ---- 自绘图标：lucide 线性风格（与 TopBar.kt 同款绘制参数；图标就近各自文件持有）----
+// ---- 自绘图标：Sidebar 专属的几颗（lucide 线性风格；共享图标已上移 AuroraIcons.kt，第 20 刀收编）----
 
 // Section 图标配色（对齐 React TreeSidebar 的 tailwind 色：专题 pink-500、相册/标签
 // blue-500、人物 purple-500、画布 emerald-500、网络断连 gray-400）。SECTION_EMERALD
@@ -1153,36 +1153,6 @@ private val SIDEBAR_GRAY_500 = Color(0xFF6B7280)
 private val SIDEBAR_GRAY_600 = Color(0xFF4B5563)
 private val SIDEBAR_GRAY_400 = Color(0xFF9CA3AF)
 
-private const val STROKE = 2f
-
-// roundedRect 扩展已上移 AuroraIcons.kt 共享（M4c 2.6），本文件沿用同名共享版本。
-
-private fun iconBuilder(
-    name: String,
-    block: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
-): ImageVector = ImageVector.Builder(
-    name = name,
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    path(
-        stroke = SolidColor(Color.Black),
-        strokeLineWidth = STROKE,
-        strokeLineCap = StrokeCap.Round,
-        strokeLineJoin = StrokeJoin.Round,
-    ) { block() }
-}.build()
-
-private val IconChevronDown: ImageVector by lazy {
-    iconBuilder("ChevronDown") {
-        moveTo(6f, 9f)
-        lineTo(12f, 15f)
-        lineTo(18f, 9f)
-    }
-}
-
 // IconLayout（专题 Section）已上移 AuroraIcons.kt 共享（2026-09-28 长按菜单图形化顺带
 // 收编，几何不变），本文件直接引用同包共享版本。
 
@@ -1201,7 +1171,7 @@ private val IconChevronDown: ImageVector by lazy {
  * （同一个语义就该同一颗图标，别处再画一颗只会画歪）。
  */
 internal val IconBrain: ImageVector by lazy {
-    iconBuilder("Brain") {
+    auroraIcon("Brain") {
         // 左脑叶：顶 → 左上凸 → 左缘 → 左下凸 → 底 → 回中缝
         moveTo(12f, 5f)
         curveTo(10.9f, 3.9f, 8.6f, 3.9f, 7.2f, 5.1f)
@@ -1227,7 +1197,7 @@ internal val IconBrain: ImageVector by lazy {
 
 /** lucide Tag（标签 Section；含铆点）。 */
 private val IconTagBadge: ImageVector by lazy {
-    iconBuilder("TagBadge") {
+    auroraIcon("TagBadge") {
         moveTo(12.586f, 2.586f)
         arcTo(2f, 2f, 0f, false, false, 11.172f, 2f)
         lineTo(4f, 2f)
@@ -1246,7 +1216,7 @@ private val IconTagBadge: ImageVector by lazy {
 
 /** lucide Scan + 中线（画布 Section 变体；与 AuroraIcons 的标准 IconScan 区分）。 */
 private val IconScanMidline: ImageVector by lazy {
-    iconBuilder("Scan") {
+    auroraIcon("Scan") {
         moveTo(3f, 7f)
         lineTo(3f, 5f)
         arcTo(2f, 2f, 0f, false, true, 5f, 3f)
@@ -1270,7 +1240,7 @@ private val IconScanMidline: ImageVector by lazy {
 
 /** lucide sliders-horizontal（设置行）：三条横线 + 滑块圆点。 */
 private val IconSettings: ImageVector by lazy {
-    iconBuilder("SettingsSliders") {
+    auroraIcon("SettingsSliders") {
         moveTo(21f, 4f)
         lineTo(14f, 4f)
         moveTo(10f, 4f)
@@ -1292,28 +1262,9 @@ private val IconSettings: ImageVector by lazy {
     }
 }
 
-/** lucide folder。 */
-private val IconFolder: ImageVector by lazy {
-    iconBuilder("Folder") {
-        moveTo(20f, 20f)
-        arcTo(2f, 2f, 0f, false, false, 22f, 18f)
-        lineTo(22f, 8f)
-        arcTo(2f, 2f, 0f, false, false, 20f, 6f)
-        lineTo(12.1f, 6f)
-        arcTo(2f, 2f, 0f, false, true, 10.41f, 5.1f)
-        lineTo(9.6f, 3.9f)
-        arcTo(2f, 2f, 0f, false, false, 7.93f, 3f)
-        lineTo(4f, 3f)
-        arcTo(2f, 2f, 0f, false, false, 2f, 5f)
-        lineTo(2f, 18f)
-        arcTo(2f, 2f, 0f, false, false, 4f, 20f)
-        close()
-    }
-}
-
 /** lucide tag（主路径；小尺寸省铆点）。 */
 private val IconTagSmall: ImageVector by lazy {
-    iconBuilder("TagSmall") {
+    auroraIcon("TagSmall") {
         moveTo(12.586f, 2.586f)
         arcTo(2f, 2f, 0f, false, false, 11.172f, 2f)
         lineTo(4f, 2f)
@@ -1325,21 +1276,5 @@ private val IconTagSmall: ImageVector by lazy {
         lineTo(21.29f, 14.71f)
         arcTo(2.426f, 2.426f, 0f, false, false, 21.29f, 11.29f)
         close()
-    }
-}
-
-/** lucide arrow-down-up（排序循环；同 TopBar 的 ArrowDownUp 绘制）。 */
-private val IconArrowUpDown: ImageVector by lazy {
-    iconBuilder("ArrowUpDown") {
-        moveTo(3f, 16f)
-        lineTo(7f, 20f)
-        lineTo(11f, 16f)
-        moveTo(7f, 20f)
-        lineTo(7f, 4f)
-        moveTo(21f, 8f)
-        lineTo(17f, 4f)
-        lineTo(13f, 8f)
-        moveTo(17f, 4f)
-        lineTo(17f, 20f)
     }
 }

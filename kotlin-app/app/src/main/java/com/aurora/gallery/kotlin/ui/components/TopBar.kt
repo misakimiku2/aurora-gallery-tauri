@@ -865,52 +865,22 @@ private fun TopBarButton(
     }
 }
 
-// ---- 自绘图标：lucide 线性风格（对齐 React 版 lucide-react 图标，24 视口 / 2 线宽 / 圆头）----
-// M4c 2.6：builder 上移 [AuroraIcons]（设置页图形化复用同一套画法），此处仅别名转发。
-
-private fun iconBuilder(
-    name: String,
-    block: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
-): ImageVector = auroraIcon(name, block)
+// ---- 自绘图标：TopBar 专属的几颗（lucide 线性风格，24 视口 / 2 线宽 / 圆头）----
+// 共享图标已上移 AuroraIcons.kt（第 20 刀收编 IconX/IconSearch/IconArrowDownUp/
+// IconMoreVertical/IconChevronDown/IconFolder），此处直接引用同包共享版本。
 
 // internal：AuroraSubmenuHeader（已拆到 AuroraDropdown.kt，第 17 刀）引用
 internal val IconChevronLeft: ImageVector by lazy {
-    iconBuilder("ChevronLeft") {
+    auroraIcon("ChevronLeft") {
         moveTo(15f, 18f)
         lineTo(9f, 12f)
         lineTo(15f, 6f)
     }
 }
 
-// IconChevronRight 已上移 AuroraIcons.kt 共享，本文件直接引用同包共享版本。
-
-/** lucide more-vertical：竖排三点（M8b 1.4 手机竖屏「更多」菜单按钮）。 */
-// M8b 验收反馈二轮：三点原用「0.01 单位线段+圆头笔帽」画（同 SelectionBar M4b 反馈前的
-// 旧技法），直径 ≈2 视口单位，20dp 下渲染出 ≈1.7dp 的点，用户对比选择栏同款图标偏小。
-// 对齐 SelIconMore（r=2 实心圆，直径 4 视口单位 ≈3.3dp），双处「更多」视觉一致。
-private val IconMoreVertical: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "MoreVertical",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    ).apply {
-        path(fill = SolidColor(Color.Black)) {
-            listOf(5f, 12f, 19f).forEach { cy ->
-                // 实心圆 r=2：两个 arcTo 半圆拼整圆（NonZero 填充下互不干扰）
-                moveTo(10f, cy)
-                arcTo(2f, 2f, 0f, false, true, 14f, cy)
-                arcTo(2f, 2f, 0f, false, true, 10f, cy)
-                close()
-            }
-        }
-    }.build()
-}
-
 /** lucide panel-left：面板外框 + 左分隔竖线（侧栏开关，React TopBar 最左按钮同款）。 */
 private val IconPanelLeft: ImageVector by lazy {
-    iconBuilder("PanelLeft") {
+    auroraIcon("PanelLeft") {
         roundedRect(3f, 3f, 18f, 18f, 2f)
         moveTo(9f, 3f)
         lineTo(9f, 21f)
@@ -923,7 +893,7 @@ private val IconPanelLeft: ImageVector by lazy {
 
 /** lucide settings-2：双横线 + 双旋钮（设置入口，M4c 横屏手机顶栏兜底）。 */
 private val IconSettings2: ImageVector by lazy {
-    iconBuilder("Settings2") {
+    auroraIcon("Settings2") {
         moveTo(20f, 7f)
         lineTo(11f, 7f)
         moveTo(14f, 17f)
@@ -939,47 +909,8 @@ private val IconSettings2: ImageVector by lazy {
     }
 }
 
-// internal：SearchPill.kt 与筛选 Sheet（第 19 刀）共用（第 18 刀降权）
-internal val IconSearch: ImageVector by lazy {
-    iconBuilder("Search") {
-        // circle(11, 11, r=8)
-        moveTo(3f, 11f)
-        arcTo(8f, 8f, 0f, true, true, 19f, 11f)
-        arcTo(8f, 8f, 0f, true, true, 3f, 11f)
-        close()
-        moveTo(21f, 21f)
-        lineTo(16.65f, 16.65f)
-    }
-}
-
-// internal：SearchPill.kt 与筛选 Sheet（第 19 刀）共用（第 18 刀降权）
-internal val IconX: ImageVector by lazy {
-    iconBuilder("X") {
-        moveTo(18f, 6f)
-        lineTo(6f, 18f)
-        moveTo(6f, 6f)
-        lineTo(18f, 18f)
-    }
-}
-
-private val IconArrowDownUp: ImageVector by lazy {
-    iconBuilder("ArrowDownUp") {
-        // lucide arrow-down-up：左列向下箭头 + 右列向上箭头
-        moveTo(3f, 16f)
-        lineTo(7f, 20f)
-        lineTo(11f, 16f)
-        moveTo(7f, 20f)
-        lineTo(7f, 4f)
-        moveTo(21f, 8f)
-        lineTo(17f, 4f)
-        lineTo(13f, 8f)
-        moveTo(17f, 4f)
-        lineTo(17f, 20f)
-    }
-}
-
 private val IconCalendar: ImageVector by lazy {
-    iconBuilder("Calendar") {
+    auroraIcon("Calendar") {
         roundedRect(3f, 4f, 18f, 18f, 2f)
         moveTo(8f, 2f)
         lineTo(8f, 6f)
@@ -991,7 +922,7 @@ private val IconCalendar: ImageVector by lazy {
 }
 
 private val IconGrid: ImageVector by lazy {
-    iconBuilder("Grid") {
+    auroraIcon("Grid") {
         roundedRect(3f, 3f, 18f, 18f, 2f)
         moveTo(3f, 9f)
         lineTo(21f, 9f)
