@@ -65,7 +65,16 @@ import kotlin.math.abs
  */
 class NativeGalleryView @JvmOverloads constructor(
     context: Context,
-) : FrameLayout(context), DialogTheme {
+    /** DialogTheme 委托实例（第 21 刀）：默认自建即可，init 里 bind 到本类可变状态 */
+    paletteContract: PaletteContract = PaletteContract(),
+) : FrameLayout(context),
+    // 取值 lambda 每次调用读最新字段：palette 随暗色主题切换整体重赋，不能构造期捕获；
+    // 超类型委托表达式引用不到 this 的属性，故经构造参数传入并在 init 里 bind
+    DialogTheme by paletteContract {
+
+    init {
+        paletteContract.bind(paletteNow = { palette }, darkNow = { isDarkTheme })
+    }
 
     interface Listener {
         /**
@@ -253,25 +262,9 @@ class NativeGalleryView @JvmOverloads constructor(
     var lanAllowEdit: Boolean = false
 
     private fun colorBg() = palette.main
-    // colorPanel 不在此处私有定义：DialogTheme 接口已带默认实现（palette.panel 同值），
-    // Kotlin 里私有成员与父类同签名共存会被拒（VIRTUAL_MEMBER_HIDDEN），删掉后调用点
-    // 落回接口默认实现，语义零变化。
-    override fun isDarkTheme(): Boolean = isDarkTheme
-    override fun colorBorder(): Int = palette.border
-    override fun colorTextPrimary(): Int = palette.textPrimary
-    override fun colorTextSecondary(): Int = palette.textSecondary
-    override fun colorAccent(): Int = palette.primary
-    override fun colorTagBg(): Int = palette.tagBg
-    override fun colorTagText(): Int = palette.tagText
-    override fun colorTagBorder(): Int = palette.tagBorder
-    override fun colorTextBoxBg(): Int = palette.textBoxBg
-    override fun colorDialogBg(): Int = palette.dialogBg
-    override fun colorMenuBg(): Int = palette.menuBg
-    override fun colorButtonSecondaryBg(): Int = palette.buttonSecondaryBg
-    override fun colorButtonSecondaryText(): Int = palette.buttonSecondaryText
-    // 提示文本颜色（比次文字更淡，纯色无透明度）
-    override fun colorHint(): Int = palette.hint
-    override fun colorDanger(): Int = palette.danger
+    // DialogTheme 的 15 个 colorXxx()/isDarkTheme() 取值实现已抽到 PaletteContract.kt
+    // （拆分清单第 21 刀），本类以 `DialogTheme by PaletteContract(...)` 委托实现；
+    // colorPanel 仍走接口默认实现（palette.panel 同值），取舍见 PaletteContract 的 KDoc。
     /** 主背景上加一层透明度（顶栏 / 缩略图条 / 底信息条的半透底） */
     private fun colorBgAlpha(alpha: Int): Int = withAlpha(palette.main, alpha)
     /** 抽屉预览图的占位底 */
