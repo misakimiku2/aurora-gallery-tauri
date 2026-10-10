@@ -862,12 +862,26 @@ class MainActivity : ComponentActivity() {
      *
      * 只是**兜底**。真图一上屏，覆盖层就逐帧改用实测矩形（`ViewerTransition.liveEnd`），
      * 因为元数据的宽高可能被 EXIF 旋转反过来，纯预测会落歪、揭幕那一帧会看到图跳一下。
+     *
+     * 2026-10-10：**宽高缺失时退回卡片封面的 intrinsic 比例**，不再铺满整屏。远端（LAN）
+     * 行就是这样——`LanMetadataItem` 只有 path/tags/description/sourceUrl，**协议里没有
+     * 宽高**，所以 `lanImageOf` 只能给 null。原兜底「先按整屏铺」的后果是：放大动画先撑到
+     * 整屏，真图上屏后实测矩形与预测差 >8%，`ViewerTransition.refreshEnd` 当场改写落点，
+     * 用户看到图先铺满、再跳一下缩回来（平板真机实测）。封面 drawable 就是这张图的缩略图、
+     * 比例与原图一致，用它算 fit 落点能直接命中，不必等实测改写。
      */
-    private fun predictedViewerRect(image: Image): RectF? {
+    private fun predictedViewerRect(image: Image, cover: ImageView?): RectF? {
         val win = contentWindowRect() ?: return null
-        val iw = image.width?.toInt() ?: 0
-        val ih = image.height?.toInt() ?: 0
-        // 元数据没记宽高（个别 LAN/异常行）：先按整屏铺，真图上屏后由实测矩形改写
+        var iw = image.width?.toInt() ?: 0
+        var ih = image.height?.toInt() ?: 0
+        if (iw <= 0 || ih <= 0) {
+            val d = cover?.drawable
+            if (d != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
+                iw = d.intrinsicWidth
+                ih = d.intrinsicHeight
+            }
+        }
+        // 两侧都没有比例（封面还没位图/异常行）：保持原兜底——先按整屏铺，真图上屏后由实测改写
         if (iw <= 0 || ih <= 0) return win
         val s = kotlin.math.min(win.width() / iw, win.height() / ih)
         val w = iw * s
@@ -888,7 +902,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun openViewerFromGrid(image: Image, cover: ImageView) {
         val view = ensureViewer()
-        val predicted = predictedViewerRect(image)
+        val predicted = predictedViewerRect(image, cover)
         // 起点快照：退出时网格查不到落点的兜底（只在 fileId 还对得上时用）
         viewerEnterAnchor = viewerTransition.windowRectOf(cover)?.let { image.id to it }
         val started = predicted != null && viewerTransition.startEnter(

@@ -220,3 +220,4 @@
 - **心跳/token 时序表（0.2）就是 Kotlin 状态机的验收对照**：写代码前把 15s 超时/5s 心跳×3/15s 重试/401 即清/SESSION 3600s 做成常量表，别散落魔法数。
 - **桌面二维码依赖外网 api.qrserver.com**：验收环境若离线，桌面端二维码显示不出≠本 App 的 bug——手输地址/访问码永远可用（fallback 是交付物的一部分）。
 - **黑盒先决条件**：mobile-ui-tester 用例跑之前宿主桌面端必须起着 lan_share 且连通口径已知——把「启动桌面端→开共享→拿地址码」写进用例环境步骤，否则用例集体假失败。
+- **远端（LAN）行没有宽高——协议里就没有，不是忘了回填**（2026-10-10 补记）：`metadata/batch` 的 `LanMetadataItem` 只有 `path` / `tags` / `description` / `sourceUrl(s)`，**没有宽高字段**，所以 `GalleryViewModelLanBrowse.kt` 的 `lanImageOf` 只能写 `width = null, height = null`。连带后果：① 查看器抽屉「尺寸」与底部信息对远端图恒显示 `—`；② 查看器打开动画的预测落点（`MainActivity.predictedViewerRect`）在宽高缺失时会退化。**②已修**：宽高缺失时退回**卡片封面的 intrinsic 比例**算 fit 落点（封面就是该图的缩略图、比例与原图一致），平板真机实测预测与实测矩形尺寸完全吻合（1173×2800 对 1173×2800），不再触发 `ViewerTransition.refreshEnd` 的「差 >8% 就改写落点」——此前会先铺满整屏再跳一下缩回来。**要真给上宽高，得先扩桌面端协议**（本侧无从查证）。
