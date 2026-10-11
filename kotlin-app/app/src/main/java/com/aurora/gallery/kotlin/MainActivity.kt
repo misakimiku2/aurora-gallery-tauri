@@ -335,14 +335,8 @@ class MainActivity : ComponentActivity() {
      * 200MB 磁盘缓存，`destroy()` 会把它 shutdown，所以每次进出查看器重建实例等于每次
      * 清空缓存（4.2 要盯的内存台阶正来自这种重建）。
      */
-    private var viewer: NativeGalleryView? = null
-
-    private fun ensureViewer(): NativeGalleryView = viewer ?: NativeGalleryView(this).also {
-        it.listener = viewerListener(it)
-        // 沉浸态的系统栏/窗口色接管：查看器只发「进/出」，动 flags 与色值一律在宿主
-        it.onImmersiveBarsChange = { hidden -> setViewerImmersiveBars(hidden) }
-        viewer = it
-    }
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal var viewer: NativeGalleryView? = null
 
     // —— 查看器进出过渡（2026-10-08）：网格卡片 ⇄ 全屏图，贝塞尔节奏的放大/收缩 ——
 
@@ -351,12 +345,14 @@ class MainActivity : ComponentActivity() {
      * 拦截壳）的兄弟节点且在其后，所以同一段动画能同时盖住网格层与查看器层——这两层在
      * Compose 里是父子 Box，从组合内部没法把动画画到它们之上。
      */
-    private val viewerTransition: ViewerTransition by lazy {
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal val viewerTransition: ViewerTransition by lazy {
         ViewerTransition(findViewById(android.R.id.content))
     }
 
     /** 退出动画落点的查询通道：由当前存活的那个 [FileGrid] 注册（见 PhotoRectQuery）。 */
-    private val viewerPhotoRectQuery = PhotoRectQuery()
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal val viewerPhotoRectQuery = PhotoRectQuery()
 
     /**
      * 进入动画的起点快照（fileId + 当时的封面矩形，窗口坐标）。
@@ -364,82 +360,8 @@ class MainActivity : ComponentActivity() {
      * 退出时先按 fileId 回查网格**当前**可见矩形（用户可能翻过页、网格也可能滚过），
      * 查不到才退回这份快照——而且只在它仍对应同一张图时用，否则会把图飞回另一张卡片上。
      */
-    private var viewerEnterAnchor: Pair<String, RectF>? = null
-
-    /** 内容根（覆盖层所在的容器）在窗口坐标系里的矩形；过渡动画的坐标都从这里起算。 */
-    private fun contentWindowRect(): RectF? =
-        viewerTransition.windowRectOf(findViewById<ViewGroup>(android.R.id.content))
-
-    /**
-     * 进入动画的预测落点：按库里记的宽高把图 fit-center 到整个窗口。
-     *
-     * 只是**兜底**。真图一上屏，覆盖层就逐帧改用实测矩形（`ViewerTransition.liveEnd`），
-     * 因为元数据的宽高可能被 EXIF 旋转反过来，纯预测会落歪、揭幕那一帧会看到图跳一下。
-     *
-     * 2026-10-10：**宽高缺失时退回卡片封面的 intrinsic 比例**，不再铺满整屏。远端（LAN）
-     * 行就是这样——`LanMetadataItem` 只有 path/tags/description/sourceUrl，**协议里没有
-     * 宽高**，所以 `lanImageOf` 只能给 null。原兜底「先按整屏铺」的后果是：放大动画先撑到
-     * 整屏，真图上屏后实测矩形与预测差 >8%，`ViewerTransition.refreshEnd` 当场改写落点，
-     * 用户看到图先铺满、再跳一下缩回来（平板真机实测）。封面 drawable 就是这张图的缩略图、
-     * 比例与原图一致，用它算 fit 落点能直接命中，不必等实测改写。
-     */
-    private fun predictedViewerRect(image: Image, cover: ImageView?): RectF? {
-        val win = contentWindowRect() ?: return null
-        var iw = image.width?.toInt() ?: 0
-        var ih = image.height?.toInt() ?: 0
-        if (iw <= 0 || ih <= 0) {
-            val d = cover?.drawable
-            if (d != null && d.intrinsicWidth > 0 && d.intrinsicHeight > 0) {
-                iw = d.intrinsicWidth
-                ih = d.intrinsicHeight
-            }
-        }
-        // 两侧都没有比例（封面还没位图/异常行）：保持原兜底——先按整屏铺，真图上屏后由实测改写
-        if (iw <= 0 || ih <= 0) return win
-        val s = kotlin.math.min(win.width() / iw, win.height() / ih)
-        val w = iw * s
-        val h = ih * s
-        val left = win.left + (win.width() - w) / 2f
-        val top = win.top + (win.height() - h) / 2f
-        return RectF(left, top, left + w, top + h)
-    }
-
-    /**
-     * 从网格点开一张图：先只起覆盖层的展开动画，**查看器等展开到位再挂载**。
-     *
-     * 为什么不当场挂载：写「打开查看器」状态 = 一次 Compose 重组 + 挂载整棵查看器视图树 +
-     * `open()`（缩略图条 submit、抽屉重建、发图、首轮 measure/layout），全是主线程同步活。
-     * 模拟器实测这一段 190ms、真机更长——压在 320ms 的展开动画里，动画就只剩两三帧，
-     * 用户看到的就是「点一下，图跳一下变大」（真机报障原话：只有 2 个阶段）。错开之后同样
-     * 的开销藏在覆盖层那张已经放大到位的图底下，一帧不丢。
-     */
-    private fun openViewerFromGrid(image: Image, cover: ImageView) {
-        val view = ensureViewer()
-        val predicted = predictedViewerRect(image, cover)
-        // 起点快照：退出时网格查不到落点的兜底（只在 fileId 还对得上时用）
-        viewerEnterAnchor = viewerTransition.windowRectOf(cover)?.let { image.id to it }
-        val started = predicted != null && viewerTransition.startEnter(
-            cover = cover,
-            scrimColor = view.transitionScrimColor(),
-            predictedEnd = predicted,
-            liveEnd = { out -> view.currentImageRect(out) },
-            onExpansionDone = { mountViewer(view, image.id) },
-            onReveal = { view.revealAfterTransition() },
-        )
-        if (started) {
-            armPendingOpenGuard()
-        } else {
-            view.holdHiddenForTransition = false
-            viewModel.appState.openViewer(image.id)
-        }
-    }
-
-    /** 展开到位：这一刻才真正挂载查看器（先置挂起位，[NativeGalleryView.open] 读它）。 */
-    private fun mountViewer(view: NativeGalleryView, fileId: String) {
-        disarmPendingOpenGuard()
-        view.holdHiddenForTransition = true
-        viewModel.appState.openViewer(fileId)
-    }
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal var viewerEnterAnchor: Pair<String, RectF>? = null
 
     /**
      * 展开窗口期（查看器还没挂载、`viewingFileId` 还是空）的返回拦截。
@@ -447,363 +369,8 @@ class MainActivity : ComponentActivity() {
      * 不拦的话这 320ms 里按返回会落到网格那条 4.3 导航链上——退掉当前文件夹，然后回调照跑、
      * 查看器在别的视图上冒出来。拦下来 = 撤回这次「点开」，覆盖层无声退场，屏幕回到点之前。
      */
-    private var pendingOpenGuard: OnBackPressedCallback? = null
-
-    private fun armPendingOpenGuard() {
-        disarmPendingOpenGuard()
-        pendingOpenGuard = object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                viewerTransition.cancel()
-                disarmPendingOpenGuard()
-            }
-        }.also { onBackPressedDispatcher.addCallback(it) }
-    }
-
-    private fun disarmPendingOpenGuard() {
-        pendingOpenGuard?.remove()
-        pendingOpenGuard = null
-    }
-
-    /**
-     * 退出：图片缩回网格卡片，动画跑完才真的关查看器、收组合层。
-     *
-     * 落点三级：① 网格当前可见的同 id 卡片；② 进入时那份起点快照（仍对应同一张才用）；
-     * ③ 都没有 = 缩到窗口中央并淡出（用户翻过页、网格滚过之后就是这个，比硬切有交代，
-     * 也不会飞到一个编出来的位置上）。
-     */
-    private fun closeViewerWithTransition(view: NativeGalleryView) {
-        // 已经有一段在跑：先把它跑完（进入=揭幕、退出=真关），再决定要不要接着做退出动画。
-        // 连点两次返回 = 第二段直接落定，不并发起第二个覆盖层，也不把同一段收尾跑两遍。
-        if (viewerTransition.isRunning) {
-            viewerTransition.finishNow()
-            if (!view.isOpen()) return
-        }
-        val fileId = view.transitionFileId()
-        val drawable = view.currentImageDrawable()
-        val start = RectF()
-        if (fileId == null || drawable == null || !view.currentImageRect(start)) {
-            closeViewerNow(view)
-            return
-        }
-        val target = RectF()
-        var anchored = viewerPhotoRectQuery.query?.invoke(fileId, target) == true
-        if (!anchored) {
-            val anchor = viewerEnterAnchor
-            if (anchor != null && anchor.first == fileId && anchor.second.width() > 0f) {
-                target.set(anchor.second)
-                anchored = true
-            }
-        }
-        if (!anchored) {
-            val win = contentWindowRect()
-            if (win == null) {
-                closeViewerNow(view)
-                return
-            }
-            val w = (start.width() * 0.35f).coerceAtLeast(1f)
-            val h = (start.height() * 0.35f).coerceAtLeast(1f)
-            val cx = win.centerX()
-            val cy = win.centerY()
-            target.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
-        }
-        view.hideForTransition()
-        val started = viewerTransition.startExit(
-            startRect = start,
-            drawable = drawable,
-            endRect = target,
-            scrimColor = view.transitionScrimColor(),
-            fadeImage = !anchored,
-            onFinish = { closeViewerNow(view) },
-        )
-        if (!started) {
-            // 覆盖层没起来（系统「移除动画」被打开等）：可见性得自己补回来再硬关，
-            // 否则整层停在 INVISIBLE，而动画永远不会来揭幕
-            view.visibility = View.VISIBLE
-            closeViewerNow(view)
-        }
-    }
-
-    private fun closeViewerNow(view: NativeGalleryView) {
-        view.close()
-        viewModel.appState.closeViewer()
-    }
-
-    private fun viewerListener(view: NativeGalleryView) = object : NativeGalleryView.Listener {
-        override fun onClose(animate: Boolean) {
-            // 用户主动退出 = 图片缩回网格卡片（2026-10-08）；animate=false 是删除/移出到空之后
-            // 的连带关闭，那张图在网格里已经没了，直接硬关。
-            if (animate) closeViewerWithTransition(view) else closeViewerNow(view)
-        }
-
-        /**
-         * 3.3：翻页跟到当前这张。不回写的话转屏重建 Activity 后会回到「进入时那张」，
-         * 而不是用户正在看的那张。
-         * M6b 阶段 3：自动提取触发点——开关开且当前图未提取（缓存无记录）时后台提取，
-         * 成败都经 [applyPaletteResult] 回填（成功塞色块、失败置手动重试按钮），无 Toast。
-         */
-        override fun onNavigate(index: Int) {
-            val fileId = view.fileIdAt(index) ?: return
-            viewModel.appState.viewerNavigated(fileId)
-            maybeAutoExtractPalette(fileId)
-        }
-
-        /**
-         * 3.2 删除：查看器自己已经把这张从它的序列里摘掉并前进到下一张（confirmDelete），
-         * 宿主只负责发起真正的删除请求。确认弹窗是查看器内的 `DeleteConfirmDialog`
-         * （与网格 4.2 的应用内确认同一形态），不走 [onDeleteSelection] 那条网格链路。
-         * 本地的删完对账交给既有 ContentObserver 重扫。
-         * M6a 阶段 6：[isLan] 分流远端链路——单张就是一个元素的批次走
-         * [GalleryViewModel.deleteLanFiles]（数据层顺带维护会话缓存 + 重拉），Toast
-         * 口径与网格批量删除一致；入口显隐由查看器按 lanAllowEdit 门禁（阶段 4 的
-         * 「删除归阶段 6」占位由此兑现）。
-         */
-        override fun onDelete(fileId: String, isLan: Boolean) {
-            if (isLan) {
-                viewModel.deleteLanFiles(listOf(fileId)) { ok, fail ->
-                    Toast.makeText(
-                        this@MainActivity,
-                        when {
-                            fail == 0 -> "已删除 $ok 张"
-                            ok == 0 -> "删除失败"
-                            else -> "已删除 $ok 张，失败 $fail 张"
-                        },
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                return
-            }
-            viewModel.resolveSelectionUris(setOf(fileId)) { uris -> requestDelete(uris) }
-        }
-
-        /** 3.2 分享：单图版，复用网格那套 ACTION_SEND_MULTIPLE。 */
-        override fun onShare(filePath: String) {
-            if (filePath.isEmpty()) {
-                // 防御分支（正常路径 filePath 恒非空）；文件操作归 M4b
-                toastSoon("分享", "M4b")
-                return
-            }
-            shareUris(listOf(Uri.parse(filePath)))
-        }
-
-        /** 3.3：幻灯片配置查看器已就地生效（能播、能设间隔），M3 没有设置持久层可写。 */
-        override fun onUpdateSlideshowConfig(configJson: String) {
-            Log.i("AuroraViewer", "slideshow config applied: $configJson")
-        }
-
-        // —— 以下入口的能力归属已按 M4 拆分重标（M4a 4.3）：查看器的复制/移动走
-        // MediaStore（M4b 1.5 已落地）；颜色/主色调链路归 M6；onMore/onEditTags/
-        // onLongPress 三个死回调已随 6.1 收口从 Listener 删除——
-
-        /**
-         * M4a 2.1：查看器三个编辑弹窗的落库分支。键与语义见
-         * [NativeGalleryView.Listener.onUpdateFile] 的契约注释。
-         *
-         * 本方法是「查看器协议 → 数据层」的唯一适配点：解析在这里做，落库与快照重算在
-         * [GalleryViewModel.saveFileUpdates]，元数据面板（4.2）直接调后者、不经过这里。
-         *
-         * M6a 阶段 5：[isLan] 分支是 D31 数据层铁律的守门员——远端项的编辑永远走
-         * [GalleryViewModel.saveLanFileUpdates]（LanClient 回写桌面），绝不落本地 FFI；
-         * 键存在才传、缺省=null=不改（对齐契约 §2.2 的 patch 语义）。
-         */
-        override fun onUpdateFile(fileId: String, updatesJson: String, isLan: Boolean) {
-            val updates = try {
-                JSONObject(updatesJson)
-            } catch (e: JSONException) {
-                Log.w("AuroraKotlin", "[Edit] updatesJson 解析失败: $updatesJson", e)
-                Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
-                return
-            }
-            val tags = updates.optJSONArray("tags")?.let { arr ->
-                // getString 而非 optString：契约里 tags 恒为字符串数组（见 Listener 注释），
-                // 元素类型不对时宁可让这次保存炸在日志里，也不静默丢掉一个标签。
-                List(arr.length()) { arr.getString(it) }
-            }
-            val description = if (updates.has("description")) updates.getString("description") else null
-            val sourceUrl = if (updates.has("sourceUrl")) updates.getString("sourceUrl") else null
-            // P1(b) 多值：查看器现在只发 sourceUrls（整体覆盖，空数组 = 清空）；
-            // sourceUrl 单值键仍认，供旧调用点/后续手动构造的 JSON。
-            val sourceUrls = updates.optJSONArray("sourceUrls")?.let { arr ->
-                List(arr.length()) { arr.getString(it) }
-            }
-            if (tags == null && description == null && sourceUrl == null && sourceUrls == null) {
-                // 走到这里的实际只有 `{"name": …}`（查看器的重命名弹窗）：重命名改的是
-                // MediaStore 的 DISPLAY_NAME（M4b 1.5 接通写原语，直写、被拦才要授权），
-                // 元数据行挂在同一 file_id 上不动（规划五要点②）。查看器已就地更新了
-                // 自己列表里的名字，失败时靠重扫对账纠正。
-                if (isLan) {
-                    // 防御：LAN 项的重命名入口已双重不可达（菜单不含 + showRenameDialog
-                    // 护栏），真到了这里也不能把远端 path 写进本地 MediaStore。
-                    Log.w("AuroraKotlin", "[Edit] LAN 项的重命名请求被拦截（理论不可达）: $fileId")
-                    return
-                }
-                val newName = updates.optString("name")
-                if (newName.isNotEmpty()) {
-                    withResolvedUris(listOf(fileId)) { uris ->
-                        viewModel.renameFiles(
-                            listOf(uris.first() to newName),
-                            onDone = { n ->
-                                if (n == 0) {
-                                    Toast.makeText(this@MainActivity, "重命名失败", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            onBlocked = writeConsentFor { blocked ->
-                                opJson("rename", blocked).put(
-                                    "targets",
-                                    JSONArray(blocked.map { JSONArray(listOf(it.toString(), newName)) }),
-                                )
-                            },
-                        )
-                    }
-                }
-                return
-            }
-            if (isLan) {
-                // D31 守门员分支：LAN 项的标签/描述/来源回写远端桌面库（allow_edit 关闭
-                // 时数据层回 false →「保存失败」），不碰本地词表/本地过滤。
-                viewModel.saveLanFileUpdates(fileId, tags, description, sourceUrl, sourceUrls) { ok ->
-                    Toast.makeText(
-                        this@MainActivity,
-                        if (ok) "已保存" else "保存失败",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-                return
-            }
-            viewModel.saveFileUpdates(fileId, tags, description, sourceUrl, sourceUrls) { ok ->
-                if (!ok) Toast.makeText(this@MainActivity, "保存失败", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        override fun onColorSearch(colorHex: String) {
-            viewModel.startColorSearch(colorHex)
-        }
-
-        override fun onExtractPalette(fileId: String, filePath: String) {
-            viewModel.extractPalette(fileId, filePath) { hexes ->
-                applyPaletteResult(fileId, hexes, silent = false)
-            }
-        }
-
-        /** M6b 阶段 2：查看器「更多 → AI 分析」（本地项；LAN 项菜单不出现该条）。 */
-        override fun onAiAnalyze(fileId: String) {
-            viewModel.startAiAnalysis(listOf(fileId))
-        }
-
-        /** M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP → 命中进 LAN 搜索结果视图。 */
-        override fun onFindSimilar(fileId: String) {
-            viewModel.findSimilarOnDesktop(fileId) { ok ->
-                if (!ok) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "未找到相似图（需连接桌面端且模型/索引就绪）",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            }
-        }
-
-        /** M4b 1.5：查看器「更多」的复制/移动 → FolderPickerDialog（folderTree 从 VM 快照构造）。 */
-        override fun onCopyToFolder(fileId: String) {
-            view.showFolderPickerDialog("copy", fileId, folderTreeJson()) { name ->
-                onViewerNewAlbum(fileId, name, "copy")
-            }
-        }
-
-        override fun onMoveToFolder(fileId: String) {
-            view.showFolderPickerDialog("move", fileId, folderTreeJson()) { name ->
-                onViewerNewAlbum(fileId, name, "move")
-            }
-        }
-
-        /**
-         * M4b 1.5：查看器弹窗确认（1.4 的 onFolderPickerConfirm 从 Toast 改为真执行；
-         * move 时查看器自己已把这张从序列里摘掉，宿主只管落库，失败靠重扫对账纠正）。
-         */
-        override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
-            performCopyMoveToFolder(listOf(fileId), targetFolderId, type)
-        }
-
-        /** M5 3.2：查看器「加入画布」（仅平板菜单可达；FFI 解析宽高 → 装箱落 store）。 */
-        override fun onAddToCanvas(fileId: String) {
-            viewModel.canvasSourcesFor(listOf(fileId)) { sources ->
-                when (val r = viewModel.canvasStore.addImages(sources)) {
-                    is AddResult.Added -> Toast.makeText(
-                        this@MainActivity,
-                        "已加入画布（${viewModel.canvasStore.count}/24）",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    AddResult.AllDuplicates -> Toast.makeText(
-                        this@MainActivity, "这张已在画布中", Toast.LENGTH_SHORT,
-                    ).show()
-                    AddResult.Full -> Toast.makeText(
-                        this@MainActivity, "画布已满（24/24）", Toast.LENGTH_SHORT,
-                    ).show()
-                }
-            }
-        }
-
-        /**
-         * M6a 阶段 4（D34）：查看器「保存到设备」（仅 LAN 项的菜单项）。
-         * VM 下载原文件 → MediaStore Downloads insert；重名自动序号，成功 Toast 带落定名。
-         */
-        override fun onSaveToDevice(remotePath: String, imageUrl: String) {
-            Toast.makeText(this@MainActivity, "正在保存到设备…", Toast.LENGTH_SHORT).show()
-            viewModel.saveLanImageToDownloads(remotePath, imageUrl) { ok, savedName ->
-                Toast.makeText(
-                    this@MainActivity,
-                    if (ok) "已保存到下载${savedName?.let { "：$it" } ?: ""}" else "保存失败",
-                    Toast.LENGTH_LONG,
-                ).show()
-            }
-        }
-    }
-
-    /** FolderPickerDialog 的 folderTreeJson：Kotlin 侧是扁平 bucket 列表（D18），全为根节点。 */
-    private fun folderTreeJson(): String {
-        val folders = viewModel.folders.value
-        val folderArr = org.json.JSONArray()
-        val roots = org.json.JSONArray()
-        folders.forEach { f ->
-            roots.put(f.id)
-            folderArr.put(
-                org.json.JSONObject()
-                    .put("id", f.id)
-                    .put("name", f.name)
-                    .put("parentId", JSONObject.NULL)
-                    .put("children", org.json.JSONArray()),
-            )
-        }
-        return org.json.JSONObject()
-            .put("roots", roots)
-            .put("folders", folderArr)
-            .toString()
-    }
-
-    /**
-     * 查看器侧「+ 新建相册」（M4b 1.3，与网格侧同一语义）：重名 → View 体系的合并确认
-     * （D13：弹窗两处实现、写入路径只有一条）；不重名 → 校验后建在 Pictures/<名字>。
-     */
-    private fun onViewerNewAlbum(fileId: String, albumName: String, type: String) {
-        val existing = viewModel.folders.value.firstOrNull { it.name == albumName }
-        if (existing != null) {
-            android.app.AlertDialog.Builder(this)
-                .setTitle("合并到已有相册")
-                .setMessage("已有同名相册「${existing.name}」（${existing.imageCount} 张）。将把所选文件并入该相册。")
-                .setPositiveButton("并入") { d, _ ->
-                    d.dismiss()
-                    performCopyMoveToFolder(listOf(fileId), existing.id, type)
-                }
-                .setNegativeButton("取消", null)
-                .show()
-            return
-        }
-        performCopyMoveToNewAlbum(listOf(fileId), albumName, type)
-    }
-
-    /** 未落地能力的可见占位（M3 3.3：静默无响应在真机上会被当成 bug 报回来）。 */
-    private fun toastSoon(feature: String, milestone: String) {
-        Toast.makeText(this, "$feature 将随 $milestone 提供", Toast.LENGTH_SHORT).show()
-    }
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal var pendingOpenGuard: OnBackPressedCallback? = null
 
     // —— M6b 阶段 3：主色调提取回填与自动提取 ——
 
@@ -812,7 +379,8 @@ class MainActivity : ComponentActivity() {
      * 不存在，Section 4 已在查看器侧隐藏，这里只是兜底）。静默模式：失败只置
      * paletteLoadFailed 让抽屉退回手动按钮，不弹 Toast。
      */
-    private fun maybeAutoExtractPalette(fileId: String) {
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal fun maybeAutoExtractPalette(fileId: String) {
         if (!viewModel.settings.value.autoExtractPalette) return
         if (viewModel.colorPalettesById.value.containsKey(fileId)) return
         val uri = contentUriOf(fileId) ?: return
@@ -832,7 +400,8 @@ class MainActivity : ComponentActivity() {
      * 提取结果回填查看器（手动与自动共用）：成功塞 palette（抽屉清 loading 显示色块），
      * 失败置 paletteLoadFailed（自动提取退回「提取主色调」按钮，手动加 Toast）。
      */
-    private fun applyPaletteResult(fileId: String, hexes: List<String>?, silent: Boolean) {
+    // 已拆到 MainActivityViewer.kt（拆分清单第 31 刀）：跨文件访问需 internal
+    internal fun applyPaletteResult(fileId: String, hexes: List<String>?, silent: Boolean) {
         val view = viewer ?: return
         val json = org.json.JSONObject()
         if (hexes != null) {
@@ -1013,7 +582,7 @@ class MainActivity : ComponentActivity() {
                         scanning = viewModel.scanning.value,
                         thumbnailLoader = viewModel.thumbnailLoader,
                         // 2026-10-08 查看器进出过渡：开图走带覆盖层的那条路，落点通道交给网格注册
-                        onOpenViewer = ::openViewerFromGrid,
+                        onOpenViewer = this@MainActivity::openViewerFromGrid,
                         viewerPhotoRectQuery = viewerPhotoRectQuery,
                         // M6a 阶段 3：LAN 连接快照（网络 Section）
                         lanSnapshot = lanSnapshot,
@@ -1492,7 +1061,7 @@ class MainActivity : ComponentActivity() {
                 ViewerLayerHost(
                     state = appState,
                     displayImages = displayImages,
-                    viewerProvider = ::ensureViewer,
+                    viewerProvider = this@MainActivity::ensureViewer,
                     parentName = currentFolderName,
                     tagsByFile = viewModel.tagsByFile.value,
                     metadataById = viewModel.metadataById.value,
