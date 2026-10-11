@@ -28,8 +28,8 @@ android {
         // manifest requestLegacyExternalStorage → Q 上拿传统视图，直写全放行；R+ 上
         // targetSdk ≤ 29 的应用系统自动给传统视图，API 30+ 授权链原样兜底。
         targetSdk = 29
-        versionCode = 6
-        versionName = "2.2.1"
+        versionCode = 7
+        versionName = "2.3.0"
     }
 
     signingConfigs {

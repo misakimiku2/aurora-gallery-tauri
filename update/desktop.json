@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "platform": "desktop",
-  "version": "2.2.1",
-  "release_name": "v2.2.1",
-  "release_notes": "2.2.1 第三方图库迁移主线（与安卓同步升级）：\n\n【全新】\n· PixCall 库迁移：快照解码 / 层级重建 / 导入记录落库，欢迎页与设置-存储两个入口\n· Eagle 库导入：智能夹按条件自算成员、硬链接优先连文件接管、专题层级压到二级、重跑幂等\n· 资源根旁新增「历史」按钮，一键切回用过的根目录；导入库时可直接切根（切根统一走确认弹窗）\n· 库不在资源根下时提前给出命中率预警，不用导完才发现没匹配上\n· 来源网址改多值（JSON 数组，旧单值自动兼容），可就地编辑，导入从「让位」改「追加」\n· 文件夹时间排序改为取内容最新时间，封面缩略图随排序变化\n· 复制 / 移动目标选择器顶部新增相册搜索框；查看器顶栏旋转钮改为钉屏方向切换\n\n【修复】外部链接在 Tauri 下唤不起浏览器、翻页后永远停在缩略图、切根后局域网共享根路径不更新、只建空专题也算「有东西可迁」等。\n\n完整清单见 Release 页。",
-  "published_at": "2026-10-09",
+  "version": "2.3.0",
+  "release_name": "v2.3.0",
+  "release_notes": "2.3.0 局域网共享收口（与安卓同步升级，桌面界面本版无改动）：\n\n【全新】\n· 局域网共享新增取色搜索端点：手机在局域网里选色，直接搜本机 colors.db（配合安卓端 2.3.0 使用）\n\n【修复】会话管理四处隐患：并发认证留下的悬垂会话、已失效令牌换壳复用、退出登录误杀同设备的新会话、过期清理时的写锁重入死锁（会把整张会话表永久冻结）；配合安卓端修掉退出重进后反复断连重连的振荡。\n\n完整清单见 Release 页。",
+  "published_at": "2026-10-11",
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "installer",
-      "name": "Aurora.Gallery_2.2.1_x64-setup.exe",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.2.1/Aurora.Gallery_2.2.1_x64-setup.exe",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.2.1/Aurora.Gallery_2.2.1_x64-setup.exe",
-      "size": 12776063,
+      "name": "Aurora.Gallery_2.3.0_x64-setup.exe",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.3.0/Aurora.Gallery_2.3.0_x64-setup.exe",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.3.0/Aurora.Gallery_2.3.0_x64-setup.exe",
+      "size": 12766996,
       "size_text": "12.2 MB",
-      "sha256": "b58ad838e75a5333294a324b374fc5f4bbf10ae45cd7402c9c225d9f7cb76435"
+      "sha256": "7660b302ec465d9f7fc94ac35f9c4a814978795dba2805e44ed4026fed8729f9"
     }
   ]
 }
