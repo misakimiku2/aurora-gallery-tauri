@@ -251,7 +251,8 @@ class MainActivity : ComponentActivity() {
      * 选择结果带着 [pendingUploadTargetDir]（发起时记录的远端目标目录）交给
      * [startLanUpload]。
      */
-    private val uploadLauncher = registerForActivityResult(
+    // 已拆到 MainActivityLan.kt（拆分清单第 30 刀）：跨文件访问需 internal
+    internal val uploadLauncher = registerForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(LAN_UPLOAD_MAX_ITEMS),
     ) { uris ->
         val target = pendingUploadTargetDir
@@ -260,48 +261,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /** 上传发起时记录的目标远端目录（共享根为空串）。 */
-    private var pendingUploadTargetDir: String? = null
-
-    /**
-     * 上传入口（LAN 目录网格 TopBar）。allow_upload=false（门禁位来自 browse/
-     * all_image_folders 尾部，D32 拍板后默认 true——置灰态=桌面端手动收紧的真实状态）：
-     * 入口已置灰，点击再提示需桌面端开启。
-     */
-    private fun launchLanUpload(targetDir: String) {
-        if (!viewModel.lanAllowUpload.value) {
-            Toast.makeText(
-                this,
-                "桌面端未开启「允许上传」，请先在桌面端共享设置中开启",
-                Toast.LENGTH_LONG,
-            ).show()
-            return
-        }
-        pendingUploadTargetDir = targetDir
-        uploadLauncher.launch(
-            androidx.activity.result.PickVisualMediaRequest(
-                ActivityResultContracts.PickVisualMedia.ImageOnly,
-            ),
-        )
-    }
-
-    /** 逐个上传：进度与完成都是 Toast（清单阶段 4 口径），完成后 VM 刷新当前目录列表。 */
-    private fun startLanUpload(uris: List<Uri>, targetDir: String) {
-        Toast.makeText(this, "开始上传 ${uris.size} 张…", Toast.LENGTH_SHORT).show()
-        viewModel.uploadUrisToLan(
-            uris,
-            targetDir,
-            onProgress = { idx, total, name, ok, err ->
-                val msg = if (ok) "上传成功（$idx/$total）$name"
-                else "上传失败（$idx/$total）$name${err?.let { "：$it" } ?: ""}"
-                Log.i("AuroraKotlin", "[Lan] $msg")
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-            },
-            onDone = { ok, fail ->
-                val msg = if (fail == 0) "上传完成（$ok 张）" else "上传完成：成功 $ok 张，失败 $fail 张"
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-            },
-        )
-    }
+    // 已拆到 MainActivityLan.kt（拆分清单第 30 刀）：跨文件访问需 internal
+    internal var pendingUploadTargetDir: String? = null
 
     // —— M4b 1.1 文件操作的批量授权（重命名/移动走 createWriteRequest，复制不弹）——
 
