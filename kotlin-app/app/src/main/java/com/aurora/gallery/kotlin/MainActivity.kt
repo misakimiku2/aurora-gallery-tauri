@@ -188,7 +188,8 @@ class MainActivity : ComponentActivity() {
      * 数据与 UI 状态都住在 GalleryViewModel（跨旋转重建保留）。factory 只在 ViewModel
      * 首次创建时求值，这里的横竖屏判断即初始面板可见性，旋转后不会被重算覆盖。
      */
-    private val viewModel: GalleryViewModel by viewModels {
+    // 已拆到 MainActivityStorage.kt 等同包扩展文件（拆分清单 ⑥）：跨文件访问需 internal
+    internal val viewModel: GalleryViewModel by viewModels {
         GalleryViewModel.factory(
             application,
             LayoutVisibility(
@@ -539,39 +540,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // —— M4b 2.3 设置面板：缓存清理 + 备份导出/导入 ——
-
-    private fun computeCacheSizeText(): String {
-        fun dirSize(dir: java.io.File): Long =
-            dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
-        val cacheDir = cacheDir
-        val total = if (cacheDir.exists()) dirSize(cacheDir) else 0L
-        // M4c：去掉 M4b 的「=」前缀（测试反馈观感异常），改「约」表达估算值语义
-        return when {
-            total >= 1L shl 20 -> "约 %.1f MB".format(total.toDouble() / (1L shl 20))
-            total >= 1024 -> "约 %.1f KB".format(total.toDouble() / 1024)
-            else -> "$total B"
-        }
-    }
-
-    private fun clearCache() {
-        lifecycleScope.launch {
-            val freed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                fun dirSize(dir: java.io.File): Long =
-                    dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
-                val before = if (cacheDir.exists()) dirSize(cacheDir) else 0L
-                cacheDir.deleteRecursively()
-                cacheDir.mkdirs()
-                before
-            }
-            Toast.makeText(
-                this@MainActivity,
-                "缓存已清理（释放 %.1f MB）".format(freed.toDouble() / (1L shl 20)),
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-    }
-
     /** 备份导入（2.3）：SAF 选 JSON → 词表并集 + 人物/专题按 id 去重合并（React 同语义）。 */
     private val importBackupLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -579,167 +547,6 @@ class MainActivity : ComponentActivity() {
         if (uri != null) importBackupFrom(uri)
     }
 
-    private fun importBackupFrom(uri: Uri) {
-        lifecycleScope.launch {
-            val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                var tagsAdded = 0
-                var peopleAdded = 0
-                var topicsAdded = 0
-                try {
-                    val text = contentResolver.openInputStream(uri)?.use { input ->
-                        input.readBytes().toString(Charsets.UTF_8)
-                    } ?: throw IllegalStateException("openInputStream failed")
-                    val json = org.json.JSONObject(text)
-                    val tags = json.optJSONArray("tags")
-                    val existingIds = HashSet<String>()
-                    if (tags != null) {
-                        val grouped = uniffi.aurora_core.getGroupedTags(viewModel.settings.value.language)
-                        grouped.forEach { g -> g.tags.forEach { existingIds.add(it.tag) } }
-                        for (i in 0 until tags.length()) {
-                            val tag = tags.getString(i).trim()
-                            if (tag.isNotEmpty() && tag !in existingIds) {
-                                uniffi.aurora_core.addTagToVocabulary(tag)
-                                tagsAdded++
-                            }
-                        }
-                    }
-                    val people = json.optJSONObject("people")
-                    if (people != null) {
-                        val existing = uniffi.aurora_core.getAllPeople().associateBy { it.id }
-                        for (key in people.keys()) {
-                            if (key in existing) continue
-                            val p = people.getJSONObject(key)
-                            uniffi.aurora_core.upsertPerson(
-                                uniffi.aurora_core.FfiPerson(
-                                    id = p.optString("id", key),
-                                    name = p.optString("name", key),
-                                    coverFileId = "",
-                                    count = 0,
-                                    description = p.optString("description").takeIf { it.isNotEmpty() },
-                                    faceBox = null,
-                                    updatedAt = null,
-                                    characterTagName = null,
-                                    characterTagIndex = null,
-                                ),
-                            )
-                            peopleAdded++
-                        }
-                    }
-                    val topics = json.optJSONObject("topics")
-                    if (topics != null) {
-                        val existing = uniffi.aurora_core.getAllTopics().associateBy { it.id }
-                        for (key in topics.keys()) {
-                            if (key in existing) continue
-                            val t = topics.getJSONObject(key)
-                            val peopleIds = mutableListOf<String>()
-                            t.optJSONArray("peopleIds")?.let { arr ->
-                                for (i in 0 until arr.length()) peopleIds.add(arr.getString(i))
-                            }
-                            val now = System.currentTimeMillis()
-                            uniffi.aurora_core.upsertTopic(
-                                uniffi.aurora_core.FfiTopic(
-                                    id = t.optString("id", key),
-                                    parentId = t.optString("parentId").takeIf { it.isNotEmpty() },
-                                    name = t.optString("name", key),
-                                    description = t.optString("description").takeIf { it.isNotEmpty() },
-                                    topicType = t.optString("type", "TOPIC").ifEmpty { "TOPIC" },
-                                    coverFileId = null,
-                                    backgroundFileId = null,
-                                    coverCrop = null,
-                                    peopleIds = peopleIds,
-                                    fileIds = emptyList(),
-                                    sourceUrl = null,
-                                    createdAt = now,
-                                    updatedAt = now,
-                                    sourceType = null,
-                                    workName = null,
-                                    workNameCn = null,
-                                    fileCount = 0,
-                                ),
-                            )
-                            topicsAdded++
-                        }
-                    }
-                    "已导入：词表 +$tagsAdded，人物 +$peopleAdded，专题 +$topicsAdded"
-                } catch (e: Exception) {
-                    Log.w("AuroraKotlin", "[Settings] import backup failed", e)
-                    "导入失败（格式或读取错误）"
-                }
-            }
-            if (report.startsWith("已导入")) viewModel.refreshTagSnapshots()
-            Toast.makeText(this@MainActivity, report, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    /** 备份导出（2.3，字段对齐 React StoragePanel 导出：词表 + 人物 + 简化专题）。 */
-    private fun exportBackup() {
-        lifecycleScope.launch {
-            val json = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val grouped = uniffi.aurora_core.getGroupedTags(viewModel.settings.value.language)
-                val tags = grouped.flatMap { g -> g.tags.map { it.tag } }
-                val people = uniffi.aurora_core.getAllPeople()
-                val topics = uniffi.aurora_core.getAllTopics()
-                val peopleJson = org.json.JSONObject()
-                people.forEach { p ->
-                    peopleJson.put(
-                        p.id,
-                        org.json.JSONObject()
-                            .put("name", p.name)
-                            .put("description", p.description ?: JSONObject.NULL)
-                            .put("count", p.count),
-                    )
-                }
-                val topicsJson = org.json.JSONObject()
-                topics.forEach { t ->
-                    topicsJson.put(
-                        t.id,
-                        org.json.JSONObject()
-                            .put("id", t.id)
-                            .put("name", t.name)
-                            .put("parentId", t.parentId ?: JSONObject.NULL)
-                            .put("description", t.description ?: JSONObject.NULL)
-                            .put("type", t.topicType ?: "TOPIC")
-                            .put("peopleIds", org.json.JSONArray(t.peopleIds)),
-                    )
-                }
-                org.json.JSONObject()
-                    .put("tags", org.json.JSONArray(tags))
-                    .put("people", peopleJson)
-                    .put("topics", topicsJson)
-                    .toString(2)
-            }
-            try {
-                val fileName = "aurora_metadata_backup_${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())}.json"
-                val values = android.content.ContentValues().apply {
-                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/json")
-                    if (Build.VERSION.SDK_INT >= 29) {
-                        put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/")
-                        put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
-                    }
-                }
-                val collection = if (Build.VERSION.SDK_INT >= 29) {
-                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
-                } else {
-                    Uri.parse("${android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)}/$fileName")
-                }
-                val uri = contentResolver.insert(collection, values)
-                    ?: throw IllegalStateException("insert failed")
-                contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(json.toByteArray())
-                } ?: throw IllegalStateException("openOutputStream failed")
-                if (Build.VERSION.SDK_INT >= 29) {
-                    contentResolver.update(uri, android.content.ContentValues().apply {
-                        put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
-                    }, null, null)
-                }
-                Toast.makeText(this@MainActivity, "已导出到 Download/$fileName", Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                Log.w("AuroraKotlin", "[Settings] export backup failed", e)
-                Toast.makeText(this@MainActivity, "导出失败", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
     // —— M4b 1.4/1.3 复制/移动/重命名的宿主执行（网格与查看器共用一条写入路径）——
     // 弹窗层状态（目标选择器/合并确认/重命名目标）在 App() 组合里；这里只提供
     // 「已确定目标后的执行」：解析 RELATIVE_PATH、批量授权、调写原语、反馈。
