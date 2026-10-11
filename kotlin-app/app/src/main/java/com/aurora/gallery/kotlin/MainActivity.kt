@@ -879,6 +879,7 @@ class MainActivity : ComponentActivity() {
                         },
                         // M6b 阶段 2：AI 任务挂钩与状态（打包进一个参数，见 AiUiHooks）
                         ai = AiUiHooks(
+                            connected = viewModel.aiConnected.value,
                             searchEnabled = viewModel.settings.value.aiSearchEnabled,
                             searchBusy = viewModel.aiSearchBusy.value,
                             renameProposals = viewModel.aiRenameProposals.value,
@@ -1063,6 +1064,9 @@ class MainActivity : ComponentActivity() {
                     lanImageUrlOf = viewModel.lanImageUrlOf(),
                     // M6a 阶段 6：编辑门禁位（查看器 LAN 项的删除入口显隐；同款会话现取）
                     lanAllowEdit = viewModel.lanAllowEdit.value,
+                    // 2026-10-11 菜单精简：AI 服务器连接态（查看器「AI 分析」项与重命名
+                    // 弹窗 AI 按钮的显隐门控；lanAllowEdit 同款推进实例）
+                    aiConnected = viewModel.aiConnected.value,
                     // M6b 阶段 3：抽屉 Section 4 主色调预填 + 自动提取开关推进
                     colorPalettesById = viewModel.colorPalettesById.value,
                     autoExtractPalette = viewModel.settings.value.autoExtractPalette,
@@ -1204,6 +1208,12 @@ class MainActivity : ComponentActivity() {
  * 数据与操作全走参数），AI 的状态/操作以此打包进一个参数。
  */
 data class AiUiHooks(
+    /**
+     * AI 服务器连接态（2026-10-11 长按菜单精简）：长按菜单 AI 项与重命名弹窗 AI 按钮
+     * 的显隐门控——未连接时这些入口整体不出现（对齐桌面 aiConnectionStatus==='connected'
+     * 口径），不再靠点击后的 toast 拦截。
+     */
+    val connected: Boolean,
     /** TopBar AI 搜索开关（设置持久化快照）。 */
     val searchEnabled: Boolean,
     /** AI 搜索请求进行中。 */
@@ -1681,15 +1691,22 @@ fun App(
                 add(SelectionMoreAction("复制标签", IconCopy) { onCopyTags(tab.selectedFileIds) })
             }
             add(SelectionMoreAction("粘贴标签", IconClipboard) { onPasteTags(tab.selectedFileIds) })
-            // M6b 阶段 2：AI 入口（桌面 ContextMenu 文件分支同位——AI 分析/AI 重命名）。
-            // 未配置 provider 时宿主入口自行友好拦截，菜单项常驻。
-            add(SelectionMoreAction("AI 分析…", IconSparkles) { ai.onAnalyze(tab.selectedFileIds.toList()) })
-            add(SelectionMoreAction("AI 重命名…", IconSparkles) { ai.onRename(tab.selectedFileIds.toList()) })
+            // M6b 阶段 2：AI 入口（桌面 ContextMenu 文件分支同位）。2026-10-11 长按菜单
+            // 精简：未连接各自的服务器就不出现（对齐桌面 aiConnectionStatus==='connected'
+            // 门控 + M4a「不适用的项不出现」先例），点了必弹拦截 toast 的常驻项不再挂；
+            // AI 重命名从菜单撤下，收进重命名弹窗（RenameDialog AI 按钮，桌面同位是
+            // 元数据面板文件名旁的 AI 按钮）。
+            if (ai.connected) {
+                add(SelectionMoreAction("AI 分析…", IconSparkles) { ai.onAnalyze(tab.selectedFileIds.toList()) })
+            }
             // M6b 阶段 4（D37）：人物识别=图字节卸载桌面 WD14→general 标签进本地词表、
-            // character 归组建本地人物（未连接桌面时 VM 内拦截提示）
-            add(SelectionMoreAction("AI 人物识别…", IconScanSearch) {
-                ai.onWd14PersonPipeline(tab.selectedFileIds.toList())
-            })
+            // character 归组建本地人物——它的「AI 服务器」就是桌面端，按 LAN 会话门控
+            // （VM 内仍拦会话失效的竞态）。
+            if (lanSnapshot.state == LanState.CONNECTED) {
+                add(SelectionMoreAction("AI 人物识别…", IconScanSearch) {
+                    ai.onWd14PersonPipeline(tab.selectedFileIds.toList())
+                })
+            }
             add(SelectionMoreAction("复制到…", IconCopy) {
                 pickerType = "copy"
                 pickerFileIds = tab.selectedFileIds.toList()
@@ -1719,8 +1736,11 @@ fun App(
         }
         inFoldersOverview && tab.selectedFileIds.isNotEmpty() -> buildList {
             // M6b 阶段 2：相册卡片长按选中后的「AI 分析相册」（桌面文件夹右键同位；
-            // 扁平 bucket 无递归语义，成员=该相册全部图片）
-            add(SelectionMoreAction("AI 分析相册…", IconSparkles) { ai.onFolderAnalyze(tab.selectedFileIds.toList()) })
+            // 扁平 bucket 无递归语义，成员=该相册全部图片）。2026-10-11 菜单精简：
+            // 未连接 AI 服务器不出现（桌面文件夹右键同款门控）。
+            if (ai.connected) {
+                add(SelectionMoreAction("AI 分析相册…", IconSparkles) { ai.onFolderAnalyze(tab.selectedFileIds.toList()) })
+            }
             add(SelectionMoreAction("复制到…", IconCopy) {
                 onResolveSelectionFileIds(tab.selectedFileIds) { ids ->
                     pickerType = "copy"
@@ -2971,7 +2991,9 @@ fun App(
     }
 
     // M4b 1.4 网格重命名：复用查看器的 RenameDialog 形制（View 体系弹窗，一次性；
-    // 从 LaunchedEffect 拉起，先清状态——取消即整条流程结束）
+    // 从 LaunchedEffect 拉起，先清状态——取消即整条流程结束）。
+    // 2026-10-11 菜单精简：AI 重命名收进弹窗——连接 AI 服务器才出「AI 重命名」按钮，
+    // 点击走 ai.onRename（提案经 renameProposals 确认弹窗回流），不再单列菜单项。
     LaunchedEffect(renameFileId) {
         val fid = renameFileId ?: return@LaunchedEffect
         renameFileId = null
@@ -2980,6 +3002,9 @@ fun App(
             context = context,
             currentName = currentName,
             onConfirm = { newName -> onRenameFile(fid, newName) },
+            onAiRename = if (ai.connected) {
+                { ai.onRename(listOf(fid)) }
+            } else null,
         ).show()
     }
 

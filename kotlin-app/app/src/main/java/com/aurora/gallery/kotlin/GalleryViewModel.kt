@@ -258,6 +258,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** M6a 阶段 7：宿主（MainActivity）转接给设置面板的只读口（未 init 时 null）。 */
     val lanServerManager get() = LanServerManager.get()
 
+    /**
+     * AI 服务器连接态（2026-10-11 长按菜单精简）：菜单 AI 项与重命名弹窗 AI 按钮的
+     * 显隐门控，对齐桌面 `aiConnectionStatus === 'connected'` 才显示的口径。启动与
+     * AI 设置变更时探测（[scheduleAiConnectionCheck]，扩展在 AI 任务簇），成功才亮。
+     * ⚠️ 必须在 init 块**之前**初始化：init 里的首探经 viewModelScope（Main.immediate）
+     * 同步执行，声明在后面就是空指针（上次崩溃根因）。
+     */
+    val aiConnected = mutableStateOf(false)
+
+    // internal 而非 private：连接探测落 GalleryViewModelAiTasks.kt 扩展函数，要用
+    internal var aiConnectCheckJob: Job? = null
+
     // —— M6a 阶段 4/5：LAN 浏览会话态 ——
     //
     // 纯内存会话数据（断线清空）：**只服务 LAN 视图的显示**，绝不写入本地库/本地词表
@@ -496,6 +508,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 wasConnected = connected
             }
         }
+        // 2026-10-11 长按菜单精简：AI 服务器连接首探（去抖 0 直发）——菜单 AI 项 /
+        // 重命名弹窗 AI 按钮的门控源（aiConnected），未连通前一律不出现
+        scheduleAiConnectionCheck(delayMs = 0L)
     }
 
     /** 语言切换（M4a 顺延项 1）：换 locale → 重算标签快照 → 侧栏分组顺序变。 */

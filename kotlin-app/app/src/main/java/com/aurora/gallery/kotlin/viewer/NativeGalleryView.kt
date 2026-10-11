@@ -135,6 +135,12 @@ class NativeGalleryView @JvmOverloads constructor(
         /** M6b 阶段 2：用户点击了「AI 分析」（仅本地项显示此菜单项；单张入口）。 */
         fun onAiAnalyze(fileId: String)
         /**
+         * 2026-10-11 长按菜单精简：用户在重命名弹窗点了「AI 重命名」（连接 AI 服务器
+         * 才出现该按钮）——宿主拉起 AI 改名管线，提案经既有确认弹窗回流。默认空实现：
+         * 老宿主不接也无害（按钮显隐本就由宿主推进的 [aiConnected] 门控）。
+         */
+        fun onAiRename(fileId: String) {}
+        /**
          * M6b 阶段 5（D36）：用户点击了「在桌面找相似」（仅本地项显示此菜单项）——
          * 本地图字节上传桌面 CLIP embed 后搜桌面库，宿主把命中集装进 LAN 搜索结果
          * 虚拟目录并切视图；未连接/桌面模型未就绪由宿主 Toast 拦截。
@@ -276,6 +282,13 @@ class NativeGalleryView @JvmOverloads constructor(
      * 目录 browse 尾随同步，宿主在组合/更新时把最新值推进来即可（setSlideshow 同款先例）。
      */
     var lanAllowEdit: Boolean = false
+
+    /**
+     * AI 服务器连接态（2026-10-11 长按菜单精简）：「AI 分析」菜单项与重命名弹窗 AI
+     * 按钮的显隐门控（lanAllowEdit 同款 var + 宿主推进实例——ViewerLayerHost 按值
+     * LaunchedEffect 推入，菜单构建时现读）。
+     */
+    var aiConnected: Boolean = false
 
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun colorBg() = palette.main
@@ -1991,12 +2004,15 @@ class NativeGalleryView @JvmOverloads constructor(
                     addAll(collapsedItems)
                     if (isTablet) add(canvasItem)
                     // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
-                    // 分析写本地库，对远端图无意义）
-                    add(
-                        MoreMenuItem("AI 分析", colorTextPrimary(), iconRes = R.drawable.ic_lucide_sparkles) {
-                            listener?.onAiAnalyze(item.fileId)
-                        }
-                    )
+                    // 分析写本地库，对远端图无意义）。2026-10-11 菜单精简：未连接 AI
+                    // 服务器不出现（与网格长按菜单同款门控，不再靠点击后 toast 拦截）
+                    if (aiConnected) {
+                        add(
+                            MoreMenuItem("AI 分析", colorTextPrimary(), iconRes = R.drawable.ic_lucide_sparkles) {
+                                listener?.onAiAnalyze(item.fileId)
+                            }
+                        )
+                    }
                     // M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP embed → 相似图
                     //（结果进 LAN 搜索结果虚拟目录；未连接/桌面模型未就绪宿主 Toast 拦截）
                     add(
@@ -2047,7 +2063,11 @@ class NativeGalleryView @JvmOverloads constructor(
                 val json = JSONObject().apply { put("name", newName) }
                 // 本地入口恒 false（见 Listener.onUpdateFile 注释：LAN 项不可达重命名）
                 listener?.onUpdateFile(item.fileId, json.toString(), false)
-            }
+            },
+            // 2026-10-11 菜单精简：AI 重命名收进重命名弹窗（连接 AI 服务器才出按钮）
+            onAiRename = if (aiConnected) {
+                { listener?.onAiRename(item.fileId) }
+            } else null,
         ).show()
     }
 

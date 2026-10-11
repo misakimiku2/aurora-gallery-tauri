@@ -344,6 +344,11 @@ private fun MainActivity.viewerListener(view: NativeGalleryView): NativeGalleryV
         host.viewModel.startAiAnalysis(listOf(fileId))
     }
 
+    /** 2026-10-11 菜单精简：查看器重命名弹窗的「AI 重命名」按钮（连接 AI 服务器才出现）。 */
+    override fun onAiRename(fileId: String) {
+        host.viewModel.startAiRename(listOf(fileId))
+    }
+
     /** M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP → 命中进 LAN 搜索结果视图。 */
     override fun onFindSimilar(fileId: String) {
         host.viewModel.findSimilarOnDesktop(fileId) { ok ->

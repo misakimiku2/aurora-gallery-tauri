@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.toAiConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.AiInputItem
@@ -16,6 +18,7 @@ import uniffi.aurora_core.SearchItem
 import uniffi.aurora_core.aiAnalyzeFiles
 import uniffi.aurora_core.aiApplySearchFilter
 import uniffi.aurora_core.aiCancelTask
+import uniffi.aurora_core.aiCheckConnection
 import uniffi.aurora_core.aiGenerateFileNames
 import uniffi.aurora_core.aiRewriteSearchQuery
 import uniffi.aurora_core.getAllFileMetadata
@@ -52,10 +55,12 @@ internal fun GalleryViewModel.setAiSearchEnabled(enabled: Boolean) {
     if (!enabled) clearAiSearch()
 }
 
-/** AI 设置面板的逐项保存口（SettingsDialog 的 onAiSettingsChange 落点）。 */
+/** AI 设置面板的逐项保存口（SettingsDialog 的 onAiSettingsChange 落点；欢迎向导 AI 步同汇到此）。 */
 internal fun GalleryViewModel.updateAiSettings(ai: com.aurora.gallery.kotlin.state.AiSettings) {
     settings.value = settings.value.copy(ai = ai)
     settingsStore.save(settings.value)
+    // 2026-10-11 菜单精简：AI 设置一变就重探连接（去抖），菜单 AI 项门控即时跟上
+    scheduleAiConnectionCheck()
 }
 
 // internal 而非 private：颜色库簇已拆到 GalleryViewModelColors.kt（扩展函数）里要用
@@ -70,6 +75,31 @@ private fun GalleryViewModel.aiEndpointBlank(): Boolean {
         "ollama" -> ai.ollamaEndpoint.isBlank()
         "lmstudio" -> ai.lmstudioEndpoint.isBlank()
         else -> ai.openaiEndpoint.isBlank()
+    }
+}
+
+/**
+ * AI 服务器连接探测（2026-10-11 长按菜单精简的显隐数据源）：endpoint 空白直接判未
+ * 连接；否则 core aiCheckConnection（GET 探测，PROBE_TIMEOUT 15s 上限）走 IO 线程，
+ * 成功才亮 [GalleryViewModel.aiConnected]。触发点：VM init 首探（delayMs=0）+ AI
+ * 设置每次变更（设置面板逐键提交 / 欢迎向导 AI 步，都汇到 updateAiSettings）。
+ *
+ * 去抖 600ms（对齐桌面 AISettingsPanel 的 500ms debounce）：静默窗内的新请求取消旧
+ * Job 重排。注意 blocking FFI 不可中断——取消只保证旧协程**不写回结果**（isActive
+ * 复查），挂着的 HTTP 请求本身等它自然超时。
+ */
+internal fun GalleryViewModel.scheduleAiConnectionCheck(delayMs: Long = 600L) {
+    aiConnectCheckJob?.cancel()
+    aiConnectCheckJob = viewModelScope.launch {
+        if (delayMs > 0) delay(delayMs)
+        val ok = !aiEndpointBlank() && withContext(Dispatchers.IO) {
+            runCatching {
+                aiCheckConnection(settings.value.ai.toAiConfig(settings.value.language))
+            }.isSuccess
+        }
+        if (!isActive) return@launch
+        aiConnected.value = ok
+        Log.i(GalleryViewModel.TAG, "[Ai] connection probe: connected=$ok")
     }
 }
 

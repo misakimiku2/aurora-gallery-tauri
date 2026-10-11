@@ -52,6 +52,11 @@ fun ViewerLayerHost(
      */
     lanAllowEdit: Boolean = false,
     /**
+     * AI 服务器连接态（2026-10-11 长按菜单精简）：查看器「AI 分析」菜单项与重命名
+     * 弹窗 AI 按钮的显隐门控（lanAllowEdit 同款推进实例，菜单构建时现读）。
+     */
+    aiConnected: Boolean = false,
+    /**
      * file_id → 主色调 hex 列表（M6b 阶段 3）：[GalleryViewModel.colorPalettesById] 快照，
      * 本地项抽屉 Section 4 的预填源（LAN 项恒空，[toViewerItem] 内分支）。remember key
      * 之一——提取成功增量写入后重组，但 `open()` 不重跑，打开中的查看器靠宿主
@@ -91,6 +96,7 @@ fun ViewerLayerHost(
         startIndex = startIndex,
         openToken = state.activeTab.viewerSession,
         lanAllowEdit = lanAllowEdit,
+        aiConnected = aiConnected,
         autoExtractPalette = autoExtractPalette,
         onRequestClose = { state.closeViewer() },
     )
@@ -121,6 +127,8 @@ fun NativeViewerLayer(
     openToken: Int = 0,
     /** LAN 编辑门禁位（M6a 阶段 6）：同步到查看器实例，删除入口的显隐在现读时生效。 */
     lanAllowEdit: Boolean = false,
+    /** AI 服务器连接态（2026-10-11 菜单精简）：AI 分析项/重命名 AI 按钮的门控源。 */
+    aiConnected: Boolean = false,
     /** 浏览时自动提取主色调开关（M6b 阶段 3）：抽屉 loading/按钮态由查看器现读。 */
     autoExtractPalette: Boolean = false,
     onRequestClose: () -> Unit,
@@ -133,6 +141,7 @@ fun NativeViewerLayer(
     val latestStart by rememberUpdatedState(startIndex)
     // 门禁位推进查看器实例（key = 值本身：浏览中门禁变化也即时生效，菜单构建时现读）
     LaunchedEffect(lanAllowEdit) { viewer.lanAllowEdit = lanAllowEdit }
+    LaunchedEffect(aiConnected) { viewer.aiConnected = aiConnected }
     LaunchedEffect(autoExtractPalette) { viewer.autoExtractPalette = autoExtractPalette }
     LaunchedEffect(openToken) { viewer.open(latestItems, latestStart, viewerOptions) }
     // 查看器自己实现了 dispatchKeyEvent（幻灯片 → 抽屉 → 关闭），拿到焦点时由它逐层消化；
