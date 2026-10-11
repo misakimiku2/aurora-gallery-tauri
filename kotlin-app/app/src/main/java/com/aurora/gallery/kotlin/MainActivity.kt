@@ -204,7 +204,8 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private val requestPermission = registerForActivityResult(
+    // 已拆到 MainActivityPermissions.kt（拆分清单第 29 刀）：跨文件访问需 internal
+    internal val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
@@ -1669,58 +1670,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /** 阶段 5：通知权限（API 33+ 运行时请求；拒绝则扫描通知静默不发，不影响功能）。 */
-    private val notificationPermission = registerForActivityResult(
+    // 已拆到 MainActivityPermissions.kt（拆分清单第 29 刀）：跨文件访问需 internal
+    internal val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 拒绝也不阻断：通知只是增强 */ }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
-    /** 媒体库读权限字符串：设备 API 33+ **且** targetSdk ≥ 33 才用 READ_MEDIA_IMAGES
-     *  （该权限只对 targetSdk ≥ 33 的应用生效；targetSdk < 33 时走 READ_EXTERNAL_STORAGE
-     *  的媒体映射，声明掐了会拿残缺索引）。须与 GalleryViewModel.hasMediaPermission 一致。 */
-    private fun mediaPermission(): String =
-        if (Build.VERSION.SDK_INT >= 33 &&
-            applicationInfo.targetSdkVersion >= 33
-        ) {
-            Manifest.permission.READ_MEDIA_IMAGES
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-
-    private fun hasMediaPermission(): Boolean =
-        checkSelfPermission(mediaPermission()) == PackageManager.PERMISSION_GRANTED
-
-    private fun requestMediaPermissionIfNeeded() {
-        if (hasMediaPermission()) {
-            viewModel.startScanIfNeeded()
-            requestWritePermissionIfNeeded()
-            requestNotificationPermissionIfNeeded()
-        } else {
-            // READ 授权回调里会再进 WRITE 补请求，见 requestPermission 的 granted 分支
-            requestPermission.launch(mediaPermission())
-        }
-    }
-
-    /** 欢迎向导权限拒绝兜底：跳系统应用详情页；授权后 onResume 推进（launcher 不回调）。 */
-    private fun openAppDetailsSettings() {
-        try {
-            startActivity(
-                android.content.Intent(
-                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    android.net.Uri.fromParts("package", packageName, null),
-                ),
-            )
-        } catch (e: Exception) {
-            Log.w("AuroraKotlin", "[Welcome] open app settings failed", e)
-            Toast.makeText(this, "无法打开系统设置", Toast.LENGTH_SHORT).show()
-        }
-    }
 }
 
 /**
