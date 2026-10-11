@@ -42,6 +42,8 @@ data class AuroraColorScheme(
     val textPrimary: Color,   // 正文
     val textSecondary: Color, // 说明/占位
     val border: Color,        // 边框/描边（M4a 3.3 专题卡片细边框起进 scheme）
+    /** 弹窗底色（2026-10-11 起进 Compose 层：M3 AlertDialog 显式 containerColor 用） */
+    val dialogBg: Color,
     // —— 专题专属（M4a 3.3，值见 AuroraPalette 字段注释）——
     val topicPink: Color,
     val topicSelectPink: Color,
@@ -84,6 +86,12 @@ object AuroraTheme {
 /**
  * Aurora 主题包装：同时设置 MaterialTheme（对齐 Material 组件默认色）与
  * [LocalAuroraColors]（语义 token，供自绘组件使用）。
+ *
+ * 2026-10-11 弹窗主题色修复：M3 的 `AlertDialog` 默认容器色取 `surfaceContainerHigh`
+ * 槽位（此前未映射 = Material 基线浅灰/深灰，与 Aurora 色板不符——用户报障「复制弹窗
+ * 颜色跟主题不符合」的根源）。这里把 M3 的 surfaceContainer 槽位族统一映射进 Aurora
+ * token（container 族 = dialogBg/panel），全仓库的裸 AlertDialog（删除确认/专题/
+ * 人物/设置等十余处）随之整体对齐主题，无需逐个显式传色。
  */
 @Composable
 fun AuroraTheme(
@@ -103,6 +111,15 @@ fun AuroraTheme(
             onSurfaceVariant = colors.textSecondary,
             secondary = colors.primary,
             onSecondary = Color.White,
+            // M3 容器槽位族 → Aurora（AlertDialog/Menu/Sheet 等 M3 组件的实际取色点）
+            surfaceContainerLowest = colors.dialogBg,
+            surfaceContainerLow = colors.panel,
+            surfaceContainer = colors.panel,
+            surfaceContainerHigh = colors.dialogBg,
+            surfaceContainerHighest = colors.surface,
+            // 染色基准用中性 panel：M3 弹窗默认 tonalElevation 会拿 surfaceTint（默认
+            // primary 蓝）往容器上叠色，不覆盖会把 dialogBg 染出蓝味
+            surfaceTint = colors.panel,
         )
     } else {
         lightColorScheme(
@@ -116,6 +133,12 @@ fun AuroraTheme(
             onSurfaceVariant = colors.textSecondary,
             secondary = colors.primary,
             onSecondary = Color.White,
+            surfaceContainerLowest = colors.dialogBg,
+            surfaceContainerLow = colors.panel,
+            surfaceContainer = colors.panel,
+            surfaceContainerHigh = colors.dialogBg,
+            surfaceContainerHighest = colors.surface,
+            surfaceTint = colors.panel,
         )
     }
 

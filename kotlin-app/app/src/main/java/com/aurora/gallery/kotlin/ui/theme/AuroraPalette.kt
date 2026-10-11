@@ -149,6 +149,7 @@ fun AuroraPalette.toComposeColorScheme(): AuroraColorScheme = AuroraColorScheme(
     textPrimary = Color(textPrimary),
     textSecondary = Color(textSecondary),
     border = Color(border),
+    dialogBg = Color(dialogBg),
     topicPink = Color(topicPink),
     topicSelectPink = Color(topicSelectPink),
     topicGradientStart = Color(topicGradientStart),

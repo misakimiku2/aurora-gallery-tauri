@@ -102,6 +102,17 @@ const val LAN_TOPIC_PREFIX = "lan:topic:"
  */
 const val LAN_SEARCH_FOLDER_ID = "__lan_search__"
 
+/**
+ * LAN 颜色搜索结果虚拟目录 id（2026-10-11；契约 §9.1 安卓端落点）。同
+ * [LAN_SEARCH_FOLDER_ID] 的形制与理由：**不带** [LAN_FOLDER_ID_PREFIX] 的纯内部 id，
+ * reloadImages 的 LAN 分流与 MainActivity 的 inLanBrowser/标题分支都要单独判它。
+ * 网格内容由 [com.aurora.gallery.kotlin.GalleryViewModel] 的颜色搜索态
+ * （colorSearchResultImages）与 reloadLanImages 的颜色分支双路供给——数据源切换在
+ * MainActivity 的 displayImages（colorSearchActive 分支）本就优先，虚拟目录只承担
+ * 「从总览发起时有个可导航、可回退的 BROWSER 视图」。
+ */
+const val LAN_COLOR_SEARCH_FOLDER_ID = "__lan_color_search__"
+
 /** 远端人物 id → folderId（[LAN_PERSON_PREFIX] 自带 lan: 段，等于 [lanFolderId] 的 person 形态）。 */
 fun lanPersonFolderId(personId: String) = LAN_PERSON_PREFIX + personId
 

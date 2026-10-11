@@ -84,7 +84,7 @@ import com.aurora.gallery.kotlin.ui.components.IconSparkles
 import com.aurora.gallery.kotlin.ui.components.IconTag
 import com.aurora.gallery.kotlin.ui.components.IconTrash2
 import com.aurora.gallery.kotlin.ui.components.TagsOverview
-import com.aurora.gallery.kotlin.ui.components.TargetPickerDialog
+import com.aurora.gallery.kotlin.ui.components.CopyMovePickerDialog
 import com.aurora.gallery.kotlin.ui.components.TopicChildrenSection
 import com.aurora.gallery.kotlin.ui.components.TopicCollapsibleDetail
 import com.aurora.gallery.kotlin.ui.components.TopicDashedEmpty
@@ -95,7 +95,6 @@ import com.aurora.gallery.kotlin.ui.components.TopicsOverview
 import com.aurora.gallery.kotlin.ui.components.TopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.LanTopicPickerDialog
 import com.aurora.gallery.kotlin.ui.components.LanFolderPickerDialog
-import com.aurora.gallery.kotlin.ui.components.LanPickerMode
 import com.aurora.gallery.kotlin.ui.components.LanPersonEditDialog
 import com.aurora.gallery.kotlin.ui.components.SettingsHost
 import com.aurora.gallery.kotlin.ui.components.SettingsCategory
@@ -244,25 +243,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // —— M6a 阶段 4：LAN 上传（系统照片选择器多选 → 逐个 multipart）——
-
-    /**
-     * 系统照片选择器（PickMultipleVisualMedia：API 33+ 的照片选择器，无需存储权限）。
-     * 选择结果带着 [pendingUploadTargetDir]（发起时记录的远端目标目录）交给
-     * [startLanUpload]。
-     */
-    // 已拆到 MainActivityLan.kt（拆分清单第 30 刀）：跨文件访问需 internal
-    internal val uploadLauncher = registerForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(LAN_UPLOAD_MAX_ITEMS),
-    ) { uris ->
-        val target = pendingUploadTargetDir
-        pendingUploadTargetDir = null
-        if (target != null && uris.isNotEmpty()) startLanUpload(uris, target)
-    }
-
-    /** 上传发起时记录的目标远端目录（共享根为空串）。 */
-    // 已拆到 MainActivityLan.kt（拆分清单第 30 刀）：跨文件访问需 internal
-    internal var pendingUploadTargetDir: String? = null
+    // —— M6a 阶段 4：LAN 上传（2026-10-11 移除：顶栏上传按钮随统一复制/移动弹窗下线，
+    // upload 端点转作「本地 → 网络」跨域复制的传输原语——uploadUrisToLan 保留在数据层）——
 
     // —— M4b 1.1 文件操作的批量授权（重命名/移动走 createWriteRequest，复制不弹）——
 
@@ -696,6 +678,17 @@ class MainActivity : ComponentActivity() {
                                 appState.exitSelectionMode()
                             }
                         },
+                        // 2026-10-11 跨域复制/移动（MainActivityLan 执行簇；统一弹窗按
+                        // 源/目标域分派到这四条链，LAN→LAN 走上面的 onCopyMoveLanFiles）
+                        onPerformLocalToLan = { fileIds, targetDir, type ->
+                            performLocalToLan(fileIds, targetDir, type)
+                        },
+                        onPerformLanToLocal = { paths, folderId, type ->
+                            performLanToLocal(paths, folderId, type)
+                        },
+                        onPerformLanToLocalNewAlbum = { paths, albumName, type ->
+                            performLanToLocalNewAlbum(paths, albumName, type)
+                        },
                         onResolveSelectionFileIds = { ids, onReady ->
                             viewModel.resolveSelectionFileIds(ids, onReady)
                         },
@@ -760,11 +753,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        // —— M6a 阶段 4：LAN 浏览视图（总览数据/标题/上传入口/下拉刷新）——
+                        // —— M6a 阶段 4：LAN 浏览视图（总览数据/标题/下拉刷新；上传入口
+                        // 2026-10-11 移除——跨域传输统一走复制/移动弹窗）——
                         lanOverviewFolders = viewModel.lanOverviewFolders.value,
                         lanServerName = lanSnapshot.serverName,
-                        lanAllowUpload = viewModel.lanAllowUpload.value,
-                        onLanUploadClick = { remotePath -> launchLanUpload(remotePath) },
                         onLanFolderRefresh = { onComplete -> viewModel.refreshLanFolder(onComplete) },
                         onLanRootsRefresh = { onComplete -> viewModel.refreshLanRoots(onComplete) },
                         // —— M6a 阶段 5：在线元数据/人物/专题（写回调统一落 LanClient，D31）——
@@ -1315,6 +1307,10 @@ fun App(
     onCopyMoveFiles: (fileIds: List<String>, targetFolderId: String, type: String) -> Unit = { _, _, _ -> },
     /** 复制/移动到**新相册**（1.3 懒创建；宿主校验名字后建在 Pictures/<名字>）。 */
     onCopyMoveToNewAlbum: (fileIds: List<String>, albumName: String, type: String) -> Unit = { _, _, _ -> },
+    /** 2026-10-11 跨域复制/移动（MainActivityLan 执行簇；统一弹窗按源/目标域分派）。 */
+    onPerformLocalToLan: (fileIds: List<String>, targetDir: String, type: String) -> Unit = { _, _, _ -> },
+    onPerformLanToLocal: (paths: List<String>, folderId: String, type: String) -> Unit = { _, _, _ -> },
+    onPerformLanToLocalNewAlbum: (paths: List<String>, albumName: String, type: String) -> Unit = { _, _, _ -> },
     /** 总览选中的文件夹卡片展开成成员图片 id（复制/移动/删除的统一前置）。 */
     onResolveSelectionFileIds: (Set<String>, (List<String>) -> Unit) -> Unit = { _, _ -> },
     /** 网格重命名（1.4 单选菜单项；宿主过写授权后改 DISPLAY_NAME）。 */
@@ -1344,10 +1340,6 @@ fun App(
     lanOverviewFolders: List<uniffi.aurora_core.Folder> = emptyList(),
     /** 服务端上报名（TopBar 标题用；null/空退回「局域网」）。 */
     lanServerName: String? = null,
-    /** 上传门禁位（allow_upload；false 时入口置灰，点击宿主 Toast 提示）。 */
-    lanAllowUpload: Boolean = false,
-    /** 上传入口点击（宿主起系统照片选择器；参数=目标远端 path，共享根传空串）。 */
-    onLanUploadClick: (String) -> Unit = {},
     /** LAN 目录网格的下拉刷新（重拉当前远端目录）。 */
     onLanFolderRefresh: ((onComplete: () -> Unit) -> Unit) = {},
     /** LAN 总览的下拉刷新（重拉 all_image_folders）。 */
@@ -1484,13 +1476,18 @@ fun App(
     // M6a 阶段 6 互联态文件操作的弹窗目标：重命名的远端 path、目录选择器的模式
     // （移动/复制/换头像）与换头像的目标人物（AVATAR 模式提交流程要用）
     var lanRenamePath by remember { mutableStateOf<String?>(null) }
-    var lanPickerMode by remember { mutableStateOf<LanPickerMode?>(null) }
+    // M6a 阶段 6：人物「换头像」弹窗开关（2026-10-11 起 LanFolderPickerDialog 只剩
+    // AVATAR 一个用途——复制/移动已并入统一的 CopyMovePickerDialog 双根树）
+    var lanAvatarPicker by remember { mutableStateOf(false) }
     var lanAvatarPersonId by remember { mutableStateOf<String?>(null) }
     // M4b 1.4 目标选择器（copy|move + 已展开成图片 id 的操作集）
     var pickerType by remember { mutableStateOf<String?>(null) }
     var pickerFileIds by remember { mutableStateOf<List<String>>(emptyList()) }
-    // M4b 1.3 新建相册的重名合并确认（相册 + 待执行的 type/fileIds）
-    var albumMerge by remember { mutableStateOf<Triple<uniffi.aurora_core.Folder, String, List<String>>?>(null) }
+    // 2026-10-11：LAN 选中集的复制/移动（与 pickerFileIds 互斥使用，统一弹窗按非空方分派）
+    var pickerLanPaths by remember { mutableStateOf<List<String>>(emptyList()) }
+    // M4b 1.3 新建相册的重名合并确认（目标相册 + type + 源：本地 id 集 / LAN path 集，
+    // 2026-10-11 起来源二选一，统一弹窗的新建相册入口共用这条拦截链）
+    var albumMerge by remember { mutableStateOf<AlbumMergeTarget?>(null) }
     // M4b 1.4 网格重命名的目标文件（单选菜单项触发；弹窗复用查看器 RenameDialog 形制）
     var renameFileId by remember { mutableStateOf<String?>(null) }
     // 3.2④ 建专题弹窗的目标父级：总览按钮=null（根专题），详情子专题区=当前专题
@@ -1532,9 +1529,11 @@ fun App(
     }
     // M6a 阶段 4：LAN 目录网格 = BROWSER + folderId 带 lan 前缀（序列源分流在 reloadImages）
     // M6b 阶段 5：搜索结果/人物成员/专题成员三个人工目录同属 LAN 浏览态（数据源=会话缓存过滤）
+    // 2026-10-11：颜色搜索结果虚拟目录（__lan_color_search__）并入同款判定
     val inLanBrowser = tab.viewMode == ViewMode.BROWSER &&
         (tab.folderId?.lanRemotePathOrNull() != null ||
             tab.folderId == com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID ||
+            tab.folderId == com.aurora.gallery.kotlin.state.LAN_COLOR_SEARCH_FOLDER_ID ||
             tab.folderId?.lanPersonIdOrNull() != null ||
             tab.folderId?.lanTopicIdOrNull() != null)
     val inBrowser =
@@ -1567,6 +1566,8 @@ fun App(
         lanTopics.firstOrNull { it.id == id }?.name ?: "专题"
     }
     val inLanSearchResults = tab.folderId == com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
+    // 2026-10-11：颜色搜索结果视图的标题分支（startLanColorSearch 在总览发起时跳入）
+    val inLanColorResults = tab.folderId == com.aurora.gallery.kotlin.state.LAN_COLOR_SEARCH_FOLDER_ID
     val inTopicsList = inTopicsOverview && tab.activeTopicId == null
     val inTopicDetail = inTopicsOverview && tab.activeTopicId != null
     val currentTopicName = tab.activeTopicId?.let { id ->
@@ -1636,8 +1637,16 @@ fun App(
                     add(SelectionMoreAction("重命名…", IconPencil) { lanRenamePath = tab.selectedFileIds.first() })
                 }
                 add(SelectionMoreAction("删除", IconTrash2) { showDeleteConfirm = true })
-                add(SelectionMoreAction("复制到…", IconCopy) { lanPickerMode = LanPickerMode.COPY })
-                add(SelectionMoreAction("移动到…", IconFolderInput) { lanPickerMode = LanPickerMode.MOVE })
+                // 2026-10-11：统一复制/移动弹窗（CopyMovePickerDialog 双根树）——LAN 选中集
+                // 记入 pickerLanPaths，与本地源（pickerFileIds）共用同一个弹窗、同一棵树
+                add(SelectionMoreAction("复制到…", IconCopy) {
+                    pickerType = "copy"
+                    pickerLanPaths = tab.selectedFileIds.toList()
+                })
+                add(SelectionMoreAction("移动到…", IconFolderInput) {
+                    pickerType = "move"
+                    pickerLanPaths = tab.selectedFileIds.toList()
+                })
             }
         }
         inBrowser -> buildList {
@@ -2025,6 +2034,8 @@ fun App(
                         lanPersonTitle != null -> "人物 · $lanPersonTitle"
                         lanTopicTitle != null -> "专题 · $lanTopicTitle"
                         inLanSearchResults -> "搜索结果"
+                        // 2026-10-11：颜色搜索结果视图（LAN 态取色的落点）
+                        inLanColorResults -> "颜色结果"
                         inLanBrowser -> lanBrowserTitle ?: "局域网"
                         localPersonTitle != null -> "人物 · $localPersonTitle"
                         tagFilterTitle.isNotEmpty() -> "标签 · $tagFilterTitle"
@@ -2079,8 +2090,10 @@ fun App(
                     onAiSearchSubmit = ai.onSearchSubmit,
                     aiSearchBusy = ai.searchBusy,
                     // M6b 阶段 3：取色入口（D39 双入口的 TopBar 半边）；显隐=日期/标签
-                    // 同域（纯图片流视图），颜色过滤态高亮按钮+胶囊色点芯片
-                    showColorSearch = !inTopicsOverview && !inLanOverview && !inLanBrowser,
+                    // 同域，颜色过滤态高亮按钮+胶囊色点芯片。
+                    // 2026-10-11：LAN 态放开（会话在线时 startColorSearch 分流桌面
+                    // /api/color_search，契约 §9.1）——总览/目录/颜色结果视图均可取色。
+                    showColorSearch = !inTopicsOverview,
                     colorSearchHex = colorSearchHex,
                     onColorSearch = onColorSearch,
                     onClearColorSearch = onClearColorSearch,
@@ -2101,15 +2114,21 @@ fun App(
                     onGroupByChange = { state.groupBy = it },
                     layoutMode = tab.layoutMode,
                     onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
-                    // 标签弹层与侧栏标签区同一份数据、同一个点击行为（M4a 3.1 / 4.1）
-                    tagGroups = tagGroups,
-                    activeTags = tab.activeTags,
-                    onTagClick = onTagClick,
-                    // M6b 阶段 5：LAN 浏览态放开搜索入口（/api/search 文件名 + AI 开=CLIP
-                    // 语义叠加，提交分流在 onLanSearchSubmit）；总览仍无搜索语义
-                    showSearch = !inLanOverview,
-                    // M6b 阶段 5：LAN 态回车提交分流到 VM（文件名/CLIP 按 AI 开关在 VM 内分流）
-                    onLanSearchSubmit = if (inLanBrowser) onLanSearchSubmit else null,
+                    // 标签弹层与侧栏标签区同一份数据、同一个点击行为（M4a 3.1 / 4.1）。
+                    // 2026-10-11：LAN 态换远端词表/远端单选语义——chip 点击进远端 tag
+                    // 筛选虚拟目录（TreeSidebar 远端标签行同款），选中态高亮当前 lanTagTitle
+                    tagGroups = if (inLanBrowser || inLanOverview) lanRemoteTagGroups else tagGroups,
+                    activeTags = if (inLanBrowser || inLanOverview) {
+                        listOfNotNull(lanTagTitle)
+                    } else tab.activeTags,
+                    onTagClick = if (inLanBrowser || inLanOverview) {
+                        { tag -> state.openFolder(com.aurora.gallery.kotlin.state.lanTagFolderId(tag)) }
+                    } else onTagClick,
+                    // M6b 阶段 5：LAN 浏览态搜索提交分流到 VM（/api/search 文件名 + AI 开=
+                    // CLIP 语义叠加）。2026-10-11：总览也放开——输入即过滤文件夹名
+                    // （displayLanFolders 管道），回车 = 全库图片搜索并跳结果视图
+                    showSearch = true,
+                    onLanSearchSubmit = if (inLanBrowser || inLanOverview) onLanSearchSubmit else null,
                     // 专题视图下顶栏只留 搜索/返回/侧栏开关（桌面 TopBar :1256/:1521/:1563
                     // 在 topics-overview 隐藏排序/日期/标签，专题自己的排序在页头菜单里）；
                     // 视图切换（grid/adaptive/masonry）= 文件夹网格与专题详情共用
@@ -2135,24 +2154,16 @@ fun App(
                         )
                     }) else null,
                     showViewMode = inBrowser || inTopicDetail,
-                    // LAN 视图隐藏日期/标签筛选（远端项无时间字段；标签弹层是本地词表）
-                    showDateFilter = !inTopicsOverview && !inLanOverview && !inLanBrowser,
+                    // 2026-10-11：LAN 视图放开日期/标签筛选——远端行 createdAt 2026-10 起随
+                    // browse 回填（filterImages/filterFolders 的日期分支对任意来源生效）；
+                    // 标签弹层在 LAN 态换远端词表（lanRemoteTagGroups），点 chip 进
+                    // lan:__lan_tag__:<tag> 虚拟目录（侧栏远端标签行同款）
+                    showDateFilter = !inTopicsOverview,
                     showGroupBy = inBrowser,
-                    showTags = !inTopicsOverview && !inLanOverview && !inLanBrowser,
-                    // M6a 阶段 4：上传入口只在 LAN 目录网格出现（目标=当前远端目录）；
-                    // allow_upload=false 置灰（点击宿主 Toast 提示需桌面端开启）
-                    actionIcon = if (inLanBrowser) com.aurora.gallery.kotlin.ui.components.IconUpload else null,
-                    actionContentDescription = "上传到此目录",
-                    actionEnabled = lanAllowUpload,
-                    onActionClick = if (inLanBrowser) {
-                        {
-                            onLanUploadClick(
-                                tab.folderId?.lanRemotePathOrNull()
-                                    ?.takeUnless { it == com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID }
-                                    ?: "",
-                            )
-                        }
-                    } else null,
+                    showTags = !inTopicsOverview,
+                    // 2026-10-11：LAN 上传按钮移除（用户拍板）——「把文件送到电脑端」统一
+                    // 走复制/移动弹窗（CopyMovePickerDialog 的网络根，执行链=upload 端点），
+                    // 不再保留顶栏独立入口；uploadUrisToLan 保留作跨域复制原语
                     // M4c D21：横屏手机侧栏底部「设置」行被裁切不可达，设置入口挂顶栏兜底
                     onOpenSettings = if (isLandscapePhone) {
                         { onOpenSettings() }
@@ -2199,7 +2210,7 @@ fun App(
                     onDescribe = { describeLanPersonState = it },
                     onAvatarChange = { person ->
                         lanAvatarPersonId = person.id
-                        lanPickerMode = LanPickerMode.AVATAR
+                        lanAvatarPicker = true
                     },
                     // 本地人物：单击进筛选视图，长按出编辑菜单，页头「新建人物」
                     onLocalPersonClick = { person -> onOpenLocalPersonFilter(person.id) },
@@ -2692,25 +2703,16 @@ fun App(
         )
     }
 
-    // M6a 阶段 6 LAN 目录选择弹窗（网格「复制到…/移动到…」与人物卡「换头像」的最后一跳，
-    // 接线区对齐上面的 LanTopicPickerDialog）。选中项身份 = 远端 path，move/copy 直接把
-    // 选中集当 paths 传数据层；browse/缩略图构造器都是宿主转 GalleryViewModel 的会话
-    // 访问器（断线时 lanThumbnailUrlOf 为 null，弹窗图片行退化占位底，不阻塞选择）。
-    lanPickerMode?.let { mode ->
+    // M6a 阶段 6 LAN 目录弹窗（2026-10-11 起只剩人物「换头像」一个用途——复制/移动
+    // 已并入下面的统一 CopyMovePickerDialog 双根树）。点图即走：目标人物在入口
+    //（人物卡长按「换头像」）已记下；悬空防御（正常不可达）直接丢弃，不给半截流程弹第二次。
+    if (lanAvatarPicker) {
         LanFolderPickerDialog(
-            mode = mode,
             browse = { path, onReady -> onBrowseLanPath(path, onReady) },
             thumbnailUrlOf = lanThumbnailUrlOf ?: { null },
-            onDismiss = { lanPickerMode = null },
-            onPickFolder = { dir ->
-                lanPickerMode = null
-                // MOVE/COPY 都可能有部分失败（逐项语义），汇总与退选择在宿主回调里
-                onCopyMoveLanFiles(tab.selectedFileIds.toList(), dir, if (mode == LanPickerMode.MOVE) "move" else "copy")
-            },
+            onDismiss = { lanAvatarPicker = false },
             onPickImage = { imagePath, _ ->
-                lanPickerMode = null
-                // AVATAR 点图即走：目标人物在入口（人物卡长按「换头像」）已记下；
-                // 悬空防御（正常不可达）直接丢弃，不给半截流程弹第二次
+                lanAvatarPicker = false
                 val personId = lanAvatarPersonId
                 lanAvatarPersonId = null
                 if (personId != null) onChangeLanAvatar(personId, imagePath)
@@ -2883,43 +2885,79 @@ fun App(
         )
     }
 
-    // —— M4b 1.4 目标相册选择器 + 1.3 新建相册（含重名合并拦截）——
+    // —— 2026-10-11 统一目标选择器（CopyMovePickerDialog 双根树）+ 1.3 新建相册 ——
+    // 源分派：pickerLanPaths 非空 = LAN 选中集（远端 path 身份），否则本地 pickerFileIds。
+    // 四条执行链按目标域分流（跨域原语在 MainActivityLan.kt）：
+    //   本地→本地 onCopyMoveFiles/onCopyMoveToNewAlbum；本地→LAN performLocalToLan；
+    //   LAN→LAN onCopyMoveLanFiles；LAN→本地 performLanToLocal。
     pickerType?.let { type ->
-        TargetPickerDialog(
-            folders = folders,
+        val localIds = pickerFileIds
+        val lanPaths = pickerLanPaths
+        CopyMovePickerDialog(
             type = type,
-            onDismiss = { pickerType = null },
-            onPickFolder = { folder ->
-                val fileIds = pickerFileIds
+            localFolders = folders,
+            lanAvailable = lanSnapshot.state == LanState.CONNECTED,
+            browse = { path, onReady -> onBrowseLanPath(path, onReady) },
+            onDismiss = {
                 pickerType = null
-                onCopyMoveFiles(fileIds, folder.id, type)
+                pickerLanPaths = emptyList()
+            },
+            onPickLocalFolder = { folder ->
+                pickerType = null
+                pickerLanPaths = emptyList()
+                if (lanPaths.isNotEmpty()) {
+                    onPerformLanToLocal(lanPaths, folder.id, type)
+                } else {
+                    onCopyMoveFiles(localIds, folder.id, type)
+                }
             },
             onPickNewAlbum = { name ->
-                val fileIds = pickerFileIds
                 pickerType = null
-                // 细则 iii：与已有相册同名 → 合并确认，不静默合并；确认后并入该相册
-                // 实际的 RELATIVE_PATH（可能是 DCIM 等非 Pictures 目录）
+                pickerLanPaths = emptyList()
+                // 细则 iii：与已有相册同名 → 合并确认，不静默合并（本地源并入该相册
+                // 实际的 RELATIVE_PATH，可能是 DCIM 等非 Pictures 目录；LAN 源并入 =
+                // 下载到该相册）。确认执行在下面的 albumMerge 挂载区。
                 val existing = folders.firstOrNull { it.name == name }
-                if (existing != null) albumMerge = Triple(existing, type, fileIds)
-                else onCopyMoveToNewAlbum(fileIds, name, type)
+                if (existing != null) {
+                    albumMerge = AlbumMergeTarget(existing, type, localIds, lanPaths)
+                } else if (lanPaths.isNotEmpty()) {
+                    onPerformLanToLocalNewAlbum(lanPaths, name, type)
+                } else {
+                    onCopyMoveToNewAlbum(localIds, name, type)
+                }
+            },
+            onPickLanFolder = { dir ->
+                pickerType = null
+                pickerLanPaths = emptyList()
+                if (lanPaths.isNotEmpty()) {
+                    onCopyMoveLanFiles(lanPaths, dir, type)
+                } else {
+                    onPerformLocalToLan(localIds, dir, type)
+                }
             },
         )
     }
 
-    albumMerge?.let { (folder, type, fileIds) ->
+    albumMerge?.let { merge ->
         AlertDialog(
             onDismissRequest = { albumMerge = null },
             title = { Text("合并到已有相册") },
             text = {
                 Text(
-                    "已有同名相册「${folder.name}」（${folder.imageCount} 张）。将把所选 ${fileIds.size} 个文件并入该相册。",
+                    "已有同名相册「${merge.folder.name}」（${merge.folder.imageCount} 张）。将把所选 " +
+                        (if (merge.lanPaths.isNotEmpty()) merge.lanPaths.size else merge.localIds.size) +
+                        " 个文件并入该相册。",
                     color = AuroraTheme.colors.textPrimary,
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     albumMerge = null
-                    onCopyMoveFiles(fileIds, folder.id, type)
+                    if (merge.lanPaths.isNotEmpty()) {
+                        onPerformLanToLocal(merge.lanPaths, merge.folder.id, merge.type)
+                    } else {
+                        onCopyMoveFiles(merge.localIds, merge.folder.id, merge.type)
+                    }
                 }) {
                     Text("并入", color = AuroraTheme.colors.primaryDeep)
                 }
@@ -3055,8 +3093,17 @@ fun App(
     }
 }
 
-/** LAN 上传单次最多张数（系统照片选择器的上限；对齐常见批量体量，超出走多次上传）。 */
-private const val LAN_UPLOAD_MAX_ITEMS = 20
+/**
+ * M4b 1.3 新建相册重名合并确认的载荷（2026-10-11 从 Triple 扩为具名类）：目标相册 +
+ * type（copy|move）+ 源（本地 id 集或 LAN path 集，二选一非空）。确认执行按源分流——
+ * 本地源走 onCopyMoveFiles，LAN 源走 performLanToLocal（下载落盘进该相册）。
+ */
+private data class AlbumMergeTarget(
+    val folder: uniffi.aurora_core.Folder,
+    val type: String,
+    val localIds: List<String>,
+    val lanPaths: List<String>,
+)
 
 /**
  * M8b-15：pre-IME 返回拦截壳（2026-09-27 用户要求「点击搜索时可用返回键关闭搜索框」）。

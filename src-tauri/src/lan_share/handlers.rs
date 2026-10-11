@@ -810,6 +810,12 @@ pub struct PaletteQuery {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ColorSearchQuery {
+    /// 目标颜色 hex（`#RRGGBB` 或 `RRGGBB`，color_search::hex_to_lab 对 `#` 前缀宽容）。
+    pub color: String,
+}
+
 pub async fn handle_root() -> impl IntoResponse {
     Json(serde_json::json!({
         "name": "Aurora Gallery LAN Share",
@@ -1046,6 +1052,49 @@ pub async fn handle_palette(
     }).await.unwrap_or_default();
 
     Ok(Json(serde_json::json!({ "palette": palette })))
+}
+
+/// 按颜色搜索（契约 §7 扩展端点）：复用桌面主色调搜索引擎（CIEDE2000 三模式打分，
+/// colors.db），与桌面端「取色搜索」同一套召回口径。结果为共享根**相对路径**、按
+/// 相似度降序——colors.db 存的是绝对路径，这里 strip 掉 root 前缀转契约相对形态
+/// （不在共享根下的残留记录直接丢弃）；color_db_pool 缺席（未初始化）回空集不报错，
+/// 对齐 handle_palette 的降级口径。
+pub async fn handle_color_search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ColorSearchQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let token = extract_token(&headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| {
+            log::warn!("[LAN Share] 颜色搜索请求失败 - 无效或过期的 Token");
+            error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token")
+        })?;
+
+    state.devices.update_activity(&session.device_id).await;
+    log::info!("[LAN Share] 颜色搜索 - 设备: {}, 颜色: {}", session.device_name, query.color);
+
+    let Some(pool) = state.color_db_pool.clone() else {
+        return Ok(Json(serde_json::json!({ "paths": [] })));
+    };
+    let root_path = state.root();
+    let abs_paths = crate::color_search::search_by_palette_pool(pool, vec![query.color.clone()])
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("[LAN Share] 颜色搜索引擎失败: {}", e);
+            Vec::new()
+        });
+    let paths: Vec<String> = abs_paths
+        .into_iter()
+        .filter_map(|abs| {
+            std::path::Path::new(&abs)
+                .strip_prefix(&root_path)
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+        })
+        .collect();
+    log::info!("[LAN Share] 颜色搜索命中 {} 张（设备: {}）", paths.len(), session.device_name);
+    Ok(Json(serde_json::json!({ "paths": paths })))
 }
 
 pub async fn handle_browse(

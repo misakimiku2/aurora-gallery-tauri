@@ -130,6 +130,7 @@ impl LanShareServer {
             .route("/api/auth/logout", post(handle_logout))
             .route("/api/browse", get(handle_browse))
             .route("/api/palette", get(handle_palette))
+            .route("/api/color_search", get(handle_color_search))
             .route("/api/all_image_folders", get(handle_all_image_folders))
             .route("/api/search", get(handle_search))
             .route("/api/thumbnail", get(handle_thumbnail))

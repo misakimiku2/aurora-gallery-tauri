@@ -342,3 +342,21 @@
 | 状态码 | 场景 |
 |---|---|
 | 503 | §8.1–8.3 的模型未下载/加载失败、嵌入索引不存在 |
+
+## 9. 新端点：按颜色搜索（2026-10-11，安卓端 LAN 态取色搜索）
+
+### 9.1 `GET /api/color_search?color=<hex>` — 主色调搜索
+
+- 门禁： token（不受 allow_edit/allow_upload 管；纯查询，不触发 data-changed）。
+- 入参： `color` = 目标颜色 hex（`#RRGGBB` 或 `RRGGBB`，服务端对 `#` 前缀宽容）。
+- 语义： 复用桌面「取色搜索」同一套引擎（CIEDE2000 三模式打分，colors.db 全库扫描），
+  召回口径与桌面端取色搜索逐条一致。
+- 响应 `200`： `paths` 为共享根**相对路径**数组、按相似度降序（colors.db 存绝对路径，
+  服务端 strip root 前缀转契约相对形态，§0 铁律同款；不在共享根下的残留记录丢弃）。
+  colors.db 未初始化（color_db_pool 缺席）回空集不报错。
+
+```json
+{ "paths": ["Wallpapers/2026/a.jpg", "插画/b.png"] }
+```
+
+- 错误： 401。搜索引擎内部失败降级为空集（服务端 log::warn）。

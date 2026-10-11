@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
+import com.aurora.gallery.kotlin.state.LAN_COLOR_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID
 import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.lanFolderId
@@ -268,8 +269,9 @@ private fun GalleryViewModel.rebuildLanOverview(session: LanManager.LanSession, 
     lanOverviewFolders.value = out
 }
 
-/** 远端图片项 → FFI [Image]（网格/查看器共用的展示模型；path 身份铁律：id=远端 path）。 */
-private fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: LanRemoteImage): Image = Image(
+/** 远端图片项 → FFI [Image]（网格/查看器共用的展示模型；path 身份铁律：id=远端 path）。
+ *  internal：颜色搜索簇（GalleryViewModelLanAi.startLanColorSearch）构造命中序列同用。 */
+internal fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: LanRemoteImage): Image = Image(
     id = item.path,
     name = item.name.ifEmpty { item.path.substringAfterLast('/') },
     // contentUri 装**缩略图 URL**：网格/总览的 URL 分支按 http 前缀识别（FileGrid.loadInto）
@@ -280,7 +282,10 @@ private fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: La
     // 2026-10 协议扩展：browse 响应带 created_at（file_index.created_at，秒级）。
     // 旧服务端/缺省仍为 0（查看器抽屉显示「—」，日期分组落 Unknown，React 同口径）
     createdAt = item.createdAt,
-    modifiedAt = 0,
+    // 2026-10-11：modifiedAt 同填 created_at——远端行只有 created_at 一个时间字段，
+    // 日期筛选的「修改时间」档若填 0 会恒空集；同值=「两档都按创建时间筛」的折衷
+    // （TopBar 日期筛选放开 LAN 后 filterImages 的 UPDATED 分支不至于永远筛不出图）。
+    modifiedAt = item.createdAt,
     format = item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() }?.lowercase(Locale.US),
 )
 
@@ -375,6 +380,28 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
             .mapNotNull { hit -> patchedLibrary[hit.first]?.let { hit.second to it } }
             .sortedByDescending { it.first }
             .map { lanImageOf(session, it.second) }
+    } else if (folderId == LAN_COLOR_SEARCH_FOLDER_ID) {
+        // 2026-10-11：颜色搜索结果虚拟目录（契约 §9.1；startLanColorSearch 的落点）。
+        // 命中集 = colorSearchIds（与本地颜色搜索同一套状态）；展示与 displayImages 的
+        // colorSearchActive 顶替是双路供给——本分支保证刷新/进程重建后重进视图仍有着落。
+        // 命中集为空（未发起/已清）= 空网格兜底。
+        val ids = colorSearchIds.value.orEmpty()
+        val library = lanLibraryImages.value
+        val missing = ids.filter { it !in library }
+        if (missing.isNotEmpty()) {
+            val patched = library.toMutableMap()
+            missing.forEach { p ->
+                patched[p] = LanRemoteImage(
+                    name = p.substringAfterLast('/'),
+                    path = p,
+                    type = "image",
+                    size = 0,
+                )
+            }
+            lanLibraryImages.value = patched
+        }
+        ids.mapNotNull { lanLibraryImages.value[it] }
+            .map { lanImageOf(session, it) }
     } else if (folderId.lanPersonIdOrNull() != null || folderId.lanTopicIdOrNull() != null) {
         // M6b 阶段 5：人物/专题成员筛选虚拟目录（D40，lan:person:<id> / lan:topic:<id>）。
         // openLanPersonFilter / openLanTopicFilter 进入时已把成员 path 集拉进
@@ -465,24 +492,28 @@ internal fun GalleryViewModel.refreshLanFolder(onDone: () -> Unit = {}) {
 }
 
 /**
- * 上传（LAN 视图入口 → 系统照片选择器多选后调这里）：逐个 multipart（读取本机字节 →
- * LanClient.upload），[onProgress] 逐个回报（宿主转 Toast），全部完成 [onDone] 汇总
- * 并刷新当前目录列表。逐个而非并发：进度可读、服务端 multipart 压力小（React 同款）。
+ * 本机 uri 逐个上传到远端目录（2026-10-11 起唯一入口 = 跨域复制/移动
+ * MainActivityLan.performLocalToLan；原顶栏上传按钮已移除）：逐个 multipart（读取
+ * 本机字节 → LanClient.upload），[onProgress] 逐个回报（宿主转 Toast），全部完成
+ * [onDone] 汇总并回**成功项的 uri 清单**（move 语义删本机源要用——失败项必须留在
+ * 本机），完成后刷新当前目录列表 + 总览。逐个而非并发：进度可读、服务端 multipart
+ * 压力小（React 同款）。
  */
 internal fun GalleryViewModel.uploadUrisToLan(
     uris: List<android.net.Uri>,
     targetDir: String,
     onProgress: (index: Int, total: Int, name: String, ok: Boolean, message: String?) -> Unit,
-    onDone: (ok: Int, fail: Int) -> Unit,
+    onDone: (ok: Int, fail: Int, okUris: List<android.net.Uri>) -> Unit,
 ) {
     val session = lan.currentSession()
     if (session == null || uris.isEmpty()) {
-        onDone(0, uris.size)
+        onDone(0, uris.size, emptyList())
         return
     }
     viewModelScope.launch {
         var okCount = 0
         var failCount = 0
+        val okUris = ArrayList<android.net.Uri>(uris.size)
         uris.forEachIndexed { idx, uri ->
             val name = withContext(Dispatchers.IO) { queryDisplayName(uri) }
                 ?: uri.lastPathSegment ?: "upload.img"
@@ -495,13 +526,23 @@ internal fun GalleryViewModel.uploadUrisToLan(
                 }
             }
             val ok = result.getOrNull()?.success == true
-            if (ok) okCount++ else failCount++
+            if (ok) {
+                okCount++
+                okUris += uri
+            } else {
+                failCount++
+            }
             val message = result.exceptionOrNull()?.message ?: result.getOrNull()?.error
             onProgress(idx + 1, uris.size, name, ok, message)
         }
         Log.i(GalleryViewModel.TAG, "[Lan] 上传完成 ok=$okCount fail=$failCount target=…${targetDir.takeLast(12)}")
-        if (okCount > 0) refreshLanFolder()
-        onDone(okCount, failCount)
+        if (okCount > 0) {
+            refreshLanFolder()
+            // 跨域复制的发起方可能在本地视图：总览计数/侧栏也一并刷新（本地上传流没有
+            // 这一步——发起时就在 LAN 目录内，refreshLanFolder 的 browse 已覆盖门禁位）
+            refreshLanRoots()
+        }
+        onDone(okCount, failCount, okUris)
     }
 }
 
@@ -580,4 +621,97 @@ internal fun GalleryViewModel.mimeForFileName(name: String): String = when (name
     "bmp" -> "image/bmp"
     "heic", "heif" -> "image/heic"
     else -> "application/octet-stream"
+}
+
+/**
+ * LAN 项按文件夹落盘（2026-10-11，跨域复制/移动的「网络 → 本地」半边；MainActivityLan
+ * .performLanToRelPath 调）：逐个 imageUrl 下载全图字节 → MediaStore **Images**
+ * insert（[relPath] 为 RELATIVE_PATH，重名 MediaProvider 自动序号），进度逐个回报。
+ * type=move 时落盘成功的项再走 [deleteLanFiles] 删远端源——「先落后删」，删除失败
+ * 只丢移动语义不丢数据（副本已安全在本机）。完成后刷新当前目录与总览。
+ *
+ * API < 29 无 RELATIVE_PATH 语义，调用方（宿主）拦截不进这里（saveLanImageToDownloads
+ * 同款口径）。标签/描述等元数据不跨域迁移（与「保存到设备」同口径，登记差异）。
+ */
+internal fun GalleryViewModel.saveLanImagesToFolder(
+    paths: List<String>,
+    relPath: String,
+    type: String,
+    onProgress: (index: Int, total: Int, name: String, ok: Boolean, message: String?) -> Unit = { _, _, _, _, _ -> },
+    onDone: (ok: Int, fail: Int) -> Unit,
+) {
+    val session = lan.currentSession()
+    if (session == null || paths.isEmpty() || Build.VERSION.SDK_INT < 29) {
+        onDone(0, paths.size)
+        return
+    }
+    viewModelScope.launch {
+        var okCount = 0
+        val savedPaths = ArrayList<String>(paths.size)
+        paths.forEachIndexed { idx, path ->
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = session.client.fetchBytes(
+                        session.client.imageUrl(session.base, session.token, path),
+                    )
+                    if (bytes.isEmpty()) throw java.io.IOException("下载内容为空")
+                    insertImageToFolder(path, bytes, relPath)
+                }
+            }
+            val ok = result.isSuccess
+            if (ok) {
+                okCount++
+                savedPaths += path
+            }
+            val message = result.exceptionOrNull()?.message
+            onProgress(idx + 1, paths.size, path.substringAfterLast('/'), ok, message)
+        }
+        Log.i(
+            GalleryViewModel.TAG,
+            "[Lan] 按文件夹落盘完成 ok=$okCount fail=${paths.size - okCount} type=$type relPath=$relPath",
+        )
+        if (okCount > 0) {
+            if (type == "move" && savedPaths.isNotEmpty()) {
+                // move：删远端源（批量函数内部自带缓存清理与刷新，结果不重复回报）
+                deleteLanFiles(savedPaths) { _, _ -> }
+            }
+            refreshLanFolder()
+            refreshLanRoots()
+        }
+        onDone(okCount, paths.size - okCount)
+    }
+}
+
+/**
+ * MediaStore **Images** insert 到指定 RELATIVE_PATH + 写字节；返回 MediaProvider 最终
+ * 落定的文件名（重名自动序号）。半截文件（写流失败）回滚删除，不留在相册里
+ * （insertToDownloads 同款纪律）。仅 API ≥ 29（RELATIVE_PATH），调用方保证。
+ */
+private fun GalleryViewModel.insertImageToFolder(remotePath: String, bytes: ByteArray, relPath: String): String {
+    val fileName = remotePath.substringAfterLast('/').ifEmpty {
+        "aurora-lan-${System.currentTimeMillis()}.jpg"
+    }
+    val resolver = appContext.contentResolver
+    // "/"（本机「根目录图片」虚拟根解析产物）与空串不是合法 RELATIVE_PATH（MediaStore
+    // 只收 DCIM/、Pictures/ 等一级目录），统一落 Pictures/ 根——2026-10-11 平板实测
+    val sanitized = relPath.trim('/')
+    val normalizedRelPath = if (sanitized.isEmpty()) "Pictures/" else "$sanitized/"
+    val values = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+        put(MediaStore.MediaColumns.MIME_TYPE, mimeForFileName(fileName))
+        put(MediaStore.MediaColumns.RELATIVE_PATH, normalizedRelPath)
+        put(MediaStore.MediaColumns.IS_PENDING, 1)
+    }
+    val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    val uri = resolver.insert(collection, values) ?: throw java.io.IOException("MediaStore insert 失败")
+    try {
+        resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            ?: throw java.io.IOException("openOutputStream 失败")
+        val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+        resolver.update(uri, done, null, null)
+    } catch (e: Exception) {
+        runCatching { resolver.delete(uri, null, null) } // 半截文件不留在相册里
+        throw e
+    }
+    return queryDisplayName(uri) ?: fileName
 }

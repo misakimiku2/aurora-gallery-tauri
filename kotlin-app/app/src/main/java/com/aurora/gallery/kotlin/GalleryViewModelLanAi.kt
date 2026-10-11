@@ -5,7 +5,9 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.LAN_COLOR_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
+import com.aurora.gallery.kotlin.state.ViewMode
 import com.aurora.gallery.kotlin.state.lanPersonFolderId
 import com.aurora.gallery.kotlin.state.lanPersonIdOrNull
 import com.aurora.gallery.kotlin.state.lanTopicFolderId
@@ -366,6 +368,72 @@ internal fun GalleryViewModel.performLanSearch(query: String) {
 /** 清 LAN 搜索结果态（退出搜索视图/新搜索前置共用；视图内容由下次导航自然接管）。 */
 internal fun GalleryViewModel.clearLanSearch() {
     lanSearchHits.value = null
+}
+
+/**
+ * LAN 颜色搜索（2026-10-11，契约 §9.1 的客户端半边；[GalleryViewModel.startColorSearch]
+ * 在会话在线时的分流终点）：`GET /api/color_search` 服务端全库 CIEDE2000，命中 path
+ * 集写进与本地颜色搜索**同一套** colorSearch* 状态（胶囊色点芯片/互斥清 AI/查看器
+ * 数据源无差别），命中序列用 [lanImageOf] 现做（缓存缺条目按 __lan_search__ 同款补
+ * 最小条目——颜色搜索是全库语义，不能被「先浏览过来源目录」绑架）。
+ *
+ * 导航：总览（LAN_FOLDERS_OVERVIEW）发起时跳入 `__lan_color_search__` 结果视图（标题
+ * 「颜色结果」由 UI 层处理）；目录内发起就地对出结果，不动导航。busy/防抖补跑语义
+ * 与本地 [GalleryViewModel.startColorSearch] 完全同款。
+ */
+internal fun GalleryViewModel.startLanColorSearch(hex: String) {
+    val session = lan.currentSession()
+    if (session == null) {
+        aiToast("需先连接桌面端")
+        return
+    }
+    if (colorSearchBusy.value) {
+        pendingColorHex = hex
+        return
+    }
+    viewModelScope.launch {
+        colorSearchBusy.value = true
+        clearAiSearch() // 与 AI 命中集互斥（本地链路同口径）
+        try {
+            val paths = withContext(Dispatchers.IO) {
+                runCatching { session.client.colorSearch(session.base, session.token, hex) }
+            }.getOrElse { e ->
+                Log.w(GalleryViewModel.TAG, "[Lan] 颜色搜索失败 hex=$hex：${e.message}")
+                aiToast("颜色搜索失败：${e.message ?: "未知错误"}")
+                return@launch
+            }
+            // 缓存缺条目补最小条目（reloadLanImages 搜索分支同款；size=0 假条目不造，
+            // 与成员分支的取舍一致——缩略图/大图 URL 只依赖 path+token，照常出图）
+            val library = lanLibraryImages.value
+            val missing = paths.filter { it !in library }
+            if (missing.isNotEmpty()) {
+                val patched = library.toMutableMap()
+                missing.forEach { p ->
+                    patched[p] = LanRemoteImage(
+                        name = p.substringAfterLast('/'),
+                        path = p,
+                        type = "image",
+                        size = 0,
+                    )
+                }
+                lanLibraryImages.value = patched
+            }
+            colorSearchIds.value = paths.toSet()
+            colorSearchHex.value = hex
+            colorSearchResultImages.value = paths.mapNotNull { lanLibraryImages.value[it] }
+                .map { lanImageOf(session, it) }
+            // 总览发起才导航；目录内发起就地对出结果（与本地 BROWSER 内行为一致）
+            if (appState.activeTab.viewMode == ViewMode.LAN_FOLDERS_OVERVIEW) {
+                appState.openFolder(LAN_COLOR_SEARCH_FOLDER_ID)
+            }
+            aiToast("按颜色搜索命中 ${paths.size} 张")
+        } finally {
+            colorSearchBusy.value = false
+            // 补跑搜索期间到达的最新色（startColorSearch 函数头的 pendingColorHex 说明）
+            val next = pendingColorHex?.also { pendingColorHex = null }
+            if (next != null && !next.equals(hex, ignoreCase = true)) startLanColorSearch(next)
+        }
+    }
 }
 
 /**

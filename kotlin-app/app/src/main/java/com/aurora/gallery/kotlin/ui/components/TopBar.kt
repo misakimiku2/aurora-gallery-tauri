@@ -259,15 +259,6 @@ fun TopBar(
      * 设置入口临时挂到顶栏。平板/竖屏手机走侧栏入口，传 null 不渲染。
      */
     onOpenSettings: (() -> Unit)? = null,
-    /**
-     * 视图专属动作按钮（M6a 阶段 4：LAN 视图的上传入口；null = 不渲染）。
-     * [actionEnabled] = false 时按钮呈置灰态、点击仍回调（宿主 Toast 说明置灰原因，
-     * 对齐「入口置灰 + 提示需桌面端开启」的验收口径）。
-     */
-    actionIcon: ImageVector? = null,
-    actionContentDescription: String = "",
-    actionEnabled: Boolean = true,
-    onActionClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
@@ -349,10 +340,9 @@ fun TopBar(
         val showSearchBtn = showSearch && !searchOpen
         val showMoreBtn = isPhonePortrait && !searchOpen &&
             (showSortMenu || showViewMode || showDateFilter || showTags || showColorSearch)
-        val showActionBtn = actionIcon != null && onActionClick != null
         val leftBtnCount = 1 + (if (showBack) 1 else 0)
         val rightBtnCount = if (isPhonePortrait) {
-            (if (showSearchBtn) 1 else 0) + (if (showActionBtn) 1 else 0) + (if (showMoreBtn) 1 else 0)
+            (if (showSearchBtn) 1 else 0) + (if (showMoreBtn) 1 else 0)
         } else {
             0
         }
@@ -750,17 +740,8 @@ fun TopBar(
                 }
             }
         }
-        // 视图专属动作（M6a 阶段 4：LAN 上传入口）。置灰态降低不透明度、仍可点击（宿主提示）。
-        if (actionIcon != null && onActionClick != null) {
-            TopBarButton(onClick = onActionClick) {
-                Icon(
-                    imageVector = actionIcon,
-                    contentDescription = actionContentDescription,
-                    tint = if (actionEnabled) colors.textSecondary else colors.textSecondary.copy(alpha = 0.35f),
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
+        // 2026-10-11：视图专属动作位（原 LAN 上传入口）随上传按钮移除——唯一消费者
+        // 消失，机制一并下线；将来有视图专属动作再加回
         if (onOpenSettings != null) {
             TopBarButton(
                 onClick = onOpenSettings,

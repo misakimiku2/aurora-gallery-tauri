@@ -20,27 +20,26 @@ pub fn hex_to_lab(hex: &str) -> Option<Lab> {
     Some(Lab::from_color(srgb))
 }
 
-#[tauri::command]
-pub async fn search_by_palette(
-    pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
+/// 池版核心（Tauri 命令与 LAN 共享端点共用）：对 colors.db 全库做 CIEDE2000 主色调
+/// 匹配，返回按相似度降序的**绝对路径**（LAN 端点自行转共享根相对路径，契约 §0）。
+pub async fn search_by_palette_pool(
+    pool: Arc<color_db::ColorDbPool>,
     target_palette: Vec<String>
 ) -> Result<Vec<String>, String> {
     eprintln!("[search_by_palette] Called with {} colors: {:?}", target_palette.len(), target_palette);
-    
+
     // Parse target palette to Lab once
     let target_labs: Vec<Lab> = target_palette.iter()
         .filter_map(|h| hex_to_lab(h))
         .collect();
     eprintln!("[search_by_palette] Parsed {} valid Lab colors", target_labs.len());
-        
+
     if target_labs.is_empty() {
         return Ok(Vec::new());
     }
 
     let is_single_color = target_labs.len() == 1;
     let is_atmosphere_search = target_labs.len() >= 5;
-
-    let pool = pool_state.inner().clone();
 
     // If cache hasn't been initialized yet, prefer a DB-indexed fast-path to avoid blocking a full refresh.
     if !pool.is_cache_initialized() {
@@ -433,9 +432,17 @@ pub async fn search_by_palette(
 }
 
 #[tauri::command]
+pub async fn search_by_palette(
+    pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
+    target_palette: Vec<String>
+) -> Result<Vec<String>, String> {
+    search_by_palette_pool(pool_state.inner().clone(), target_palette).await
+}
+
+#[tauri::command]
 pub async fn search_by_color(
      pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
      color: String
 ) -> Result<Vec<String>, String> {
-    search_by_palette(pool_state, vec![color]).await
+    search_by_palette_pool(pool_state.inner().clone(), vec![color]).await
 }

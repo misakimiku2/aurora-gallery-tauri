@@ -151,6 +151,13 @@ private fun GalleryViewModel.allImageIds(): List<String> =
 
 /** 按颜色搜索（查看器色块/TopBar 取色器共用）：命中集顶替文本过滤（AI 搜索同管线，互斥清理）。 */
 internal fun GalleryViewModel.startColorSearch(hex: String) {
+    // LAN 会话在线 = 远端全库语义（桌面 colors.db 引擎，契约 §9.1）；断开即回本地
+    // colors.db。同一命中集状态（colorSearch*），胶囊色点芯片/互斥清理/查看器数据源
+    // 对两条链路无差别——用户口径「不区分网络和本机」。
+    if (lan.currentSession() != null) {
+        startLanColorSearch(hex)
+        return
+    }
     // 搜索进行中又来新色（HSV 面板防抖连发）：只记下最新色，本轮收尾后补跑一次——
     // 直接丢弃会让「面板上停下来的颜色」与实际过滤色不一致（末次调用被吞）。
     if (colorSearchBusy.value) {

@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.LAN_COLOR_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.LAN_FOLDER_ID_PREFIX
 import com.aurora.gallery.kotlin.state.LAN_SEARCH_FOLDER_ID
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -54,8 +55,11 @@ suspend fun GalleryViewModel.reloadImages() {
     // folderId 带 lan 前缀 = 远端目录（或虚拟根/成员筛选虚拟目录），走 LanClient/会话态；
     // M6b 阶段 5：LAN 搜索结果虚拟目录（__lan_search__）不带 lan: 前缀（纯内部 id），
     // 这里显式并进分流，否则会落到本地 listImages 分支把网格清空。
+    // 2026-10-11：颜色搜索结果虚拟目录（__lan_color_search__）同款并进。
     if (tab.viewMode == ViewMode.BROWSER &&
-        (tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true || tab.folderId == LAN_SEARCH_FOLDER_ID)
+        (tab.folderId?.startsWith(LAN_FOLDER_ID_PREFIX) == true ||
+            tab.folderId == LAN_SEARCH_FOLDER_ID ||
+            tab.folderId == LAN_COLOR_SEARCH_FOLDER_ID)
     ) {
         reloadLanImages(tab.folderId!!)
         return

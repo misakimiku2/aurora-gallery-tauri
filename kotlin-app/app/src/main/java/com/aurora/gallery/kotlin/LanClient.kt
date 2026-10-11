@@ -285,6 +285,18 @@ class LanClient(private val http: OkHttpClient) {
     }
 
     /**
+     * 按颜色搜索（契约 §9.1：`GET /api/color_search?color=`）。返回共享根相对 path
+     * 列表（服务端已按相似度降序，客户端不重排不加工——「path 是不透明字符串」铁律
+     * 同款）；colors.db 未就绪/无命中都是空列表，调用方按「命中 0 张」兜底。
+     */
+    suspend fun colorSearch(base: String, token: String, color: String): List<String> {
+        val json = getJson(base, token, "/api/color_search?color=${lanQueryEncode(color)}")
+        return json.optJSONArray("paths")?.let { arr ->
+            List(arr.length()) { arr.optString(it) }.filter { it.isNotEmpty() }
+        } ?: emptyList()
+    }
+
+    /**
      * 全部含图目录 + 根级散图（侧栏网络 Section / 阶段 4 LAN 总览的数据源）。
      * [sortBy]/[sortDir] 语义同 [browse]（2026-10 协议扩展）。
      */
