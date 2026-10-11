@@ -414,6 +414,7 @@ internal fun GalleryViewModel.startLanColorSearch(hex: String) {
                         path = p,
                         type = "image",
                         size = 0,
+                        // 宽高无数据源（色搜命中只回 path），留 null 走 1:1 兜底
                     )
                 }
                 lanLibraryImages.value = patched

@@ -430,6 +430,9 @@ private fun GalleryViewModel.batchLanFileOp(
                     path = newPath,
                     type = "image",
                     size = old.size,
+                    // 2026-10-11：宽高沿用旧条目（move/rename 不改变图片本身尺寸）
+                    width = old.width,
+                    height = old.height,
                 )
             }
         }

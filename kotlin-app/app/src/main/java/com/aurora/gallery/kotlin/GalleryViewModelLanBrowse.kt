@@ -270,14 +270,18 @@ private fun GalleryViewModel.rebuildLanOverview(session: LanManager.LanSession, 
 }
 
 /** 远端图片项 → FFI [Image]（网格/查看器共用的展示模型；path 身份铁律：id=远端 path）。
- *  internal：颜色搜索簇（GalleryViewModelLanAi.startLanColorSearch）构造命中序列同用。 */
+ *  internal：颜色搜索簇（GalleryViewModelLanAi.startLanColorSearch）构造命中序列同用。
+ *
+ *  2026-10-11：宽高接入（[LanRemoteImage.width]/[LanRemoteImage.height]，源 = 服务端
+ *  browse/search 响应的 file_index 真值）。此前恒 null 导致远端目录瀑布流/自适应退化
+ *  为正方形、查看器「尺寸」恒「—」；null（旧服务端/异常数据）仍走既有 1:1 兜底。 */
 internal fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: LanRemoteImage): Image = Image(
     id = item.path,
     name = item.name.ifEmpty { item.path.substringAfterLast('/') },
     // contentUri 装**缩略图 URL**：网格/总览的 URL 分支按 http 前缀识别（FileGrid.loadInto）
     contentUri = session.client.thumbnailUrl(session.base, session.token, item.path),
-    width = null,
-    height = null,
+    width = item.width?.takeIf { it > 0 }?.toUInt(),
+    height = item.height?.takeIf { it > 0 }?.toUInt(),
     size = item.size,
     // 2026-10 协议扩展：browse 响应带 created_at（file_index.created_at，秒级）。
     // 旧服务端/缺省仍为 0（查看器抽屉显示「—」，日期分组落 Unknown，React 同口径）
@@ -371,6 +375,7 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
                     path = p,
                     type = "image",
                     size = 0,
+                    // 宽高无数据源（CLIP 命中只回 path+score），留 null 走 1:1 兜底
                 )
             }
             lanLibraryImages.value = patched
@@ -396,6 +401,7 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
                     path = p,
                     type = "image",
                     size = 0,
+                    // 宽高无数据源（色搜命中只回 path），留 null 走 1:1 兜底
                 )
             }
             lanLibraryImages.value = patched
@@ -422,6 +428,7 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
                     path = p,
                     type = "image",
                     size = 0,
+                    // 宽高无数据源（成员端点只回 path），留 null 走 1:1 兜底
                 )
             }
             lanLibraryImages.value = patched

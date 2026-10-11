@@ -42,12 +42,17 @@ private fun MainActivity.contentWindowRect(): RectF? =
  * 只是**兜底**。真图一上屏，覆盖层就逐帧改用实测矩形（`ViewerTransition.liveEnd`），
  * 因为元数据的宽高可能被 EXIF 旋转反过来，纯预测会落歪、揭幕那一帧会看到图跳一下。
  *
- * 2026-10-10：**宽高缺失时退回卡片封面的 intrinsic 比例**，不再铺满整屏。远端（LAN）
- * 行就是这样——`LanMetadataItem` 只有 path/tags/description/sourceUrl，**协议里没有
- * 宽高**，所以 `lanImageOf` 只能给 null。原兜底「先按整屏铺」的后果是：放大动画先撑到
- * 整屏，真图上屏后实测矩形与预测差 >8%，`ViewerTransition.refreshEnd` 当场改写落点，
- * 用户看到图先铺满、再跳一下缩回来（平板真机实测）。封面 drawable 就是这张图的缩略图、
- * 比例与原图一致，用它算 fit 落点能直接命中，不必等实测改写。
+ * 2026-10-10：**宽高缺失时退回卡片封面的 intrinsic 比例**，不再铺满整屏。原兜底「先按
+ * 整屏铺」的后果是：放大动画先撑到整屏，真图上屏后实测矩形与预测差 >8%，
+ * `ViewerTransition.refreshEnd` 当场改写落点，用户看到图先铺满、再跳一下缩回来（平板
+ * 真机实测）。封面 drawable 就是这张图的缩略图、比例与原图一致，用它算 fit 落点能直接
+ * 命中，不必等实测改写。
+ *
+ * 2026-10-11 补记：远端（LAN）行当时恒走封面兜底，真因**不是**「协议没有宽高」——服务端
+ * 自网页客户端时代（2026-03）起就一直随 browse 返回 file_index 真值，是 Kotlin 侧漏解析
+ * /漏回填（`lanImageOf` 恒写 null）。现已在数据链补齐（`LanClient.parseItems` →
+ * `LanRemoteImage.width/height` → `lanImageOf`），本函数逻辑不变：真值优先，封面兜底保留
+ * 给缺值/异常行（EXIF 旋转反向 = 纯预测的既有边界，仍由 refreshEnd 的实测改写兜底）。
  */
 private fun MainActivity.predictedViewerRect(image: Image, cover: ImageView?): RectF? {
     val win = contentWindowRect() ?: return null

@@ -83,6 +83,18 @@ data class LanRemoteImage(
     val type: String,
     val size: Long,
     /**
+     * 服务端 `width` / `height`（2026-10-11 接入；browse/search 同形响应的 image 项
+     * 一直携带，源 = 桌面 `file_index` 真值——网页客户端时代（2026-03）起就在返回，
+     * 此前 Kotlin 移植漏解析，不是协议缺失）。
+     *
+     * 消费面：瀑布流/自适应的宽高比排版（`GridModels.aspectRatioOf` → `coverHeightFor` /
+     * `packAdaptiveRowAt`）、查看器「尺寸」格与开图动画 fit 落点预测。缺省/旧服务端/
+     * 异常数据 = null（排版按 1:1 兜底、查看器显示「—」，与历史行为一致）。
+     */
+    val width: Int? = null,
+    /** 同 [width]，服务端 `height`。 */
+    val height: Int? = null,
+    /**
      * 服务端 `created_at`（2026-10 协议扩展，秒级；缺省/旧服务端 = 0 = 无日期）。
      * 0 语义与本地一致：查看器抽屉显示「—」、日期分组落 Unknown、DATE 排序按无日期。
      */
@@ -874,6 +886,10 @@ class LanClient(private val http: OkHttpClient) {
                 path = path,
                 type = o.optString("type", "image"),
                 size = o.optLong("size", 0L),
+                // 2026-10-11：服务端一直带 file_index 宽高（image 项），此前漏解析；
+                // 0/缺省（旧服务端/异常数据）= null = 排版 1:1、查看器「—」兜底
+                width = o.optInt("width", 0).takeIf { it > 0 },
+                height = o.optInt("height", 0).takeIf { it > 0 },
                 // 2026-10 协议扩展：图片创建时间（旧服务端缺省 0 = 无日期）
                 createdAt = o.optLong("created_at", 0L),
             )
