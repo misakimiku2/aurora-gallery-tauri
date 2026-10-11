@@ -40,7 +40,7 @@ import java.io.IOException
  * 状态经 [snapshot] StateFlow 暴露（设置 LAN 面板与侧栏网络 Section 消费，不轮询）。
  * 日志纪律：状态迁移全打 Log.d(tag=AuroraLan)，token 只打尾 4 位，**绝不整 token 入日志**。
  */
-class LanManager(context: Context, private val store: SettingsStore) {
+class LanManager private constructor(context: Context, private val store: SettingsStore) {
 
     private val appContext = context.applicationContext
 
@@ -91,10 +91,27 @@ class LanManager(context: Context, private val store: SettingsStore) {
     private var attemptJob: Job? = null
     private var heartbeatFailures = 0
 
+    /** [start] 幂等守护（单例化配套：ViewModel 重建会重复调用 start，只允许首次执行）。 */
+    @Volatile
+    private var started = false
+
     // —— 生命周期 ——
 
-    /** 进程启动恢复（GalleryViewModel init 调）：有持久化连接就静默验证一次。 */
+    /**
+     * 进程启动恢复（GalleryViewModel init 调）：有持久化连接就静默验证一次。
+     *
+     * 幂等（2026-10-11 单例化配套）：单例后 ViewModel 重建（返回键退出后进程未死再进、
+     * Activity 被回收等）会再次调用本函数——重复执行会打断在途连接（transition 与
+     * attemptConnect 抢状态、repair 补配对无谓换 token），故只跑首次。
+     */
     fun start() {
+        synchronized(this) {
+            if (started) {
+                Log.d(TAG, "[Lan] start 幂等跳过（已初始化，state=${_snapshot.value.state}）")
+                return
+            }
+            started = true
+        }
         val saved: LanConnectionRecord = store.loadLanConnection() ?: run {
             Log.d(TAG, "[Lan] start: 无持久化连接，保持 disconnected")
             return
@@ -525,6 +542,27 @@ class LanManager(context: Context, private val store: SettingsStore) {
 
     companion object {
         private const val TAG = "AuroraLan"
+
+        @Volatile
+        private var instance: LanManager? = null
+
+        /**
+         * 进程级单例（2026-10-11 单例化，对齐 LanServerManager.init/get 先例）：
+         * 幂等，重复 init 返回既有实例。
+         *
+         * 修复的根因：此前每个 GalleryViewModel 各持一个实例，而 LanManager 的私有
+         * scope 不随 VM 销毁终止——MainActivity 销毁重建后会留下旧实例的心跳/重试协程
+         * 与新实例共存，两者同 device_id（持久化）交替认证，被桌面端「同 device_id 顶
+         * 旧 token」语义放大成 ~15s 周期互踢（心跳 401 → 清理 → 15s 重试 → 顶对方）。
+         * 单例后界面重建复用同一状态机：机制上消除双实例，连接在重建期间零断裂。
+         */
+        fun init(appContext: Context, store: SettingsStore): LanManager =
+            instance ?: synchronized(this) {
+                instance ?: LanManager(appContext.applicationContext, store).also { instance = it }
+            }
+
+        /** 未 init 时返回 null（调用方一律 ?. 安全调用）。 */
+        fun get(): LanManager? = instance
     }
 }
 

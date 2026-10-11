@@ -242,11 +242,16 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     val updateController = com.aurora.gallery.kotlin.update.UpdateController(appContext, viewModelScope)
 
     /**
-     * M6a 阶段 3：LAN 客户端连接状态机（auth/心跳/周期重试/重启恢复）。
-     * 状态与远端目录经 [LanManager.snapshot] StateFlow 暴露，设置 LAN 面板与侧栏
-     * 网络 Section 消费；LAN 会话是纯 HTTP（LanClient），本地库/词表零接触。
+     * M6a 阶段 3：LAN 客户端连接状态机（auth/心跳/周期重试/重启恢复）。状态与远端
+     * 目录经 [LanManager.snapshot] StateFlow 暴露，设置 LAN 面板与侧栏网络 Section
+     * 消费；LAN 会话是纯 HTTP（LanClient），本地库/词表零接触。
+     *
+     * 2026-10-11 单例化（断连振荡根因修复）：此前每 ViewModel 一个实例，而 LanManager
+     * 私有 scope 不随 VM 销毁终止——MainActivity 销毁重建会留下旧实例的协程与新实例
+     * 共存，两者同 device_id 交替认证，被桌面端「同 device_id 顶旧 token」语义放大成
+     * ~15s 周期互踢。单例后重建复用同一状态机，机制上消除双实例、连接零断裂。
      */
-    val lan = LanManager(appContext, settingsStore)
+    val lan = LanManager.init(appContext, settingsStore)
 
     /**
      * M6a 阶段 7：对等服务端单例（init 幂等；认证随 peer_server 上报 / 断开联动停 /
