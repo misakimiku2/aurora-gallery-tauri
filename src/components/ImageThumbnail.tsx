@@ -7,14 +7,10 @@ import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { isVideoFile, formatVideoDuration } from '../utils/mediaExtensions';
 
-const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v', 'mpg', 'mpeg', '3gp', 'ts']);
-const isVideoFile = (filePath?: string, format?: string): boolean => {
-  if (format && format.startsWith('video/')) return true;
-  if (!filePath) return false;
-  const ext = filePath.split('.').pop()?.toLowerCase();
-  return ext ? VIDEO_EXTENSIONS.has(ext) : false;
-};
+// 视频扩展名判定已收敛到 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
+// 视频 P1（设计方案 §2.7 口径 C / UI 设计 §5.2）。
 
 // 远程来源文件使用合成路径标记：`lan://<remotePath>`（桌面端服务）
 // 或 `android://<mediaStoreId>`（安卓设备）。
@@ -28,17 +24,21 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   modified?: string;
   size?: number;
   isHovering?: boolean;
-  fileMeta?: { format?: string };
+  fileMeta?: { format?: string; durationMs?: number };
   resourceRoot?: string;
   cachePath?: string;
   mediaStoreId?: number;
 }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '800px' }); 
+
+  // 视频判定（UI 设计 §5.2）：组件级常量，供各 effect 门禁与渲染复用。
+  // mime format 优先，否则按扩展名（真源见 utils/mediaExtensions.ts）。
+  const isVideo = isVideoFile(filePath, fileMeta?.format);
   
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
       if (!filePath) return null;
       // 视频文件没有缩略图端点，直接返回 null（由 renderThumbnail 显示视频图标）
-      if (isVideoFile(filePath, fileMeta?.format)) return null;
+      if (isVideo) return null;
       // 远程来源：直接使用远程缩略图 URL（无需本地生成）
       if (isRemote(filePath)) {
         return getRemoteThumbnailUrl(filePath);
@@ -75,6 +75,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   // 远程来源：设备重连/token 刷新后重新解析缩略图 URL。
   // 断线期间解析到的是空串（或过期 token 的 URL），不重算就会一直裂图。
   useEffect(() => {
+    // 视频不参与缩略图管线（UI 设计 §5.2）：远程视频也不刷新缩略图 URL
+    if (isVideo) return;
     if (!filePath || !isRemote(filePath)) return;
     const path = filePath;
     const refresh = () => {
@@ -83,11 +85,15 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     };
     refresh();
     return subscribeRemoteChange(refresh);
-  }, [filePath]);
+  }, [filePath, isVideo]);
 
   useEffect(() => {
     // 远程来源：缩略图 URL 直连，跳过本地生成
     if (isRemote(filePath)) return;
+    // 视频门禁（UI 设计 §5.2）：视频无缩略图端点。绝不读缩略图缓存 / 请求 getThumbnail /
+    // setThumbnailSrc——否则会命中被污染的缓存（mp4 的 asset:// 地址）把视频喂给 <img>，
+    // 对大型视频还会引发海量读取。视频统一走 renderThumbnail 的 VideoIcon 占位。
+    if (isVideo) return;
     if (!filePath || !resourceRoot) return;
     mountedRef.current = true; // 本次 effect 实例挂载中
 
@@ -150,7 +156,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       mountedRef.current = false;
       controller.abort();
     };
-  }, [filePath, modified, resourceRoot, isInView, wasInView]);
+  }, [filePath, modified, resourceRoot, isInView, wasInView, isVideo]);
 
   useEffect(() => {
     if (!filePath) return;
@@ -178,6 +184,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   useEffect(() => {
     // 远程来源：无本地缩略图升级管线
     if (isRemote(filePath)) return;
+    // 视频门禁（UI 设计 §5.2）：视频不参与缩略图升级，避免 setThumbnailSrc 把视频喂给 <img>
+    if (isVideo) return;
     if (!upgrading || !filePath || !resourceRoot) return;
     let cancelled = false;
     let retryCount = 0;
@@ -208,7 +216,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
     checkUpgrade();
     return () => { cancelled = true; };
-  }, [upgrading, filePath, resourceRoot, modified, cachePath, mediaStoreId]);
+  }, [upgrading, filePath, resourceRoot, modified, cachePath, mediaStoreId, isVideo]);
 
   useEffect(() => {
     let isMounted = true;
@@ -263,6 +271,9 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   const finalSrc = animSrc || thumbnailSrc;
 
+  // 视频 P1（UI 设计 §5.2）：视频卡片右下角时长角标。非视频或无 durationMs 为空串（不渲染）
+  const durationLabel = isVideo ? formatVideoDuration(fileMeta?.durationMs) : '';
+
   // LAN 导航管道：首个缩略图 <img> onLoad 时记录「Thumbnail 加载完成」
   const lanThumbLoadLoggedRef = useRef(false);
   const handleThumbLoad = useCallback(() => {
@@ -301,7 +312,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     }
 
     // 视频文件显示视频图标
-    if (isVideoFile(filePath, fileMeta?.format)) {
+    if (isVideo) {
       return (
         <div className="w-full h-full flex items-center justify-center">
           <VideoIcon className="w-8 h-8 text-gray-400 dark:text-gray-600" />
@@ -327,6 +338,12 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
+        </div>
+      )}
+      {durationLabel && (
+        // 视频 P1（UI 设计 §5.2）：右下角时长角标，mm:ss / h:mm:ss。无 durationMs 不显示
+        <div className="absolute bottom-1 right-1 z-10 px-1 py-px rounded bg-black/60 text-white text-[10px] font-medium leading-none pointer-events-none tabular-nums">
+          {durationLabel}
         </div>
       )}
     </div>

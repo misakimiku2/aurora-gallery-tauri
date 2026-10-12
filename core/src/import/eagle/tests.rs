@@ -307,6 +307,9 @@ fn a_name_that_hits_nothing_goes_to_unmatched_items() {
 // ---------------------------------------------------------------- 分类顺序（§4.8 变体）
 
 /// 顺序错了会把同一条目重复计入两栏：回收站里的 mp4 只能进 excluded_trash。
+///
+/// 视频 P1（设计方案 §11.1）：`video/mp4` 已支持，正常的 video.mp4 不再进
+/// `skipped_unsupported_type`；它路径不在我们库里 → 落 unmatched_items（缺失问题）。
 #[test]
 fn trash_is_excluded_before_the_type_filter() {
     let lib = Lib::new("order");
@@ -314,7 +317,7 @@ fn trash_is_excluded_before_the_type_filter() {
     let mut trashed = meta_with("E1", "trashed", "mp4", &["X"], &["F1"]);
     trashed["isDeleted"] = json!(true);
     lib.item("E1", trashed, &["trashed.mp4"]);
-    // 正常的 mp4：skipped_unsupported_type + annotated_unsupported
+    // 正常的 mp4：已支持 → 参与匹配；库中无此名 → unmatched_items
     lib.item("E2", meta_with("E2", "video", "mp4", &["Y"], &[]), &["video.mp4"]);
     let p = plan_for(&lib, &our_db());
 
@@ -325,8 +328,13 @@ fn trash_is_excluded_before_the_type_filter() {
         Some("游戏"),
         "origin_folder 从夹树解析"
     );
-    assert_eq!(p.report.skipped_unsupported_type, 1, "只有 video.mp4，回收站那条不算支持性问题");
-    assert_eq!(p.report.annotated_unsupported, 1);
+    assert_eq!(p.report.skipped_unsupported_type, 0, "视频已支持，skipped 栏归零");
+    assert_eq!(p.report.annotated_unsupported, 0);
+    assert_eq!(
+        p.report.unmatched_items,
+        vec!["video.mp4".to_string()],
+        "video.mp4 路径不在库中（回收站那条不得混进来）"
+    );
 }
 
 /// §8.3：Bookmark 类（无实体文件）不参与匹配，进 unmatched_items 并记类别计数，

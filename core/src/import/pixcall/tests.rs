@@ -171,8 +171,11 @@ fn topic_names(plan: &MigrationPlan) -> Vec<String> {
 // ---------------------------------------------------------------- ⑫ Trash 排除
 
 /// §4.8 的分类顺序在真数据上的后果：回收站里那条 mp4 只能进 `excluded_trash`，
-/// 既不能进 `skipped_unsupported_type`（那栏只数 1 条 = c.mp4），也不能进 `unmatched`。
-/// 这正是设计文档自己警告的「顺序错了会把同一条目重复计入两栏」。
+/// 不能进 `unmatched`（缺失问题）。这正是设计文档自己警告的「顺序错了会把同一条目
+/// 重复计入两栏」。
+///
+/// 视频 P1（设计方案 §11.1）：`video/mp4` 已支持，不再进 `skipped_unsupported_type`；
+/// 夹具里的 c.mp4 路径不在我们索引中，因此落 `unmatched`（缺失问题）而非支持性问题。
 #[test]
 fn trash_subtree_is_excluded_before_the_type_filter() {
     let p = plan();
@@ -183,9 +186,20 @@ fn trash_subtree_is_excluded_before_the_type_filter() {
         Some("Games"),
         "原所在夹取自 entries.source_path（⑫ 的唯一非空值就是它）"
     );
-    assert_eq!(p.report.skipped_unsupported_type, 1, "只有 c.mp4，回收站那条不算支持性问题");
-    assert_eq!(p.report.unmatched, 1, "只有 gone.png，回收站那条不算缺失");
-    assert_eq!(p.report.unmatched_paths, vec!["C:/Pix/gone.png".to_string()]);
+    assert_eq!(p.report.skipped_unsupported_type, 0, "视频已支持，skipped 栏归零");
+    assert_eq!(p.report.annotated_unsupported, 0);
+    assert_eq!(
+        p.report.unmatched, 2,
+        "c.mp4（新支持但库中无此路径）+ gone.png；回收站那条不算缺失"
+    );
+    assert_eq!(
+        p.report.unmatched_paths,
+        vec!["C:/Pix/c.mp4".to_string(), "C:/Pix/gone.png".to_string()]
+    );
+    assert!(
+        !p.report.unmatched_paths.iter().any(|s| s.ends_with("z.mp4")),
+        "回收站那条不得进 unmatched（① 先于 ②④ 的顺序门禁）"
+    );
 }
 
 /// ①⑫ 的路径重建要求：Trash 条目会被拼成**根级**相对路径（光秃秃的文件名），
@@ -316,13 +330,19 @@ fn a_legacy_plain_source_url_reads_as_a_one_element_list() {
     assert_eq!(row.source_url.as_deref(), Some("https://legacy.example/x"));
 }
 
-/// §4.9 第 2 条：视频标注今天「已解码、暂不落地」，代价要在报告里可见。
+/// 视频 P1（设计方案 §11.1）：`is_indexable` 放开后视频不再「搁置」——
+/// `skipped_unsupported_type` / `annotated_unsupported` 都不再计视频。本夹具里的 c.mp4
+/// 路径不在我们索引中，因此落到 `unmatched`（缺失问题），仍不产生 fa..fc 的落库编辑。
 #[test]
-fn annotated_videos_are_decoded_but_parked_with_a_count() {
+fn videos_are_no_longer_parked_after_p1_support() {
     let p = plan();
-    assert_eq!(p.report.skipped_unsupported_type, 1);
-    assert_eq!(p.report.annotated_unsupported, 1);
-    assert!(p.edits.iter().all(|e| e.file_id != "fc"), "视频不落 file_metadata");
+    assert_eq!(p.report.skipped_unsupported_type, 0, "视频已支持，skipped 栏归零");
+    assert_eq!(p.report.annotated_unsupported, 0);
+    assert!(
+        p.report.unmatched_paths.contains(&"C:/Pix/c.mp4".to_string()),
+        "c.mp4 因路径不在库中而落 unmatched"
+    );
+    assert!(p.edits.iter().all(|e| e.file_id != "fc"), "路径未命中，故仍无 fc 的落库编辑");
 }
 
 // ---------------------------------------------------------------- §4.6 看板规则
@@ -346,10 +366,10 @@ fn manual_boards_migrate_with_hierarchy_and_smart_nodes_materialize() {
     let test = p.topics.iter().find(|t| t.name == "test").unwrap();
     assert_eq!(test.parent_id.as_deref(), Some(song.id.as_str()), "层级照搬（§4.6 规则 1）");
     assert!(test.materialized);
-    // 复算集合 = size<1MiB 的非回收站条目 = b.png + c.mp4；视频成员计 skipped_type，
-    // 因此 topic_files_added 可以小于 file_count（规则 9）
+    // 复算集合 = size<1MiB 的非回收站条目 = b.png + c.mp4；视频 P1 起 c.mp4 已支持，
+    // 但路径不在我们库里 → 记 unmatched，不进成员；故 topic_files_added 仍可小于 file_count（规则 9）。
     assert_eq!(test.file_ids, vec!["fb".to_string()]);
-    assert_eq!(p.report.topic_members_skipped_type, 1);
+    assert_eq!(p.report.topic_members_skipped_type, 0, "视频已支持，成员不再因类型被跳过");
     assert!(p.report.warnings.iter().any(|w| w.contains("快照") && w.contains("test")));
 }
 

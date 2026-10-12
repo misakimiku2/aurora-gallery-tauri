@@ -37,28 +37,29 @@ export const useViewerHandlers = ({
   const handleViewerNavigate = (direction: 'next' | 'prev' | 'random') => {
     if (!activeTab.viewingFileId) return;
 
-    // Filter to get only image file IDs
-    const imageFileIds = displayFileIds.filter(id => state.files[id].type === FileType.IMAGE);
-    if (imageFileIds.length === 0) return;
+    // 导航序列：混排图片与视频，只排除文件夹（设计文档 §5.1）。
+    // 旧实现 === IMAGE 会让视频被排除在序列环之外，永远无法在混排里连续翻页。
+    // random 分支（:53）也一并走同一序列。
+    const mediaFileIds = displayFileIds.filter(id => state.files[id].type !== FileType.FOLDER);
+    if (mediaFileIds.length === 0) return;
 
-    const currentFile = state.files[activeTab.viewingFileId];
-    let currentIndex = imageFileIds.indexOf(activeTab.viewingFileId);
+    let currentIndex = mediaFileIds.indexOf(activeTab.viewingFileId);
 
-    // If current file is not in image list (shouldn't happen), start from beginning
+    // If current file is not in the list (shouldn't happen), start from beginning
     if (currentIndex === -1) {
       currentIndex = 0;
     }
 
     let nextIndex = currentIndex;
     if (direction === 'random') {
-      nextIndex = Math.floor(Math.random() * imageFileIds.length);
+      nextIndex = Math.floor(Math.random() * mediaFileIds.length);
     } else if (direction === 'next') {
-      nextIndex = (currentIndex + 1) % imageFileIds.length;
+      nextIndex = (currentIndex + 1) % mediaFileIds.length;
     } else {
-      nextIndex = (currentIndex - 1 + imageFileIds.length) % imageFileIds.length;
+      nextIndex = (currentIndex - 1 + mediaFileIds.length) % mediaFileIds.length;
     }
 
-    const nextId = imageFileIds[nextIndex];
+    const nextId = mediaFileIds[nextIndex];
     updateActiveTab(prev => {
       const newStack = [...prev.history.stack];
       if (prev.history.currentIndex >= 0 && prev.history.currentIndex < newStack.length) {

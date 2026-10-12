@@ -66,10 +66,12 @@ export const ViewerPane = ({
 }: ViewerPaneProps) => {
   return (
     <>
+      {/* 导航序列：混排图片与视频，只排除文件夹（设计文档 §5.1 最致命的一处）。
+          旧实现 === IMAGE 会把视频排除在「上一个/下一个」环之外，导致视频无法参与连续翻页。 */}
       {activeTab.viewingFileId && !isAndroidSync() && (
         <ImageViewer
           file={state.files[activeTab.viewingFileId]}
-          sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
+          sortedFileIds={displayFileIds.filter(id => state.files[id].type !== FileType.FOLDER)}
           files={state.files}
           layout={state.layout}
           slideshowConfig={state.slideshowConfig}

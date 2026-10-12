@@ -146,10 +146,11 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
     // 获取已存在图片的集合
     const existingIdsSet = useMemo(() => new Set(existingImageIds), [existingImageIds]);
 
-    // 获取所有图片文件（排除已存在的）
+    // 获取所有图片/视频文件（排除已存在的）
+    // 视频播放UI设计 §6.1 / §7.6：候选列表对视频放开（非文件夹即可）——视频可作为画布封面位图
     const imageFiles = useMemo(() => {
         return Object.values(files || {}).filter(f => 
-            f.type === FileType.IMAGE && !existingIdsSet.has(f.id)
+            f.type !== FileType.FOLDER && !existingIdsSet.has(f.id)
         );
     }, [files, existingIdsSet]);
 
@@ -251,7 +252,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                         ? topic.fileIds
                         : (topicFileIdsCache[topic.id] || []);
                     const availableCount = topicIds.filter(id =>
-                        !existingIdsSet.has(id) && files[id]?.type === FileType.IMAGE
+                        !existingIdsSet.has(id) && files[id] && files[id].type !== FileType.FOLDER
                     ).length || (topicIds.length === 0 ? (topic.fileCount ?? 0) : 0);
                     
                     nodes.push({
@@ -275,9 +276,9 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
             }
             case 'people': {
                 peopleList.forEach(person => {
-                    // 计算该人物下可添加的图片数量
+                    // 计算该人物下可添加的图片/视频数量（§6.1：视频手动标了人也计入）
                     const availableCount = Object.values(files || {}).filter(f => 
-                        f.type === FileType.IMAGE && 
+                        f.type !== FileType.FOLDER && 
                         !existingIdsSet.has(f.id) &&
                         f.aiData?.faces?.some(face => face.personId === person.id)
                     ).length;
@@ -429,10 +430,10 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                 if (selectedNodeId) {
                     const folder = files[selectedNodeId];
                     if (folder) {
-                        // 只获取当前文件夹中的图片（不包括子文件夹）
+                        // 只获取当前文件夹中的图片/视频（不包括子文件夹）
                         folder.children?.forEach(childId => {
                             const child = files[childId];
-                            if (child?.type === FileType.IMAGE && !existingIdsSet.has(child.id)) {
+                            if (child && child.type !== FileType.FOLDER && !existingIdsSet.has(child.id)) {
                                 filtered.push(child);
                             }
                         });
@@ -451,7 +452,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                         filtered = ids
                             .map(id => files[id])
                             .filter((f): f is FileNode =>
-                                f?.type === FileType.IMAGE && !existingIdsSet.has(f.id)
+                                !!f && f.type !== FileType.FOLDER && !existingIdsSet.has(f.id)
                             );
                     }
                 }

@@ -322,7 +322,9 @@ function attachImageNodes(
       id: fileId,
       parentId: parentId || null,
       name: img.name,
-      type: 'image' as FileType,
+      // 视频 P1（设计方案 §2.7 类型转换点）：按 mime_type 派生，避免硬编码成 IMAGE。
+      // 当前 android_scan_images 只返回图片（安卓本地库视频见 P3），此项为前向兼容。
+      type: (img.mime_type && img.mime_type.startsWith('video/') ? FileType.VIDEO : FileType.IMAGE) as FileType,
       path: img.path,
       contentUri: img.content_uri,
       mediaStoreId: img.id,

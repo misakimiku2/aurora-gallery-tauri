@@ -41,6 +41,14 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         return None;
     }
 
+    // 视频 P1（设计方案 §5.2-5）：视频不进 image crate 缩略图管线（只解静态图）；
+    // 抽帧封面是 P1.5 的事，这里直接返回 None。
+    if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
+        if crate::file_types::is_supported_video(ext) {
+            return None;
+        }
+    }
+
     // Quick hash
     let metadata = fs::metadata(image_path).ok()?;
     let size = metadata.len();
@@ -270,6 +278,14 @@ pub async fn get_thumbnails_batch(
             if !image_path.exists() || path.contains(".Aurora_Cache") {
                 let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false });
                 return;
+            }
+
+            // 视频 P1（设计方案 §5.2-5）：视频跳过图片缩略图管线（抽帧封面属 P1.5）。
+            if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
+                if crate::file_types::is_supported_video(ext) {
+                    let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false });
+                    return;
+                }
             }
 
             let metadata = match fs::metadata(image_path) { Ok(m) => m, Err(_) => { let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false }); return; } };

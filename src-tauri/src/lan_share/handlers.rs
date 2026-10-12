@@ -1,8 +1,9 @@
 use axum::{
+    body::Body,
     extract::{
         ConnectInfo, Multipart, Query, State,
     },
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -12,6 +13,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::fs;
 use tower_http::cors::{Any, CorsLayer};
+// 视频 P1（设计方案 §5.5）：文件响应支持 Range，走 ServeFile（fs feature 已开）。
+use tower_http::services::ServeFile;
 
 use super::device_manager::DeviceManager;
 use super::metadata::{
@@ -1684,23 +1687,54 @@ pub async fn handle_image(
         return Err(error_response(StatusCode::NOT_FOUND, "Image not found"));
     }
 
-    let data = fs::read(&full_path).await
-        .map_err(|e| {
-            log::error!("[LAN Share] 图片读取失败: {}", e);
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
-        })?;
+    // 视频 P1（设计方案 §5.5，从 P3 提前）：文件响应支持 Range（见 serve_file_with_range）。
+    // 鉴权已在上面完成，本段只负责把字节流交回。
+    serve_file_with_range(&full_path, &headers).await
+}
 
-    let content_type = get_content_type(&full_path);
+/// 读取文件并作为 HTTP 响应返回，支持 Range（视频 P1，设计方案 §5.5）。
+///
+/// 鉴权由调用方（handler）先行完成；本函数只负责字节流：delegate 给 tower-http 的
+/// `ServeFile`（`fs` feature 已开），自带 `Accept-Ranges: bytes`、206 + `Content-Range`、
+/// 流式传输与 If-Range/多段等边界处理 —— 远程视频因此可 seek。
+async fn serve_file_with_range(full_path: &std::path::Path, headers: &HeaderMap) -> Result<Response, Response> {
+    let content_type = get_content_type(full_path);
 
-    log::info!("[LAN Share] 图片返回成功 - 大小: {} bytes, 类型: {}", data.len(), content_type);
+    let mut serve = ServeFile::new(full_path);
+    let mut req_builder = Request::builder().method(Method::GET);
+    if let Some(range) = headers.get(header::RANGE) {
+        req_builder = req_builder.header(header::RANGE, range.clone());
+    }
+    // ServeFile 只读方法与 Range/条件头，不解析请求路径；给个占位 URI 即可。
+    let req = req_builder
+        .uri("/")
+        .body(Body::empty())
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
 
-    Ok((
-        [
-            (header::CONTENT_TYPE, content_type.as_str()),
-            (header::CACHE_CONTROL, "private, max-age=300"),
-        ],
-        data
-    ).into_response())
+    let resp = tower::Service::call(&mut serve, req).await.map_err(|e| {
+        log::error!("[LAN Share] 文件读取失败: {}", e);
+        error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
+    })?;
+
+    let mut response = resp.map(Body::new);
+    // 覆盖 ServeFile 由 mime_guess 猜的 Content-Type，统一走 get_content_type 口径
+    // （确保视频拿到正确 video/*，见 §2.2）。
+    if let Ok(ct) = HeaderValue::from_bytes(content_type.as_bytes()) {
+        response.headers_mut().insert(header::CONTENT_TYPE, ct);
+    }
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
+    response
+        .headers_mut()
+        .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+
+    log::info!(
+        "[LAN Share] 文件返回成功 - 类型: {}, 状态: {}",
+        content_type,
+        response.status()
+    );
+    Ok(response)
 }
 
 pub async fn handle_delete(
@@ -2753,6 +2787,20 @@ fn get_content_type(path: &std::path::Path) -> String {
         "tiff" | "tif" => "image/tiff",
         "avif" => "image/avif",
         "jxl" => "image/jxl",
+        // 视频 P1（设计方案 §2.2 / §5.2）：补 video/* 映射，对齐 is_video_file 的 12 种。
+        // Chromium 对 <video> 的 MIME 检查比 <img> 严，回落 octet-stream 会让播放直接失败；
+        // 这条同时卡桌面端与安卓端 LAN 播放，是共用前置。
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "m4v" => "video/x-m4v",
+        "avi" => "video/x-msvideo",
+        "mkv" => "video/x-matroska",
+        "webm" => "video/webm",
+        "wmv" => "video/x-ms-wmv",
+        "flv" => "video/x-flv",
+        "mpg" | "mpeg" => "video/mpeg",
+        "3gp" => "video/3gpp",
+        "ts" => "video/mp2t",
         _ => "application/octet-stream",
     }.to_string()
 }
@@ -2762,4 +2810,114 @@ pub fn create_cors_layer() -> CorsLayer {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 视频 P1（设计方案 §2.2）：get_content_type 补齐 video/* 映射。
+    #[test]
+    fn content_type_covers_video_extensions() {
+        assert_eq!(get_content_type(std::path::Path::new("a.mp4")), "video/mp4");
+        assert_eq!(get_content_type(std::path::Path::new("a.MKV")), "video/x-matroska");
+        assert_eq!(get_content_type(std::path::Path::new("a.mov")), "video/quicktime");
+        assert_eq!(get_content_type(std::path::Path::new("a.m4v")), "video/x-m4v");
+        assert_eq!(get_content_type(std::path::Path::new("a.avi")), "video/x-msvideo");
+        assert_eq!(get_content_type(std::path::Path::new("a.webm")), "video/webm");
+        assert_eq!(get_content_type(std::path::Path::new("a.wmv")), "video/x-ms-wmv");
+        assert_eq!(get_content_type(std::path::Path::new("a.flv")), "video/x-flv");
+        assert_eq!(get_content_type(std::path::Path::new("a.mpeg")), "video/mpeg");
+        assert_eq!(get_content_type(std::path::Path::new("a.mpg")), "video/mpeg");
+        assert_eq!(get_content_type(std::path::Path::new("a.3gp")), "video/3gpp");
+        assert_eq!(get_content_type(std::path::Path::new("a.ts")), "video/mp2t");
+        // 图片与未知保持原样
+        assert_eq!(get_content_type(std::path::Path::new("a.jpg")), "image/jpeg");
+        assert_eq!(get_content_type(std::path::Path::new("a.bin")), "application/octet-stream");
+    }
+
+    /// 视频 P1（设计方案 §5.5）：serve_file_with_range 对 Range 请求返回 206 + Content-Range，
+    /// 且总是带 Accept-Ranges；无 Range 时返回 200 全量。这是 handle_image 实际调用的函数。
+    #[tokio::test]
+    async fn serve_file_supports_range() {
+        let path = std::env::temp_dir().join(format!("aurora_range_test_{}.mp4", std::process::id()));
+        let data: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).expect("write temp file");
+
+        // 带 Range → 206 + Content-Range + 正确的 video/* MIME
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, HeaderValue::from_static("bytes=100-200"));
+        let resp = serve_file_with_range(&path, &headers).await.expect("range ok");
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT, "Range 请求应返回 206");
+        let cr = resp
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(cr.starts_with("bytes 100-200/"), "Content-Range = {}", cr);
+        assert_eq!(
+            resp.headers().get(header::ACCEPT_RANGES).and_then(|v| v.to_str().ok()),
+            Some("bytes")
+        );
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+            Some("video/mp4")
+        );
+
+        // 无 Range → 200 全量
+        let resp = serve_file_with_range(&path, &HeaderMap::new()).await.expect("full ok");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::ACCEPT_RANGES).and_then(|v| v.to_str().ok()),
+            Some("bytes")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 对齐验收口径：起一个真实 HTTP 服务，`Range: bytes=100-200` 请求返回 206 + Content-Range。
+    /// （鉴权由 handler 负责，这里只验证文件字节流的 Range 行为。）
+    #[tokio::test]
+    async fn range_request_over_http_returns_206() {
+        let path = std::env::temp_dir().join(format!("aurora_range_http_{}.mp4", std::process::id()));
+        let data: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &data).expect("write temp file");
+
+        let file = path.clone();
+        let app = axum::Router::new().route(
+            "/api/file",
+            axum::routing::get(move |headers: HeaderMap| {
+                let file = file.clone();
+                async move { serve_file_with_range(&file, &headers).await }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let resp = reqwest::Client::new()
+            .get(format!("http://{}/api/file", addr))
+            .header("Range", "bytes=100-200")
+            .send()
+            .await
+            .expect("http request");
+
+        assert_eq!(resp.status().as_u16(), 206, "Range 请求应返回 206 Partial Content");
+        let cr = resp
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        println!("HTTP 206 Content-Range = {}", cr);
+        assert!(cr.starts_with("bytes 100-200/1000"), "Content-Range = {}", cr);
+        assert_eq!(
+            resp.headers().get("accept-ranges").and_then(|v| v.to_str().ok()),
+            Some("bytes")
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

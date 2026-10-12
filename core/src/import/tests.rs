@@ -318,10 +318,12 @@ fn apply_creates_topics_with_sequenced_members() {
 
 #[test]
 fn is_indexable_is_the_single_support_gate() {
-    // §4.9：今天 video/* 为 false、image/* 为 true；视频立项时只改这一个函数
+    // 视频 P1（设计方案 §11.1）：video/* 已放开为 true、image/* 仍 true；
+    // 其它类型（folder/unknown）仍拦下。
     assert!(is_indexable("image/png"));
     assert!(is_indexable("image/jpeg"));
-    assert!(!is_indexable("video/mp4"));
+    assert!(is_indexable("video/mp4"));
+    assert!(is_indexable("video/x-matroska"));
     assert!(!is_indexable("application/folder"));
     assert!(!is_indexable("unknown"));
 }

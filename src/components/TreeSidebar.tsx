@@ -27,8 +27,11 @@ import { scrollProfiler } from '../utils/scrollProfiler';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const isLan = isRemotePath(file.path) || (file.source === 'lan' && !!file.remotePath);
+  // 视频 P1.5（实机反馈修复）：视频不进入图片缩略图管线（不读缓存、不 fallback、不渲染 <img>），
+  // 统一显示占位图标（抽帧封面属 P1.5）。否则会把 mp4 当图片加载 → 破图/海量读取。
+  const isVideo = file.type === FileType.VIDEO;
   const [src, setSrc] = useState<string | null>(() => {
-    if (!file.path) return null;
+    if (!file.path || isVideo) return null;
     // 远程来源（桌面端服务/安卓设备）：直接使用远程缩略图 URL
     if (isLan && file.remotePath) {
       return getRemoteThumbnailUrl(file.path);
@@ -50,6 +53,14 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
     }
     return () => { active = false; };
   }, [file.path, file.meta?.modified, resourceRoot, src, isLan, file.remotePath]);
+
+  if (isVideo) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <Film size={14} className="text-gray-400 dark:text-gray-600" />
+      </div>
+    );
+  }
 
   // 远程来源：使用远程缩略图 URL；本地文件回退到 convertFileSrc
   const displaySrc = (isLan && file.remotePath)

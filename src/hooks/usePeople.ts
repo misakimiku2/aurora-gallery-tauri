@@ -206,7 +206,9 @@ export const usePeople = ({
 
       matchedFileIds.forEach(fid => {
         const file = newFiles[fid];
-        if (file && file.type === FileType.IMAGE) {
+        // 视频播放UI设计 §6.1：手动标注人物对视频与图片同权（放开 IMAGE 门禁，非文件夹即可）。
+        // 下方 aiData 不存在时懒创建 analyzed:false 的壳子，只把 faces 当容器用 —— 手动标注不依赖 AI 先跑过。
+        if (file && file.type !== FileType.FOLDER) {
           const currentFaces = file.aiData?.faces || [];
           const newFace: AiFace = {
             id: Math.random().toString(36).substr(2, 9),
@@ -269,7 +271,8 @@ export const usePeople = ({
 
       newFileIds.forEach(fid => {
         const file = newFiles[fid];
-        if (file && file.type === FileType.IMAGE) {
+        // §6.1：智能添加人物同样对视频开放（非文件夹即可）
+        if (file && file.type !== FileType.FOLDER) {
           const currentFaces = file.aiData?.faces || [];
           if (!currentFaces.some(f => f.personId === personId)) {
             const newFace: AiFace = {
@@ -365,7 +368,8 @@ export const usePeople = ({
 
         fileIds.forEach(fid => {
           const file = newFiles[fid];
-          if (file && file.type === FileType.IMAGE) {
+          // §6.1：批量手动添加人物同样对视频开放（非文件夹即可）
+          if (file && file.type !== FileType.FOLDER) {
             const currentFaces = file.aiData?.faces || [];
             if (!currentFaces.some(f => f.personId === personId)) {
               const newFace: AiFace = {
@@ -439,7 +443,8 @@ export const usePeople = ({
 
       fileIds.forEach(fid => {
         const file = newFiles[fid];
-        if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
+        // §6.1：清除人物信息对视频开放（视频手动标了人，就得能清除）
+        if (file && file.type !== FileType.FOLDER && file.aiData?.faces) {
           let updatedFaces: AiFace[];
 
           if (personIdsToClear && personIdsToClear.length > 0) {
@@ -467,7 +472,8 @@ export const usePeople = ({
         personIdsToUpdate.forEach(personId => {
           let newCount = 0;
           Object.values(newFiles).forEach(file => {
-            if (file.type === FileType.IMAGE && file.aiData?.faces) {
+            // §6.1：重算 person.count 时同样计入视频（否则视频标了人数量对不上）
+            if (file.type !== FileType.FOLDER && file.aiData?.faces) {
               if (file.aiData.faces.some(face => face.personId === personId)) {
                 newCount++;
               }

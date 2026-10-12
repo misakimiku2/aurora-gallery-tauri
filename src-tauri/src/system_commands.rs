@@ -211,10 +211,35 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
     }
 }
 
+/// `read_file_as_base64` 的整文件读取上限（128 MiB）。
+///
+/// 该命令会把整个文件读进内存再 base64 编码（体积膨胀约 4/3）经 IPC 传给前端。
+/// 调用方（AI 识图 / 剪贴板 / 动画缩略图 / 远程缩略图）的输入都应是图片，
+/// 但大文件测试下若误把多 GB 的视频/超大文件喂进来，会一次性吃掉数 GB 内存并拖垮 WebView2。
+/// 这里设一个远离正常图片、但足以挡住 GB 级文件的防御性上限；超限直接拒绝并记录原因。
+const MAX_BASE64_READ_BYTES: u64 = 128 * 1024 * 1024;
+
 #[tauri::command]
 pub async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String> {
-    if !Path::new(&file_path).exists() {
+    let meta = match fs::metadata(&file_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(None), // 不存在或不可读 → 与旧行为一致，返回 None
+    };
+    if !meta.is_file() {
         return Ok(None);
+    }
+    if meta.len() > MAX_BASE64_READ_BYTES {
+        log::warn!(
+            "[read_file_as_base64] 拒绝读取超出上限的文件: {} ({} bytes > {} bytes)",
+            file_path,
+            meta.len(),
+            MAX_BASE64_READ_BYTES
+        );
+        return Err(format!(
+            "file too large to read as base64: {} bytes (limit {} bytes)",
+            meta.len(),
+            MAX_BASE64_READ_BYTES
+        ));
     }
     
     let file_bytes = fs::read(&file_path)

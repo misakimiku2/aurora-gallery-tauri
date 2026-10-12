@@ -13,7 +13,8 @@ interface RustFileNode {
   id: string;
   parentId: string | null;
   name: string;
-  type: 'image' | 'folder' | 'unknown';  // camelCase 序列化
+  // camelCase 序列化。'video' 为视频 P1 新增（与 core::file_types::FileType::Video 对齐）
+  type: 'image' | 'video' | 'folder' | 'unknown';
   path: string;
   size?: number;
   children?: string[] | null;
@@ -29,6 +30,10 @@ interface RustFileNode {
     modified: string;
     format: string;
     palette?: string[] | null;
+    // 视频 P1 元数据（设计方案 §6）：图片无此三项
+    durationMs?: number | null;
+    frameRate?: number | null;
+    rotation?: number | null;
   } | null;
   description?: string | null;
   sourceUrl?: string | null;
@@ -62,6 +67,9 @@ export const scanDirectory = async (
       let fileType: FileType = FileType.UNKNOWN;
       if (node.type === 'image') {
         fileType = FileType.IMAGE;
+      } else if (node.type === 'video') {
+        // 视频 P1（设计方案 §2.7 类型转换点）：不补这一支，Rust 返回的 'video' 会落 UNKNOWN
+        fileType = FileType.VIDEO;
       } else if (node.type === 'folder') {
         fileType = FileType.FOLDER;
       }
@@ -99,6 +107,10 @@ export const scanDirectory = async (
           modified: node.meta.modified || '',
           format: node.meta.format || '',
           palette: node.meta.palette || undefined,
+          // 视频 P1 元数据（图片为空则保持 undefined）
+          durationMs: node.meta.durationMs ?? undefined,
+          frameRate: node.meta.frameRate ?? undefined,
+          rotation: node.meta.rotation ?? undefined,
         } : undefined,
       };
 
@@ -135,6 +147,7 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
     Object.entries(rustFiles).forEach(([id, node]) => {
       let fileType: FileType = FileType.UNKNOWN;
       if (node.type === 'image') fileType = FileType.IMAGE;
+      else if (node.type === 'video') fileType = FileType.VIDEO; // 视频 P1（设计方案 §2.7）
       else if (node.type === 'folder') fileType = FileType.FOLDER;
 
       const fileNode: FileNode = {
@@ -159,6 +172,10 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
           modified: node.meta.modified || '',
           format: node.meta.format || '',
           palette: node.meta.palette || undefined,
+          // 视频 P1 元数据（图片为空则保持 undefined）
+          durationMs: node.meta.durationMs ?? undefined,
+          frameRate: node.meta.frameRate ?? undefined,
+          rotation: node.meta.rotation ?? undefined,
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
@@ -464,7 +481,11 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
       id: rustFile.id,
       parentId: rustFile.parentId,
       name: rustFile.name,
-      type: rustFile.type === 'image' ? FileType.IMAGE : rustFile.type === 'folder' ? FileType.FOLDER : FileType.UNKNOWN,
+      // 视频 P1（设计方案 §2.7 类型转换点）：补 'video' 分支，否则单个视频落 UNKNOWN
+      type: rustFile.type === 'image' ? FileType.IMAGE
+        : rustFile.type === 'video' ? FileType.VIDEO
+        : rustFile.type === 'folder' ? FileType.FOLDER
+        : FileType.UNKNOWN,
       path: rustFile.path,
       size: rustFile.size,
       children: rustFile.children || undefined,
@@ -480,6 +501,10 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
         modified: rustFile.meta.modified || '',
         format: rustFile.meta.format || '',
         palette: rustFile.meta.palette || undefined,
+        // 视频 P1 元数据（图片为空则保持 undefined）
+        durationMs: rustFile.meta.durationMs ?? undefined,
+        frameRate: rustFile.meta.frameRate ?? undefined,
+        rotation: rustFile.meta.rotation ?? undefined,
       } : undefined,
       description: rustFile.description || undefined,
       sourceUrl: rustFile.sourceUrl || undefined,

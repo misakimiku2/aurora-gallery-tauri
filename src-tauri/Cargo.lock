@@ -131,7 +131,7 @@ dependencies = [
  "objc2-foundation",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
  "x11rb",
 ]
 
@@ -419,6 +419,7 @@ dependencies = [
  "palette",
  "rayon",
  "reqwest 0.12.28",
+ "revelo",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1674,7 +1675,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2587,7 +2588,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.58.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -3410,6 +3411,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "memoffset"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4106,7 +4116,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4720,7 +4730,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5037,6 +5047,123 @@ dependencies = [
 ]
 
 [[package]]
+name = "revelo"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32b5511790b968c84fd1b6184687274a332f94fd010b0649563d78d2d91e22a6"
+dependencies = [
+ "memmap2",
+ "revelo-core",
+ "revelo-dispatcher",
+ "revelo-parsers-tag",
+]
+
+[[package]]
+name = "revelo-core"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "154617c11c899946ff3b5285d649cbc2695b9552eee1a23c4e29f0f76758dbf5"
+dependencies = [
+ "memmap2",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-dispatcher"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e53dc483c4c727fecd8e1cebaae6d4268d9bff691e1322b48ecbd49a2764d273"
+dependencies = [
+ "rayon",
+ "revelo-core",
+ "revelo-parsers-archive",
+ "revelo-parsers-audio",
+ "revelo-parsers-container",
+ "revelo-parsers-image",
+ "revelo-parsers-tag",
+ "revelo-parsers-text",
+ "revelo-parsers-video",
+]
+
+[[package]]
+name = "revelo-parsers-archive"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50f832dc603a6e2ad302c388be3fd55de77eee63364b96cf9522508c9a25d528"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-audio"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80297496121c5c4315e8fbdc5a5680543e4d0d55d367bfdff26171b64111d7b6"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-container"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fd29a2da1d03e789eb175c731e434e7f7f985124ae631763dfa768469d05735"
+dependencies = [
+ "revelo-core",
+ "revelo-parsers-video",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-image"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b4c6b8b01fbe782bb374b9c4ecfcd0483a940669a24c2a39a1fc85f71f1dd39"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-tag"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "936ef4c11057415d5df3263208ac330a2991b426e95facdc677d7ddb4cf0d4c0"
+dependencies = [
+ "flate2",
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-text"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "696a6fe06ec0f978ee4fc69e3f724a5c90cd67e59002e7b2beb3476e146204d5"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-parsers-video"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01cac5ee47bd3d6ec42ff3a34e4d54f48215c001bdeb1262c6b6e51aa2a816ca"
+dependencies = [
+ "revelo-core",
+ "revelo-util",
+]
+
+[[package]]
+name = "revelo-util"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5791ce4fb26417fdebe06f6e8a71ea5921df44c03366c8c4ef826bff7be87344"
+
+[[package]]
 name = "rfd"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5123,7 +5250,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6285,7 +6412,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7451,7 +7578,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -26,12 +26,12 @@ use crate::db::{normalize_path, topics};
 
 /// §4.9 第 1 条：全仓**唯一**一处问「我们支不支持这类文件」。
 ///
-/// 今天 `video/*` 返回 false、`image/*` 返回 true。视频支持立项 = 改这一个函数
+/// 视频 P1（设计方案 §11.1）：原本 `video/*` 返回 false，现放开为 true。改这一个函数
 /// + scanner 收视频 + `file_index` 加 Video 类型，**导入器一行不改**：原本被
-/// §4.8 ② 拦下的视频标注会自动走到 ④⑤ 正常落库。
+/// §4.8 ② 拦下的视频标注会自动走到 ④⑤ 正常落库（`skipped_unsupported_type` 归零）。
 /// 禁止在导入器其它地方散落 `== "image"` 或扩展名黑名单。
 pub fn is_indexable(content_type: &str) -> bool {
-    content_type.starts_with("image/")
+    content_type.starts_with("image/") || content_type.starts_with("video/")
 }
 
 /// §4.7：报告必须分栏，缺一栏在验收时就会看起来像丢数据。
@@ -69,7 +69,7 @@ pub struct MigrationReport {
     pub topics_skipped_unverifiable: u32,
     /// 父级未落库、降级挂到最近已迁祖先的节点数（§4.6 规则 2）
     pub topics_reparented: u32,
-    /// §4.8 ②：`is_indexable` 为 false 的条目（今天即视频）
+    /// §4.8 ②：`is_indexable` 为 false 的条目（视频 P1 起视频已放开，此项仅剩其它不支持类型）
     pub skipped_unsupported_type: u32,
     /// 其中挂着标签、描述或来源链接的条数（§4.9 第 2 条：搁置的代价要在报告里可见）
     pub annotated_unsupported: u32,
@@ -486,7 +486,8 @@ pub fn apply_plan(
             // 桌面在「新成员归入且专题还没有封面」时拿第一张图当封面
             // （`useTopics.ts:89-98`：`targetFileIds.find(id => file.type === IMAGE)`）。
             // 导入器直接落库、绕过了那条前端路径，所以这里补同一条规则。成员按 §4.9 的
-            // `is_indexable` 过滤后全是 image/*，首个成员就是首张图。
+            // `is_indexable` 过滤后全是 image/* 或 video/*，首个成员即首张封面（视频 P1
+            // 起视频也可当封面，与 R1/U6 一致）。
             if created.cover_file_id.is_none() {
                 created.cover_file_id = topic.file_ids.first().cloned();
             }

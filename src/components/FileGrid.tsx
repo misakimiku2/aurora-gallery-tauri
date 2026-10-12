@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic, SortOption, SortDirection } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
+import { formatVideoDuration } from '../utils/mediaExtensions';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
@@ -751,9 +752,12 @@ const FileCard = React.memo(({
                 }}
             >
                 <MarqueeText active={isSelected} title={file.name}>{file.name}</MarqueeText>
-                {file.type === FileType.IMAGE && (
+                {(file.type === FileType.IMAGE || file.type === FileType.VIDEO) && (
                 <div className={`text-[9px] font-normal truncate mt-0.5 ${isSelected ? 'text-white/90' : 'text-gray-400 dark:text-gray-500'}`}>
-                  {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
+                  {/* 视频 P1（UI 设计 §5.2）：卡片名下显示时长而非分辨率（分辨率已在右侧面板） */}
+                  {file.type === FileType.VIDEO
+                    ? formatVideoDuration(file.meta?.durationMs)
+                    : (file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : '')}
                 </div>
                 )}
             </div>

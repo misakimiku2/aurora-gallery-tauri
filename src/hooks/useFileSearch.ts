@@ -103,7 +103,9 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
       const person = state.people[searchCriteria.activePersonId];
       const characterTagName = person?.characterTagName;
       candidates = allFiles.filter(f => {
-        if (f.type !== FileType.IMAGE) return false;
+        // 视频 P1（UI 设计 §6.1）：手动标注人物对视频同样有效。此处是真正的搜索路径
+        // （search.worker.ts 未被实例化），放开到非文件夹以修复"视频标了人却筛不出来"
+        if (f.type === FileType.FOLDER) return false;
         if (f.aiData?.faces?.some(face => face.personId === searchCriteria.activePersonId)) return true;
         if (characterTagName && f.tags?.some(tag => tag === characterTagName)) return true;
         return false;

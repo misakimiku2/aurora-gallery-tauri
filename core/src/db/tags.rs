@@ -131,7 +131,8 @@ pub fn get_files_by_tag(conn: &Connection, tag: &str) -> Result<Vec<String>> {
 ///
 /// 三个口径都是照 React 抄的，别顺手改：
 ///  - 多标签是**并集**，不是交集——`useFileSearch.ts:110-113` 用的是 `tags.some(...)`；
-///  - 只取 `file_type = 'Image'`，词表里挂到文件夹上的标签不参与；
+///  - 只取 `file_type IN ('Image','Video')`，词表里挂到文件夹上的标签不参与；
+///    （视频 P1：按标签筛选放开到视频，与桌面端网格同权。）
 ///  - 顺序 `modified_at DESC`，与 `list_images` 同一条，切进切出筛选时网格不会突然换序。
 ///
 /// 用 `EXISTS` 而不是 JOIN `file_tags`：一张图同时带两个命中标签时，JOIN 会把它
@@ -147,9 +148,9 @@ pub fn images_with_any_tag(conn: &Connection, tags: &[String]) -> Result<Vec<Fil
         .join(", ");
     let sql = format!(
         "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
-                width, height, format \
+                width, height, format, duration_ms, frame_rate, rotation \
          FROM file_index f \
-         WHERE f.file_type = 'Image' \
+         WHERE f.file_type IN ('Image', 'Video') \
            AND EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.file_id AND t.tag IN ({})) \
          ORDER BY f.modified_at DESC",
         marks
@@ -169,6 +170,9 @@ pub fn images_with_any_tag(conn: &Connection, tags: &[String]) -> Result<Vec<Fil
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
     rows.collect()

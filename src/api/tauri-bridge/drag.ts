@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { startDrag as tauriStartDrag } from '@crabnebula/tauri-plugin-drag';
 import { isTauriEnvironment } from '../../utils/environment';
+import { IMAGE_EXTENSION_SET, getLowerExtension } from '../../utils/mediaExtensions';
 
 /**
  * 生成拖拽预览图（用于外部拖拽时显示）
@@ -78,9 +79,11 @@ export const startDragToExternal = async (
     }
 
     // 如果还是没有缩略图，使用原始文件（仅对图片）
+    // 视频 P1（设计方案 §2.7 口径 C）：原先此处的正则只认 6 种扩展名，
+    // 现改为引用统一扩展名表（与 core/src/file_types.rs 同步）。
     if (!finalIconPath) {
       const firstFilePath = filePaths[0];
-      const isImage = /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(firstFilePath);
+      const isImage = IMAGE_EXTENSION_SET.has(getLowerExtension(firstFilePath));
       if (isImage) {
         finalIconPath = firstFilePath;
       }

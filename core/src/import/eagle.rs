@@ -1903,6 +1903,9 @@ pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u
             width: None,
             height: None,
             format: None,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         });
     }
 
@@ -1930,7 +1933,17 @@ pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u
             parent_id,
             path: normalize_path(&file.path),
             name,
-            file_type: "Image".to_string(),
+            // 视频 P1（设计方案 §11.1）：is_indexable 放开视频后，Eagle 侧搬运的视频也会
+            // 走到这里，按扩展名落正确的 file_type（否则会被误标成 Image）。
+            file_type: if format
+                .as_deref()
+                .map(crate::file_types::is_supported_video)
+                .unwrap_or(false)
+            {
+                "Video".to_string()
+            } else {
+                "Image".to_string()
+            },
             size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
             created_at: meta
                 .as_ref()
@@ -1945,6 +1958,9 @@ pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u
             width: file.width,
             height: file.height,
             format,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         });
     }
 

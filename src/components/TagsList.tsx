@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Tag, Image as ImageIcon } from 'lucide-react';
+import { Tag, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getThumbnail } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
@@ -63,7 +63,9 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
 
   useEffect(() => {
     let active = true;
-    if (file.type === FileType.IMAGE && resourceRoot && !src) {
+    // 视频 P1（UI 设计 §6.1）：视频没有缩略图端点。原门禁 === IMAGE 会让视频落到
+    // convertFileSrc(file.path)，对 mp4 显示坏图；故显式排除视频（改走占位图标，见下方 render）。
+    if (file.type !== FileType.FOLDER && file.type !== FileType.VIDEO && resourceRoot && !src) {
       getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
         if (active && url) {
           setSrc(url);
@@ -73,6 +75,15 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
     }
     return () => { active = false; };
   }, [file.path, file.meta?.modified, resourceRoot, src]);
+
+  // 视频：用占位图标，不渲染 <img>（避免 mp4 走 convertFileSrc 出坏图）
+  if (file.type === FileType.VIDEO) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
+        <VideoIcon className="text-gray-400 dark:text-gray-500" size={20} />
+      </div>
+    );
+  }
 
   // Use thumbnail if available, otherwise fallback to converted original path
   const displaySrc = src || convertFileSrc(file.path);

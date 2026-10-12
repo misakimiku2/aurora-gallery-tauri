@@ -1310,7 +1310,8 @@ export const App: React.FC = () => {
 
     // Count files per person
     Object.values(state.files).forEach(file => {
-      if (file.type === FileType.IMAGE) {
+      // 视频 P1（UI设计 §6.1）：视频手动标注的人物也计入计数（AI 自动识别仍不跑视频）
+      if (file.type !== FileType.FOLDER) {
         const personIds = new Set<string>();
         
         // Count from faces (face recognition)

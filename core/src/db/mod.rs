@@ -99,6 +99,32 @@ pub fn generate_id(path: &str) -> String {
     }
 }
 
+/// 扫描器「能力版本」——存在 SQLite 的 `PRAGMA user_version` 里（库级、随库走）。
+///
+/// 语义：**每当代码新增支持一种文件类型、或需要全量回填的元数据字段时 +1**。
+/// `scan_directory` 入口会比对：库版本 < 当前版本 → 本次强制全扫（升级后自动补扫新类型），
+/// 真实扫描成功收尾时写回当前版本 —— 升级后**只发生一次**，之后回到正常的快速启动。
+///
+/// 背景（2026-10-12 实测）：旧库升级到支持视频的版本后，视频藏在子目录里、
+/// 根目录浅比较的数量不变，启动扫描被「数量短路」直接走缓存 —— 不强制的话
+/// 新类型永远不会被扫到（用户必须手动刷新）。
+///
+/// 历史：
+/// - `0`：未标记（视频支持之前的旧库）
+/// - `2`：支持视频（P1，2026-10-12）
+pub const SCANNER_CAPABILITY: i64 = 2;
+
+/// 读取库的扫描能力版本（旧库缺省 `0`）。
+pub fn get_scanner_capability(conn: &Connection) -> i64 {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0)
+}
+
+/// 写入库的扫描能力版本（真实扫描成功收尾后调用）。
+pub fn set_scanner_capability(conn: &Connection, version: i64) -> Result<()> {
+    conn.pragma_update(None, "user_version", version)
+}
+
 pub fn init_db(conn: &Connection) -> Result<()> {
     // Create persons table
     conn.execute(
@@ -203,4 +229,19 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     topics::backfill_association_tables(conn)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// 新旧库的缺省/往返：旧库读到 0（= 未标记，触发一次升级补扫），写回后读到当前版本。
+    #[test]
+    fn scanner_capability_defaults_to_zero_and_roundtrips() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        assert_eq!(get_scanner_capability(&conn), 0, "新库缺省 0（视作能力未标记）");
+        set_scanner_capability(&conn, SCANNER_CAPABILITY).expect("set capability");
+        assert_eq!(get_scanner_capability(&conn), SCANNER_CAPABILITY);
+    }
 }

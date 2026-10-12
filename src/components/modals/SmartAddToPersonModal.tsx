@@ -64,6 +64,10 @@ export const SmartAddToPersonModal: React.FC<SmartAddToPersonModalProps> = ({
   }, [files, person.id]);
 
   const allImageFiles = useMemo(() => {
+    // 视频 P1 实践修正（对 UI设计 §6.1 的偏离，已记档）：本弹窗是「智能添加」——候选与匹配
+    // 全部依赖 CLIP，而 CLIP 不覆盖视频。若放开视频，只会把它带进"缺少嵌入向量"的检测/
+    // 批量生成路径（误触发）。「手动添加到人物」的入口在 usePeople.ts（已对视频放开），
+    // 本弹窗保持仅图片。
     return Object.values(files || {}).filter(file => 
       file.type === FileType.IMAGE && file.path && !existingFileIds.has(file.id)
     );

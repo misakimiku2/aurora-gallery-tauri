@@ -8,7 +8,7 @@ pub struct FileIndexEntry {
     pub parent_id: Option<String>,
     pub path: String,
     pub name: String,
-    pub file_type: String, // "Image", "Folder", "Unknown"
+    pub file_type: String, // "Image", "Video", "Folder", "Unknown"
     pub size: u64,
     pub created_at: i64,
     pub modified_at: i64,
@@ -16,6 +16,13 @@ pub struct FileIndexEntry {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub format: Option<String>,
+    // Video specific（视频 P1，设计方案 §6）：图片行一律 None。
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub frame_rate: Option<f64>,
+    #[serde(default)]
+    pub rotation: Option<i64>,
 }
 
 pub fn create_table(conn: &Connection) -> Result<()> {
@@ -69,6 +76,12 @@ pub fn create_table(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    // 视频 P1（设计方案 §6）：file_index 新增视频元数据列。沿用 db/mod.rs 的幂等加列模式
+    // （`let _ = ALTER TABLE ... ADD COLUMN`，已存在时报错被忽略）。
+    let _ = conn.execute("ALTER TABLE file_index ADD COLUMN duration_ms INTEGER", []);
+    let _ = conn.execute("ALTER TABLE file_index ADD COLUMN frame_rate REAL", []);
+    let _ = conn.execute("ALTER TABLE file_index ADD COLUMN rotation INTEGER", []);
+
     Ok(())
 }
 
@@ -79,8 +92,9 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
         let mut stmt = tx.prepare(
             "INSERT INTO file_index (
                 file_id, parent_id, path, name, file_type, size, 
-                created_at, modified_at, width, height, format
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                created_at, modified_at, width, height, format,
+                duration_ms, frame_rate, rotation
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(file_id) DO UPDATE SET
                 parent_id = excluded.parent_id,
                 path = excluded.path,
@@ -91,7 +105,10 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
                 modified_at = excluded.modified_at,
                 width = excluded.width,
                 height = excluded.height,
-                format = excluded.format"
+                format = excluded.format,
+                duration_ms = excluded.duration_ms,
+                frame_rate = excluded.frame_rate,
+                rotation = excluded.rotation"
         )?;
 
         for entry in entries {
@@ -106,7 +123,10 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
                 entry.modified_at,
                 entry.width,
                 entry.height,
-                entry.format
+                entry.format,
+                entry.duration_ms,
+                entry.frame_rate,
+                entry.rotation
             ])?;
         }
     }
@@ -117,7 +137,7 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
 
 pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<FileIndexEntry>> {
     let pattern = format!("{}%", root_path);
-    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE path LIKE ?1")?;
+    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE path LIKE ?1")?;
     let rows = stmt.query_map(params![pattern], |row| {
         Ok(FileIndexEntry {
             file_id: row.get(0)?,
@@ -131,6 +151,9 @@ pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
 
@@ -142,7 +165,7 @@ pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<
 }
 
 pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
-    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index")?;
+    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index")?;
     let rows = stmt.query_map([], |row| {
         Ok(FileIndexEntry {
             file_id: row.get(0)?,
@@ -156,6 +179,9 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
 
@@ -168,9 +194,15 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
 
 /// 获取所有图片文件（file_type = "Image"）
 /// 用于 CLIP 嵌入向量生成
+///
+/// 视频 P1：**本条按「AI 分类相关 SQL 保持只认 'Image'」口径保留**（设计方案 §0.2 第 2 条
+/// 「AI 分析不跑视频」）。本函数是 CLIP 嵌入的输入源（`clip_commands::get_all_image_files`
+/// → 前端 `clip.ts`/`AIVisionPanel`），放开会把视频灌进 CLIP。副作用：颜色清理
+/// （`db_commands::cleanup_stale_color_records`）与 LAN `handle_all_image_folders` 也共用本
+/// 函数，因此这两处暂不含视频——待 P1.5 视频算主色时再单独评估。
 pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format 
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation 
          FROM file_index 
          WHERE file_type = 'Image'"
     )?;
@@ -187,6 +219,9 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
 
@@ -200,9 +235,10 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
 /// 按 id 集合取图片（M4a 3.2）。**保留入参顺序**、不在库中的 id 静默跳过——调用方
 /// 是专题：成员 id 来自 `topic_files`，而 MediaStore 对账可能已把对应行清掉（用户删了图），
 /// 这时该成员自然消失，不该报错炸掉整个专题详情。
-/// 只认 `file_type = 'Image'`：专题理论上可能挂了文件夹/视频 id，网格只吃图片。
+/// 只认 `file_type IN ('Image','Video')`：专题理论上可能挂了文件夹 id，网格不吃文件夹；
+/// 视频 P1 起专题成员网格与图片同权纳入视频（设计方案 §5.2 列表类口径）。
 pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileIndexEntry>> {
-    use rusqlite::{params_from_iter, ToSql};
+    use rusqlite::ToSql;
     use std::collections::HashMap;
 
     if file_ids.is_empty() {
@@ -214,9 +250,9 @@ pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileI
         .join(", ");
     let sql = format!(
         "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
-                width, height, format \
+                width, height, format, duration_ms, frame_rate, rotation \
          FROM file_index \
-         WHERE file_type = 'Image' AND file_id IN ({})",
+         WHERE file_type IN ('Image', 'Video') AND file_id IN ({})",
         marks
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -234,6 +270,9 @@ pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileI
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
     let mut by_id: HashMap<String, FileIndexEntry> = HashMap::new();
@@ -283,6 +322,9 @@ pub fn get_minimal_entries_under_path(conn: &Connection, root_path: &str) -> Res
             width: None,
             height: None,
             format: None,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         })
     })?;
 
@@ -345,6 +387,9 @@ mod reconcile_tests {
             width: None,
             height: None,
             format: None,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         }
     }
 
@@ -445,6 +490,47 @@ mod reconcile_tests {
 
         let count = get_all_entries(&conn).expect("read back").len();
         assert_eq!(count, 2, "重复对账不产生累积或丢失");
+    }
+
+    /// 2026-10-12 实测回归（视频 P1 连带发现）：对子文件夹执行扫描（前端「刷新」）后，
+    /// 该文件夹**自身的行必须保留** —— 旧实现把 root 自身当删除候选（`path = ?1 OR path LIKE ?2`），
+    /// 而 existing_paths 不含 root（walk 跳过扫描根），导致 root 行被误删、子行沦为孤儿。
+    /// 同时验证带分隔符的前缀匹配不会误伤同前缀的兄弟目录。
+    #[test]
+    fn delete_orphaned_entries_keeps_root_row_and_same_prefix_sibling() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+
+        let root_path = "C:/videos/Game.exe".to_string();
+        let child_a = "C:/videos/Game.exe/a.mp4".to_string();
+        let child_b = "C:/videos/Game.exe/b.png".to_string();
+        // 同前缀的兄弟目录：绝不能被误伤
+        let sibling = "C:/videos/Game.exe2/c.png".to_string();
+
+        let seed = vec![
+            entry("root", None, &root_path, "Game.exe", "Folder"),
+            entry("a", Some("root"), &child_a, "a.mp4", "Video"),
+            entry("b", Some("root"), &child_b, "b.png", "Image"),
+            entry("sib", None, &sibling, "c.png", "Image"),
+        ];
+        batch_upsert(&mut conn, &seed).expect("seed rows");
+
+        // 磁盘侧：root 下只剩 a（b 已消失）；sibling 不在本次扫描范围内
+        let deleted = delete_orphaned_entries(&mut conn, &root_path, &[child_a.clone()])
+            .expect("delete orphaned");
+        assert_eq!(deleted, 1, "只应删掉 root 下已消失的 b");
+
+        let mut paths: Vec<String> = get_all_entries(&conn)
+            .expect("read back")
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![root_path.clone(), child_a.clone(), sibling.clone()],
+            "root 行保留（防孤儿化）、a 保留、b 删除、同前缀兄弟不受影响"
+        );
     }
 
     #[test]
@@ -583,6 +669,9 @@ mod bench_tests {
                 width: Some(800),
                 height: Some(600),
                 format: Some("jpg".into()),
+                duration_ms: None,
+                frame_rate: None,
+                rotation: None,
             });
         }
 
@@ -627,7 +716,8 @@ mod bench_tests {
 ///
 /// 单事务保证原子性：任一步失败整体回滚，索引保持上一次一致状态。
 /// 临时表挂在连接上；池只有一个连接，IF NOT EXISTS + 先清空即可重入。
-/// 只触碰 'Folder' / 'Image' 两种类型，其他 file_type 的行不属于 MediaStore 管辖。
+/// 只触碰 'Folder' / 'Image' / 'Video' 三种类型，其他 file_type 的行不属于 MediaStore 管辖。
+/// （视频 P1 起把 'Video' 纳入清理口径，避免删除同步时漏保护视频行、累积脏数据。）
 pub fn reconcile_mediastore_snapshot(
     conn: &mut Connection,
     folder_entries: &[FileIndexEntry],
@@ -639,8 +729,9 @@ pub fn reconcile_mediastore_snapshot(
         let mut upsert = tx.prepare(
             "INSERT INTO file_index (
                 file_id, parent_id, path, name, file_type, size,
-                created_at, modified_at, width, height, format
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                created_at, modified_at, width, height, format,
+                duration_ms, frame_rate, rotation
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(file_id) DO UPDATE SET
                 parent_id = excluded.parent_id,
                 path = excluded.path,
@@ -651,7 +742,10 @@ pub fn reconcile_mediastore_snapshot(
                 modified_at = excluded.modified_at,
                 width = excluded.width,
                 height = excluded.height,
-                format = excluded.format"
+                format = excluded.format,
+                duration_ms = excluded.duration_ms,
+                frame_rate = excluded.frame_rate,
+                rotation = excluded.rotation"
         )?;
         for entry in folder_entries.iter().chain(image_entries) {
             upsert.execute(params![
@@ -665,7 +759,10 @@ pub fn reconcile_mediastore_snapshot(
                 entry.modified_at,
                 entry.width,
                 entry.height,
-                entry.format
+                entry.format,
+                entry.duration_ms,
+                entry.frame_rate,
+                entry.rotation
             ])?;
         }
 
@@ -698,7 +795,7 @@ pub fn reconcile_mediastore_snapshot(
             [],
         )?;
         tx.execute(
-            "DELETE FROM file_index WHERE file_type = 'Image' AND file_id NOT IN (SELECT id FROM current_snapshot_ids) AND file_id NOT IN (SELECT id FROM protected_media_ids)",
+            "DELETE FROM file_index WHERE file_type IN ('Image', 'Video') AND file_id NOT IN (SELECT id FROM current_snapshot_ids) AND file_id NOT IN (SELECT id FROM protected_media_ids)",
             [],
         )?;
 
@@ -707,9 +804,10 @@ pub fn reconcile_mediastore_snapshot(
         // 由此而来（卡片数 = 缓存列 = 原始行数，详情 = list_images_by_ids 静默跳过
         // 缺行）。这里清掉孤儿成员并把 file_count 缓存对齐实际成员数。此函数只有
         // 安卓 MediaStore 对账调用（桌面走文件系统同步，不经这里）。
+        // 视频 P1：成员口径同步放开到 Video（专题成员网格已纳入视频）。
         tx.execute(
             "DELETE FROM topic_files WHERE file_id NOT IN (
-                SELECT file_id FROM file_index WHERE file_type = 'Image')",
+                SELECT file_id FROM file_index WHERE file_type IN ('Image', 'Video'))",
             [],
         )?;
         tx.execute(
@@ -761,10 +859,17 @@ pub fn delete_orphaned_entries(conn: &mut Connection, root_path: &str, existing_
         // 1. 快速索引：将磁盘路径存入 HashSet，查找速度从 O(N) 变为 O(1)
         let existing_set: HashSet<&String> = existing_paths.iter().collect();
 
-        // 2. 找出该目录下所有已经在数据库中的路径
-        let pattern = format!("{}%", root_path);
-        let mut stmt = tx.prepare("SELECT path FROM file_index WHERE path = ?1 OR path LIKE ?2")?;
-        let db_paths: Vec<String> = stmt.query_map(params![root_path, pattern], |row| row.get(0))?
+        // 2. 找出该目录「之下」所有已经在数据库中的路径。
+        //    只匹配带分隔符的 `root/` 前缀，两点必须：
+        //    ① 不能把 root 自身当删除候选 —— scanned_paths（existing_paths）不包含扫描根自身
+        //       （walk 显式跳过 root），旧写法 `path = ?1 OR path LIKE ?2` 在对子文件夹执行
+        //       扫描时会把这个文件夹自身的行误删，令其子行沦为孤儿（parent 指向不存在的行）。
+        //       2026-10-12 实测：刷新 Game.exe 文件夹后其行消失、5 个子行成孤儿。
+        //    ② 带分隔符避免误伤同前缀的兄弟目录（root = Game.exe 时不该波及 Game.exe2/）。
+        let trimmed = root_path.trim_end_matches(|c| c == '/' || c == '\\');
+        let pattern = format!("{}/%", trimmed);
+        let mut stmt = tx.prepare("SELECT path FROM file_index WHERE path LIKE ?1")?;
+        let db_paths: Vec<String> = stmt.query_map(params![pattern], |row| row.get(0))?
             .filter_map(|r| r.ok())
             .collect();
             
@@ -839,9 +944,10 @@ pub fn search_by_name(conn: &Connection, query: &str, scope: &str) -> Result<Vec
     let search_pattern = format!("%{}%", query.to_lowercase());
     
     let sql = match scope {
-        "file" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Image'",
-        "folder" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Folder'",
-        _ => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1",
+        // 视频 P1：文件搜索放开到 Video（列表类口径）。
+        "file" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1 AND file_type IN ('Image', 'Video')",
+        "folder" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Folder'",
+        _ => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1",
     };
     
     let mut stmt = conn.prepare(sql)?;
@@ -858,6 +964,9 @@ pub fn search_by_name(conn: &Connection, query: &str, scope: &str) -> Result<Vec
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
 
@@ -872,7 +981,7 @@ pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Resu
     let parent_id = crate::db::generate_id(parent_path);
     
     let mut stmt = conn.prepare(
-        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format 
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation 
          FROM file_index WHERE parent_id = ?1"
     )?;
     
@@ -889,6 +998,9 @@ pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Resu
             width: row.get(8)?,
             height: row.get(9)?,
             format: row.get(10)?,
+            duration_ms: row.get(11)?,
+            frame_rate: row.get(12)?,
+            rotation: row.get(13)?,
         })
     })?;
 
@@ -902,8 +1014,9 @@ pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Resu
 pub fn get_folder_preview_images(conn: &Connection, folder_path: &str, limit: usize) -> Result<Vec<String>> {
     let folder_id = crate::db::generate_id(folder_path);
     
+    // 视频 P1（设计方案 §5.2 封面选取口径）：文件夹预览图放开到视频（R1「文件夹封面取视频」）。
     let sql = format!(
-        "SELECT path FROM file_index WHERE parent_id = ?1 AND file_type = 'Image' ORDER BY modified_at DESC LIMIT {}", 
+        "SELECT path FROM file_index WHERE parent_id = ?1 AND file_type IN ('Image', 'Video') ORDER BY modified_at DESC LIMIT {}", 
         limit
     );
     
@@ -1010,9 +1123,10 @@ pub fn get_folder_info_batch(
         }
     }
 
-    // 直接子图的最新创建时间（LAN 协议 latest_created_at：不递归嵌套，仅 file_type='Image'）
+    // 直接子图的最新创建时间（LAN 协议 latest_created_at：不递归嵌套）。
+    // 视频 P1（设计方案 §5.2）：同权纳入视频，口径改为 IN ('Image','Video')。
     let latest_sql = format!(
-        "SELECT parent_id, MAX(created_at) FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image' GROUP BY parent_id",
+        "SELECT parent_id, MAX(created_at) FROM file_index WHERE parent_id IN ({}) AND file_type IN ('Image', 'Video') GROUP BY parent_id",
         placeholders.join(",")
     );
     let mut latest_stmt = conn.prepare(&latest_sql)?;
@@ -1028,7 +1142,7 @@ pub fn get_folder_info_batch(
     }
 
     let preview_sql = format!(
-        "SELECT parent_id, path FROM (SELECT parent_id, path, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY {}) as rn FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image') WHERE rn <= 3",
+        "SELECT parent_id, path FROM (SELECT parent_id, path, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY {}) as rn FROM file_index WHERE parent_id IN ({}) AND file_type IN ('Image', 'Video')) WHERE rn <= 3",
         preview_order_clause(sort),
         placeholders.join(",")
     );
@@ -1066,6 +1180,9 @@ mod folder_info_batch_tests {
             width: None,
             height: None,
             format: None,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         }
     }
 
@@ -1082,6 +1199,9 @@ mod folder_info_batch_tests {
             width: None,
             height: None,
             format: None,
+            duration_ms: None,
+            frame_rate: None,
+            rotation: None,
         }
     }
 

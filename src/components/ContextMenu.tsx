@@ -261,6 +261,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
         )}
 
+        {/* 视频播放UI设计 §7.1：复制图片仅对图片（视频隐藏该项 —— 复制的是静态位图）。
+            TODO(P1.5 抽帧后)：视频接「复制封面/复制当前帧」（§7.2/§7.4），届时放开为 !== FOLDER 并替换图标文案。 */}
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && (
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCopyImageToClipboard(contextMenu.targetId!); closeContextMenu(); }}>
             <Clipboard size={iconSize} className="mr-2 opacity-70" />
@@ -281,6 +283,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             </div>
           );
         })()}
+        {/* 视频播放UI设计 §7.1：搜索相似图片依赖 CLIP 图像 embedding，视频没有 → 视频天然被此 IMAGE 门禁隐藏 */}
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && clipSettings?.enabled && handleSearchSimilarImages && (
           <div className={isAndroidDevice
             ? 'mx-2 px-4 rounded hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'
@@ -324,7 +327,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Sparkles size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
         )}
-        {contextMenu.type === 'file-single' && contextMenu.targetId && aiConnectionStatus === 'connected' && (
+        {/* 视频播放UI设计 §7.1/§7.5：原「AI 分析」只看连接状态、无类型门禁 —— 与「AI 不跑视频」定案冲突，此处补视频门禁 */}
+        {contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type !== FileType.VIDEO && aiConnectionStatus === 'connected' && (
           <div className={purpleItemClass} style={menuItemStyle} onClick={() => {
             handleAIAnalysis([contextMenu.targetId!]);
             closeContextMenu();
@@ -450,7 +454,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <Type size={iconSize} className="mr-2 opacity-70" />
           {t('context.batchRename')}
         </div>)}
-        {(contextMenu.type === 'file-multi') && aiConnectionStatus === 'connected' && (
+        {(contextMenu.type === 'file-multi') && aiConnectionStatus === 'connected' && activeTab.selectedFileIds.some(id => files[id]?.type === FileType.IMAGE) && (
           <div className={purpleItemClass} style={menuItemStyle} onClick={() => {
             handleAIAnalysis(activeTab.selectedFileIds);
             closeContextMenu();
@@ -465,7 +469,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           fileIds.forEach(fid => {
             const file = files[fid];
-            if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
+            // 视频播放UI设计 §7.1：清除人物信息对视频放开（视频手动标了人，就得能清除）
+            if (file && file.type !== FileType.FOLDER && file.aiData?.faces) {
               file.aiData.faces.forEach(face => {
                 allPeople.add(face.personId);
               });

@@ -1,5 +1,6 @@
 use crate::db::{self, generate_id, normalize_path, AppDbPool};
-use crate::file_types::{FileType, FileNode, ImageMeta, ScanProgress, is_supported_image};
+use crate::file_types::{FileType, FileNode, ImageMeta, ScanProgress, is_supported_image, is_supported_video};
+use crate::video_metadata::read_video_metadata;
 use crate::image_utils::get_image_dimensions;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -116,7 +117,7 @@ fn sort_children(all_files: &mut HashMap<String, FileNode>) {
 pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     let scan_start = std::time::Instant::now();
     log::info!("[Scanner] scan_directory start: path={}, force={}", path, force_rescan.unwrap_or(false));
-    let force = force_rescan.unwrap_or(false);
+    let mut force = force_rescan.unwrap_or(false);
     let root_path_os = Path::new(&path);
     
     if !root_path_os.exists() {
@@ -135,6 +136,15 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
 
     let pool_for_metadata = pool_inner.clone();
     let pool_for_index = pool_inner.clone();
+
+    // 扫描能力版本（db::SCANNER_CAPABILITY）：库记录的能力低于当前代码时（如旧图片库首次
+    // 升级到支持视频的版本），本次强制全扫一次把新类型补进来；真实扫描成功收尾时写回版本。
+    // 升级后只发生一次。不强制时：视频藏在子目录里、根目录浅比较的数量不变，启动扫描会被
+    // 下方的「数量短路」直接走缓存 —— 新类型永远扫不到（2026-10-12 指挥官实机验证）。
+    if db::get_scanner_capability(&pool_inner.get_connection()) < db::SCANNER_CAPABILITY {
+        force = true;
+        log::info!("[Scanner] scanner capability outdated -> forcing full rescan");
+    }
 
     let (metadata_map, cached_index_map) = tokio::join!(
         tokio::task::spawn_blocking(move || {
@@ -173,7 +183,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 if let Ok(md) = e.metadata() {
                     if md.is_dir() { return true; }
                     let ext = e.path().extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).unwrap_or_default();
-                    return is_supported_image(&ext);
+                    return is_supported_image(&ext) || is_supported_video(&ext);
                 }
                 false
             }).count()
@@ -211,7 +221,13 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                     id: entry.file_id.clone(),
                     parent_id: entry.parent_id.clone(),
                     name: entry.name.clone(),
-                    r#type: if entry.file_type == "Image" { FileType::Image } else { FileType::Folder },
+                    // 视频 P1（设计方案 §2.7 口径 D）：兜底分支必须认 "Video"，
+                    // 否则视频即使骗过上面的过滤点，在这里也会被判成文件夹。
+                    r#type: match entry.file_type.as_str() {
+                        "Image" => FileType::Image,
+                        "Video" => FileType::Video,
+                        _ => FileType::Folder,
+                    },
                     path: f_path.clone(),
                     size: Some(entry.size),
                     children: if entry.file_type == "Folder" { Some(Vec::new()) } else { None },
@@ -242,6 +258,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         modified: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                         format: entry.format.clone().unwrap_or_else(|| "unknown".to_string()),
                         palette: None,
+                        duration_ms: entry.duration_ms,
+                        frame_rate: entry.frame_rate,
+                        rotation: entry.rotation,
                     });
                 }
 
@@ -358,7 +377,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 let entry = e.ok()?;
                 if entry.file_type().is_file() {
                     let ext = entry.path().extension()?.to_str()?.to_lowercase();
-                    if is_supported_image(&ext) { return Some(1); }
+                    if is_supported_image(&ext) || is_supported_video(&ext) { return Some(1); }
                 }
                 None
             })
@@ -413,6 +432,11 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 let mut width = 0;
                 let mut height = 0;
                 let mut has_cached_dims = false;
+                // 视频 P1（设计方案 §6）：缓存命中时复用已入库的视频元数据，避免 batch_upsert
+                // 的 ON CONFLICT DO UPDATE 把 duration/frame_rate/rotation 覆盖成 NULL。
+                let mut cached_duration_ms = None;
+                let mut cached_frame_rate = None;
+                let mut cached_rotation = None;
 
                 if let Some(c) = cached {
                     if c.modified_at == mtime && c.size == metadata.len() {
@@ -423,6 +447,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                 has_cached_dims = true;
                             }
                         }
+                        cached_duration_ms = c.duration_ms;
+                        cached_frame_rate = c.frame_rate;
+                        cached_rotation = c.rotation;
                     }
                 }
 
@@ -436,15 +463,39 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                     };
                     Some((file_id, folder_node, p_path))
-                } else if is_supported_image(&extension) {
-                    if !has_cached_dims && force {
-                         let dims = get_image_dimensions(&entry_path.to_string_lossy());
-                         width = dims.0;
-                         height = dims.1;
+                } else if is_supported_image(&extension) || is_supported_video(&extension) {
+                    // 视频 P1（设计方案 §2.7 口径 E）：视频与图片同权进入扫描文件分支。
+                    let is_video = is_supported_video(&extension);
+
+                    // 视频元数据走 revelo（mmap 只读元数据区）：duration / 编码尺寸 /
+                    // frame_rate / rotation。width/height 存「编码尺寸」，不按 rotation 交换。
+                    // 图片仍走 image crate 的 get_image_dimensions。
+                    let mut duration_ms = None;
+                    let mut frame_rate = None;
+                    let mut rotation = None;
+                    if is_video {
+                        if !has_cached_dims || force {
+                            if let Some(vm) = read_video_metadata(&entry_path) {
+                                width = vm.width;
+                                height = vm.height;
+                                duration_ms = vm.duration_ms;
+                                frame_rate = vm.frame_rate;
+                                rotation = vm.rotation;
+                            }
+                        } else {
+                            duration_ms = cached_duration_ms;
+                            frame_rate = cached_frame_rate;
+                            rotation = cached_rotation;
+                        }
+                    } else if !has_cached_dims && force {
+                        let dims = get_image_dimensions(&entry_path.to_string_lossy());
+                        width = dims.0;
+                        height = dims.1;
                     }
 
-                    let image_node = FileNode {
-                        id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Image, path: full_path.clone(),
+                    let node_type = if is_video { FileType::Video } else { FileType::Image };
+                    let file_node = FileNode {
+                        id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: node_type, path: full_path.clone(),
                         size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, source_urls: None, category: None, ai_data: None,
                         created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
@@ -458,9 +509,12 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                 .unwrap_or_default(),
                             modified: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                             palette: None,
+                            duration_ms,
+                            frame_rate,
+                            rotation,
                         }),
                     };
-                    Some((file_id, image_node, p_path))
+                    Some((file_id, file_node, p_path))
                 } else { None }
             })
             .for_each(|item| {
@@ -500,7 +554,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             node.ai_data = meta.ai_data.clone();
         }
 
-        if matches!(node.r#type, FileType::Image) {
+        if matches!(node.r#type, FileType::Image | FileType::Video) {
             processed_count += 1;
             if !force && processed_count > current_total { current_total = processed_count; }
             if force && processed_count % 500 == 0 {
@@ -509,6 +563,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         }
 
         let (w, h, fmt) = node.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
+        // 视频 P1（设计方案 §6）：视频元数据经 ImageMeta 带到这里落库。
+        let (dur, fps, rot) = node.meta.as_ref().map_or((None, None, None), |m| (m.duration_ms, m.frame_rate, m.rotation));
         let c_at = node.created_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
         let m_at = node.updated_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
 
@@ -517,9 +573,10 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             parent_id: None,
             path: node.path.clone(),
             name: node.name.clone(),
-            file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
+            file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Video => "Video".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
             size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
-            created_at: c_at, modified_at: m_at, 
+            created_at: c_at, modified_at: m_at,
+            duration_ms: dur, frame_rate: fps, rotation: rot,
         });
 
         all_files.insert(id, node);
@@ -574,6 +631,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         let mut conn = app_db_inner.get_connection();
         let _ = db::file_index::batch_upsert(&mut conn, &entries_to_save);
         let _ = db::file_index::delete_orphaned_entries(&mut conn, &root_to_clean, &scanned_paths);
+        // 真实扫描成功收尾：把库的扫描能力版本升到当前 —— 升级后的自动补扫只发生一次。
+        let _ = db::set_scanner_capability(&conn, db::SCANNER_CAPABILITY);
     });
 
     if !to_process.is_empty() {
@@ -605,6 +664,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                     entries.push(db::file_index::FileIndexEntry {
                                         file_id: id, parent_id: None, path: path.clone(), name, file_type: "Image".to_string(),
                                         size: md.len(), width: Some(w), height: Some(h), format: fmt, created_at: c_at, modified_at: m_at,
+                                        duration_ms: None, frame_rate: None, rotation: None,
                                     });
                                 }
                             }

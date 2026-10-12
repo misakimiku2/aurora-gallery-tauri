@@ -536,7 +536,8 @@ export const FileListItem = React.memo(({
             )}
         </div>
         <div className={`w-24 text-xs hidden md:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
-            {file.type === FileType.IMAGE && file.meta?.width ? `${file.meta.width}×${file.meta.height}` : '-'}
+            {/* 视频 P1（UI 设计 §5.2）：尺寸列放开到非文件夹（视频同样有 width/height） */}
+            {file.type !== FileType.FOLDER && file.meta?.width ? `${file.meta.width}×${file.meta.height}` : '-'}
         </div>
         <div className={`w-32 text-xs truncate hidden sm:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
             {file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : '-'}
@@ -545,10 +546,11 @@ export const FileListItem = React.memo(({
             {file.type === FileType.FOLDER ? t('meta.folderType') : file.meta?.format || '-'}
         </div>
         <div className={`w-20 text-xs text-right font-mono hidden sm:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
-            {file.type === FileType.IMAGE 
+            {/* 视频 P1（UI 设计 §5.2）：大小列放开到非文件夹（视频通常很大，这列尤其重要） */}
+            {file.type !== FileType.FOLDER 
                 ? formatSize(file.meta?.sizeKb || 0) 
                 // 远程文件夹（安卓/LAN）子节点通常未加载，优先用服务端下发的 imageCount
-                : (file.type === FileType.FOLDER ? `${file.imageCount ?? file.children?.length ?? 0} ${t('meta.items')}` : '-')}
+                : `${file.imageCount ?? file.children?.length ?? 0} ${t('meta.items')}`}
         </div>
         {isAndroid && showContextMenuAnim && (
             <CircularProgressOverlay

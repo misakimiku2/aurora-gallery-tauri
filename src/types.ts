@@ -1,6 +1,8 @@
 
 export enum FileType {
   IMAGE = 'image',
+  /** 视频（P1 视频功能引入）。序列化口径与 Rust 侧 `FileType::Video` 对齐（'video'） */
+  VIDEO = 'video',
   FOLDER = 'folder',
   UNKNOWN = 'unknown'
 }
@@ -20,6 +22,12 @@ export interface ImageMeta {
   format: string;
   palette?: string[];
   dominantColors?: DominantColor[];
+  /** 视频时长（毫秒）。图片无此字段（视频 P1 元数据） */
+  durationMs?: number;
+  /** 视频帧率。逐帧功能的前置依赖；拿不到时逐帧按钮应置灰（视频 P1 元数据） */
+  frameRate?: number;
+  /** 视频旋转标记（0/90/180/270）。width/height 存编码尺寸，显示尺寸按 rotation 派生（视频 P1 元数据） */
+  rotation?: number;
 }
 
 export interface AiFace {
@@ -595,9 +603,9 @@ declare global {
   }
 }
 
-export const SUPPORTED_EXTENSIONS = [
-  'jpg', 'jpeg', 'tga', 'jft', 'png', 'bmp', 'webp', 'gif', 'psd', 'tif', 'tiff', 'raw', 'arw', 'dng', 'exr', 'hdr', 'avif', 'jxl'
-];
+// 说明（视频 P1，设计方案 §2.7 口径 C）：原先此处的 SUPPORTED_EXTENSIONS（18 种，
+// 含 psd/raw 等历史遗留）经全仓核实为死代码（无任何调用点），已删除。
+// 前端扩展名真源迁至 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
 
 // 更新检查相关类型
 export type DownloadState = 'idle' | 'preparing' | 'downloading' | 'paused' | 'completed' | 'error';

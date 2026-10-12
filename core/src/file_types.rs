@@ -19,6 +19,8 @@ impl Default for SavedWindowState {
 #[serde(rename_all = "camelCase")]
 pub enum FileType {
     Image,
+    // 视频 P1（设计方案 §2.7 口径 E）：视频与图片同权进库，serde camelCase → JSON "video"。
+    Video,
     Folder,
     Unknown,
 }
@@ -34,6 +36,16 @@ pub struct ImageMeta {
     pub format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<Vec<String>>,
+    // 视频 P1（设计方案 §6）：视频元数据五项，图片一律 None。
+    /// 时长（毫秒，统一整数避免浮点误差）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// 帧率（逐帧功能依赖；拿不到时保持 None，前端据此置灰逐帧按钮，不按 1/30 兜底）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate: Option<f64>,
+    /// 旋转标记（0 / 90 / 180 / 270）。`width/height` 存编码尺寸不交换，显示尺寸由 rotation 派生。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,12 +79,24 @@ pub struct ScanProgress {
     pub total: usize,
 }
 
-pub const SUPPORTED_EXTENSIONS: &[&str] = &[
+// 视频 P1（设计方案 §2.7 口径 E）：扩展名白名单拆成图片 / 视频两份，并作为全仓唯一真源
+// （原 `SUPPORTED_EXTENSIONS` 只含图片，视频在扫描阶段就被丢弃——这是根因一）。
+// 视频 12 种与 LAN `is_video_file` 的列表对齐。
+pub const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tiff", "ico", "svg", "avif", "jxl",
 ];
 
+pub const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv", "m4v", "mpg", "mpeg", "3gp", "ts",
+];
+
 pub fn is_supported_image(extension: &str) -> bool {
-    SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
+    SUPPORTED_IMAGE_EXTENSIONS.contains(&extension.to_lowercase().as_str())
+}
+
+/// 视频 P1（设计方案 §2.7 口径 E）：视频扩展名判定，语义与 LAN `is_video_file` 一致。
+pub fn is_supported_video(extension: &str) -> bool {
+    SUPPORTED_VIDEO_EXTENSIONS.contains(&extension.to_lowercase().as_str())
 }
 
 /// 扩展名 → MIME（Eagle 导入期新增；`ai.rs` 的 `guess_mime` 是给 AI 接口兜底的——
@@ -80,7 +104,11 @@ pub fn is_supported_image(extension: &str) -> bool {
 ///
 /// Eagle 侧只有扩展名，要先映射成 content_type 才能过 `import::is_indexable` 这道
 /// 全仓唯一的支持门禁（调研 §7 明令不许在适配器里散落扩展名黑名单）。支持列表与
-/// `SUPPORTED_EXTENSIONS` 保持同一份口径：不在表里的扩展名返回 None → 不支持。
+/// `SUPPORTED_IMAGE_EXTENSIONS` / `SUPPORTED_VIDEO_EXTENSIONS` 保持同一份口径：
+/// 不在表里的扩展名返回 None → 不支持。
+///
+/// 视频 P1（设计方案 §11.1）：补 `video/*` 映射，否则 Eagle 走 ext→mime 拿不到
+/// `video/*`，`is_indexable` 照样把视频标注拦下。
 pub fn mime_for_extension(extension: &str) -> Option<&'static str> {
     match extension.to_lowercase().as_str() {
         "jpg" | "jpeg" | "jfif" => Some("image/jpeg"),
@@ -93,6 +121,18 @@ pub fn mime_for_extension(extension: &str) -> Option<&'static str> {
         "svg" => Some("image/svg+xml"),
         "avif" => Some("image/avif"),
         "jxl" => Some("image/jxl"),
+        // 视频 P1（设计方案 §6 / §11.1）：视频容器 → MIME。
+        "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        "m4v" => Some("video/x-m4v"),
+        "avi" => Some("video/x-msvideo"),
+        "mkv" => Some("video/x-matroska"),
+        "webm" => Some("video/webm"),
+        "wmv" => Some("video/x-ms-wmv"),
+        "flv" => Some("video/x-flv"),
+        "mpg" | "mpeg" => Some("video/mpeg"),
+        "3gp" => Some("video/3gpp"),
+        "ts" => Some("video/mp2t"),
         _ => None,
     }
 }

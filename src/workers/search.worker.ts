@@ -63,7 +63,9 @@ self.onmessage = (e: MessageEvent<SearchWorkerInput>) => {
     });
   } else if (activeTab.activePersonId) {
      const pId = activeTab.activePersonId;
-     candidates = allFiles.filter(f => f.type === FileType.IMAGE && f.aiData?.faces?.some(face => face.personId === pId));
+     // 视频 P1（UI 设计 §6.1）：手动标注的人物对视频同样有效，放开到非文件夹，
+     // 修复"视频标了人却筛不出来"
+     candidates = allFiles.filter(f => f.type !== FileType.FOLDER && f.aiData?.faces?.some(face => face.personId === pId));
   } else if (activeTab.activeTags.length > 0) {
      const tagSet = new Set(activeTab.activeTags);
      candidates = allFiles.filter(f => f.type !== FileType.FOLDER && f.tags?.some(t => tagSet.has(t)));

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Tag, Image as ImageIcon, Loader2, Sparkles, ArrowLeft, Check, AlertCircle } from 'lucide-react';
+import { Tag, Image as ImageIcon, Film, Loader2, Sparkles, ArrowLeft, Check, AlertCircle } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Grid } from 'react-window';
 import { FileNode, FileType, PreviewTag, TagsPreviewResult } from '../../types';
@@ -13,8 +13,10 @@ interface TagPreviewThumbnailProps {
 }
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: TagPreviewThumbnailProps) => {
+  // 视频 P1.5（实机反馈修复）：视频不进入图片管线（不读缓存/不 fallback/不渲染 <img>），显示占位。
+  const isVideo = file.type === FileType.VIDEO;
   const [src, setSrc] = useState<string | null>(() => {
-    if (!file.path) return null;
+    if (!file.path || isVideo) return null;
     return getGlobalCache().get(file.path) || null;
   });
 
@@ -30,6 +32,14 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: TagPreviewThumbnailProps) =
     }
     return () => { active = false; };
   }, [file.path, file.meta?.modified, resourceRoot, src]);
+
+  if (isVideo) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <Film size={14} className="text-gray-400 dark:text-gray-600" />
+      </div>
+    );
+  }
 
   const displaySrc = src || convertFileSrc(file.path);
 

@@ -2,6 +2,8 @@ pub mod color_worker;
 pub use aurora_core::{color_extractor, color_db, db};
 pub mod color_search;
 pub mod thumbnail;
+// 视频 P1（设计方案 §6）：视频容器元数据读取（revelo）。
+pub mod video_metadata;
 pub use aurora_core::file_types;
 pub mod image_utils;
 pub mod scanner;

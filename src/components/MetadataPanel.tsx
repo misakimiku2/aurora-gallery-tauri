@@ -5,7 +5,7 @@ import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic, AppSettings, AppState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout } from 'lucide-react';
+import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout, Activity } from 'lucide-react';
 import { useAIRename } from '../hooks/useAIRename';
 import ImagePreview from './metadata/ImagePreview';
 import PersonAvatar from './metadata/PersonAvatar';
@@ -22,6 +22,7 @@ import { findImagesDeeply } from '../utils/fileTree';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { getSourceUrls, appendSourceUrl, removeSourceUrl, replaceSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
+import { formatVideoDuration } from '../utils/mediaExtensions';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
@@ -251,7 +252,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             setSource('');
 
             // 当文件选中时，如果元数据缺失（如尺寸为 0），尝试重新扫描单个文件以获取最新信息
-            if (!isMulti && file.type === FileType.IMAGE && file.path) {
+            // 视频播放UI设计 §1.2：口径统一为 !== FOLDER —— 视频的 width/height 也是布局（瀑布流/自适应）的前置依赖，
+            // 缺失时同样需要重扫补齐（设计方案 §5.2）。
+            if (!isMulti && file.type !== FileType.FOLDER && file.path) {
                 const needsMeta = !file.meta || file.meta.width === 0 || file.meta.height === 0;
                 if (needsMeta) {
                     (async () => {
@@ -312,7 +315,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }, [file?.id, selectedFileIds.join(',')]);
 
     useEffect(() => {
-        if (!file || isMulti || file.type !== FileType.IMAGE || !file.path) return;
+        // 视频播放UI设计 §1.2 / 设计方案 §11.3：主色调对视频同样成立（从非黑抽帧封面算），故非文件夹即可。
+        if (!file || isMulti || file.type === FileType.FOLDER || !file.path) return;
         // 用户关闭了"浏览时自动提取主色调"设置
         if (settings && !settings.autoExtractPalette) return;
         // LAN 图片存在于远程服务器，本地无法提取主色调，跳过自动提取。
@@ -632,7 +636,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         let totalSize = 0;
         let count = 0;
         Object.values(files || {}).forEach((f: FileNode) => {
-            if (f.type === FileType.IMAGE && f.aiData?.faces.some(face => face.personId === person.id)) {
+            // 视频播放UI设计 §6.1：人物计数放开 —— 视频手动标了人也要计入，否则人物详情页数量与实际不符
+            if (f.type !== FileType.FOLDER && f.aiData?.faces.some(face => face.personId === person.id)) {
                 totalSize += f.meta?.sizeKb || 0;
                 count++;
             }
@@ -680,7 +685,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         const allTags = new Set<string>();
 
         selectedNodes.forEach(node => {
-            if (node.type === FileType.IMAGE) {
+            // 视频 P1（UI设计 §5）：非文件夹（图片/视频）都按格式计入类型分布，避免视频落进 FOLDER 桶
+            if (node.type !== FileType.FOLDER) {
                 totalSize += node.meta?.sizeKb || 0;
                 const fmt = node.meta?.format?.toUpperCase() || 'UNKNOWN';
                 typeCount[fmt] = (typeCount[fmt] || 0) + 1;
@@ -862,8 +868,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     }
                 }
                 // 如果没有找到明确标记为图片的文件，回退到第一个对应的文件
+                // （视频 P1.5：视频不喂 <img>，无图片时返回 null 不显示封面）
                 const firstFile = files[t.fileIds[0]];
-                if (firstFile) return convertFileSrc(firstFile.path);
+                if (firstFile && firstFile.type === FileType.IMAGE) return convertFileSrc(firstFile.path);
             }
             return null;
         };
@@ -1526,12 +1533,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 )}
 
                 {/* Large Preview Image (Single Image Only) */}
-                {!isMulti && file && file.type === FileType.IMAGE && (
-                    <ImagePreview file={file} resourceRoot={resourceRoot} cachePath={cachePath} />
+                {/* 视频播放UI设计 §6：大预览对视频放开（非文件夹即可），显示的是抽帧封面（P1.5） */}
+                {!isMulti && file && file.type !== FileType.FOLDER && (
+                    <ImagePreview file={file} resourceRoot={resourceRoot} cachePath={cachePath} t={t} />
                 )}
 
                 {/* Color Palette (8 Card Grid) */}
-                {!isMulti && file && file.type === FileType.IMAGE && (
+                {/* 视频播放UI设计 §6 / 设计方案 §11.3：视频算主色，可进颜色搜索 */}
+                {!isMulti && file && file.type !== FileType.FOLDER && (
                     <PaletteSection
                         file={file}
                         colors={colors}
@@ -1607,6 +1616,32 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         <div className="font-medium text-gray-800 dark:text-gray-200">
                                             {(file.meta.width || file.meta.height) ? `${file.meta.width || 0} x ${file.meta.height || 0}` : '---'}
                                         </div>
+                                    </div>
+                                </>
+                            )}
+                            {/* 视频播放UI设计 §6 / 设计方案 §2.5(B2 · 时间轴属性)：视频文件信息区追加时间轴字段。
+                                数据来源 file.meta（ImageMeta）：durationMs / width / height / format / frameRate。
+                                设计方案 §6 的「码率 / 视频编码」两列数据模型未含（file_index 现无 bitrate/codec 列），
+                                TODO(视频 P1 元数据)：待 revelo 入库后再补，本批次不实现。 */}
+                            {file.type === FileType.VIDEO && file.meta && (
+                                <>
+                                    <div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Clock size={10} className="mr-1" /> {t('meta.duration')}</div>
+                                        <div className="font-medium text-gray-800 dark:text-gray-200">{formatVideoDuration(file.meta.durationMs) || '---'}</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><ImageIcon size={10} className="mr-1" /> {t('meta.resolution')}</div>
+                                        <div className="font-medium text-gray-800 dark:text-gray-200">
+                                            {(file.meta.width || file.meta.height) ? `${file.meta.width || 0} x ${file.meta.height || 0}` : '---'}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><FileText size={10} className="mr-1" /> {t('meta.containerFormat')}</div>
+                                        <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.format?.toUpperCase() || '---'}</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Activity size={10} className="mr-1" /> {t('meta.frameRate')}</div>
+                                        <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.frameRate ? `${file.meta.frameRate} fps` : '---'}</div>
                                     </div>
                                 </>
                             )}

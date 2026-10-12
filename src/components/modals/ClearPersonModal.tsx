@@ -88,7 +88,8 @@ export const ClearPersonModal: React.FC<ClearPersonModalProps> = ({ files, fileI
         const allPeople = new Set<string>();
         fileIds.forEach((fileId: string) => {
             const file = files[fileId];
-            if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
+            // 视频播放UI设计 §6.1：清除人物信息对视频开放（视频手动标了人也要能清除）
+            if (file && file.type !== FileType.FOLDER && file.aiData?.faces) {
                 file.aiData.faces.forEach((face: AiFace) => allPeople.add(face.personId));
             }
         });

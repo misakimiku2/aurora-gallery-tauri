@@ -22,11 +22,15 @@ const FileInfoSection = ({ isMulti, file, files, selectedCount, t, settings, aiC
         <div className="p-5 flex-shrink-0 bg-panel">
             {/* 文件名区域 - 使用相对定位，按钮绝对定位在右下角 */}
             <div className="relative">
+                {/* 视频播放UI设计 §1.2：:25 与 :30 是同一个判断的两个变体 —— 都只服务于右下角的
+                    「AI 重命名」按钮（:25 是给按钮留位而加的右内边距 pr-7）。
+                    AI 重命名依赖 AI 分析，而「AI 不跑视频」是已拍板口径（§6.1），故此处
+                    显式保留 FileType.IMAGE 门禁、不改为 !== FOLDER，让视频时按钮与其留白一起自然消失。 */}
                 <div className={`font-bold text-lg text-gray-800 dark:text-white break-all leading-tight mb-1 ${!isMulti && file && file.type === FileType.IMAGE && settings && !previewName ? 'pr-7' : ''}`}>
                     {isMulti ? `${selectedCount} ${t('meta.items')}` : file?.name}
                 </div>
 
-                {/* 按钮绝对定位在右下角 */}
+                {/* 按钮绝对定位在右下角 —— 仅 AI 重命名（依赖 AI 分析，视频不显示，见上方注释） */}
                 {!isMulti && file && file.type === FileType.IMAGE && settings && aiConnectionStatus === 'connected' && !previewName && (
                     <div className="absolute bottom-0 right-0">
                         <AIRenameButton

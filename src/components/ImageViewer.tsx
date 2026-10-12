@@ -1,10 +1,11 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
+import { FileNode, SlideshowConfig, SearchScope, TabState, FileType } from '../types';
 import { debounce } from '../utils/debounce';
 import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { ColorPickerPopover } from './ColorPickerPopover';
+import { VideoControls } from './viewer/VideoControls';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -391,6 +392,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const scopeBtnRef = useRef<HTMLButtonElement>(null);
 
+  // 统一容器：按 file.type 分派渲染层（设计文档 §1.1）——
+  // 顶层容器（顶栏/右侧面板/键盘/导航）不卸载，只有渲染层与底部控制条随类型切换。
+  const isVideo = file.type === FileType.VIDEO;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  // 视频拖拽（平移）判定：拖拽后抑制尾随的 click，避免「平移顺带暂停」
+  const videoDragMovedRef = useRef(false);
+
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -517,6 +525,106 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     (window as any).__isImmersive = isImmersiveMode;
   }, [isImmersiveMode]);
 
+  // ── 视频：播放源分派（与图片一致的分派规则）──
+  // 本地：convertFileSrc（桌面端 asset protocol 支持 Range，总文档 §3.2）；
+  // 远程：沿用图片的远程 URL 解析（LAN 视频串流需服务端 Range，属 P3）。
+  const videoSrc = useMemo(() => {
+    if (!isVideo || !file.path) return '';
+    return isRemotePath(file.path) ? getRemoteImageUrl(file.path) : convertFileSrc(file.path);
+  }, [isVideo, file.path]);
+
+  // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
+  // 稳定化：总文档 §3.2 的 asset protocol 按 ≤1MB 分片返回，单次 seek/播放会多次触发
+  // waiting↔canplay；直连 boolean 会让遮罩反复挂载、animate-spin 每次从 0° 重播（闪烁）。
+  // 故同样采用「延迟显示 + 最短展示」吸收抖动。图片模式不涉及，行为保持不变。
+  const [isVideoBuffering, setIsVideoBuffering] = useState(false);
+  // 拖拽进度条中（尚未 seek，§3）：由 VideoControls 回调同步，期间不显示中央遮罩
+  const [isVideoScrubbing, setIsVideoScrubbing] = useState(false);
+  const isVideoScrubbingRef = useRef(false);
+  useEffect(() => { isVideoScrubbingRef.current = isVideoScrubbing; }, [isVideoScrubbing]);
+  const handleVideoScrubbingChange = useCallback((scrubbing: boolean) => { setIsVideoScrubbing(scrubbing); }, []);
+
+  const videoBufRef = useRef(false);          // 中央遮罩当前是否已「显示」
+  const videoBufShownAtRef = useRef(0);       // 显示时刻
+  const videoBufShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 延迟显示
+  const videoBufHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 延迟隐藏
+  useEffect(() => {
+    const clearTimers = () => {
+      if (videoBufShowTimerRef.current) { clearTimeout(videoBufShowTimerRef.current); videoBufShowTimerRef.current = null; }
+      if (videoBufHideTimerRef.current) { clearTimeout(videoBufHideTimerRef.current); videoBufHideTimerRef.current = null; }
+    };
+    // 与 VideoControls 同一套稳定化策略：120ms 内自愈的等待不显示；显示的至少保持 320ms
+    const applyWaiting = (next: boolean) => {
+      if (next) {
+        if (videoBufHideTimerRef.current) { clearTimeout(videoBufHideTimerRef.current); videoBufHideTimerRef.current = null; }
+        if (videoBufRef.current || videoBufShowTimerRef.current) return;
+        videoBufShowTimerRef.current = setTimeout(() => {
+          videoBufShowTimerRef.current = null;
+          videoBufRef.current = true;
+          videoBufShownAtRef.current = performance.now();
+          setIsVideoBuffering(true);
+        }, 120);
+        return;
+      }
+      if (videoBufShowTimerRef.current) { clearTimeout(videoBufShowTimerRef.current); videoBufShowTimerRef.current = null; }
+      if (!videoBufRef.current) return;
+      const remain = 320 - (performance.now() - videoBufShownAtRef.current);
+      if (remain <= 0) {
+        videoBufRef.current = false;
+        setIsVideoBuffering(false);
+      } else if (!videoBufHideTimerRef.current) {
+        videoBufHideTimerRef.current = setTimeout(() => {
+          videoBufHideTimerRef.current = null;
+          videoBufRef.current = false;
+          setIsVideoBuffering(false);
+        }, remain);
+      }
+    };
+
+    if (!isVideo) {
+      clearTimers();
+      videoBufRef.current = false;
+      setIsVideoBuffering(false);
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    // 拖拽中不显示遮罩（尚未 seek，此时 waiting 只是播放流下的背景缓冲噪声）
+    const onWaiting = () => { if (!isVideoScrubbingRef.current) applyWaiting(true); };
+    const onReady = () => applyWaiting(false);
+    v.addEventListener('waiting', onWaiting);
+    v.addEventListener('stalled', onWaiting);
+    v.addEventListener('seeking', onWaiting);
+    v.addEventListener('playing', onReady);
+    v.addEventListener('seeked', onReady);
+    v.addEventListener('canplay', onReady);
+    return () => {
+      v.removeEventListener('waiting', onWaiting);
+      v.removeEventListener('stalled', onWaiting);
+      v.removeEventListener('seeking', onWaiting);
+      v.removeEventListener('playing', onReady);
+      v.removeEventListener('seeked', onReady);
+      v.removeEventListener('canplay', onReady);
+      clearTimers();
+    };
+  }, [isVideo, file.id]);
+
+  // ── B4 / §5：切换文件或关闭查看器时必须 pause() + 重置 currentTime，否则会后台出声 ──
+  // 用 effect cleanup 兜住所有路径（file.id 变化 + 组件卸载）；捕获元素引用避免误伤新元素。
+  useEffect(() => {
+    const v = videoRef.current;
+    return () => {
+      if (v) {
+        try {
+          v.pause();
+          v.currentTime = 0;
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [file.id, isVideo]);
+
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
@@ -606,6 +714,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
+    // 视频不走图片加载管线（<video> 自行加载，见 §1.1 渲染层分派）
+    if (isVideo) {
+      setDisplayUrl('');
+      displayPathRef.current = '';
+      return;
+    }
     if (!file.path) {
       setDisplayUrl('');
       displayPathRef.current = '';
@@ -811,7 +925,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }
       });
     }
-  }, [file.path, remoteEpoch]);
+  }, [file.path, remoteEpoch, isVideo]);
 
   // 清理过渡计时器
   useEffect(() => {
@@ -866,14 +980,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     if (!preloadImages.key) return;
 
     immediate.forEach(node => {
-      if (node.path) {
+      // 视频不预加载缩略图/调色板（图片管线不适用 mp4）
+      if (node.path && node.type !== FileType.VIDEO) {
         preloadToCache(node.path, 'high');
         preloadPaletteToCache(node.path, node.meta?.palette);
       }
     });
 
     nearby.forEach(node => {
-      if (node.path) {
+      if (node.path && node.type !== FileType.VIDEO) {
         preloadToCache(node.path, 'low');
         preloadPaletteToCache(node.path, node.meta?.palette);
       }
@@ -1119,6 +1234,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [slideshowActive]);
 
+  // 幻灯片间隔驱动（图片/视频通用）。加入 file.id：每个条目获得完整间隔，
+  // 配合下方视频「播完」事件实现 U5/R2：切换条件 = 播完 或 播满间隔，取二者较小。
   useEffect(() => {
     let intervalId: ReturnType<typeof setTimeout>;
     if (slideshowActive) {
@@ -1127,7 +1244,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }, slideshowConfig.interval);
     }
     return () => clearInterval(intervalId);
-  }, [slideshowActive, onNext, slideshowConfig]);
+  }, [slideshowActive, onNext, slideshowConfig, file.id]);
+
+  // 视频进幻灯片：自动播放，并在「播完」时立即切换（U5/R2，§8）
+  useEffect(() => {
+    if (!isVideo || !slideshowActive) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const onEnded = () => onNextRef.current(slideshowConfig.isRandom);
+    v.addEventListener('ended', onEnded);
+    const p = v.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        // 自动播放被策略拦截时退化为静音播放（幻灯片场景可接受）
+        v.muted = true;
+        v.play().catch(() => {});
+      });
+    }
+    return () => {
+      v.removeEventListener('ended', onEnded);
+    };
+  }, [isVideo, slideshowActive, file.id, slideshowConfig.isRandom]);
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
@@ -1220,11 +1357,92 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
   };
 
+  // 复制当前帧（§7.2）：把当前播放位置画面经 <video> → <canvas> 抓帧后写入剪贴板
+  const handleCopyVideoFrame = async () => {
+    try {
+      const v = videoRef.current;
+      if (!v || !v.videoWidth || !v.videoHeight) return;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+
+      const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) return;
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+    } catch (err) {
+      // 跨域视频会污染 canvas 导致 toBlob 抛 SecurityError，静默失败即可
+      console.error('Failed to copy video frame: ', err);
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (showSearch && document.activeElement === searchInputRef.current) {
         if (e.key === 'Enter') handleSearchSubmit();
         return;
+      }
+
+      // ── 视频键位（设计文档 §4）──
+      // U1：← → 仍为「上一个/下一个文件」，故不在此拦截，落到下方既有逻辑。
+      if (isVideo) {
+        const v = videoRef.current;
+        switch (e.key) {
+          case ' ':
+          case 'Spacebar':
+            e.preventDefault();
+            if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); }
+            return;
+          case ',':
+            e.preventDefault();
+            videoStepFrame(-1);
+            return;
+          case '.':
+            e.preventDefault();
+            videoStepFrame(1);
+            return;
+          case 'j':
+          case 'J':
+            e.preventDefault();
+            videoNudge(-5);
+            return;
+          case 'l':
+          case 'L':
+            e.preventDefault();
+            videoNudge(5);
+            return;
+          case 'ArrowUp':
+            e.preventDefault();
+            if (v) { v.muted = false; v.volume = Math.min(1, v.volume + 0.1); }
+            return;
+          case 'ArrowDown':
+            e.preventDefault();
+            if (v) { v.volume = Math.max(0, v.volume - 0.1); }
+            return;
+          case 'm':
+          case 'M':
+            e.preventDefault();
+            if (v) v.muted = !v.muted;
+            return;
+          case 'f':
+          case 'F':
+            if (e.ctrlKey || e.metaKey) break; // Ctrl+F 交给下方搜索
+            e.preventDefault();
+            toggleFullscreen();
+            return;
+          default:
+            break;
+        }
+        // Esc：全屏时先退全屏（§4「退出全屏优先于关闭」）
+        if (e.key === 'Escape' && document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+          return;
+        }
       }
 
       if (e.key === 'ArrowRight') onNextRef.current();
@@ -1246,7 +1464,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery]);
+  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery, isVideo, file.meta?.frameRate]);
 
   const handleNext = () => {
     onNext();
@@ -1277,6 +1495,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
     setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
+    if (isVideo) videoDragMovedRef.current = false;
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -1285,6 +1504,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     e.preventDefault();
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
+    // 视频：超过阈值即视为拖拽平移，用于抑制尾随的 click（否则平移会顺带暂停）
+    if (isVideo && Math.abs(dx) + Math.abs(dy) > 3) videoDragMovedRef.current = true;
     setPosition(prev => ({ x: prev.x + dx, y: prev.y + dy }));
     setDragStart({ x: e.clientX, y: e.clientY });
   };
@@ -1372,6 +1593,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // If user exits fullscreen (usually via Esc), stop the slideshow immediately
   useEffect(() => {
     const onFullscreenChange = () => {
+      // 同步全屏状态（Esc 退出全屏时也要更新，否则视频控制条/顶栏图标会残留）
+      setIsFullscreen(!!document.fullscreenElement);
       if (!document.fullscreenElement) {
         if (slideshowActiveRef.current) {
           stopSlideshow();
@@ -1390,6 +1613,20 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   const rotate = (deg: number) => setRotation(r => r + deg);
 
+  // 当前媒体元素（图片或视频），供缩放/平移类操作共用
+  const getMediaEl = (): HTMLImageElement | HTMLVideoElement | null =>
+    isVideo ? videoRef.current : imgRef.current;
+
+  // 当前媒体自然尺寸（图片 naturalWidth/Height；视频 videoWidth/Height）
+  const getMediaNaturalSize = (): { w: number; h: number } | null => {
+    if (isVideo) {
+      const v = videoRef.current;
+      return v && v.videoWidth && v.videoHeight ? { w: v.videoWidth, h: v.videoHeight } : null;
+    }
+    const img = imgRef.current;
+    return img && img.naturalWidth && img.naturalHeight ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+  };
+
   const handleReset = () => {
     // animate to fit-window (scale=1, center)
     animateTransformTo(1, 0, 0, 260);
@@ -1398,20 +1635,20 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   const handleFitWindow = () => handleReset();
 
+  // 原始尺寸：图片 = 1:1 像素；视频语义为「1:1 播放」（同一条数学路径，§7.2）
   const handleOriginalSize = () => {
-    if (!imgRef.current || !containerRef.current) return;
-    const { naturalWidth, naturalHeight } = imgRef.current;
+    if (!containerRef.current) return;
+    const size = getMediaNaturalSize();
+    if (!size) return;
     const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
 
-    if (!naturalWidth || !naturalHeight) return;
-
-    const scaleX = containerWidth / naturalWidth;
-    const scaleY = containerHeight / naturalHeight;
+    const scaleX = containerWidth / size.w;
+    const scaleY = containerHeight / size.h;
     const fitScale = Math.min(scaleX, scaleY);
 
     // Calculate new scale. 
-    // If fitScale < 1 (image larger than window), we scale UP by 1/fitScale to reach 1.0 (original size).
-    // If fitScale > 1 (image smaller than window), we scale DOWN.
+    // If fitScale < 1 (media larger than window), we scale UP by 1/fitScale to reach 1.0 (original size).
+    // If fitScale > 1 (media smaller than window), we scale DOWN.
     const newScale = 1 / fitScale;
 
     animateTransformTo(newScale, 0, 0, 320);
@@ -1419,14 +1656,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   // Toggle between fit-window (scale ~= 1) and original-size (scale = 1/fitScale).
   const toggleOriginalFit = (clientX?: number, clientY?: number) => {
-    if (!imgRef.current || !containerRef.current) return;
-    const { naturalWidth, naturalHeight } = imgRef.current;
+    if (!containerRef.current) return;
+    const mediaEl = getMediaEl();
+    const size = getMediaNaturalSize();
+    if (!mediaEl || !size) return;
     const containerRect = containerRef.current.getBoundingClientRect();
     const { width: containerWidth, height: containerHeight } = containerRect;
-    if (!naturalWidth || !naturalHeight) return;
 
-    const scaleX = containerWidth / naturalWidth;
-    const scaleY = containerHeight / naturalHeight;
+    const scaleX = containerWidth / size.w;
+    const scaleY = containerHeight / size.h;
     const fitScale = Math.min(scaleX, scaleY);
     const originalScale = 1 / fitScale;
 
@@ -1435,35 +1673,64 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const toOriginal = Math.abs(current - originalScale) > Math.abs(current - 1);
 
     if (toOriginal) {
-      // 检测鼠标是否在图片内
-      const imgRect = imgRef.current.getBoundingClientRect();
+      // 检测鼠标是否在媒体内容内
+      const mediaRect = mediaEl.getBoundingClientRect();
       const isMouseInImage =
         clientX !== undefined && clientY !== undefined &&
-        clientX >= imgRect.left &&
-        clientX <= imgRect.right &&
-        clientY >= imgRect.top &&
-        clientY <= imgRect.bottom;
+        clientX >= mediaRect.left &&
+        clientX <= mediaRect.right &&
+        clientY >= mediaRect.top &&
+        clientY <= mediaRect.bottom;
 
       if (isMouseInImage && clientX !== undefined && clientY !== undefined) {
-        // 鼠标在图片内：以鼠标位置为中心
+        // 鼠标在媒体内：以鼠标位置为中心
         // 将鼠标位置转换为相对于容器中心的向量
         const centerX = containerWidth / 2;
         const centerY = containerHeight / 2;
         const dx = clientX - (containerRect.left + centerX);
         const dy = clientY - (containerRect.top + centerY);
 
-        // 计算目标位移，使缩放时鼠标位置下的图片内容保持不变
+        // 计算目标位移，使缩放时鼠标位置下的内容保持不变
         // 公式：targetPos = mouseOffset * (1 - originalScale)
         const targetX = dx * (1 - originalScale);
         const targetY = dy * (1 - originalScale);
         animateTransformTo(originalScale, targetX, targetY, 360);
       } else {
-        // 鼠标在图片外或没有鼠标位置信息：保持原逻辑（居中）
+        // 鼠标在媒体外或没有鼠标位置信息：保持原逻辑（居中）
         animateTransformTo(originalScale, 0, 0, 360);
       }
     } else {
       animateTransformTo(1, 0, 0, 260);
     }
+  };
+
+  // 点击视频画面 = 播放/暂停切换（U2）；拖拽平移之后抑制尾随 click
+  const handleVideoSurfaceClick = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (videoDragMovedRef.current) {
+      videoDragMovedRef.current = false;
+      return;
+    }
+    if (v.paused) v.play().catch(() => {});
+    else v.pause();
+  };
+
+  // 视频键位专用的 ±5s / 逐帧（与 VideoControls 共用同一 video 元素）
+  const videoNudge = (delta: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    const max = isFinite(v.duration) ? v.duration : v.currentTime + Math.abs(delta);
+    v.currentTime = Math.max(0, Math.min(v.currentTime + delta, max));
+  };
+  const videoStepFrame = (dir: 1 | -1) => {
+    const v = videoRef.current;
+    const fps = file.meta?.frameRate;
+    if (!v || typeof fps !== 'number' || fps <= 0) return;
+    v.pause();
+    const next = v.currentTime + dir / fps;
+    const max = isFinite(v.duration) ? v.duration : next;
+    v.currentTime = Math.max(0, Math.min(next, max));
   };
 
   const getScopeIcon = () => {
@@ -1667,7 +1934,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       <div
         ref={containerRef}
-        className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'}`}
+        className={`flex-1 overflow-hidden relative transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'} ${!slideshowActive && !isVideo ? 'cursor-grab active:cursor-grabbing' : ''}`}
         style={{
           ...(slideshowActive ? { cursor: 'none' } : {}),
         }}
@@ -1675,10 +1942,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        // 点击视频画面 = 播放/暂停切换（U2，§3；与图片只有拖拽/缩放区分）
+        onClick={isVideo && !slideshowActive ? handleVideoSurfaceClick : undefined}
         onContextMenu={handleContextMenu}
       >
-        {/* 只有在完全没有图片时才显示加载指示器 */}
-        {!displayUrl && (
+        {/* 只有在完全没有图片时才显示加载指示器（视频由 <video> 自身加载） */}
+        {!isVideo && !displayUrl && (
           <div className="absolute inset-0 flex items-center justify-center z-0">
             <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
           </div>
@@ -1687,6 +1956,33 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         {/* 单图层渲染 - 简洁高效（普通模式） */}
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
         <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
+          {/* 视频渲染层：统一容器内按类型分派（§1.1） */}
+          {isVideo && (
+            <video
+              ref={videoRef}
+              key={file.id}
+              src={videoSrc || undefined}
+              className="max-w-none absolute inset-0 m-auto"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                background: '#000',
+                transformOrigin: 'center center',
+                pointerEvents: 'auto',
+                zIndex: 2,
+                // 复用图片的变换状态：支持滚轮/拖拽平移与 1:1 缩放（§7.2 原始尺寸/适应窗口）
+                transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+              }}
+              playsInline
+              preload="metadata"
+              draggable={false}
+            />
+          )}
+
+          {/* 图片渲染层：既有 <img> 管线保持不变 */}
+          {!isVideo && (
+          <>
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
             <img
@@ -1767,7 +2063,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             }}
             draggable={false}
           />
+          </>
+          )}
         </div>
+
+        {/* 视频缓冲/seek 等待遮罩：1MB 分片上限使大文件 seek 有等待，必须给反馈（§3）；
+            拖拽进度条中（未 seek）不显示，避免拖拽期闪烁 */}
+        {isVideo && isVideoBuffering && !isVideoScrubbing && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
+            <div className="p-3 rounded-full bg-black/40">
+              <Loader2 className="animate-spin text-white/90" size={36} />
+            </div>
+          </div>
+        )}
 
         {!slideshowActive && (
           <>
@@ -1791,6 +2099,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         )}
       </div>
 
+      {/* 视频控制条：仅视频时显示，图片时隐藏（§1.1：只有底部控制条随类型切换，容器不卸载） */}
+      {isVideo && !slideshowActive && (
+        <VideoControls
+          key={file.id}
+          videoRef={videoRef}
+          file={file}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          t={t}
+          onScrubbingChange={handleVideoScrubbingChange}
+        />
+      )}
+
       {contextMenu.visible && (() => {
         const menuItemClass = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
         const iconSize = 14;
@@ -1810,11 +2131,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {/* 原始尺寸 / 适应窗口：视频语义为 1:1 播放 / 适应窗口（§7.2） */}
           <div className={menuItemClass} onClick={() => { handleOriginalSize(); closeMenu(); }}>
-            <Maximize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.original')}
+            <Maximize size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.original') : t('viewer.original')}
           </div>
           <div className={menuItemClass} onClick={() => { handleFitWindow(); closeMenu(); }}>
-            <Minimize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.fit')}
+            <Minimize size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.fit') : t('viewer.fit')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
@@ -1859,8 +2181,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className={menuItemClass} onClick={() => { handleCopyImage(); closeMenu(); }}>
-            <Clipboard size={iconSize} className="mr-2 opacity-70" /> {t('context.copyImage')}
+          {/* 复制图片 / 复制当前帧：视频改为抓取当前播放位置的画面（§7.2） */}
+          <div className={menuItemClass} onClick={() => { isVideo ? handleCopyVideoFrame() : handleCopyImage(); closeMenu(); }}>
+            <Clipboard size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.copyFrame') : t('context.copyImage')}
           </div>
 
           <div className={menuItemClass} onClick={() => { onCopyToFolder(file.id); closeMenu(); }}>
@@ -1872,12 +2195,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className={purpleItemClass} onClick={() => { onAIAnalysis(file.id); closeMenu(); }}>
-            <Sliders size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
-          </div>
+          {/* AI 分析：视频不跑 AI（B3 / §7.2 必须补类型门禁，旧实现只看连接状态会误显示） */}
+          {!isVideo && (
+            <div className={purpleItemClass} onClick={() => { onAIAnalysis(file.id); closeMenu(); }}>
+              <Sliders size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
+            </div>
+          )}
 
-          {/* 图片对比菜单项 - 仅当有图片对比标签页时显示 */}
-          {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === 'image' && (() => {
+          {/* 图片对比菜单项 - 仅当有图片对比标签页时显示；用枚举判定（§7.5：旧实现用字符串 'image'，视频进来易漏） */}
+          {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === FileType.IMAGE && (() => {
             const imageIds = [file.id];
             const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
             const compareCls = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';

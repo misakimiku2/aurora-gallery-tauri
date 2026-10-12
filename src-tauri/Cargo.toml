@@ -51,6 +51,10 @@ futures = "0.3"
 num_cpus = "1.16"
 crossbeam-channel = "0.5"
 jpeg-decoder = "0.2"
+# 视频 P1（设计方案 §6 / §10.5）：纯 Rust 媒体元数据读取（BSD-2-Clause，零原生依赖，
+# mmap 只读元数据区），供 scanner 读取视频的时长/分辨率/帧率/旋转。
+# 刻意不启用 exiftool-tables feature —— 那会把 GPL/Artistic 的表拖进来。
+revelo = "0.5"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
 once_cell = "1.19"
 futures-util = "0.3"

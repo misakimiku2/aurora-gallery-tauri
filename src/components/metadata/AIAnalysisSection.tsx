@@ -1,5 +1,5 @@
 import { Sparkles, Trash2, Smile, User, Scan, FileText, Languages, Copy } from 'lucide-react';
-import { FileNode, Person } from '../../types';
+import { FileNode, Person, FileType } from '../../types';
 
 interface AIAnalysisSectionProps {
     isMulti: boolean;
@@ -188,17 +188,23 @@ const AIAnalysisSection = ({ isMulti, file, files, selectedFileIds, people, onUp
                 // Single file AI analysis details
                 file && file.aiData && (
                     <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="bg-surface p-2 rounded border border-subtle">
-                                <div className="text-gray-400 mb-1">{t('meta.aiScene')}</div>
-                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.aiData.sceneCategory}</div>
+                        {/* 视频播放UI设计 §6 / §6.1：AI 不跑视频（B3），其 aiData 是"半人工状态"——
+                            只有手动标注产生的 faces，sceneCategory 恒为空、analyzed 恒 false。
+                            故视频时隐藏 AI 生成的「场景 / 置信度」块；但下方「人物区」（faces）必须保留渲染。 */}
+                        {file.type !== FileType.VIDEO && (
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="bg-surface p-2 rounded border border-subtle">
+                                    <div className="text-gray-400 mb-1">{t('meta.aiScene')}</div>
+                                    <div className="font-medium text-gray-800 dark:text-gray-200">{file.aiData.sceneCategory}</div>
+                                </div>
+                                <div className="bg-surface p-2 rounded border border-subtle">
+                                    <div className="text-gray-400 mb-1">{t('meta.aiConfidence')}</div>
+                                    <div className="font-medium text-gray-800 dark:text-gray-200">{Math.round(file.aiData.confidence * 100)}%</div>
+                                </div>
                             </div>
-                            <div className="bg-surface p-2 rounded border border-subtle">
-                                <div className="text-gray-400 mb-1">{t('meta.aiConfidence')}</div>
-                                <div className="font-medium text-gray-800 dark:text-gray-200">{Math.round(file.aiData.confidence * 100)}%</div>
-                            </div>
-                        </div>
+                        )}
 
+                        {/* 人物区：不依赖 analyzed（视频仅手动标注时 analyzed 恒 false），只按 faces 是否存在渲染 */}
                         {file.aiData.faces.length > 0 && (
                             <div>
                                 <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Smile size={10} className="mr-1" /> {t('meta.aiFaces')}</div>

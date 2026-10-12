@@ -1,6 +1,6 @@
 use crate::color_db;
 use crate::db::{self, generate_id, normalize_path, AppDbPool};
-use crate::file_types::{FileType, FileNode, ImageMeta, is_supported_image};
+use crate::file_types::{FileType, FileNode, ImageMeta, is_supported_image, is_supported_video};
 use crate::image_utils::get_image_dimensions;
 use std::fs;
 use std::path::Path;
@@ -152,6 +152,9 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                     .unwrap_or_default(),
                 format: extension,
                 palette: None,
+                duration_ms: None,
+                frame_rate: None,
+                rotation: None,
             }),
             description: None,
             source_url: None,
@@ -242,10 +245,11 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 parent_id: node_clone.parent_id,
                 path: node_clone.path,
                 name: node_clone.name,
-                file_type: match node_clone.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
+                file_type: match node_clone.r#type { FileType::Image => "Image".to_string(), FileType::Video => "Video".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
                 size: node_clone.size.unwrap_or(0),
                 width: w, height: h, format: fmt,
-                created_at: c_at, modified_at: m_at, 
+                created_at: c_at, modified_at: m_at,
+                duration_ms: None, frame_rate: None, rotation: None,
             };
             let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
         });
@@ -308,6 +312,7 @@ pub async fn create_folder(path: String, app: tauri::AppHandle) -> Result<(), St
         width: None, height: None, format: None,
         created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
         modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+        duration_ms: None, frame_rate: None, rotation: None,
     };
     
     let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
@@ -457,6 +462,9 @@ pub async fn copy_file_metadata_with_pools(
                                 format: entry.format.clone(),
                                 created_at: entry.created_at,
                                 modified_at: entry.modified_at,
+                                duration_ms: entry.duration_ms,
+                                frame_rate: entry.frame_rate,
+                                rotation: entry.rotation,
                             })
                         } else {
                             None
@@ -477,12 +485,21 @@ pub async fn copy_file_metadata_with_pools(
                 let mut width = None;
                 let mut height = None;
                 let mut format = None;
+                // 视频 P1：移动/复制单个视频时，沿用源行的视频元数据与 file_type。
+                let mut duration_ms = None;
+                let mut frame_rate = None;
+                let mut rotation = None;
+                let mut file_type = if is_supported_video(&ext) { "Video".to_string() } else { "Image".to_string() };
 
                 let all_entries = db::file_index::get_entries_under_path(&conn_mut, &src_normalized).unwrap_or_default();
                 if let Some(src_entry) = all_entries.iter().find(|e| e.path == src_normalized) {
                     width = src_entry.width;
                     height = src_entry.height;
                     format = src_entry.format.clone();
+                    duration_ms = src_entry.duration_ms;
+                    frame_rate = src_entry.frame_rate;
+                    rotation = src_entry.rotation;
+                    file_type = src_entry.file_type.clone();
                 }
 
                 let new_entry = db::file_index::FileIndexEntry {
@@ -490,11 +507,12 @@ pub async fn copy_file_metadata_with_pools(
                     parent_id: Some(dest_p.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))).unwrap_or_default()),
                     path: dest_normalized,
                     name: file_name,
-                    file_type: "Image".to_string(),
+                    file_type,
                     size: md.len(),
                     width, height, format: format.or(Some(ext)),
                     created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                     modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                    duration_ms, frame_rate, rotation,
                 };
 
                 let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
@@ -864,6 +882,7 @@ pub async fn write_file_bytes_indexed(
                                 file_type: "Image".to_string(),
                                 size: md.as_ref().map(|m| m.len()).unwrap_or(0),
                                 width: None, height: None, format: Some(ext),
+                                duration_ms: None, frame_rate: None, rotation: None,
                                 created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                                 modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                             };

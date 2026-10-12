@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Search, Image as ImageIcon, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Person, FileNode } from '../../types';
+import { Person, FileNode, FileType } from '../../types';
 import { ImageThumbnail } from '../ImageThumbnail';
 
 interface CropAvatarModalProps {
@@ -51,7 +51,9 @@ export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initi
         const images: any[] = [];
 
         Object.values(allFiles || {}).forEach((file: any) => {
-            if (file.type === 'image' && file.aiData?.faces) {
+            // 视频播放UI设计 §6.1 / §7.5：此处原为字符串 'image'（口径 B，改枚举门禁碰不到）。
+            // 统一枚举化并放开（非文件夹即可）——否则手动标了人的视频列不进候选，换不了头像。
+            if (file.type !== FileType.FOLDER && file.aiData?.faces) {
                 const hasPerson = file.aiData.faces.some((face: any) => face.personId === personId);
                 if (hasPerson) {
                     images.push(file);
