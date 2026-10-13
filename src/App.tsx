@@ -81,6 +81,7 @@ export const App: React.FC = () => {
       autoStart: false,
       exitAction: 'ask',
       animateOnHover: true,
+      hoverPlayVideos: true,
       autoExtractPalette: true,
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },

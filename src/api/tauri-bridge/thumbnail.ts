@@ -5,6 +5,9 @@ import { performanceMonitor } from '../../utils/performanceMonitor';
 import { getGlobalCache } from '../../utils/thumbnailCache';
 import { _isAndroid, _globalCacheRoot, _upgradingThumbnails } from './state';
 import { readFileAsBase64 } from './files';
+// 主色提取已抽到 utils 共享：AVIF 回落 与 视频抽帧（P1.5）必须用同一套口径，否则色差不可控
+import { extractColorsFromImageData } from '../../utils/dominantColors';
+import { extractVideoCover } from '../../utils/videoCover';
 
 // 批量请求管理器
 class ThumbnailBatcher {
@@ -396,7 +399,7 @@ const generateAvifThumbnailAndColors = async (
           const savedPath = await invoke<string>('save_remote_thumbnail', {
             filePath,
             thumbnailData: thumbBase64,
-            colors,
+            colors: toRustColors(colors as DominantColorWithLab[]),
             cacheRoot: cachePath
           });
 
@@ -422,62 +425,136 @@ const generateAvifThumbnailAndColors = async (
   }
 };
 
+// extractColorsFromImageData / rgbToLab 已于 P1.5 抽出到 '../../utils/dominantColors'
+// —— AVIF 回落与视频抽帧共用同一份实现，避免两份拷贝出现色差。
+import { DominantColorWithLab } from '../../utils/dominantColors';
+
 /**
- * 从 Canvas ImageData 中提取主色调 (简单中值切分或频率统计)
+ * TS → Rust 的取色结构转换。
+ *
+ * ⚠️ Rust `ColorResult`（core/src/color_extractor.rs）是 **snake_case**：
+ * `lab_l / lab_a / lab_b / is_dark`，且四个字段全都不是 Option —— serde 反序列化
+ * 缺任何一个直接报错。TS 侧对象是 `labL/labA/labB/isDark`，
+ * **不转换就 100% 落库失败**（封面抽成功了也被这一步拦下，2026-10-14 实测）。
+ * AVIF 回落路径此前同样踩在这里（`colors` 原样透传）。
  */
-function extractColorsFromImageData(data: Uint8ClampedArray, count: number): DominantColor[] {
-  const colorMap: Record<string, number> = {};
-  const step = 4 * 4; // 步进抽样提高性能
+const toRustColors = (colors: DominantColorWithLab[]) =>
+  colors.map((c) => ({
+    hex: c.hex,
+    rgb: c.rgb,
+    lab_l: c.labL ?? 0,
+    lab_a: c.labA ?? 0,
+    lab_b: c.labB ?? 0,
+    is_dark: c.isDark,
+  }));
 
-  for (let i = 0; i < data.length; i += step) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const a = data[i + 3];
-    if (a < 128) continue; // 忽略透明像素
+/**
+ * 视频封面（P1.5-A）：与 AVIF 回落同构，只是源头从 `<img>` 换成 `<video>` + seek。
+ *
+ * 链路：`<video>` seek 到非黑帧 → canvas 缩到短边 256 → 取主色 → save_remote_thumbnail 落进
+ * **同一套缓存命名**（后端按 size+mtime+首 4096 字节算 md5），因此六个封面消费方无需改动。
+ *
+ * ⚠️ 写进缓存的必须是这里返回的**封面 JPEG 路径**，绝不能是源视频路径
+ * （见记忆 §2.1：`asset://*.mp4` 一旦进缓存，所有卡片都会把它喂给 `<img>` 破图，
+ * 对 GB 级文件还会引发海量读取与 WebView2 崩溃）。
+ */
+const generateVideoCoverAndColors = async (
+  filePath: string,
+  cachePath: string,
+  onColors?: (colors: DominantColor[] | null) => void,
+  signal?: AbortSignal,
+  sizeBytes?: number
+): Promise<string | null> => {
+  try {
+    const result = await extractVideoCover(filePath, { sizeBytes, signal });
+    if (!result) return null;
 
-    // 简单的颜色量化，减少 key 数量 (每 8 位取高 5 位)
-    const qr = r & 0xF8;
-    const qg = g & 0xF8;
-    const qb = b & 0xF8;
-    const key = `${qr},${qg},${qb}`;
-    colorMap[key] = (colorMap[key] || 0) + 1;
+    if (onColors) onColors(result.colors);
+
+    const savedPath = await invoke<string>('save_remote_thumbnail', {
+      filePath,
+      thumbnailData: result.dataUrl,
+      colors: toRustColors(result.colors),
+      cacheRoot: cachePath,
+    });
+
+    if (!savedPath) return null;
+    const assetUrl = convertFileSrc(savedPath);
+    // 回填路径缓存，避免下一次挂载又触发抽帧
+    getGlobalCache().set(filePath, assetUrl);
+    return assetUrl;
+  } catch (error) {
+    console.error('[VideoCover] generateVideoCoverAndColors failed:', error);
+    return null;
   }
+};
 
-  const sorted = Object.entries(colorMap)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, count);
+/**
+ * 视频封面入口（P1.5-A）。
+ *
+ * 只覆盖 Chromium 原生可解码的 mp4 / m4v / mov / webm；其余容器返回 null，
+ * 由调用方退回 VideoIcon 占位（后续 P1.5-B 的 ffmpeg 路径接管的就是这批）。
+ */
+// 在途请求去重：同一个视频在短时间内会被多个 effect 实例重复请求
+// （2026-10-14 实测日志：每张卡片因视口状态变化触发了 3 次），
+// 抽帧是串行的，不去重等于把同一帧抽三遍。
+const inflightVideoCovers = new Map<string, Promise<string | null>>();
 
-  return sorted.map(([key, _]) => {
-    const [r, g, b] = key.split(',').map(Number);
-    const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+// 失败负缓存：抽帧失败的文件在 60s 内不再重试。
+// 4500 文件夹实测教训：失败没有任何记忆时，滚动中每次挂载都会重新排队抽一遍，
+// 串行队列被重复请求冲垮，越滚越糟。只缓存在内存（失败可能是暂态的：IO 竞争、超时），
+// 下次会话或 60s 后照常重试。
+const failedVideoCovers = new Map<string, number>();
+const VIDEO_COVER_NEGATIVE_CACHE_MS = 60_000;
 
-    // 粗略计算 LAB (这里可以用更精准的库，若为了极速则保持此简版)
-    const { l, a, b: lab_b } = rgbToLab(r, g, b);
+export const getVideoCover = async (
+  filePath: string,
+  rootPath?: string,
+  signal?: AbortSignal,
+  onColors?: (colors: DominantColor[] | null) => void,
+  cachePathOverride?: string,
+  sizeBytes?: number
+): Promise<string | null> => {
+  if (!filePath || filePath.trim() === '') return null;
+  if (signal?.aborted) return null;
 
-    // 补充 DominantColor 必须的字段
-    const rgb: [number, number, number] = [r, g, b];
-    const isDark = (r * 0.299 + g * 0.587 + b * 0.114) < 128; // 感知亮度阈值
+  const inflight = inflightVideoCovers.get(filePath);
+  if (inflight) return inflight;
 
-    return { hex, rgb, isDark, labL: l, labA: a, labB: lab_b, percentage: 0 }; // percentage 暂时设为 0
-  });
-}
+  const failedAt = failedVideoCovers.get(filePath);
+  if (failedAt && Date.now() - failedAt < VIDEO_COVER_NEGATIVE_CACHE_MS) return null;
 
-function rgbToLab(r: number, g: number, b: number) {
-  // 简化的 RGB -> LAB 转换逻辑
-  let rf = r / 255, gf = g / 255, bf = b / 255;
-  rf = rf > 0.04045 ? Math.pow((rf + 0.055) / 1.055, 2.4) : rf / 12.92;
-  gf = gf > 0.04045 ? Math.pow((gf + 0.055) / 1.055, 2.4) : gf / 12.92;
-  bf = bf > 0.04045 ? Math.pow((bf + 0.055) / 1.055, 2.4) : bf / 12.92;
+  const work = (async (): Promise<string | null> => {
+  const cachePath =
+    cachePathOverride && cachePathOverride.trim() !== ''
+      ? cachePathOverride
+      : rootPath && rootPath.trim() !== '' && rootPath !== 'android_media_store'
+        ? `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`
+        : _globalCacheRoot || '';
 
-  let x = (rf * 0.4124 + gf * 0.3576 + bf * 0.1805) * 100;
-  let y = (rf * 0.2126 + gf * 0.7152 + bf * 0.0722) * 100;
-  let z = (rf * 0.0193 + gf * 0.1192 + bf * 0.9505) * 100;
+  if (!cachePath) return null;
 
-  x /= 95.047; y /= 100.0; z /= 108.883;
-  x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
-  y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
-  z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
+  const timerId = performanceMonitor.start('getVideoCover', undefined, true);
+  try {
+    const res = await generateVideoCoverAndColors(filePath, cachePath, onColors, signal, sizeBytes);
+    performanceMonitor.end(timerId, 'getVideoCover', { success: !!res });
+    return res;
+  } catch (err) {
+    performanceMonitor.end(timerId, 'getVideoCover', { success: false, error: true });
+    return null;
+  }
+  })();
 
-  return { l: (116 * y) - 16, a: 500 * (x - y), b: 200 * (y - z) };
-}
+  inflightVideoCovers.set(filePath, work);
+  try {
+    const res = await work;
+    if (res) {
+      failedVideoCovers.delete(filePath);
+    } else {
+      failedVideoCovers.set(filePath, Date.now());
+    }
+    return res;
+  } finally {
+    inflightVideoCovers.delete(filePath);
+  }
+};

@@ -34,6 +34,53 @@ fn is_avif(buffer: &[u8]) -> bool {
     false
 }
 
+/// 计算某文件的缩略图缓存路径（size + mtime + 首 4096 字节 → md5），返回 (jpg, webp) 两个候选。
+///
+/// 命名规则必须与 `process_thumbnail_decode` / `save_remote_thumbnail` 完全一致，
+/// 否则前端写进去的封面后端永远找不到。
+fn thumbnail_cache_paths(file_path: &str, cache_root: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let image_path = Path::new(file_path);
+    let metadata = fs::metadata(image_path).ok()?;
+    let size = metadata.len();
+    let modified = metadata
+        .modified()
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+        .unwrap_or(0);
+
+    let mut file = fs::File::open(image_path).ok()?;
+    let mut buffer = [0u8; 4096];
+    let bytes_read = file.read(&mut buffer).unwrap_or(0);
+
+    let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+    let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
+    let cache_filename = if hash_str.len() >= 24 {
+        hash_str[..24].to_string()
+    } else {
+        format!("{:0>24}", hash_str)
+    };
+
+    Some((
+        cache_root.join(format!("{}.jpg", cache_filename)),
+        cache_root.join(format!("{}.webp", cache_filename)),
+    ))
+}
+
+/// 视频 P1（设计方案 §5.2-5）：视频不进 image crate 缩略图管线（只解静态图）。
+///
+/// **P1.5 修订**：视频自己仍然不解图，但前端抽帧（`<video>` + canvas → `save_remote_thumbnail`）
+/// 已经把封面 JPEG 写进**同一套缓存命名**里。这里必须命中并返回它，
+/// 否则每次挂载 / 每次重开软件都要重新抽一帧（机械盘上尤其难忍）。
+fn find_existing_video_cover(file_path: &str, cache_root: &Path) -> Option<String> {
+    let (jpg, webp) = thumbnail_cache_paths(file_path, cache_root)?;
+    if jpg.exists() {
+        return Some(jpg.to_str().unwrap_or_default().to_string());
+    }
+    if webp.exists() {
+        return Some(webp.to_str().unwrap_or_default().to_string());
+    }
+    None
+}
+
 // Core thumbnail generation (kept synchronous; invoked from spawn_blocking)
 pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
     let image_path = Path::new(file_path);
@@ -41,11 +88,9 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         return None;
     }
 
-    // 视频 P1（设计方案 §5.2-5）：视频不进 image crate 缩略图管线（只解静态图）；
-    // 抽帧封面是 P1.5 的事，这里直接返回 None。
     if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
         if crate::file_types::is_supported_video(ext) {
-            return None;
+            return find_existing_video_cover(file_path, cache_root);
         }
     }
 
@@ -280,10 +325,29 @@ pub async fn get_thumbnails_batch(
                 return;
             }
 
-            // 视频 P1（设计方案 §5.2-5）：视频跳过图片缩略图管线（抽帧封面属 P1.5）。
+            // 视频 P1 + P1.5：视频不走图片解码管线；但前端抽帧（P1.5-A）写进同套缓存的
+            // 封面要在这里命中并返回。命中不了就 url=None（前端落 VideoIcon 占位），
+            // 绝不 fallback 到视频路径去喂 <img>。
             if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
                 if crate::file_types::is_supported_video(ext) {
-                    let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false });
+                    match find_existing_video_cover(path, root) {
+                        Some(url) => {
+                            let _ = on_event.send(ThumbnailBatchResult {
+                                path: path.clone(),
+                                url: Some(url),
+                                colors: None,
+                                from_cache: true,
+                            });
+                        }
+                        None => {
+                            let _ = on_event.send(ThumbnailBatchResult {
+                                path: path.clone(),
+                                url: None,
+                                colors: None,
+                                from_cache: false,
+                            });
+                        }
+                    }
                     return;
                 }
             }
@@ -334,6 +398,7 @@ pub async fn save_remote_thumbnail(
     use base64::{Engine as _, engine::general_purpose};
     use std::fs;
     use crate::color_db::ColorDbPool;
+    use std::sync::Arc;
 
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let image_path = Path::new(&file_path);
@@ -379,15 +444,36 @@ pub async fn save_remote_thumbnail(
         fs::write(&cache_file_path, decoded_data).map_err(|e| e.to_string())?;
 
         // 3. 持久化颜色数据
-        let pool = app.state::<ColorDbPool>();
-        let mut conn = pool.get_connection();
-        
-        // 这种方式直接调用批量保存即可，虽然只有一个
-        let batch_data = [(&file_path as &str, colors.as_slice())];
-        pool.batch_save_colors(&batch_data).map_err(|e: String| e)?;
+        // ⚠️ 2026-10-14 修：这里原本写 `app.state::<ColorDbPool>()`，而全项目注册/读取的都是
+        // `Arc<ColorDbPool>`（lib.rs 里 `app.manage(pool_arc.clone())`；color_commands.rs、
+        // db_commands.rs、color_worker.rs 清一色 `Arc<...>`）。类型不匹配 →
+        // `state() called before manage()` panic，命令自诞生起就跑不过去
+        // （视频抽帧 P1.5 与 AVIF 回落两条路径都卡在这里）。
+        let pool = app.state::<Arc<ColorDbPool>>().inner().clone();
 
-        // 4. 更新色彩扫描状态 (在 batch_save_colors 内部通常已经处理了，但为了保险我们显式调用一次 status)
-        let _ = crate::color_db::update_status(&mut conn, &file_path, "completed");
+        // ⚠️ 2026-10-14 修（第二颗雷，指挥官日志实锤）：原代码先 `pool.get_connection()`
+        // 拿住 MutexGuard，再调 `pool.batch_save_colors()` —— 而它内部**再次 lock 同一把
+        // Mutex**（color_db.rs:728 `self.conn.lock().unwrap()`）。std Mutex 不可重入，
+        // 同线程自锁 = 永久死锁，invoke 永不返回。此前 panic 先炸在这里之前，所以从未暴露。
+        // 正确顺序：先让 batch_save_colors 自己取锁/放锁，之后再单独取锁做 update_status。
+        //
+        // 另外颜色持久化**不允许失败拖垮封面**：封面文件已写进缓存（步骤 2），
+        // 若这里 Err 返回，TS 侧拿不到路径 → 每次挂载都重抽一遍。颜色缺失可以靠
+        // 常规主色管线补跑，封面不行 —— 故降级为 warn 日志。
+        let batch_data = [(&file_path as &str, colors.as_slice())];
+        if let Err(e) = pool.batch_save_colors(&batch_data) {
+            log::warn!(
+                "[save_remote_thumbnail] 颜色持久化失败（封面已落库，不影响显示）: {} - {}",
+                file_path,
+                e
+            );
+        }
+
+        // 4. 更新色彩扫描状态（batch_save_colors 已放锁，这里再取锁不会死锁）
+        {
+            let mut conn = pool.get_connection();
+            let _ = crate::color_db::update_status(&mut conn, &file_path, "completed");
+        }
 
         Ok(cache_file_path.to_str().unwrap_or_default().to_string())
     }).await.map_err(|e| e.to_string())??;

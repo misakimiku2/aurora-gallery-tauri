@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic, SortOption, SortDirection } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
-import { formatVideoDuration } from '../utils/mediaExtensions';
+import { formatVideoDuration, isVideoFile } from '../utils/mediaExtensions';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
@@ -40,6 +40,13 @@ import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 // 但过渡期间用户并不滚动；动画只需要覆盖视口 ±150（见下面 WAAPI 的 viewportPadding），
 // 因此 150 足够，换卡量比 400 少约 27%。过渡结束后自动恢复 400。
 const FLIP_BUFFER = 150;
+
+// 视频悬停预览（P1.5 配套）：**没有体积上限**（2026-10-14 取消）。
+// 流式播放走 asset 协议 Range 分片，不随文件大小增长（详见下方 mouseEnter 处注释），
+// 设体积门槛属于把「大文件」当成风险本身 —— 变量没隔离就下结论。
+// 真正的保护是下面这个「悬停意图延迟」：鼠标必须停留一段时间才起解码器，
+// 扫过一屏卡片不会逐个创建 <video>。
+const HOVER_PLAY_INTENT_DELAY_MS = 250;
 
 // 滚动时的渲染窗口 buffer：视口上下各扩展多少像素内的卡片会被挂载。
 // 它直接决定换批频率 —— 滚动 handler 用 renderWindowRef 判断是否越界，
@@ -129,6 +136,8 @@ const FileCard = React.memo(({
   const rangeSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rangeSelectTriggeredRef = useRef(false);
   const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 悬停预览的「意图延迟」定时器：鼠标扫过一屏卡片时不该逐个起视频解码器
+  const hoverPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
   const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
 
@@ -150,6 +159,10 @@ const FileCard = React.memo(({
     if (animShowTimerRef.current) {
       clearTimeout(animShowTimerRef.current);
       animShowTimerRef.current = null;
+    }
+    if (hoverPlayTimerRef.current) {
+      clearTimeout(hoverPlayTimerRef.current);
+      hoverPlayTimerRef.current = null;
     }
     setShowContextMenuAnim(false);
   }, []);
@@ -671,12 +684,32 @@ const FileCard = React.memo(({
             const fileName = file.name;
             const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
             const isAnimationFormat = (file.meta?.format === 'gif' || file.meta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
-            
-            if (settings?.animateOnHover && isAnimationFormat) {
-                onSetHoverPlayingId(file.id);
+
+            // 视频悬停预览（P1.5 配套）：独立开关 `hoverPlayVideos`。
+            // **不再按文件大小设限**（2026-10-14 指挥官质疑后复核）：
+            // 悬停的 <video> 与查看器播放器共用同一个 convertFileSrc 源，走 asset 协议的
+            // Range 分片（206，单次 ≤1MiB），从不整文件读进内存 —— 占用与文件大小基本无关。
+            // 当初设 2GiB 上限是把 §14.7 那次崩溃粗暴归因于「大文件」，而那次的真凶是
+            // `<img>` 被喂视频的污染链（已修）+ 坏块盘，尺寸本身从未被证明是原因。
+            //
+            // 真正该防的是「鼠标扫过一屏卡片 = 逐个起解码器」，与文件大小无关：
+            // 用悬停意图延迟（250ms）代替体积门槛 —— 停留才算想看，扫过一律不起解码器。
+            const isVideoCard = isVideoFile(file.path, file.meta?.format);
+
+            if ((settings?.animateOnHover && isAnimationFormat)
+              || (settings?.hoverPlayVideos && isVideoCard)) {
+                if (hoverPlayTimerRef.current) clearTimeout(hoverPlayTimerRef.current);
+                hoverPlayTimerRef.current = setTimeout(() => {
+                  hoverPlayTimerRef.current = null;
+                  onSetHoverPlayingId(file.id);
+                }, HOVER_PLAY_INTENT_DELAY_MS);
             }
         }) : undefined}
         onMouseLeave={!isAndroid ? (() => {
+            if (hoverPlayTimerRef.current) {
+              clearTimeout(hoverPlayTimerRef.current);
+              hoverPlayTimerRef.current = null;
+            }
             onSetHoverPlayingId(null);
         }) : undefined}>
         <div

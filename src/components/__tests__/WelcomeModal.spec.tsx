@@ -85,6 +85,7 @@ const makeSettings = (): AppSettings => ({
   autoStart: false,
   exitAction: 'ask',
   animateOnHover: false,
+  hoverPlayVideos: false,
   autoExtractPalette: false,
   paths: { resourceRoot: '/pics', cacheRoot: '' },
   search: {} as AppSettings['search'],

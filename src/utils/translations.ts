@@ -416,6 +416,8 @@ export const translations = {
       original: '1:1 播放',
       fit: '适应窗口',
       copyFrame: '复制当前帧',
+      frameCopied: '已复制当前帧到剪贴板',
+      frameCopyFailed: '复制当前帧失败',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: '抽帧封面生成后显示',
       // 视频 P1（UI 设计 §6）：视频主色需等抽帧封面生成后才能提取
@@ -539,6 +541,8 @@ export const translations = {
       animateOnHoverDesc: '当鼠标悬停在 GIF 或 WebP 动画文件上时播放动画预览',
       animateOnSelect: '选择动画文件时播放',
       animateOnSelectDesc: '当选择GIF或者WebP动画文件时播放动画预览',
+      hoverPlayVideos: '视频悬停预览',
+      hoverPlayVideosDesc: '鼠标悬停在视频上时静音循环播放开头片段；大文件会自动跳过以免占用过多资源',
       autoExtractPalette: '浏览时自动提取主色调',
       autoExtractPaletteDesc: '在图片查看器中浏览图片时，自动提取主色调信息',
       exitAction: '关闭主面板时',
@@ -1623,6 +1627,8 @@ export const translations = {
       original: '1:1 Playback',
       fit: 'Fit to Window',
       copyFrame: 'Copy Current Frame',
+      frameCopied: 'Frame copied to clipboard',
+      frameCopyFailed: 'Failed to copy current frame',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: 'Cover appears after frame extraction',
       // 视频 P1（UI 设计 §6）：视频主色需等抽帧封面生成后才能提取
@@ -1746,6 +1752,8 @@ export const translations = {
       animateOnHoverDesc: 'Play animation preview when hovering over GIF or WebP files',
       animateOnSelect: 'Play on Selection',
       animateOnSelectDesc: 'Play animation preview when selecting GIF or WebP files',
+      hoverPlayVideos: 'Preview Videos on Hover',
+      hoverPlayVideosDesc: 'Muted looping preview when hovering over a video; large files are skipped to save resources',
       autoExtractPalette: 'Auto Extract Palette',
       autoExtractPaletteDesc: 'Automatically extract dominant colors when browsing images in the viewer',
       exitAction: 'When Closing',

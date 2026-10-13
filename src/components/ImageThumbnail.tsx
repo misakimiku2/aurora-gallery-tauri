@@ -7,6 +7,7 @@ import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { isVideoFile, formatVideoDuration } from '../utils/mediaExtensions';
 
 // 视频扩展名判定已收敛到 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
@@ -48,6 +49,10 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   });
   
   const [animSrc, setAnimSrc] = useState<string | null>(null);
+  // 视频悬停预览（P1.5 配套）：存 asset URL 交给 <video> 播放，不存 base64
+  const [videoPreviewSrc, setVideoPreviewSrc] = useState<string | null>(null);
+  // 视频是否已解出第一帧：未就绪时保持透明，让底层封面继续显示（消除闪空）
+  const [videoPreviewReady, setVideoPreviewReady] = useState(false);
   const [upgrading, setUpgrading] = useState(() => filePath ? isThumbnailUpgrading(filePath) : false);
 
   const isAndroid = resourceRoot === 'android_media_store';
@@ -158,6 +163,68 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     };
   }, [filePath, modified, resourceRoot, isInView, wasInView, isVideo]);
 
+  // 视频封面（P1.5-A）
+  // 视频**不**参与图片缩略图管线（后端 `process_single_thumbnail` 对视频不解图），
+  // 走专门的前端抽帧链路：<video> seek → canvas → JPEG → save_remote_thumbnail 落同一套磁盘缓存。
+  //
+  // ⚠️ 三条不可回退的红线（记忆 §2.1 事故）：
+  //   ① 写进 / 读出缓存的必须是封面 JPEG 的 URL，**绝不能**是源视频的 asset:// 地址；
+  //      故从缓存取值时显式排除「等于 convertFileSrc(filePath)」的情况（历史上的污染形态）。
+  //   ② 抽帧失败一律返回 null —— 保持 thumbnailSrc 为空，renderThumbnail 落到 VideoIcon 占位，
+  //      绝不 fallback 到视频路径去喂 <img>。
+  //   ③ 并发控制：队列化在 utils/videoCover 内部已经串行，这里只负责不并发触发。
+  useEffect(() => {
+    if (!isVideo || !filePath || !resourceRoot) return;
+    // 远程（LAN / 安卓）视频暂不支持前端抽帧：Thumbnail 需要本地文件，保持占位
+    if (isRemote(filePath)) return;
+    // 刻意**不**按 isInView 门控：图片缩略图路径同样不门控（挂载即请求），
+    // FileGrid 本身是虚拟化窗口，挂载的卡片本就在渲染窗口内；
+    // 抽帧的并发压力由 utils/videoCover 的串行队列 + 体积上限兜底。
+    // （2026-10-14 排障记录：曾按视口门控，与图片路径行为不一致，先对齐排除变量。）
+
+    const cache = getGlobalCache();
+    const videoUrl = convertFileSrc(filePath);
+    const cached = cache.get(filePath);
+    if (cached) {
+      // 防御：历史污染可能留下视频自身的 asset:// 地址（见①），剔除而不是拿来用
+      if (cached === videoUrl) {
+        cache.delete(filePath);
+      } else {
+        setThumbnailSrc(cached);
+        return;
+      }
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+
+    const loadCover = async () => {
+      try {
+        const { getVideoCover } = await import('../api/tauri-bridge');
+        const cover = await getVideoCover(
+          filePath,
+          resourceRoot,
+          controller.signal,
+          undefined,
+          cachePath,
+          size
+        );
+        if (cancelled || !cover || controller.signal.aborted) return;
+        if (cover === videoUrl) return; // 双保险：绝不让视频地址落到 <img>
+        if (mountedRef.current) setThumbnailSrc(cover);
+      } catch {
+        // 静默降级：抽不出来就维持占位图标
+      }
+    };
+
+    loadCover();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [filePath, resourceRoot, isInView, wasInView, isVideo, cachePath, size]);
+
   useEffect(() => {
     if (!filePath) return;
     const handler = (e: Event) => {
@@ -224,10 +291,26 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     const loadAnimation = async () => {
       // 远程来源：动画预览需要本地文件访问；远程文件跳过
       if (isRemote(filePath)) {
-        if (isMounted) setAnimSrc(null);
+        if (isMounted) {
+          setAnimSrc(null);
+          setVideoPreviewSrc(null);
+          setVideoPreviewReady(false);
+        }
         return;
       }
       if (isHovering && filePath) {
+        if (isVideo) {
+          // 视频悬停预览：直接把 asset URL 交给 <video> 流式播放。
+          // ⚠️ 这里刻意不走 readFileAsBase64——那会把整个文件读进内存，
+          //    对 GB 级视频正是 §14.7 崩溃事故的形态（体积上限由 FileGrid 侧把关）。
+          if (isMounted) {
+            // 换源必须重置就绪标记，否则上一个视频的 ready 会让新视频一开始就显示（又是闪空）
+            setVideoPreviewReady(false);
+            setVideoPreviewSrc(convertFileSrc(filePath));
+            setAnimSrc(null);
+          }
+          return;
+        }
         const fileName = filePath.split(/[\\/]/).pop() || '';
         const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
         const isAnimationFormat = (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
@@ -253,11 +336,15 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         } else {
           if (isMounted) {
             setAnimSrc(null);
+            setVideoPreviewSrc(null);
+            setVideoPreviewReady(false);
           }
         }
       } else {
         if (isMounted) {
           setAnimSrc(null);
+          setVideoPreviewSrc(null);
+          setVideoPreviewReady(false);
         }
       }
     };
@@ -267,7 +354,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     return () => {
       isMounted = false;
     };
-  }, [isHovering, filePath, fileMeta]);
+  }, [isHovering, filePath, fileMeta, isVideo]);
 
   const finalSrc = animSrc || thumbnailSrc;
 
@@ -285,6 +372,50 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   }, [filePath]);
 
   const renderThumbnail = () => {
+    // 视频悬停预览（P1.5 配套）：静音循环播放。这是唯一一处「<video> 出现在卡片里」的路径，
+    // 它渲染的是真正的视频流，与缩略图 <img> 完全无关（不构成记忆 §2.1 所说的管线污染）。
+    //
+    // ⚠️ 修复「封面 → 空白 → 视频」的闪空（指挥官 2026-10-14 反馈）：
+    // 不能用 <video> 直接**替换**封面 <img>——视频元素创建后到解出第一帧之间有空窗
+    // （机械盘上大文件尤其明显），那一瞬间卡片就是空的。
+    // 正确做法：封面留在底层，视频叠在上层且初始 opacity-0，
+    // 等 `loadeddata`/`playing` 确认真的有画面了再淡入。
+    if (videoPreviewSrc) {
+      return (
+        <div className="absolute inset-0 w-full h-full">
+          {finalSrc ? (
+            <img
+              src={finalSrc}
+              alt={alt}
+              className="absolute inset-0 w-full h-full object-cover"
+              decoding="async"
+              draggable="false"
+            />
+          ) : (
+            // 还没有封面的视频（如 mkv —— 要等 P1.5-B 的 ffmpeg）：底层继续显示占位图标，
+            // 否则悬停时照样是一块空白
+            <div className="w-full h-full flex items-center justify-center">
+              <VideoIcon className="w-8 h-8 text-gray-400 dark:text-gray-600" />
+            </div>
+          )}
+          <video
+            src={videoPreviewSrc}
+            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-150 ${
+              videoPreviewReady ? 'opacity-100' : 'opacity-0'
+            }`}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            crossOrigin="anonymous"
+            onLoadedData={() => setVideoPreviewReady(true)}
+            onPlaying={() => setVideoPreviewReady(true)}
+          />
+        </div>
+      );
+    }
+
     if (animSrc) {
       return (
         <img

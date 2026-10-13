@@ -41,6 +41,52 @@ export const isVideoFile = (filePath?: string | null, format?: string): boolean 
 };
 
 /**
+ * Chromium / WebView2 原生可解码的容器子集 —— 视频 P1.5-A（前端抽帧）的适用边界。
+ *
+ * 判断依据：这就是 P0 播放器已经能播的那批（MP4/MOV/M4V 装 H.264 + AAC，WebM 装 VP8/VP9）。
+ * 其余 8 种 Chromium 解不了，只能交给后端 ffmpeg（P1.5-B）。
+ *
+ * ⚠️ 不要凭猜改这张表：加容器前先在 WebView 里实际播一遍。
+ */
+export const WEB_DECODABLE_VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm'];
+
+/** 其余容器：Chromium 解不了 → 走后端 ffmpeg 抽帧（P1.5-B） */
+export const FFMPEG_ONLY_VIDEO_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS.filter(
+  (ext) => !WEB_DECODABLE_VIDEO_EXTENSIONS.includes(ext)
+);
+
+const WEB_DECODABLE_VIDEO_SET = new Set(WEB_DECODABLE_VIDEO_EXTENSIONS);
+
+/** `video/*` MIME → 扩展名（与 Rust `file_types::mime_for_extension` 对齐） */
+const VIDEO_MIME_TO_EXT: Record<string, string> = {
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/x-m4v': 'm4v',
+  'video/x-msvideo': 'avi',
+  'video/x-matroska': 'mkv',
+  'video/webm': 'webm',
+  'video/x-ms-wmv': 'wmv',
+  'video/x-flv': 'flv',
+  'video/mpeg': 'mpg',
+  'video/3gpp': '3gp',
+  'video/mp2t': 'ts',
+};
+
+/** 由 `video/*` MIME 反解扩展名；未知返回空串 */
+export const videoExtensionFromMime = (format?: string): string =>
+  (format && VIDEO_MIME_TO_EXT[format]) || '';
+
+/**
+ * 该视频是否可由前端直接用 <video> 解码抽帧（P1.5-A）。
+ * 优先扩展名，扩展名缺失时（LAN 下发、`fileMeta.format` 场景）回落到 MIME。
+ */
+export const isWebDecodableVideo = (filePath?: string | null, format?: string): boolean => {
+  const ext = getLowerExtension(filePath);
+  if (ext) return WEB_DECODABLE_VIDEO_SET.has(ext);
+  return WEB_DECODABLE_VIDEO_SET.has(videoExtensionFromMime(format));
+};
+
+/**
  * 格式化视频时长：mm:ss；超过 1 小时用 h:mm:ss。无值返回空串（调用方据此隐藏角标）。
  * 视频 P1（UI 设计 §5.2 网格卡片时长角标）。
  */

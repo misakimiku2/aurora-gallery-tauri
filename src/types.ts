@@ -424,6 +424,11 @@ export interface AppSettings {
   autoStart: boolean;
   exitAction: 'ask' | 'minimize' | 'exit';
   animateOnHover: boolean;
+  /**
+   * 悬停播放视频（P1.5 配套）：鼠标悬停在视频卡片上时静音循环预览。
+   * 与 GIF/WebP 的 `animateOnHover` 分开——视频解码重得多，用户可能只想开前者。
+   */
+  hoverPlayVideos: boolean;
   autoExtractPalette: boolean;
   paths: {
     resourceRoot: string;

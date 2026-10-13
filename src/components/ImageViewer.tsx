@@ -6,6 +6,7 @@ import { debounce } from '../utils/debounce';
 import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { VideoControls } from './viewer/VideoControls';
+import { useToasts } from '../hooks/useToasts';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -398,6 +399,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   // 视频拖拽（平移）判定：拖拽后抑制尾随的 click，避免「平移顺带暂停」
   const videoDragMovedRef = useRef(false);
+
+  // 复制帧的结果提醒（指挥官 2026-10-14 要求）：成功/失败都要有反馈，不再静默
+  const { toast: frameToast, showToast: showFrameToast } = useToasts();
 
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -1371,13 +1375,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
 
       const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) return;
+      if (!blob) {
+        showFrameToast(t('video.frameCopyFailed'));
+        return;
+      }
       await navigator.clipboard.write([
         new ClipboardItem({ [blob.type]: blob })
       ]);
+      showFrameToast(t('video.frameCopied'));
     } catch (err) {
-      // 跨域视频会污染 canvas 导致 toBlob 抛 SecurityError，静默失败即可
+      // 跨域视频会污染 canvas 导致 toBlob 抛 SecurityError（crossOrigin 修复后不应再发生，
+      // 保留兜底）：给出可见失败提醒，不再静默
       console.error('Failed to copy video frame: ', err);
+      showFrameToast(t('video.frameCopyFailed'));
     }
   };
 
@@ -1755,6 +1765,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     >
       {/* Preloading handled in useEffect now */}
 
+      {/* 复制帧结果提醒（指挥官 2026-10-14 要求）：成功/失败均有可见反馈。
+          fixed 定位保证沉浸模式（z-[300]）下也在最上层。 */}
+      {frameToast.visible && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[400] bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg backdrop-blur-sm animate-toast-up pointer-events-none">
+          {frameToast.msg}
+        </div>
+      )}
+
+
       <div className={`h-14 bg-white dark:bg-[#262626] flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
 
         <div className="flex items-center space-x-2">
@@ -1962,6 +1981,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               ref={videoRef}
               key={file.id}
               src={videoSrc || undefined}
+              // 视频 P1.5 修复：必须以 CORS 模式加载，否则 <video> 会把 canvas 标记为 tainted，
+              // drawImage 后 toBlob/toDataURL 直接抛 SecurityError
+              // ——「复制当前帧」此前因此一直静默失败（指挥官 2026-10-14 实测报错原文：
+              // "Failed to execute 'toBlob' on 'HTMLCanvasElement': Tainted canvases may not be exported"）。
+              // 安全性已核实：Tauri 2.11.6 的 asset 协议对每个响应都写
+              // `Access-Control-Allow-Origin: <window_origin>`（src/protocol/asset.rs:39），
+              // Windows 上 window_origin = http://tauri.localhost，与页面自身源精确吻合；
+              // LAN 源走 tower_http 的 CorsLayer::allow_origin(Any) 给的是 `*`。
+              // ——两边都允许 anonymous 模式，不影响播放，只是请求改成 CORS 模式。
+              crossOrigin="anonymous"
               className="max-w-none absolute inset-0 m-auto"
               style={{
                 width: '100%',

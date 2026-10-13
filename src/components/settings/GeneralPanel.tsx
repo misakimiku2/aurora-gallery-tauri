@@ -90,6 +90,24 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
               </button>
             </div>
 
+            {/* 视频悬停预览（P1.5 配套）。安卓端无鼠标悬停概念，不显示这一项。 */}
+            {!isAndroid && (
+              <div className="flex items-center justify-between mb-3 pt-3 border-subtle">
+                <div>
+                  <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.hoverPlayVideos')}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.hoverPlayVideosDesc')}</div>
+                </div>
+                <button
+                  onClick={() => {
+                    onUpdateSettingsData({ hoverPlayVideos: !settings.hoverPlayVideos });
+                  }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${settings.hoverPlayVideos ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.hoverPlayVideos ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            )}
+
             <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-subtle' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
               <div>
                 <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoExtractPalette')}</div>
