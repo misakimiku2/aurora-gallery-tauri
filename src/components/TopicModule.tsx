@@ -16,6 +16,7 @@ import {
   dbRemovePersonFromTopic,
 } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
+import { useVideoCover } from '../hooks/useVideoCover';
 
 type LayoutMode = 'grid' | 'adaptive' | 'masonry';
 
@@ -705,26 +706,38 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
     // Helper to get cover image URL
     // Phase 0：列表态 fileIds 为空，依赖 coverFileId；详情态可回退到已加载页首张
-    const getCoverUrl = (topic: Topic) => {
+    //
+    // P1.5：解析出的是封面**文件节点**而非 URL——封面文件可能是视频，
+    // 视频不能 convertFileSrc 喂 <img>（记忆 §2.1）。由调用方分流：
+    // 图片走 convertFileSrc，视频走 useVideoCover 抽帧封面。
+    const resolveCoverFile = (topic: Topic): FileNode | null => {
         if (topic.coverFileId && files[topic.coverFileId]) {
-            return convertFileSrc(files[topic.coverFileId].path);
+            return files[topic.coverFileId];
         }
         // 详情态：用已分页加载的 fileIds 兜底
         if (topic.id === currentTopicId && topicImagesFileIds.length > 0) {
             const firstFile = files[topicImagesFileIds[0]];
-            if (firstFile) return convertFileSrc(firstFile.path);
+            if (firstFile) return firstFile;
         }
         // 内存中仍有 fileIds（详情态或增删后）的兜底
         if (topic.fileIds && topic.fileIds.length > 0) {
             const firstFile = files[topic.fileIds[0]];
-            if (firstFile) return convertFileSrc(firstFile.path);
+            if (firstFile) return firstFile;
         }
         return null; // Should render placeholder
     };
 
     // 专题封面图片组件 - 使用 img 标签以获得更好的抗锯齿效果
     const TopicCoverImage = React.memo(({ topic, className }: { topic: Topic; className?: string }) => {
-        const coverUrl = getCoverUrl(topic);
+        const coverFile = resolveCoverFile(topic);
+        // 视频封面（P1.5-A 消费方）：封面文件是视频时走抽帧链路，绝不 convertFileSrc 喂 <img>（记忆 §2.1）
+        const { isVideo, coverUrl: videoCoverUrl } = useVideoCover(
+            coverFile?.path,
+            resourceRoot,
+            coverFile?.meta?.format,
+            coverFile?.size
+        );
+        const coverUrl = coverFile ? (isVideo ? videoCoverUrl : convertFileSrc(coverFile.path)) : null;
         const [imgDimensions, setImgDimensions] = React.useState<{ width: number; height: number } | null>(null);
 
         const handleImageLoad = React.useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -732,7 +745,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
         }, []);
 
-        if (!coverUrl) return null;
+        // 无封面文件 / 视频封面生成中：占位（避免空白盒；抽帧失败时也停在这里）
+        if (!coverUrl) {
+            return (
+                <div className={`w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 ${className || ''}`}>
+                    <Layout size={48} className="text-white opacity-50" />
+                </div>
+            );
+        }
 
         const crop = topic.coverCrop;
         const hasValidCrop = crop && crop.width > 0 && crop.height > 0;
@@ -785,7 +805,26 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         );
     });
 
-    const TopicPersonAvatar = React.memo(({ person, coverFile, size = 120 }: { person: Person; coverFile?: FileNode; size?: number }) => {
+    // 专题详情页 hero 背景（P1.5-A 消费方）：背景文件或封面文件是视频时用抽帧封面，
+    // 绝不把 mp4 塞进 background-image（浏览器解不了 → 静默空白）。
+    // 注意：「设为背景」上下文菜单对视频同样开放（2440 行），backgroundFile 可能是视频。
+    const TopicHeroBackground = React.memo(({ backgroundFile, coverFile }: { backgroundFile?: FileNode; coverFile?: FileNode }) => {
+        const heroFile = backgroundFile || coverFile;
+        const { isVideo, coverUrl: videoCoverUrl } = useVideoCover(
+            heroFile?.path,
+            resourceRoot,
+            heroFile?.meta?.format,
+            heroFile?.size
+        );
+        const heroUrl = heroFile ? (isVideo ? videoCoverUrl : convertFileSrc(heroFile.path)) : null;
+        return heroUrl ? (
+            <div className="absolute inset-0 bg-cover bg-center blur-sm scale-110 opacity-50" style={{ backgroundImage: `url("${heroUrl}")` }} />
+        ) : (
+            <div className="absolute inset-0 bg-gradient-to-r from-slate-900 to-slate-800" />
+        );
+    });
+
+    const TopicPersonAvatar = React.memo(({ person, coverFile, size = 120, resourceRoot }: { person: Person; coverFile?: FileNode; size?: number; resourceRoot?: string }) => {
         const [imgDimensions, setImgDimensions] = React.useState<{ width: number; height: number } | null>(null);
 
         const handleImageLoad = React.useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -793,8 +832,16 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
         }, []);
 
-        const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
-        const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+        // 视频封面（P1.5-A 消费方）：封面文件是视频时走抽帧链路，绝不 convertFileSrc 喂 <img>（记忆 §2.1）
+        const { isVideo, coverUrl: videoCoverUrl } = useVideoCover(
+            coverFile?.path,
+            resourceRoot,
+            coverFile?.meta?.format,
+            coverFile?.size
+        );
+        const coverUrl = coverFile?.path ? (isVideo ? videoCoverUrl : convertFileSrc(coverFile.path)) : null;
+        // faceBox 来自 AI 人脸检测（图片域）；视频封面不适用，退回居中裁剪
+        const hasFaceBox = !isVideo && person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
 
         let renderCrop: CropRect | null = null;
 
@@ -1855,7 +1902,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                 <div className="relative" style={{ height: totalHeight }}>
                     {visibleLayoutItems.map(({ topic, x, y, width, height }) => {
-                        const coverUrl = getCoverUrl(topic);
+                        const coverFile = resolveCoverFile(topic);
                         const personCount = getTotalPersonCount(topic);
                         const fileCount = getTotalFileCount(topic);
                         const subTopicCount = Object.values(topics || {}).filter(t => t.parentId === topic.id).length;
@@ -1881,7 +1928,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             >
                                 <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-lg">
-                                        {coverUrl ? (
+                                        {coverFile ? (
                                             <div className="w-full h-full overflow-hidden transition-transform duration-500 group-hover/topic:scale-110 origin-center pointer-events-none">
                                                 <TopicCoverImage topic={topic} className="w-full h-full" />
                                             </div>
@@ -2019,7 +2066,6 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         const allSubTopicIds = sortedSubTopics.map(t => t.id);
         const backgroundFile = currentTopic.backgroundFileId ? files[currentTopic.backgroundFileId] : null;
-        const heroUrl = backgroundFile ? convertFileSrc(backgroundFile.path) : getCoverUrl(currentTopic);
 
         return (
             <div
@@ -2035,11 +2081,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 <div className="relative w-full overflow-hidden" style={{ height: headerHeight }}>
                     {/* Background */}
                     <div className="absolute inset-0">
-                        {heroUrl ? (
-                            <div className="absolute inset-0 bg-cover bg-center blur-sm scale-110 opacity-50" style={{ backgroundImage: `url("${heroUrl}")` }} />
-                        ) : (
-                            <div className="absolute inset-0 bg-gradient-to-r from-slate-900 to-slate-800" />
-                        )}
+                        <TopicHeroBackground backgroundFile={backgroundFile ?? undefined} coverFile={resolveCoverFile(currentTopic) ?? undefined} />
                         <div className="absolute inset-0 bg-gradient-to-t from-white dark:from-gray-900 via-transparent to-transparent" />
                     </div>
 
@@ -2114,7 +2156,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             {sortedSubTopics.length > 0 ? (
                                 <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTopicsLayout.height }}>
                                     {visibleSubTopics.map(({ topic: sub, x, y, width, height }) => {
-                                        const subCoverUrl = getCoverUrl(sub);
+                                        const subCoverFile = resolveCoverFile(sub);
                                         return (
                                             <div
                                                 key={sub.id}
@@ -2133,7 +2175,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                             >
                                                 <div className={`relative aspect-[3/4] w-full transform transition-transform duration-300 origin-center group-hover:scale-105 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                                     <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-800 bg-gray-200 dark:bg-gray-800">
-                                                        {subCoverUrl ? (
+                                                        {subCoverFile ? (
                                                             <div className="w-full h-full overflow-hidden transition-transform duration-500 group-hover/sub:scale-110 origin-center pointer-events-none">
                                                                 <TopicCoverImage topic={sub} className="w-full h-full" />
                                                             </div>
@@ -2207,7 +2249,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                 <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
                                                     <div className="relative w-full h-full rounded-full overflow-hidden">
                                                         <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
-                                                            <TopicPersonAvatar person={p} coverFile={coverFile} />
+                                                            <TopicPersonAvatar person={p} coverFile={coverFile} resourceRoot={resourceRoot} />
                                                         </div>
                                                     </div>
 

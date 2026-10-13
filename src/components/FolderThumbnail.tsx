@@ -4,6 +4,8 @@ import { FileNode, FolderIconStyle, LayoutMode, SortOption, SortDirection } from
 import { DEFAULT_FOLDER_ICON_STYLE } from '../constants';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { isVideoFile } from '../utils/mediaExtensions';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
@@ -63,10 +65,11 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
 
   // 封面 = 文件夹内按当前 (sortBy, sortDirection) 排序后的前 3 张（findImagesDeeply
   // 内部流式选图，比较语义与 useFileSearch 一致），不再固定取"最近修改"。
+  // R1（UI 设计 §0.2）：桌面端候选含视频（与图片同权竞争）；安卓端无本地抽帧链路，保持仅图片。
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
-      return findImagesDeeply(file, getFileNode, 3, sortBy, sortDirection);
-  }, [file, getFileNode, sortBy, sortDirection]);
+      return findImagesDeeply(file, getFileNode, 3, sortBy, sortDirection, !isAndroid);
+  }, [file, getFileNode, sortBy, sortDirection, isAndroid]);
 
   // 远程文件夹（安卓设备 / LAN）：封面来自设备的远程缩略图接口，
   // 本地 getThumbnail 无法生成，且子节点通常尚未展开（imageChildren 为空）。
@@ -97,7 +100,13 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
       const cache = getGlobalCache();
       const cachedUrls = imageChildren.map(child => {
-          return cache.get(child.path) || null; 
+          const url = cache.get(child.path);
+          // 防污染：缓存里绝不允许是视频自身的 asset:// 地址（记忆 §2.1 事故形态）
+          if (url && isVideoFile(child.path) && url === convertFileSrc(child.path)) {
+              cache.delete(child.path);
+              return null;
+          }
+          return url || null;
       });
       return cachedUrls.filter((url): url is string => !!url);
   });
@@ -122,10 +131,11 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     });
   }, [imageChildren]);
 
-  // 本地可生成缩略图的子节点（远程路径交由远程缩略图接口处理）
-  const localImageChildren = useMemo(
-    () => imageChildren.filter((img) => !isRemotePath(img.path)),
-    [imageChildren]
+  // 本地可生成封面的子节点（远程路径交由远程缩略图接口处理）。
+  // R1（UI 设计 §0.2）：候选含视频（findImagesDeeply 已纳入），视频走抽帧封面链路。
+  const localCoverChildren = useMemo(
+      () => imageChildren.filter((img) => !isRemotePath(img.path)),
+      [imageChildren]
   );
 
   useEffect(() => {
@@ -133,8 +143,8 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     if (remoteCoverPaths) return;
     // 组件被虚拟化渲染即表示在视口附近，直接加载（不依赖 IntersectionObserver，
     // 否则快速滚动时 observer 回调延迟会导致缩略图永远不加载）
-    if (!resourceRoot || localImageChildren.length === 0) return;
-    const expected = Math.min(3, localImageChildren.length);
+    if (!resourceRoot || localCoverChildren.length === 0) return;
+    const expected = Math.min(3, localCoverChildren.length);
     // 已填满 → 无需再请求（previewSrcs 变化会重跑本 effect，未满则继续补）
     if (previewSrcs.length === expected) return;
 
@@ -151,21 +161,31 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     const loadPreviews = async () => {
       if (!alive) return;
       try {
-        const { getThumbnail } = await import('../api/tauri-bridge');
+        const { getThumbnail, getVideoCover } = await import('../api/tauri-bridge');
 
-        const promises = localImageChildren.map(async (img: FileNode) => {
+        const promises = localCoverChildren.map(async (img: FileNode) => {
             const cache = getGlobalCache();
             const cached = cache.get(img.path);
             if (cached) {
-                return cached;
+                // 防污染：缓存里绝不允许是视频自身的 asset:// 地址（记忆 §2.1）
+                if (isVideoFile(img.path) && cached === convertFileSrc(img.path)) {
+                    cache.delete(img.path);
+                } else {
+                    return cached;
+                }
             }
 
-            const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, undefined, undefined, undefined, img.mediaStoreId);
+            // R1（UI 设计 §0.2）：视频子节点走抽帧封面链路（P1.5-A），与图片同权竞争封面位
+            const url = isVideoFile(img.path)
+                ? await getVideoCover(img.path, resourceRoot, undefined, undefined, cachePath, img.size)
+                : await getThumbnail(img.path, img.updatedAt, resourceRoot, undefined, undefined, undefined, img.mediaStoreId);
             if (url) {
                 cache.set(img.path, url);
-                const isUpgrading = isThumbnailUpgrading(img.path);
-                if (isUpgrading) {
-                  setUpgradingPaths(prev => new Set(prev).add(img.path));
+                if (!isVideoFile(img.path)) {
+                    const isUpgrading = isThumbnailUpgrading(img.path);
+                    if (isUpgrading) {
+                        setUpgradingPaths(prev => new Set(prev).add(img.path));
+                    }
                 }
             }
             return url;
@@ -205,7 +225,7 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
       alive = false;
       // 不再 controller.abort()：底层生成继续，完成后写入 getGlobalCache 供下次挂载命中
     };
-  }, [isInView, wasInView, localImageChildren, resourceRoot, previewSrcs.length, remoteCoverPaths, file.id]);
+  }, [isInView, wasInView, localCoverChildren, resourceRoot, previewSrcs.length, remoteCoverPaths, file.id]);
 
   useEffect(() => {
     const handler = (e: Event) => {

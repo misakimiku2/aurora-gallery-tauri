@@ -23,13 +23,13 @@ import NetworkSection from './lan-client/NetworkSection';
 import MarqueeText from './MarqueeText';
 import { PeopleCanvas } from './PeopleCanvas';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
+import { useVideoCover } from '../hooks/useVideoCover';
 import { scrollProfiler } from '../utils/scrollProfiler';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const isLan = isRemotePath(file.path) || (file.source === 'lan' && !!file.remotePath);
-  // 视频 P1.5（实机反馈修复）：视频不进入图片缩略图管线（不读缓存、不 fallback、不渲染 <img>），
-  // 统一显示占位图标（抽帧封面属 P1.5）。否则会把 mp4 当图片加载 → 破图/海量读取。
-  const isVideo = file.type === FileType.VIDEO;
+  // 视频抽帧封面（P1.5-A 消费方）：hook 对非视频返回 null，图片路径不受影响
+  const { isVideo, coverUrl } = useVideoCover(file.path, resourceRoot, file.meta?.format, file.size);
   const [src, setSrc] = useState<string | null>(() => {
     if (!file.path || isVideo) return null;
     // 远程来源（桌面端服务/安卓设备）：直接使用远程缩略图 URL
@@ -55,7 +55,20 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
   }, [file.path, file.meta?.modified, resourceRoot, src, isLan, file.remotePath]);
 
   if (isVideo) {
-    return (
+    // 抽帧封面就绪 → 显示封面 JPEG；未就绪（mkv 等 8 种容器等 P1.5-B）/ 失败 → Film 占位
+    // （绝不 fallback convertFileSrc(file.path) 喂 <img>，记忆 §2.1）
+    return coverUrl ? (
+      <img
+        src={coverUrl}
+        alt=""
+        className="w-full h-full object-cover"
+        style={{
+          imageRendering: 'high-quality' as any,
+          transform: 'translateZ(0)'
+        }}
+        loading="lazy"
+      />
+    ) : (
       <div className="w-full h-full flex items-center justify-center">
         <Film size={14} className="text-gray-400 dark:text-gray-600" />
       </div>
@@ -479,6 +492,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                  scrollTop={localScrollTop}
                  t={t}
                  isDarkMode={isDarkMode}
+                 resourceRoot={roots?.[0]}
                />
              )}
            </div>

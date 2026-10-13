@@ -5,7 +5,8 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
 import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
 import { getPinyinGroup } from '../utils/textUtils';
-import { getThumbnail } from '../api/tauri-bridge';
+import { getThumbnail, getVideoCover } from '../api/tauri-bridge';
+import { isVideoFile } from '../utils/mediaExtensions';
 
 interface PersonGroup {
   id: string;
@@ -40,6 +41,8 @@ const PersonCard = React.memo(({
 
   const coverFile = files[person.coverFileId];
   const hasCover = !!coverFile;
+  // 视频封面（P1.5-A 消费方）：封面文件是视频时走抽帧链路，绝不 convertFileSrc 喂 <img>（记忆 §2.1）
+  const isVideoCover = hasCover && isVideoFile(coverFile.path, coverFile.meta?.format);
   const coverSrc = coverFile?.path ? convertFileSrc(coverFile.path) : null;
   const { width, height, x, y } = style;
   const avatarSize = Math.min(width, height - 60);
@@ -53,18 +56,23 @@ const PersonCard = React.memo(({
   }, []);
 
   useEffect(() => {
-    if (hasCover && coverFile?.path && resourceRoot && !person.faceBox) {
-      getThumbnail(coverFile.path, undefined, resourceRoot)
+    // 视频封面也加载（faceBox 对视频不适用，见下方 displaySrc / hasFaceBox 处理）
+    if (hasCover && coverFile?.path && resourceRoot && (!person.faceBox || isVideoCover)) {
+      const load = isVideoCover
+        ? getVideoCover(coverFile.path, resourceRoot, undefined, undefined, undefined, coverFile.size)
+        : getThumbnail(coverFile.path, undefined, resourceRoot);
+      load
         .then(url => setThumbnailUrl(url))
         .catch(e => console.error('Failed to load avatar thumbnail:', e));
     } else {
       setThumbnailUrl(null);
     }
-  }, [hasCover, coverFile?.path, resourceRoot, person.faceBox]);
+  }, [hasCover, coverFile?.path, resourceRoot, person.faceBox, isVideoCover]);
 
-  const displaySrc = person.faceBox ? coverSrc : (thumbnailUrl || coverSrc);
+  // 视频：displaySrc 只能是封面 URL（未就绪 → null → 占位头像），绝不能用 coverSrc（mp4 直连）
+  const displaySrc = isVideoCover ? thumbnailUrl : (person.faceBox ? coverSrc : (thumbnailUrl || coverSrc));
 
-  const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+  const hasFaceBox = !isVideoCover && person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
 
   let renderCrop: CropRect | null = null;
 

@@ -4,6 +4,7 @@ import { Tag, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getThumbnail } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { useVideoCover } from '../hooks/useVideoCover';
 import { FileType, FileNode } from '../types';
 import { LayoutItem } from './useLayoutHook';
 
@@ -56,16 +57,18 @@ export const TagIndexBar: React.FC<TagIndexBarProps> = ({ keys, scrollTop, layou
 };
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
+  // 视频抽帧封面（P1.5-A 消费方）：hook 对非视频返回 null，图片路径不受影响
+  const { isVideo, coverUrl } = useVideoCover(file.path, resourceRoot, file.meta?.format, file.size);
   const [src, setSrc] = useState<string | null>(() => {
-    if (!file.path) return null;
+    if (!file.path || isVideo) return null;
     return getGlobalCache().get(file.path) || null;
   });
 
   useEffect(() => {
     let active = true;
-    // 视频 P1（UI 设计 §6.1）：视频没有缩略图端点。原门禁 === IMAGE 会让视频落到
-    // convertFileSrc(file.path)，对 mp4 显示坏图；故显式排除视频（改走占位图标，见下方 render）。
-    if (file.type !== FileType.FOLDER && file.type !== FileType.VIDEO && resourceRoot && !src) {
+    // 视频 P1（UI 设计 §6.1）：视频没有缩略图端点，封面走 useVideoCover 抽帧链路；
+    // 原门禁 !== VIDEO 会让视频落到 convertFileSrc(file.path)，对 mp4 显示坏图。
+    if (file.type !== FileType.FOLDER && !isVideo && resourceRoot && !src) {
       getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
         if (active && url) {
           setSrc(url);
@@ -74,11 +77,23 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
       });
     }
     return () => { active = false; };
-  }, [file.path, file.meta?.modified, resourceRoot, src]);
+  }, [file.path, file.meta?.modified, resourceRoot, src, isVideo]);
 
-  // 视频：用占位图标，不渲染 <img>（避免 mp4 走 convertFileSrc 出坏图）
-  if (file.type === FileType.VIDEO) {
-    return (
+  // 视频：抽帧封面就绪 → 显示封面 JPEG；未就绪（mkv 等 8 种容器等 P1.5-B）/ 失败 → 占位图标
+  // （绝不 fallback convertFileSrc(file.path) 喂 <img>，记忆 §2.1）
+  if (isVideo) {
+    return coverUrl ? (
+      <img
+        src={coverUrl}
+        alt=""
+        className="w-full h-full object-cover"
+        style={{
+          imageRendering: 'high-quality' as any,
+          transform: 'translateZ(0)'
+        }}
+        loading="lazy"
+      />
+    ) : (
       <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
         <VideoIcon className="text-gray-400 dark:text-gray-500" size={20} />
       </div>

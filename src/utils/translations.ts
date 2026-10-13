@@ -420,8 +420,6 @@ export const translations = {
       frameCopyFailed: '复制当前帧失败',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: '抽帧封面生成后显示',
-      // 视频 P1（UI 设计 §6）：视频主色需等抽帧封面生成后才能提取
-      paletteAfterCover: '视频抽帧封面生成后可提取主色',
     },
     viewer: {
       toggleSidebar: '切换侧边栏',
@@ -1631,8 +1629,6 @@ export const translations = {
       frameCopyFailed: 'Failed to copy current frame',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: 'Cover appears after frame extraction',
-      // 视频 P1（UI 设计 §6）：视频主色需等抽帧封面生成后才能提取
-      paletteAfterCover: 'Palette can be extracted after the video cover is generated',
     },
     viewer: {
       toggleSidebar: 'Toggle Sidebar',

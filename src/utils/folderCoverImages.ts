@@ -56,15 +56,27 @@ const insertIntoBest = (
     best[idx] = candidate;
 };
 
+/**
+ * 文件夹封面候选选取（组件渲染与滚动预取共用的唯一实现）。
+ *
+ * R1（UI 设计 §0.2，指挥官 2026-10-12 拍板）：桌面端文件夹封面**取视频**——
+ * 有缩略图后视频与图片无差别（推翻方案文档 §2.5 旧口径，以总纲为准）。
+ * 总纲「默认同权」：候选 = IMAGE + VIDEO，按同一排序竞争 top-N。
+ *
+ * `includeVideos` 默认 false：安卓路径（resourceRoot === 'android_media_store'）
+ * 没有本地抽帧链路，视频候选既生成不了封面、又会抢走图片的 top-N 名额，
+ * 因此只有桌面端打开。指纹含此开关，避免两端缓存互相串。
+ */
 export const findImagesDeeply = (
     rootFolder: FileNode,
     getFileNode: NodeLookup,
     limit: number = 3,
     sortBy?: SortOption,
     sortDirection?: SortDirection,
+    includeVideos: boolean = false,
 ): FileNode[] => {
-    // 指纹必须包含排序参数：同一文件夹在不同排序下封面不同
-    const fp = `${childrenFingerprint(rootFolder)}|${sortBy || ''}|${sortDirection || ''}`;
+    // 指纹必须包含排序参数与视频开关：同一文件夹在不同排序/平台下封面不同
+    const fp = `${childrenFingerprint(rootFolder)}|${sortBy || ''}|${sortDirection || ''}|v${includeVideos ? 1 : 0}`;
     const cached = cache.get(rootFolder.id);
     if (cached && cached.fingerprint === fp) return cached.images;
 
@@ -88,7 +100,10 @@ export const findImagesDeeply = (
         const node = getFileNode(id);
         if (!node) continue;
 
-        if (node.type === FileType.IMAGE) {
+        // R1（UI 设计 §0.2，指挥官 2026-10-12 拍板）：桌面端文件夹封面**取视频**——
+        // 有缩略图后视频与图片无差别。总纲「默认同权」：候选 = IMAGE + VIDEO，
+        // 按同一排序竞争 top-N（includeVideos 由调用方按平台给出，见函数注释）。
+        if (node.type === FileType.IMAGE || (includeVideos && node.type === FileType.VIDEO)) {
             insertIntoBest(best, node, limit, cmp);
         } else if (node.type === FileType.FOLDER && node.children) {
             stack.push(...node.children);

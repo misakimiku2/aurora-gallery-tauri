@@ -3,12 +3,14 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { User } from 'lucide-react';
 import { Person, FileNode } from '../../types';
 import { cropToImgStyle, faceBoxToCrop, centerCrop, CropRect } from '../../utils/cropStyle';
+import { useVideoCover } from '../../hooks/useVideoCover';
 
-const PersonAvatar = ({ person, coverFile, size = 80, className = '' }: {
+const PersonAvatar = ({ person, coverFile, size = 80, className = '', resourceRoot }: {
     person: Person;
     coverFile?: FileNode;
     size?: number;
     className?: string;
+    resourceRoot?: string;
 }) => {
     const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
 
@@ -17,8 +19,16 @@ const PersonAvatar = ({ person, coverFile, size = 80, className = '' }: {
         setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
     }, []);
 
-    const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
-    const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+    // 视频封面（P1.5-A 消费方）：封面文件是视频时走抽帧链路，绝不 convertFileSrc 喂 <img>（记忆 §2.1）
+    const { isVideo, coverUrl: videoCoverUrl } = useVideoCover(
+        coverFile?.path,
+        resourceRoot,
+        coverFile?.meta?.format,
+        coverFile?.size
+    );
+    const coverUrl = coverFile?.path ? (isVideo ? videoCoverUrl : convertFileSrc(coverFile.path)) : null;
+    // faceBox 来自 AI 人脸检测（图片域）；视频封面不适用，退回居中裁剪
+    const hasFaceBox = !isVideo && person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
 
     let renderCrop: CropRect | null = null;
 

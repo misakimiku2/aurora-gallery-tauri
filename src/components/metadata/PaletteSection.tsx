@@ -26,8 +26,8 @@ interface PaletteSectionProps {
 }
 
 const PaletteSection = ({ file, colors, loadingPalette, resourceRoot, t, onSearch, onUpdate, extractedCache, currentExtractFileRef, onPaletteMenu, onLoadingPalette }: PaletteSectionProps) => {
-    // 视频 P1（UI 设计 §6 / 设计方案 §11.3）：视频主色依赖抽帧封面（P1.5 生成）。
-    // 封面就绪前 getDominantColors 拿不到图源，重提取只会失败/无反馈，故禁用按钮并给出说明。
+    // 视频 P1.5：主色从抽帧封面提取（generateVideoCoverAndColors 已把颜色落进 ColorDb），
+    // 「重新提取」对视频同样放开——封面未生成时下面的 handler 会先触发 getVideoCover 再取色。
     const isVideo = isVideoFile(file.path, file.meta?.format);
     return (
         <div>
@@ -54,7 +54,6 @@ const PaletteSection = ({ file, colors, loadingPalette, resourceRoot, t, onSearc
                     <button
                         onClick={() => {
                             // 视频播放UI设计 §6 / 设计方案 §11.3：视频算主色，「重新提取」对视频同样放开（非文件夹即可）
-                            if (isVideo) return; // 视频抽帧封面就绪前禁用（封面未生成时提取只会失败）
                             if (file && file.type !== FileType.FOLDER && file.path) {
                                 // Remove from cache to force re-extraction
                                 extractedCache.current.delete(file.id);
@@ -77,10 +76,21 @@ const PaletteSection = ({ file, colors, loadingPalette, resourceRoot, t, onSearc
 
                                             if (!thumbnailPath && resourceRoot) {
                                                 try {
-                                                    const { getThumbnail } = await import('../../api/tauri-bridge');
-                                                    const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
-                                                    if (thumbUrl) {
-                                                        thumbnailPath = pathCache.get(file.path!);
+                                                    if (isVideo) {
+                                                        // 视频（P1.5）：生成抽帧封面（内部磁盘缓存优先）。
+                                                        // 完成后颜色已落 ColorDb、pathCache 也有封面路径，
+                                                        // 下面的 getDominantColors 直接命中（DB 优先）。
+                                                        const { getVideoCover } = await import('../../api/tauri-bridge');
+                                                        await getVideoCover(file.path!, resourceRoot);
+                                                        if (pathCache && pathCache.get) {
+                                                            thumbnailPath = pathCache.get(file.path!);
+                                                        }
+                                                    } else {
+                                                        const { getThumbnail } = await import('../../api/tauri-bridge');
+                                                        const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
+                                                        if (thumbUrl) {
+                                                            thumbnailPath = pathCache.get(file.path!);
+                                                        }
                                                     }
                                                 } catch (err) {
                                                     console.log('Failed to generate thumbnail:', err);
@@ -105,20 +115,13 @@ const PaletteSection = ({ file, colors, loadingPalette, resourceRoot, t, onSearc
                                 })();
                             }
                         }}
-                        disabled={isVideo}
-                        className={`p-1.5 rounded-md transition-colors flex items-center justify-center ${isVideo ? 'opacity-40 cursor-not-allowed' : 'hover:bg-surface'}`}
-                        title={isVideo ? t('video.paletteAfterCover') : t('meta.regeneratePalette')}
+                        className="p-1.5 rounded-md transition-colors flex items-center justify-center hover:bg-surface"
+                        title={t('meta.regeneratePalette')}
                     >
                         <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
                     </button>
                 </div>
             </div>
-            {isVideo && (
-                // 视频 P1（UI 设计 §6）：封面未就绪时明确告知不可提取，避免点击后无反馈/失败态
-                <p className="text-[10px] text-gray-400 dark:text-gray-500 mb-2 text-center leading-snug">
-                    {t('video.paletteAfterCover')}
-                </p>
-            )}
             <div className="flex flex-wrap gap-2 justify-center">
                 {colors.length > 0 ? (
                     colors.slice(0, 8).map((color, i) => (

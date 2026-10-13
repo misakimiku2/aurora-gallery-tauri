@@ -8,8 +8,9 @@
 import { FileNode, FileType, SortOption, SortDirection } from '../types';
 import { isRemotePath } from './remoteSource';
 import { getGlobalCache } from './thumbnailCache';
-import { getThumbnail } from '../api/tauri-bridge/thumbnail';
+import { getThumbnail, getVideoCover } from '../api/tauri-bridge/thumbnail';
 import { findImagesDeeply, clearFolderCoverCache, type NodeLookup } from './folderCoverImages';
+import { isVideoFile } from './mediaExtensions';
 
 // 预取提前量：约 1.3 屏（配合虚拟化 ±400px 缓冲，卡片进入 DOM 前早已缓存就绪）
 const AHEAD_PX = 1200;
@@ -140,7 +141,9 @@ class FolderThumbnailPrefetcher {
   private warmFolder(folder: FileNode, getFileNode: NodeLookup): void {
     // 与 FolderThumbnail 取封面用的是同一个函数（含模块级指纹缓存），
     // 因此预热到的 URL 必定是组件挂载后要用到的那几个。
-    const images = findImagesDeeply(folder, getFileNode, MAX_IMAGES_PER_FOLDER, this.sortBy, this.sortDirection);
+    // includeVideos=true：本预取器入口已跳过 android_media_store（只有桌面端会走到这），
+    // 与 FolderThumbnail 桌面端的候选口径一致（R1：视频与图片同权）。
+    const images = findImagesDeeply(folder, getFileNode, MAX_IMAGES_PER_FOLDER, this.sortBy, this.sortDirection, true);
     for (const img of images) this.warmOne(img);
   }
 
@@ -148,6 +151,12 @@ class FolderThumbnailPrefetcher {
     if (!img.path || isRemotePath(img.path)) return;
     const cache = getGlobalCache();
     if (cache.has(img.path)) return; // 已就绪
+    // R1（UI 设计 §0.2）：视频子节点预热抽帧封面（P1.5-A），与图片同权。
+    // 内部有磁盘缓存优先 + 串行队列 + 在途去重，与卡片挂载时的请求自动合并。
+    if (isVideoFile(img.path, img.meta?.format)) {
+      getVideoCover(img.path, this.root ?? undefined).catch(() => {});
+      return;
+    }
     // fire-and-forget：走 ThumbnailBatcher 聚合，完成时自动写入 getGlobalCache
     getThumbnail(img.path, img.updatedAt, this.root ?? undefined).catch(() => {});
   }

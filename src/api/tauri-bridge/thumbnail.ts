@@ -482,6 +482,10 @@ const generateVideoCoverAndColors = async (
     const assetUrl = convertFileSrc(savedPath);
     // 回填路径缓存，避免下一次挂载又触发抽帧
     getGlobalCache().set(filePath, assetUrl);
+    // 主色提取链路（MetadataPanel / PaletteSection 的 getDominantColors）从
+    // __AURORA_THUMBNAIL_PATH_CACHE__ 取封面**文件路径**交给 Rust image::open——
+    // 视频也必须回填（存原始 savedPath，不是 asset URL），与 AVIF 回落路径同口径。
+    (window as any).__AURORA_THUMBNAIL_PATH_CACHE__?.set(filePath, savedPath);
     return assetUrl;
   } catch (error) {
     console.error('[VideoCover] generateVideoCoverAndColors failed:', error);
@@ -533,6 +537,25 @@ export const getVideoCover = async (
         : _globalCacheRoot || '';
 
   if (!cachePath) return null;
+
+  // 磁盘缓存优先（P1.5 消费方扩容后补的缺口）：
+  // 抽帧结果以前抽过就落在 <cacheRoot>/.Aurora_Cache 里（与图片缩略图同一套命名），
+  // 复用图片批处理管线里的 Rust `find_existing_video_cover` 查一次即可——
+  // 命中直接返回封面 JPEG，**不重新抽帧**。否则每次重启 / 每次新消费方挂载
+  // 都会把整个文件夹的视频重新 serial 抽一遍（4500 文件夹场景不可忍）。
+  // 安卓端不走这条（本地文件语义不同，且抽帧链路本身也不覆盖安卓）。
+  if (!_isAndroid) {
+    try {
+      const cached = await getThumbnail(filePath, undefined, undefined, signal, undefined, cachePath);
+      // 双保险：缓存里绝不允许是视频自身的 asset:// 地址（记忆 §2.1 污染形态）
+      if (cached && cached !== convertFileSrc(filePath)) {
+        return cached;
+      }
+    } catch {
+      // 磁盘查询失败不阻断抽帧主链路
+    }
+    if (signal?.aborted) return null;
+  }
 
   const timerId = performanceMonitor.start('getVideoCover', undefined, true);
   try {

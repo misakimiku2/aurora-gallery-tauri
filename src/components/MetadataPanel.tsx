@@ -8,6 +8,7 @@ import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/moc
 import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout, Activity } from 'lucide-react';
 import { useAIRename } from '../hooks/useAIRename';
 import ImagePreview from './metadata/ImagePreview';
+import FileCoverImg from './metadata/FileCoverImg';
 import PersonAvatar from './metadata/PersonAvatar';
 import TopicCoverImage from './metadata/TopicCoverImage';
 import CategorySelector from './metadata/CategorySelector';
@@ -22,7 +23,7 @@ import { findImagesDeeply } from '../utils/fileTree';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { getSourceUrls, appendSourceUrl, removeSourceUrl, replaceSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
-import { formatVideoDuration } from '../utils/mediaExtensions';
+import { formatVideoDuration, isVideoFile } from '../utils/mediaExtensions';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
@@ -368,10 +369,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 if (!thumbnailPath && resourceRoot) {
                     try {
-                        const { getThumbnail } = await import('../api/tauri-bridge');
-                        const thumbUrl = await getThumbnail(filePath, undefined, resourceRoot);
-                        if (thumbUrl) {
-                            thumbnailPath = pathCache.get(filePath);
+                        if (isVideoFile(filePath, fileMeta?.format)) {
+                            // 视频（P1.5）：生成抽帧封面（内部磁盘缓存优先）——颜色随即落 ColorDb、
+                            // pathCache 也有封面路径；下面的 getDominantColors 直接命中（DB 优先）
+                            const { getVideoCover } = await import('../api/tauri-bridge');
+                            await getVideoCover(filePath, resourceRoot);
+                            if (pathCache && pathCache.get) thumbnailPath = pathCache.get(filePath);
+                        } else {
+                            const { getThumbnail } = await import('../api/tauri-bridge');
+                            const thumbUrl = await getThumbnail(filePath, undefined, resourceRoot);
+                            if (thumbUrl) {
+                                thumbnailPath = pathCache.get(filePath);
+                            }
                         }
                     } catch (_err) {}
                 }
@@ -855,24 +864,30 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     if (topic) {
         // 封面获取逻辑增强：增加首个文件作为回退
-        const getCoverUrlInternal = (t: Topic) => {
+        // P1.5：解析出封面**文件节点**——封面文件可能是视频，视频不能 convertFileSrc 喂 <img>
+        // （记忆 §2.1），由调用方分流：图片走 convertFileSrc，视频走 TopicCoverImage 抽帧链路。
+        const resolveTopicCoverFile = (t: Topic): FileNode | null => {
             if (t.coverFileId && files[t.coverFileId]) {
-                return convertFileSrc(files[t.coverFileId].path);
+                return files[t.coverFileId];
             }
             if (t.fileIds && t.fileIds.length > 0) {
-                // 优先查找第一个图片文�?
+                // 优先查找第一个图片文件
                 for (const fid of t.fileIds) {
                     const f = files[fid];
                     if (f && f.type === FileType.IMAGE) {
-                        return convertFileSrc(f.path);
+                        return f;
                     }
                 }
-                // 如果没有找到明确标记为图片的文件，回退到第一个对应的文件
-                // （视频 P1.5：视频不喂 <img>，无图片时返回 null 不显示封面）
-                const firstFile = files[t.fileIds[0]];
-                if (firstFile && firstFile.type === FileType.IMAGE) return convertFileSrc(firstFile.path);
+                // 视频 P1.5：没有图片时不回退到视频（无图片则无封面，由占位分支展示）
             }
             return null;
+        };
+
+        // 图片封面 URL；视频封面返回 null（改走 TopicCoverImage 的 useVideoCover 抽帧链路）
+        const getCoverUrlInternal = (t: Topic) => {
+            const f = resolveTopicCoverFile(t);
+            if (!f || isVideoFile(f.path, f.meta?.format)) return null;
+            return convertFileSrc(f.path);
         };
 
         const coverUrl = getCoverUrlInternal(topic);
@@ -934,7 +949,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
                 <div className="relative w-full aspect-[3/4] bg-surface group shrink-0 overflow-hidden">
                     <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
-                        <TopicCoverImage topic={topic} coverUrl={coverUrl} className="w-full h-full" />
+                        <TopicCoverImage topic={topic} coverUrl={coverUrl} coverFile={resolveTopicCoverFile(topic) ?? undefined} resourceRoot={resourceRoot} className="w-full h-full" />
                     </div>
                     <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
                 </div>
@@ -1018,7 +1033,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             <div className="relative w-20 h-20 rounded-full bg-surface border border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
                                                 <div className="relative w-full h-full rounded-full overflow-hidden">
                                                     <div className="w-full h-full transition-transform duration-500 group-hover/avatar:scale-110">
-                                                        <PersonAvatar person={p} coverFile={pCover} size={80} className="rounded-full" />
+                                                        <PersonAvatar person={p} coverFile={pCover} size={80} className="rounded-full" resourceRoot={resourceRoot} />
                                                     </div>
                                                 </div>
 
@@ -1057,7 +1072,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         >
                                             <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-surface border border-subtle shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
                                                 <div className="w-full h-full transition-transform duration-500 group-hover/sub:scale-110">
-                                                    <TopicCoverImage topic={sub} coverUrl={subCoverUrl} className="w-full h-full rounded-2xl" />
+                                                    <TopicCoverImage topic={sub} coverUrl={subCoverUrl} coverFile={resolveTopicCoverFile(sub) ?? undefined} resourceRoot={resourceRoot} className="w-full h-full rounded-2xl" />
                                                 </div>
                                                 <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover/sub:opacity-100 transition-opacity pointer-events-none" />
                                             </div>
@@ -1159,25 +1174,24 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 const topic = topics[topicId];
                                 if (!topic) return null;
 
-                                const getTopicCover = (t: Topic) => {
-                                    if (t.coverFileId && files[t.coverFileId]) {
-                                        return convertFileSrc(files[t.coverFileId].path);
-                                    }
-                                    if (t.backgroundFileId && files[t.backgroundFileId]) {
-                                        return convertFileSrc(files[t.backgroundFileId].path);
-                                    }
+                                // P1.5：解析封面文件节点（coverFileId → backgroundFileId → 首个图片）。
+                                // 视频封面不能 convertFileSrc 喂 <img>（记忆 §2.1）：
+                                // 图片走原路径，视频走 FileCoverImg 的抽帧链路。
+                                const resolveMultiTopicCoverFile = (t: Topic): FileNode | null => {
+                                    if (t.coverFileId && files[t.coverFileId]) return files[t.coverFileId];
+                                    if (t.backgroundFileId && files[t.backgroundFileId]) return files[t.backgroundFileId];
                                     if (t.fileIds && t.fileIds.length > 0) {
                                         for (const fid of t.fileIds) {
                                             const f = files[fid];
-                                            if (f && f.type === FileType.IMAGE) {
-                                                return convertFileSrc(f.path);
-                                            }
+                                            if (f && f.type === FileType.IMAGE) return f;
                                         }
                                     }
                                     return null;
                                 };
 
-                                const coverUrl = getTopicCover(topic);
+                                const coverFileNode = resolveMultiTopicCoverFile(topic);
+                                // coverCrop 是封面**图片**上的裁剪框；视频封面不适用（坐标对不上）
+                                const isVideoCoverNode = !!coverFileNode && isVideoFile(coverFileNode.path, coverFileNode.meta?.format);
                                 const isMainTopic = !topic.parentId;
                                 const allSubTopics = isMainTopic
                                     ? Object.values(topics || {}).filter(sub => sub.parentId === topic.id)
@@ -1195,13 +1209,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     >
                                         {/* Cover with 3:4 Ratio */}
                                         <div className="w-[66px] h-[88px] rounded-lg border border-subtle/60 shadow-sm overflow-hidden bg-surface flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-all">
-                                            {coverUrl ? (
+                                            {coverFileNode ? (
                                                 <div className="w-full h-full transition-shadow duration-200 group-hover/item:shadow-md">
                                                     {/* Use the same crop display scheme as Person avatar for crisp result */}
-                                                    {topic.coverCrop ? (
+                                                    {topic.coverCrop && !isVideoCoverNode ? (
                                                         <div className="w-full h-full relative overflow-hidden">
                                                             <img
-                                                                src={coverUrl}
+                                                                src={convertFileSrc(coverFileNode.path)}
                                                                 alt={topic.name}
                                                                 className="absolute max-w-none"
                                                                 decoding="async"
@@ -1213,18 +1227,12 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                             />
                                                         </div>
                                                     ) : (
-                                                        <img
-                                                            src={coverUrl}
-                                                            alt={topic.name}
-                                                            className="w-full h-full object-cover block"
-                                                            decoding="async"
-                                                            style={{
-                                                                WebkitBackfaceVisibility: 'hidden',
-                                                                backfaceVisibility: 'hidden',
-                                                                transform: 'none',
-                                                                imageRendering: 'auto'
-                                                            }}
-                                                        />
+                                                        <FileCoverImg file={coverFileNode} resourceRoot={resourceRoot} alt={topic.name} className="w-full h-full object-cover block" style={{
+                                                            WebkitBackfaceVisibility: 'hidden',
+                                                            backfaceVisibility: 'hidden',
+                                                            transform: 'none',
+                                                            imageRendering: 'auto'
+                                                        }} />
                                                     )}
                                                 </div>
                                             ) : (
@@ -1352,7 +1360,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     >
                                         {/* Avatar */}
                                         <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-surface flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
-                                            <PersonAvatar person={selectedPerson} coverFile={coverFile} size={56} className="rounded-full" />
+                                            <PersonAvatar person={selectedPerson} coverFile={coverFile} size={56} className="rounded-full" resourceRoot={resourceRoot} />
                                         </div>
 
                                         {/* Name and Stats */}
@@ -1373,7 +1381,6 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 单个人物选择情况
     if (person) {
         const coverFile = files[person.coverFileId];
-        const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
 
         return (
             <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
@@ -1382,8 +1389,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 <div className="relative">
                     {/* Blurred Background */}
                     <div className="absolute inset-0 overflow-hidden h-40 z-0">
-                        {coverUrl ? (
-                            <img src={coverUrl} className="w-full h-full object-cover blur-xl opacity-50 dark:opacity-30 scale-110" />
+                        {coverFile ? (
+                            // P1.5-A 消费方：视频封面走抽帧链路，绝不 convertFileSrc 喂 <img>（记忆 §2.1）
+                            <FileCoverImg file={coverFile} resourceRoot={resourceRoot} className="w-full h-full object-cover blur-xl opacity-50 dark:opacity-30 scale-110" />
                         ) : (
                             <div className="w-full h-full bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/20 dark:to-purple-900/20"></div>
                         )}
@@ -1395,7 +1403,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         {/* Avatar */}
                         <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-surface mb-4 relative group">
                             <div className="w-full h-full transition-transform duration-300 group-hover:scale-110">
-                                <PersonAvatar person={person} coverFile={coverFile} size={128} className="rounded-full" />
+                                <PersonAvatar person={person} coverFile={coverFile} size={128} className="rounded-full" resourceRoot={resourceRoot} />
                             </div>
                         </div>
 

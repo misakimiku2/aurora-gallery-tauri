@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { Person, FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { isAndroidPlatformCached } from '../api/tauri-bridge';
+import { isAndroidPlatformCached, getVideoCover } from '../api/tauri-bridge';
+import { isVideoFile } from '../utils/mediaExtensions';
+import { getGlobalCache } from '../utils/thumbnailCache';
 
 interface PersonLayout {
   id: string;
@@ -25,6 +27,8 @@ interface PeopleCanvasProps {
   scrollTop: number;
   t: (key: string) => string;
   isDarkMode?: boolean;
+  /** 资源根：视频封面抽帧需要（P1.5-A 消费方）。缺省时视频只读缓存、不生成 */
+  resourceRoot?: string;
 }
 
 const COLS = 3;
@@ -77,7 +81,8 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
   height,
   scrollTop,
   t,
-  isDarkMode = false
+  isDarkMode = false,
+  resourceRoot
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
@@ -121,12 +126,35 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
         pendingImagesRef.current.delete(coverFileId);
         resolve(null);
       };
-      img.src = convertFileSrc(file.path);
+      // 视频封面（P1.5-A 消费方）：封面文件是视频时解析抽帧封面 URL，
+      // 绝不把 mp4 直塞 img.src（drawImage 解不了视频，记忆 §2.1）
+      if (isVideoFile(file.path, file.meta?.format)) {
+        const giveUp = () => {
+          // 与 onerror 同口径：清理 pending，允许后续重试（失败可能是暂态的）
+          pendingImagesRef.current.delete(coverFileId);
+          resolve(null);
+        };
+        if (resourceRoot) {
+          getVideoCover(file.path, resourceRoot, undefined, undefined, undefined, file.size)
+            .then(cover => {
+              if (cover && cover !== convertFileSrc(file.path)) img.src = cover;
+              else giveUp();
+            })
+            .catch(giveUp);
+        } else {
+          // 无 resourceRoot（无法安全生成）：只读缓存，命中才画
+          const cached = getGlobalCache().get(file.path);
+          if (cached && cached !== convertFileSrc(file.path)) img.src = cached;
+          else giveUp();
+        }
+      } else {
+        img.src = convertFileSrc(file.path);
+      }
     });
     
     pendingImagesRef.current.set(coverFileId, promise);
     return promise;
-  }, [files]);
+  }, [files, resourceRoot]);
 
   const drawPerson = useCallback((
     ctx: CanvasRenderingContext2D,
@@ -167,7 +195,10 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       
-      if (person.faceBox) {
+      // faceBox 来自 AI 人脸检测（图片域）；视频封面不适用，退回居中裁剪
+      const coverFile = files[person.coverFileId];
+      const isVideoCover = !!coverFile && isVideoFile(coverFile.path, coverFile.meta?.format);
+      if (person.faceBox && !isVideoCover) {
         const fb = person.faceBox;
         const imgW = cachedImg.width;
         const imgH = cachedImg.height;
@@ -219,7 +250,7 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
     ctx.fillStyle = colors.countText;
     ctx.font = '9px system-ui, -apple-system, sans-serif';
     ctx.fillText(`${person.count} ${t('sidebar.files')}`, centerX, y + avatarSize + 24);
-  }, [t, colors]);
+  }, [t, colors, files]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
