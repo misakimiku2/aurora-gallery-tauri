@@ -8,6 +8,7 @@ import { readFileAsBase64 } from './files';
 // 主色提取已抽到 utils 共享：AVIF 回落 与 视频抽帧（P1.5）必须用同一套口径，否则色差不可控
 import { extractColorsFromImageData } from '../../utils/dominantColors';
 import { extractVideoCover } from '../../utils/videoCover';
+import { isAbsolutePath } from '../../utils/pathUtils';
 
 // 批量请求管理器
 class ThumbnailBatcher {
@@ -269,6 +270,41 @@ class ThumbnailBatcher {
 const thumbnailBatcher = new ThumbnailBatcher();
 
 /**
+ * 解析缩略图缓存目录（`getThumbnail` / `getVideoCover` 共用）。
+ *
+ * ⚠️ `rootPath` 必须是**绝对路径**。历史事故（2026-10-14 实测）：有调用方把根节点的
+ * `id`（= `pathUtils.generateId` = `md5(path)[0..9]`，9 位 hex，如 `491b65a0d`）当成资源根传入
+ * → 拼出的 `${id}/.Aurora_Cache` 是**相对路径** → 在 cwd 下建出游离缓存目录
+ * （`src-tauri/<id>/.Aurora_Cache`），且封面永远命中不了正确缓存。
+ * 这里显式拦截：非绝对路径一律忽略并回退全局缓存根，同时打印 error 便于定位调用方。
+ */
+function resolveThumbCachePath(rootPath: string | undefined, override?: string): string {
+  if (override && override.trim() !== '') return override;
+
+  if (rootPath && rootPath.trim() !== '' && rootPath !== 'android_media_store') {
+    if (isAbsolutePath(rootPath)) {
+      // 桌面端：缓存统一放在资源根目录下的 .Aurora_Cache（与图片缩略图一致），
+      // 而非 _globalCacheRoot（AppData），避免文件夹图标与图片缓存路径分叉。
+      return `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+    }
+    console.error(
+      '[Thumbnail] rootPath 不是绝对路径（疑似把节点 id 当资源根传入），已忽略并回退全局缓存:',
+      rootPath
+    );
+    return _globalCacheRoot || '';
+  }
+
+  // android_media_store 或未提供 rootPath：优先全局缓存根
+  if (_globalCacheRoot) return _globalCacheRoot;
+
+  // 兜底：仅 android_media_store 会走到这里（其缓存根约定为 <root>/.Aurora_Cache）
+  if (rootPath && rootPath.trim() !== '') {
+    return `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+  }
+  return '';
+}
+
+/**
  * 获取图片缩略图
  * @param filePath 图片文件路径
  * @param modified 文件修改时间（可选，用于缓存）
@@ -288,18 +324,8 @@ export const androidThumbnailNavigate = async (): Promise<void> => {
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void, cachePathOverride?: string, mediaStoreId?: number): Promise<string | null> => {
   if (!filePath || filePath.trim() === '') return null;
 
-  let cachePath: string;
-  if (cachePathOverride && cachePathOverride.trim() !== '') {
-    cachePath = cachePathOverride;
-  } else if (rootPath && rootPath.trim() !== '' && rootPath !== 'android_media_store') {
-    // 桌面端：缓存统一放在资源根目录下的 .Aurora_Cache（与图片缩略图一致），
-    // 而非 _globalCacheRoot（AppData），避免文件夹图标与图片缓存路径分叉。
-    cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
-  } else if (_globalCacheRoot) {
-    cachePath = _globalCacheRoot;
-  } else if (rootPath && rootPath.trim() !== '') {
-    cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
-  } else {
+  const cachePath = resolveThumbCachePath(rootPath, cachePathOverride);
+  if (!cachePath) {
     console.error('[Thumbnail] No cache path available: cachePathOverride=', cachePathOverride, '_globalCacheRoot=', _globalCacheRoot, 'rootPath=', rootPath);
     return null;
   }
@@ -529,12 +555,7 @@ export const getVideoCover = async (
   if (failedAt && Date.now() - failedAt < VIDEO_COVER_NEGATIVE_CACHE_MS) return null;
 
   const work = (async (): Promise<string | null> => {
-  const cachePath =
-    cachePathOverride && cachePathOverride.trim() !== ''
-      ? cachePathOverride
-      : rootPath && rootPath.trim() !== '' && rootPath !== 'android_media_store'
-        ? `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`
-        : _globalCacheRoot || '';
+  const cachePath = resolveThumbCachePath(rootPath, cachePathOverride);
 
   if (!cachePath) return null;
 

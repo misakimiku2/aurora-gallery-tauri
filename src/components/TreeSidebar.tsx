@@ -26,6 +26,17 @@ import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { useVideoCover } from '../hooks/useVideoCover';
 import { scrollProfiler } from '../utils/scrollProfiler';
 
+/**
+ * 根节点 id → 真实文件路径。
+ *
+ * ⚠️ `roots` 里存的是**节点 id**（= `generateId(path)` = `md5(path)[0..9]`，9 位 hex），
+ * **不是路径**；而缩略图管线的 `resourceRoot` 需要**绝对路径**。误把 id 传下去会让
+ * 缓存目录退化成 `<cwd>/<id>/.Aurora_Cache` 游离目录，且封面永远命中不了正确缓存
+ * （2026-10-14 实测）。
+ */
+const rootPathOf = (roots?: string[], files?: Record<string, FileNode>): string | undefined =>
+  roots && roots.length > 0 ? files?.[roots[0]]?.path : undefined;
+
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const isLan = isRemotePath(file.path) || (file.source === 'lan' && !!file.remotePath);
   // 视频抽帧封面（P1.5-A 消费方）：hook 对非视频返回 null，图片路径不受影响
@@ -492,7 +503,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                  scrollTop={localScrollTop}
                  t={t}
                  isDarkMode={isDarkMode}
-                 resourceRoot={roots?.[0]}
+                 resourceRoot={rootPathOf(roots, files)}
                />
              )}
            </div>
@@ -715,7 +726,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
           initialScrollOffset={currentST}
           itemData={{ 
             tags: sortedTags, tagCounts, onTagSelect, onContextMenu, 
-            handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t, roots 
+            handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t, roots, files 
           }}
         >
           {({ index, style, data }: any) => {
@@ -756,7 +767,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                     <div className="grid grid-cols-3 gap-2">
                        {data.previewImages.map((img: any) => (
                         <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
-                           <TagPreviewThumbnail file={img} resourceRoot={data.roots?.[0]} />
+                           <TagPreviewThumbnail file={img} resourceRoot={rootPathOf(data.roots, data.files)} />
                            <div className="absolute inset-0 flex items-center justify-center bg-surface -z-10">
                              <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                            </div>
@@ -828,7 +839,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                 <div className="grid grid-cols-3 gap-2">
                   {previewImages.map(img => (
                     <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
-                       <TagPreviewThumbnail file={img} resourceRoot={roots?.[0]} />
+                       <TagPreviewThumbnail file={img} resourceRoot={rootPathOf(roots, files)} />
                        <div className="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-gray-700 -z-10">
                          <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                        </div>
