@@ -151,8 +151,15 @@ pub fn locate() -> Option<(PathBuf, FfmpegSource)> {
 pub fn probe_version(ffmpeg: &Path) -> Option<String> {
     let mut cmd = FfmpegCommand::new_with_path(ffmpeg);
     cmd.arg("-version");
-    let mut child = cmd.spawn().ok()?;
-    let stdout = child.take_stdout()?;
+    // ⚠️ spawn 细节（2026-10-14 沙箱实测踩坑）：
+    // FfmpegCommand 构造强制 stdin/stdout/stderr 三管道，且 `spawn()` 返回的
+    // FfmpegChild::from_inner 会 assert 三通道全 piped；而「子进程 stdin 匿名管道」
+    // 在受限环境（WorkBuddy 沙箱）创建即报 os error 231（`所有管道范例都在使用中`）。
+    // 处理：stdin 置 null + 用 `as_inner_mut().spawn()` 走原生 std::process::Child
+    //（no_window 的 creation_flags 在构造时已打上，不受影响）。
+    cmd.as_inner_mut().stdin(std::process::Stdio::null());
+    let mut child = cmd.as_inner_mut().spawn().ok()?;
+    let stdout = child.stdout.take()?;
     let mut first_line = String::new();
     let read_ok = std::io::BufReader::new(stdout)
         .read_line(&mut first_line)
@@ -410,9 +417,10 @@ fn run_single_frame(
         .arg("-vf")
         .arg(format!("scale={}:{}", w, h))
         .args(["-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-"]);
-
-    let mut child = cmd.spawn().ok()?;
-    let mut stdout = child.take_stdout()?;
+    // stdin 置 null + 原生 spawn：同 probe_version 的 os error 231 规避注释。
+    cmd.as_inner_mut().stdin(std::process::Stdio::null());
+    let mut child: std::process::Child = cmd.as_inner_mut().spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
     // 读线程：主线程负责 wait + 超时检测，stdout 必须另开线程排干（否则管道写满会互相卡）。
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -422,7 +430,7 @@ fn run_single_frame(
 
     let deadline = Instant::now() + timeout;
     loop {
-        match child.as_inner_mut().try_wait() {
+        match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
                 if Instant::now() >= deadline {
