@@ -79,3 +79,24 @@ export function averageLuma(data: Uint8ClampedArray): number {
   }
   return n === 0 ? 0 : sum / n;
 }
+
+/**
+ * 平均鲜艳度（0~255）：每像素 `max(R,G,B) − min(R,G,B)` 的均值。
+ *
+ * 视频选帧用（`videoCover.ts`）：亮度之外再加一维「有没有内容」——
+ * 避免在一堆候选帧里挑中「整体偏亮的灰/纯白闪过帧」，而漏掉真正有画面的一帧。
+ */
+export function averageColorfulness(data: Uint8ClampedArray): number {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4 * 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const mx = r > g ? (r > b ? r : b) : g > b ? g : b;
+    const mn = r < g ? (r < b ? r : b) : g < b ? g : b;
+    sum += mx - mn;
+    n++;
+  }
+  return n === 0 ? 0 : sum / n;
+}

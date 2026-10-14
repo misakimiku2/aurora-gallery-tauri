@@ -38,6 +38,11 @@ desktop.ini
 # Tauri
 src-tauri/target
 
+# 游离的缩略图缓存目录：正常应在「资源根」下；若某个流程把节点 id（generateId =
+# md5(path)[0..9]）当成根路径传下去，会在 cwd 下建出 <9位hex>/.Aurora_Cache。
+# 2026-10-14 观察到一次（src-tauri/491b65a0d/.Aurora_Cache），此处防御性忽略。
+.Aurora_Cache/
+
 # Tauri generated artifacts
 src-tauri/gen/schemas/
 src-tauri/metadata.json

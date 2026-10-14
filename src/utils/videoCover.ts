@@ -12,14 +12,21 @@
  *    `Access-Control-Allow-Origin: <window_origin>`（协议源码 asset.rs:39），Windows 上该值
  *    = `http://tauri.localhost`，与页面自身源精确吻合，不影响播放。
  * 2. **不得取 t=0**（设计方案 §11.2 实测：样本首帧纯黑，与 t=2~4s 帧像素差 188.7/255）。
- *    本模块用「10% 位置起步 + 近黑帧后移」的启发式。
+ *    本模块**采样多个候选帧后挑「最亮且有一定鲜艳度」的一帧**（见 `frameScore`）——
+ *    只判「是否近黑」会漏掉「暗但不算黑」的片头（2026-10-14 指挥官实测：某 13s 录像前段偏暗，
+ *    10% 处抽到的暗帧被采纳 → 封面与主色一起偏暗，而片内其实很亮）。
  * 3. **产出的永远是 JPEG 数据 URL**，由调用方交给后端 `save_remote_thumbnail` 落库；
  *    本模块**绝不**把视频自身的 asset:// 地址写进任何缩略图缓存（见记忆 §2.1 事故）。
  */
 
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { isWebDecodableVideo } from './mediaExtensions';
-import { extractColorsFromImageData, averageLuma, DominantColorWithLab } from './dominantColors';
+import {
+  extractColorsFromImageData,
+  averageLuma,
+  averageColorfulness,
+  DominantColorWithLab,
+} from './dominantColors';
 
 export interface VideoCoverResult {
   /** `data:image/jpeg;base64,...` —— 与 AVIF 回落路径同格式，可直接喂给 save_remote_thumbnail */
@@ -36,10 +43,19 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_TIMEOUT_MS = 120_000;
 /** 封面目标尺寸（短边缩到此值，与 AVIF 回落路径同口径） */
 const TARGET_SIZE = 256;
-/** 平均亮度低于此值判定为「近黑帧」，继续向后取 */
-const MIN_LUMA = 14;
-/** 跳帧重试上限 */
-const MAX_SEEK_ATTEMPTS = 4;
+/**
+ * 候选抽帧时间点（占时长的比例）。首帧常为片头/黑场，从 10% 起步（设计方案 §11.2）；
+ * 往后铺开是为了在「前段偏暗」的录像里也能取到亮帧。
+ */
+const SEEK_FRACTIONS = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85];
+/**
+ * 平均亮度达到此值即认为「够亮」，停止继续采样。
+ * 机械盘上每次 seek 要几十到几百毫秒；绝大多数视频首个候选就够亮 → 通常只抽 1 帧。
+ */
+const GOOD_LUMA = 85;
+/** 选帧打分：亮度为主（避免暗封面），鲜艳度次要加权（避免「纯白闪过」压过有内容的亮帧） */
+const SCORE_LUMA_CAP = 160;
+const SCORE_SAT_WEIGHT = 0.5;
 
 let probeVideo: HTMLVideoElement | null = null;
 let queueTail: Promise<unknown> = Promise.resolve();
@@ -120,11 +136,28 @@ function releaseProbe(v: HTMLVideoElement) {
   }
 }
 
-/** 抽帧时间点：10% 起步，避开 t=0 的黑帧；第 n 次重试逐步后移 */
-function nextSeekTime(duration: number, attempt: number): number {
+/**
+ * 生成候选抽帧时间点（秒）：按 `SEEK_FRACTIONS` 铺开，接近片尾时收敛到 safe end，
+ * 并去重（极短视频的多个比例可能落到同一毫秒）。
+ */
+export function seekCandidates(duration: number): number[] {
   const safeEnd = Math.max(duration - 0.05, 0);
-  const base = Math.max(duration * 0.1, Math.min(1, duration * 0.5));
-  return Math.min(base + attempt * duration * 0.2, safeEnd);
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const f of SEEK_FRACTIONS) {
+    const t = Math.min(duration * f, safeEnd);
+    const key = Math.round(t * 1000);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** 候选帧打分：越亮越好，其次越鲜艳越好。用于在候选帧中挑出代表帧。 */
+export function frameScore(luma: number, colorfulness: number): number {
+  return Math.min(luma, SCORE_LUMA_CAP) + colorfulness * SCORE_SAT_WEIGHT;
 }
 
 export interface VideoCoverMeta {
@@ -166,9 +199,6 @@ export async function extractVideoCover(
   return enqueue(async () => {
     const v = getProbe();
     const started = Date.now();
-    let exported: { dataUrl: string; width: number; height: number } | null = null;
-    let colors: DominantColorWithLab[] = [];
-    let usedSeek = 0;
 
     try {
       v.src = convertFileSrc(filePath);
@@ -180,33 +210,36 @@ export async function extractVideoCover(
         return null;
       }
 
+      // 目标尺寸：短边缩到 256（与 AVIF 回落同口径）。所有候选帧尺寸一致，先算一次。
+      const srcW = v.videoWidth;
+      const srcH = v.videoHeight;
+      let w: number;
+      let h: number;
+      if (srcW < srcH) {
+        w = TARGET_SIZE;
+        h = Math.round((srcH * TARGET_SIZE) / srcW);
+      } else {
+        h = TARGET_SIZE;
+        w = Math.round((srcW * TARGET_SIZE) / srcH);
+      }
+
       const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return null;
 
-      for (let attempt = 0; attempt < MAX_SEEK_ATTEMPTS; attempt++) {
+      // 采样多个候选帧，取综合得分最高的一帧（亮度为主 + 鲜艳度加权）
+      let best: { imageData: ImageData; score: number; seek: number } | null = null;
+      for (const target of seekCandidates(duration)) {
         if (meta?.signal?.aborted) return null;
         if (Date.now() - started > timeoutMs) break;
 
-        const target = nextSeekTime(duration, attempt);
         if (v.currentTime !== target) {
           v.currentTime = target;
           await waitEvent(v, 'seeked', Math.max(timeoutMs - (Date.now() - started), 1000));
         }
-        // 目标尺寸：短边缩到 256（与 AVIF 回落同口径）
-        const srcW = v.videoWidth;
-        const srcH = v.videoHeight;
-        let w: number;
-        let h: number;
-        if (srcW < srcH) {
-          w = TARGET_SIZE;
-          h = Math.round((srcH * TARGET_SIZE) / srcW);
-        } else {
-          h = TARGET_SIZE;
-          w = Math.round((srcW * TARGET_SIZE) / srcH);
-        }
-        canvas.width = w;
-        canvas.height = h;
+
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(v, 0, 0, w, h);
@@ -219,32 +252,33 @@ export async function extractVideoCover(
           return null;
         }
 
-        if (averageLuma(imageData.data) < MIN_LUMA && attempt < MAX_SEEK_ATTEMPTS - 1) {
-          continue; // 近黑帧（片头 fade-in 常见），换个时间点重试
+        const luma = averageLuma(imageData.data);
+        const score = frameScore(luma, averageColorfulness(imageData.data));
+        if (!best || score > best.score) {
+          best = { imageData, score, seek: target };
         }
-
-        let dataUrl: string;
-        try {
-          dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-        } catch {
-          return null;
-        }
-        if (!dataUrl || dataUrl.length < 100) return null;
-
-        exported = { dataUrl, width: w, height: h };
-        colors = extractColorsFromImageData(imageData.data, 8);
-        usedSeek = target;
-        break;
+        // 够亮就直接采用，省掉后续 seek（机械盘上很关键）
+        if (luma >= GOOD_LUMA) break;
       }
 
-      if (!exported) return null;
+      if (!best) return null;
+
+      // 用最优帧的像素重建画布（putImageData 为精确拷贝）再导出 JPEG
+      ctx.putImageData(best.imageData, 0, 0);
+      let dataUrl: string;
+      try {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      } catch {
+        return null;
+      }
+      if (!dataUrl || dataUrl.length < 100) return null;
 
       return {
-        dataUrl: exported.dataUrl,
-        colors,
-        width: exported.width,
-        height: exported.height,
-        seekTime: usedSeek,
+        dataUrl,
+        colors: extractColorsFromImageData(best.imageData.data, 8),
+        width: w,
+        height: h,
+        seekTime: best.seek,
       };
     } catch {
       return null;

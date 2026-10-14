@@ -34,30 +34,55 @@ fn is_avif(buffer: &[u8]) -> bool {
     false
 }
 
-/// 计算某文件的缩略图缓存路径（size + mtime + 首 4096 字节 → md5），返回 (jpg, webp) 两个候选。
+/// 视频封面缓存的**版本位**：抽帧选帧算法变更时 +1。
 ///
-/// 命名规则必须与 `process_thumbnail_decode` / `save_remote_thumbnail` 完全一致，
-/// 否则前端写进去的封面后端永远找不到。
-fn thumbnail_cache_paths(file_path: &str, cache_root: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let image_path = Path::new(file_path);
-    let metadata = fs::metadata(image_path).ok()?;
+/// 缓存名默认只由「文件大小 + mtime + 首 4096 字节」决定，**不含算法信息** ——
+/// 于是算法改了、旧封面文件还在，老视频永远不会重抽。2026-10-14 把选帧从
+/// 「非黑即收」改为「多候选取最亮」时踩到，故引入版本位，让旧封面自然失效。
+const VIDEO_COVER_CACHE_VERSION: u32 = 2;
+
+/// 计算缓存文件名：size + mtime + 首 4096 字节 → md5 前 24 位。
+/// 视频额外混入 `VIDEO_COVER_CACHE_VERSION`（**图片不受影响**）。
+/// 所有读写路径（`thumbnail_cache_paths` / `process_single_thumbnail` / `save_remote_thumbnail`）
+/// 必须共用本函数，否则前端写进去的封面后端找不到。
+fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> String {
     let size = metadata.len();
     let modified = metadata
         .modified()
         .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
         .unwrap_or(0);
 
-    let mut file = fs::File::open(image_path).ok()?;
     let mut buffer = [0u8; 4096];
-    let bytes_read = file.read(&mut buffer).unwrap_or(0);
+    let bytes_read = fs::File::open(file_path)
+        .map(|mut f| f.read(&mut buffer).unwrap_or(0))
+        .unwrap_or(0);
 
-    let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+    let is_video = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(crate::file_types::is_supported_video)
+        .unwrap_or(false);
+    let version_tag = if is_video {
+        format!("-vc{}", VIDEO_COVER_CACHE_VERSION)
+    } else {
+        String::new()
+    };
+
+    let cache_key = format!("{}-{}-{:?}{}", size, modified, &buffer[..bytes_read], version_tag);
     let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
-    let cache_filename = if hash_str.len() >= 24 {
+    if hash_str.len() >= 24 {
         hash_str[..24].to_string()
     } else {
         format!("{:0>24}", hash_str)
-    };
+    }
+}
+
+/// 计算某文件的缩略图缓存路径（size + mtime + 首 4096 字节 → md5），返回 (jpg, webp) 两个候选。
+///
+/// 命名规则由 `cache_filename_for` 统一给出（视频封面带版本位）。
+fn thumbnail_cache_paths(file_path: &str, cache_root: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let metadata = fs::metadata(file_path).ok()?;
+    let cache_filename = cache_filename_for(file_path, &metadata);
 
     Some((
         cache_root.join(format!("{}.jpg", cache_filename)),
@@ -94,20 +119,9 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         }
     }
 
-    // Quick hash
+    // Quick hash（与读路径共用同一命名函数，视频封面带版本位；图片文件名不变）
     let metadata = fs::metadata(image_path).ok()?;
-    let size = metadata.len();
-    let modified = metadata.modified()
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-        .unwrap_or(0);
-
-    let mut file = fs::File::open(image_path).ok()?;
-    let mut buffer = [0u8; 4096];
-    let bytes_read = file.read(&mut buffer).unwrap_or(0);
-
-    let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-    let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
-    let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
+    let cache_filename = cache_filename_for(file_path, &metadata);
 
     let jpg_cache_file_path = cache_root.join(format!("{}.jpg", cache_filename));
     let webp_cache_file_path = cache_root.join(format!("{}.webp", cache_filename));
@@ -406,20 +420,9 @@ pub async fn save_remote_thumbnail(
             return Err("Original file does not exist".to_string());
         }
 
-        // 1. 生成缓存文件名 (必须与 process_single_thumbnail 中的逻辑一致)
+        // 1. 生成缓存文件名（与读路径共用 cache_filename_for：视频封面带版本位）
         let metadata = fs::metadata(image_path).map_err(|e| e.to_string())?;
-        let size = metadata.len();
-        let modified = metadata.modified()
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-            .unwrap_or(0);
-
-        let mut file = fs::File::open(image_path).map_err(|e| e.to_string())?;
-        let mut buffer = [0u8; 4096];
-        let bytes_read = file.read(&mut buffer).unwrap_or(0);
-
-        let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-        let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
-        let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
+        let cache_filename = cache_filename_for(&file_path, &metadata);
 
         let root = Path::new(&cache_root);
         if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
