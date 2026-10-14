@@ -86,6 +86,10 @@ arboard = "3"
 # ——其默认源是 gyan.dev 的 GPLv3 构建（页面原文），MIT 项目分发即触发 GPL 义务；
 # 本项目只用它的 FfmpegCommand（进程启动自动 create_no_window），下载走自研 BtbN LGPL 源。
 ffmpeg-sidecar = { version = "2", default-features = false }
+# S4：BtbN 下载资产是 zip 容器，需程序化解压出 bin/ffmpeg.exe 与 bin/ffprobe.exe。
+# 仅启用 deflate（BtbN zip 的压缩算法），纯 Rust 后端——比系统 tar.exe 全量解压
+#（163MB 包含用不到的 ffplay/doc）省 ~200MB 磁盘与时间。
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # CLIP Model Support (ONNX Runtime with DirectML) - Desktop only
 ort = { version = "2.0.0-rc.9", features = ["directml", "ndarray"] }

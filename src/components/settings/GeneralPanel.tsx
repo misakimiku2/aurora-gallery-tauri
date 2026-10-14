@@ -1,12 +1,23 @@
 import React from 'react';
-import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2, Download, Pause, Play, X } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { DEFAULT_FOLDER_ICON_STYLE } from '../../constants';
 import { Folder3DIcon } from '../Folder3DIcon';
 import { Folder3DIconCanvas } from '../Folder3DIconCanvas';
 import { FolderTilesIconCanvas } from '../FolderTilesIconCanvas';
 import { isSpriteSupportedSafe } from '../../utils/spriteCache';
-import { getFfmpegStatus, FfmpegStatus } from '../../api/tauri-bridge/ffmpeg';
+import {
+  getFfmpegStatus,
+  isFfmpegAvailable,
+  invalidateFfmpegAvailability,
+  listenFfmpegDownloadProgress,
+  ffmpegDownloadStart,
+  ffmpegDownloadPause,
+  ffmpegDownloadResume,
+  ffmpegDownloadCancel,
+  FfmpegStatus,
+  FfmpegDownloadProgress,
+} from '../../api/tauri-bridge/ffmpeg';
 
 // 通用设置 + 外观设置面板组件
 interface GeneralPanelProps {
@@ -34,21 +45,68 @@ const isTilesForcedDom = (() => {
   return window.localStorage?.getItem('tilesForceDom') === '1';
 })();
 
+/** 下载速度格式化（S4 进度行）：B/s → MB/s，<0.1 MB/s 时显示 KB/s */
+const formatByteSpeed = (speed: number): string => {
+  if (!speed || speed <= 0) return '--';
+  if (speed >= 1024 * 1024) return `${(speed / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${Math.max(1, Math.round(speed / 1024))} KB/s`;
+};
+
 const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onUpdateSettingsData }) => {
   // 视频封面引擎状态（P1.5-B S1）：桌面端查询一次 ffmpeg 三态。
   // ffmpegStatus === null 仅在 invoke 失败（异常）时出现；正常未安装拿到 available:false。
   const [ffmpegStatus, setFfmpegStatus] = React.useState<FfmpegStatus | null>(null);
   const [ffmpegChecked, setFfmpegChecked] = React.useState(false);
-  React.useEffect(() => {
-    if (isAndroid) return;
-    let cancelled = false;
+  // S4：下载进度（事件驱动）；failed 时保留 error 展示，completed 时清空并刷新状态。
+  const [dlProgress, setDlProgress] = React.useState<FfmpegDownloadProgress | null>(null);
+  // 回退 latest 源的「来源未校验」告警（completed 事件携带，S5 再决定展示形态）
+  const [dlWarning, setDlWarning] = React.useState<string | null>(null);
+  const [startingDownload, setStartingDownload] = React.useState(false);
+  const refreshFfmpegStatus = React.useCallback(() => {
     getFfmpegStatus().then((s) => {
-      if (cancelled) return;
       setFfmpegStatus(s);
       setFfmpegChecked(true);
     });
-    return () => { cancelled = true; };
-  }, [isAndroid]);
+  }, []);
+  React.useEffect(() => {
+    if (isAndroid) return;
+    refreshFfmpegStatus();
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    listenFfmpegDownloadProgress((p) => {
+      if (p.status === 'completed') {
+        // 下载完成：失效可用性缓存（getVideoCover 分诊用），重新探测状态
+        invalidateFfmpegAvailability();
+        isFfmpegAvailable();
+        setDlWarning(p.warning ?? null);
+        setDlProgress(null);
+        refreshFfmpegStatus();
+      } else {
+        setDlProgress(p);
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [isAndroid, refreshFfmpegStatus]);
+
+  const startFfmpegDownload = async () => {
+    setStartingDownload(true);
+    setDlWarning(null);
+    // 进度/失败经事件驱动（Rust 侧失败也 emit failed）；invoke 本身阻塞到任务结束
+    try {
+      await ffmpegDownloadStart();
+    } catch {
+      // 错误细节已在 failed 事件里（dlProgress.error）
+    } finally {
+      setStartingDownload(false);
+      refreshFfmpegStatus();
+    }
+  };
 
   return (
     <div className="space-y-8 animate-fade-in">
@@ -124,34 +182,96 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
               </div>
             )}
 
-            {/* 视频封面引擎（P1.5-B S1）：ffmpeg 三态显示（系统 / 未安装 + 版本行）。
-                下载与重装入口在 S5 接入；安卓端不注册 ffmpeg_status，不显示。 */}
+            {/* 视频封面引擎（P1.5-B S1 三态 + S4 下载入口）。
+                安卓端不注册 ffmpeg_* 命令，不显示。 */}
             {!isAndroid && (
-              <div className="flex items-center justify-between pt-3 border-subtle">
-                <div className="min-w-0 pr-4">
-                  <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.videoCoverEngine')}</div>
-                  <div
-                    className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate"
-                    title={ffmpegStatus?.version ?? ffmpegStatus?.path ?? undefined}
-                  >
-                    {!ffmpegChecked || ffmpegStatus === null
-                      ? t('settings.ffmpegUnknown')
-                      : ffmpegStatus.available
-                        ? `${t('settings.ffmpegReady')} · ${ffmpegStatus.version ?? ''}`
-                        : t('settings.ffmpegMissing')}
+              <div className="pt-3 border-subtle">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0 pr-4">
+                    <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.videoCoverEngine')}</div>
+                    <div
+                      className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate"
+                      title={ffmpegStatus?.version ?? ffmpegStatus?.path ?? dlProgress?.error ?? dlWarning ?? undefined}
+                    >
+                      {dlProgress && dlProgress.status !== 'failed'
+                        ? dlProgress.status === 'downloading'
+                          ? `${t('settings.ffmpegDownloading')} ${dlProgress.progress}% · ${formatByteSpeed(dlProgress.speed)}`
+                          : dlProgress.status === 'paused'
+                            ? `${t('settings.ffmpegPaused')} ${dlProgress.progress}%`
+                            : dlProgress.status === 'verifying'
+                              ? t('settings.ffmpegVerifying')
+                              : t('settings.ffmpegExtracting')
+                        : dlProgress?.status === 'failed'
+                          ? `${t('settings.ffmpegFailed')}: ${dlProgress.error ?? ''}`
+                          : !ffmpegChecked || ffmpegStatus === null
+                            ? t('settings.ffmpegUnknown')
+                            : ffmpegStatus.available
+                              ? `${t('settings.ffmpegReady')} · ${ffmpegStatus.version ?? ''}`
+                              : t('settings.ffmpegMissing')}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 flex items-center gap-1.5">
+                    {!ffmpegChecked || ffmpegStatus === null ? (
+                      <Loader2 size={18} className="animate-spin text-gray-400" />
+                    ) : ffmpegStatus.available ? (
+                      ffmpegStatus.source === 'downloaded'
+                        ? <CheckCircle2 size={18} className="text-green-500" />
+                        : <Clapperboard size={18} className="text-blue-500" />
+                    ) : (
+                      <AlertCircle size={18} className="text-amber-500" />
+                    )}
+                    {/* 未安装（且不在下载中）→ 下载按钮（S4） */}
+                    {ffmpegChecked && ffmpegStatus && !ffmpegStatus.available && !dlProgress && (
+                      <button
+                        onClick={startFfmpegDownload}
+                        disabled={startingDownload}
+                        className="px-2.5 py-1.5 rounded border border-blue-500 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-xs font-bold flex items-center disabled:opacity-50"
+                      >
+                        {startingDownload ? <Loader2 size={12} className="animate-spin mr-1" /> : <Download size={12} className="mr-1" />}
+                        {t('settings.ffmpegDownload')}
+                      </button>
+                    )}
                   </div>
                 </div>
-                <div className="flex-shrink-0" title={t('settings.videoCoverEngine')}>
-                  {!ffmpegChecked || ffmpegStatus === null ? (
-                    <Loader2 size={18} className="animate-spin text-gray-400" />
-                  ) : ffmpegStatus.available ? (
-                    ffmpegStatus.source === 'downloaded'
-                      ? <CheckCircle2 size={18} className="text-green-500" />
-                      : <Clapperboard size={18} className="text-blue-500" />
-                  ) : (
-                    <AlertCircle size={18} className="text-amber-500" />
-                  )}
-                </div>
+
+                {/* 下载进度条 + 控制（S4） */}
+                {dlProgress && dlProgress.status !== 'failed' && (
+                  <div className="mt-2">
+                    <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${dlProgress.status === 'paused' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                        style={{ width: `${Math.max(dlProgress.progress, 2)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5 mt-1.5">
+                      {(dlProgress.status === 'downloading' || dlProgress.status === 'paused') && (
+                        <>
+                          {dlProgress.status === 'downloading' ? (
+                            <button
+                              onClick={() => { ffmpegDownloadPause().catch(() => {}); }}
+                              className="px-2 py-1 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center"
+                            >
+                              <Pause size={11} className="mr-1" />{t('settings.ffmpegPause')}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { ffmpegDownloadResume().catch(() => {}); }}
+                              className="px-2 py-1 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center"
+                            >
+                              <Play size={11} className="mr-1" />{t('settings.ffmpegResume')}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => { ffmpegDownloadCancel().catch(() => {}); }}
+                            className="px-2 py-1 rounded border border-subtle text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center"
+                          >
+                            <X size={11} className="mr-1" />{t('settings.ffmpegCancel')}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

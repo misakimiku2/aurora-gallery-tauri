@@ -23,6 +23,9 @@ pub mod work_extractor;
 // 视频封面 P1.5-B：ffmpeg 进程管线（定位 / 版本 / 抽帧），桌面专属。
 #[cfg(not(target_os = "android"))]
 pub mod ffmpeg_cover;
+// 视频封面 P1.5-B：ffmpeg 下载器（BtbN LGPL 静态源 + SHA256 pin），桌面专属。
+#[cfg(not(target_os = "android"))]
+pub mod ffmpeg_download;
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -1979,6 +1982,12 @@ pub fn run() {
         search_by_color,
         // 视频封面 P1.5-B（S1）：ffmpeg 三态状态（系统 / 已下载 / 未安装 + 版本行）
         ffmpeg_cover::ffmpeg_status,
+        // 视频封面 P1.5-B（S4）：ffmpeg 下载器（BtbN LGPL + SHA256 pin）
+        ffmpeg_download::ffmpeg_download_start,
+        ffmpeg_download::ffmpeg_download_pause,
+        ffmpeg_download::ffmpeg_download_resume,
+        ffmpeg_download::ffmpeg_download_cancel,
+        ffmpeg_download::ffmpeg_download_cleanup,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,
