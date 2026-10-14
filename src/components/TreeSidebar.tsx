@@ -1920,8 +1920,8 @@ export const Sidebar: React.FC<{
           {modelDownloads.map((download) => (
             <button
               key={download.modelName}
-              onClick={() => window.dispatchEvent(new CustomEvent('navigate-to-ai-vision'))}
-              title="点击打开 AI 视觉模型下载设置"
+              onClick={() => window.dispatchEvent(new CustomEvent(download.navigateTo || 'navigate-to-ai-vision'))}
+              title={download.navigateTo ? '点击打开下载设置' : '点击打开 AI 视觉模型下载设置'}
               className="w-full text-left mb-2 last:mb-0 p-2 bg-surface rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer group"
             >
               <div className="flex items-center justify-between text-xs mb-1">

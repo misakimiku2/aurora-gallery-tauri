@@ -15,6 +15,12 @@ export interface ModelDownloadInfo {
   speed: number;
   status: 'downloading' | 'paused' | 'completed' | 'error' | 'idle';
   errorMessage?: string;
+  /**
+   * 左侧面板进度卡片的点击跳转事件名（P1.5-B S4 追加）。
+   * 缺省 = 'navigate-to-ai-vision'（CLIP 模型的历史行为）；
+   * FFmpeg 等非 AI 下载传自己的事件（如 'navigate-to-settings-general'）。
+   */
+  navigateTo?: string;
 }
 
 // 全局下载状态
@@ -89,7 +95,8 @@ export function updateModelDownloadProgress(
   total: number,
   speed: number,
   status: ModelDownloadInfo['status'] = 'downloading',
-  errorMessage?: string
+  errorMessage?: string,
+  navigateTo?: string
 ): void {
   const info: ModelDownloadInfo = {
     modelName,
@@ -103,6 +110,7 @@ export function updateModelDownloadProgress(
     speed,
     status,
     errorMessage,
+    navigateTo,
   };
   
   globalModelDownloadState.downloads[modelName] = info;

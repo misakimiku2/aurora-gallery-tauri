@@ -178,6 +178,16 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // P1.5-B S4.1: 监听"前往通用设置"事件（ffmpeg 下载卡片从左侧面板跳转用）
+  useEffect(() => {
+    const handleNavigateGeneral = () => {
+      openSettings('general');
+    };
+    window.addEventListener('navigate-to-settings-general', handleNavigateGeneral);
+    return () => window.removeEventListener('navigate-to-settings-general', handleNavigateGeneral);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);

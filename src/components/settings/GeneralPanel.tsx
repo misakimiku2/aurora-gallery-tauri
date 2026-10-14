@@ -10,6 +10,7 @@ import {
   getFfmpegStatus,
   isFfmpegAvailable,
   invalidateFfmpegAvailability,
+  startFfmpegDownloadBridge,
   listenFfmpegDownloadProgress,
   ffmpegDownloadStart,
   ffmpegDownloadPause,
@@ -52,6 +53,14 @@ const formatByteSpeed = (speed: number): string => {
   return `${Math.max(1, Math.round(speed / 1024))} KB/s`;
 };
 
+/** 字节数格式化：B / KB / MB（1 位小数），进度行「已下载 / 总大小」用 */
+const formatBytes = (bytes: number): string => {
+  if (!bytes || bytes <= 0) return '0 MB';
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+};
+
 const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onUpdateSettingsData }) => {
   // 视频封面引擎状态（P1.5-B S1）：桌面端查询一次 ffmpeg 三态。
   // ffmpegStatus === null 仅在 invoke 失败（异常）时出现；正常未安装拿到 available:false。
@@ -70,6 +79,8 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
   }, []);
   React.useEffect(() => {
     if (isAndroid) return;
+    // 全局进度桥（幂等）：面板开过一次后，面板关闭时左侧面板仍显示下载进度条
+    startFfmpegDownloadBridge();
     refreshFfmpegStatus();
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -182,22 +193,22 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
               </div>
             )}
 
-            {/* 视频封面引擎（P1.5-B S1 三态 + S4 下载入口）。
-                安卓端不注册 ffmpeg_* 命令，不显示。 */}
+            {/* FFmpeg 组件（P1.5-B S1 三态 + S4 下载入口）。
+                定位是通用媒体组件（不止视频封面），安卓端不注册 ffmpeg_* 命令，不显示。 */}
             {!isAndroid && (
               <div className="pt-3 border-subtle">
                 <div className="flex items-center justify-between">
                   <div className="min-w-0 pr-4">
-                    <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.videoCoverEngine')}</div>
+                    <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.ffmpegComponent')}</div>
                     <div
                       className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate"
                       title={ffmpegStatus?.version ?? ffmpegStatus?.path ?? dlProgress?.error ?? dlWarning ?? undefined}
                     >
                       {dlProgress && dlProgress.status !== 'failed'
                         ? dlProgress.status === 'downloading'
-                          ? `${t('settings.ffmpegDownloading')} ${dlProgress.progress}% · ${formatByteSpeed(dlProgress.speed)}`
+                          ? `${t('settings.ffmpegDownloading')} ${dlProgress.progress}% · ${formatBytes(dlProgress.downloaded)} / ${formatBytes(dlProgress.total)} · ${formatByteSpeed(dlProgress.speed)}`
                           : dlProgress.status === 'paused'
-                            ? `${t('settings.ffmpegPaused')} ${dlProgress.progress}%`
+                            ? `${t('settings.ffmpegPaused')} ${dlProgress.progress}% · ${formatBytes(dlProgress.downloaded)} / ${formatBytes(dlProgress.total)}`
                             : dlProgress.status === 'verifying'
                               ? t('settings.ffmpegVerifying')
                               : t('settings.ffmpegExtracting')
@@ -210,7 +221,7 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                               : t('settings.ffmpegMissing')}
                     </div>
                   </div>
-                  <div className="flex-shrink-0 flex items-center gap-1.5">
+                <div className="flex-shrink-0 flex items-center gap-1.5">
                     {!ffmpegChecked || ffmpegStatus === null ? (
                       <Loader2 size={18} className="animate-spin text-gray-400" />
                     ) : ffmpegStatus.available ? (

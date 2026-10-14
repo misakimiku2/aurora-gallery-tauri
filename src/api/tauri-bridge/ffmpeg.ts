@@ -91,3 +91,81 @@ export const ffmpegDownloadResume = (): Promise<void> => invoke<void>('ffmpeg_do
 export const ffmpegDownloadCancel = (): Promise<void> => invoke<void>('ffmpeg_download_cancel');
 /** 清理：删除整个 ffmpeg 下载目录（zip 残留 + 已装 exe），用于「重新下载」 */
 export const ffmpegDownloadCleanup = (): Promise<void> => invoke<void>('ffmpeg_download_cleanup');
+
+// ── 全局进度桥接（S4.1）：把 ffmpeg 下载进度灌进 CLIP 那套全局下载 store ──────
+//
+// 目的：设置面板关闭后，左侧面板底部仍显示下载进度条（指挥官实测反馈：
+// CLIP 下载有这个全局条，ffmpeg 下载没有）。机制 = 复用
+// `modelDownloadState.ts` 的全局 store + listeners（TreeSidebar 订阅渲染），
+// ffmpeg 下载卡片点击跳「通用设置」而非 AI 视觉（navigateTo 字段）。
+
+import {
+  updateModelDownloadProgress,
+  completeModelDownload,
+  errorModelDownload,
+} from '../../utils/modelDownloadState';
+
+const FFMPEG_DOWNLOAD_KEY = 'ffmpeg';
+
+let bridgeStarted = false;
+
+/**
+ * 启动 ffmpeg 下载 → 全局 store 的桥接（幂等：整个进程只挂一个监听器）。
+ * 在设置面板挂载时调用即可——下载只能从面板发起，面板开过 = 桥已活，
+ * 之后面板关闭/重开都不影响左侧面板的全局进度条。
+ */
+export const startFfmpegDownloadBridge = async (): Promise<void> => {
+  if (bridgeStarted) return;
+  bridgeStarted = true;
+  try {
+    await listenFfmpegDownloadProgress((p) => {
+      const navigateTo = 'navigate-to-settings-general';
+      switch (p.status) {
+        case 'downloading':
+        case 'verifying':
+        case 'extracting':
+          // verifying/extracting 阶段沿用 downloading 态（total 用事件携带的字节数）
+          updateModelDownloadProgress(
+            FFMPEG_DOWNLOAD_KEY,
+            'FFmpeg',
+            p.status === 'downloading' ? 'ffmpeg.zip' : p.status === 'verifying' ? '校验完整性…' : '安装中…',
+            0,
+            1,
+            p.progress,
+            p.downloaded,
+            p.total,
+            p.speed,
+            'downloading',
+            undefined,
+            navigateTo
+          );
+          break;
+        case 'paused':
+          updateModelDownloadProgress(
+            FFMPEG_DOWNLOAD_KEY,
+            'FFmpeg',
+            'ffmpeg.zip',
+            0,
+            1,
+            p.progress,
+            p.downloaded,
+            p.total,
+            0,
+            'paused',
+            undefined,
+            navigateTo
+          );
+          break;
+        case 'completed':
+          completeModelDownload(FFMPEG_DOWNLOAD_KEY);
+          break;
+        case 'failed':
+          errorModelDownload(FFMPEG_DOWNLOAD_KEY, p.error ?? '下载失败');
+          break;
+      }
+    });
+  } catch (e) {
+    bridgeStarted = false; // 允许下次重试
+    console.error('[ffmpeg] failed to start download bridge:', e);
+  }
+};
