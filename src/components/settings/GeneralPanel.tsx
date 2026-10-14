@@ -1,5 +1,5 @@
 import React from 'react';
-import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2, Download, Pause, Play, X } from 'lucide-react';
+import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2, Download, Pause, Play, X, RotateCcw } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { DEFAULT_FOLDER_ICON_STYLE } from '../../constants';
 import { Folder3DIcon } from '../Folder3DIcon';
@@ -16,6 +16,7 @@ import {
   ffmpegDownloadPause,
   ffmpegDownloadResume,
   ffmpegDownloadCancel,
+  ffmpegDownloadCleanup,
   FfmpegStatus,
   FfmpegDownloadProgress,
 } from '../../api/tauri-bridge/ffmpeg';
@@ -119,6 +120,31 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
     }
   };
 
+  // S5：重新下载（两段式确认——第一次点进入确认态，3 秒内再点才执行清理）。
+  // cleanup 删整个 ffmpeg 目录（含已装 exe，~268MB），误触代价高，故不做单击直删。
+  const [confirmCleanup, setConfirmCleanup] = React.useState(false);
+  React.useEffect(() => {
+    if (!confirmCleanup) return;
+    const t = setTimeout(() => setConfirmCleanup(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmCleanup]);
+
+  const doFfmpegCleanup = async () => {
+    if (!confirmCleanup) {
+      setConfirmCleanup(true);
+      return;
+    }
+    setConfirmCleanup(false);
+    try {
+      await ffmpegDownloadCleanup();
+    } catch {
+      // 目录不存在等情况静默（状态刷新自然恢复）
+    }
+    invalidateFfmpegAvailability();
+    isFfmpegAvailable();
+    refreshFfmpegStatus();
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
       <section>
@@ -202,7 +228,11 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                     <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.ffmpegComponent')}</div>
                     <div
                       className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate"
-                      title={ffmpegStatus?.version ?? ffmpegStatus?.path ?? dlProgress?.error ?? dlWarning ?? undefined}
+                      title={
+                        ffmpegStatus?.available
+                          ? [ffmpegStatus.version, ffmpegStatus.path].filter(Boolean).join('\n')
+                          : (dlProgress?.error ?? dlWarning ?? undefined)
+                      }
                     >
                       {dlProgress && dlProgress.status !== 'failed'
                         ? dlProgress.status === 'downloading'
@@ -240,6 +270,21 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                       >
                         {startingDownload ? <Loader2 size={12} className="animate-spin mr-1" /> : <Download size={12} className="mr-1" />}
                         {t('settings.ffmpegDownload')}
+                      </button>
+                    )}
+                    {/* 已安装 → 重新下载入口（S5，两段式确认） */}
+                    {ffmpegChecked && ffmpegStatus?.available && !dlProgress && (
+                      <button
+                        onClick={doFfmpegCleanup}
+                        className={`px-2 py-1 rounded border text-xs flex items-center transition-colors ${
+                          confirmCleanup
+                            ? 'border-red-500 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 font-bold'
+                            : 'border-subtle text-gray-500 dark:text-gray-400 hover:bg-surface'
+                        }`}
+                        title={confirmCleanup ? t('settings.ffmpegConfirmCleanup') : t('settings.ffmpegRedownloadTip')}
+                      >
+                        <RotateCcw size={11} className="mr-1" />
+                        {confirmCleanup ? t('settings.ffmpegConfirmCleanup') : t('settings.ffmpegRedownload')}
                       </button>
                     )}
                   </div>
