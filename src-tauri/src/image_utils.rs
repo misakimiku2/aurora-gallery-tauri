@@ -48,6 +48,15 @@ impl ThumbDecodeSemaphore {
 pub static THUMB_DECODE_SEMAPHORE: ThumbDecodeSemaphore =
     ThumbDecodeSemaphore::new(MAX_CONCURRENT_THUMB_DECODES);
 
+/// 视频封面专用信号量（P1.5-B S3）：与图片解码**分池**，先定 2。
+///
+/// 不能照搬图片的 5：ffmpeg 是独立进程（进程启动 + 库加载比 in-process 解码重），
+/// 机械盘上并发越高 seek 越抖；实测后再调。视频任务不占图片额度，反之亦然。
+pub const MAX_CONCURRENT_VIDEO_COVERS: usize = 2;
+
+pub static VIDEO_COVER_SEMAPHORE: ThumbDecodeSemaphore =
+    ThumbDecodeSemaphore::new(MAX_CONCURRENT_VIDEO_COVERS);
+
 /// 获取缩略图解码并发额度（阻塞式）。Drop 时自动释放额度。
 pub struct ThumbDecodeGuard<'a> {
     sem: &'a ThumbDecodeSemaphore,
@@ -61,6 +70,11 @@ impl Drop for ThumbDecodeGuard<'_> {
 
 pub fn acquire_thumb_decode() -> ThumbDecodeGuard<'static> {
     THUMB_DECODE_SEMAPHORE.acquire()
+}
+
+/// 获取视频封面生成并发额度（P1.5-B S3，阻塞式；Drop 自动释放）。
+pub fn acquire_video_cover() -> ThumbDecodeGuard<'static> {
+    VIDEO_COVER_SEMAPHORE.acquire()
 }
 
 pub fn is_jxl(buffer: &[u8]) -> bool {

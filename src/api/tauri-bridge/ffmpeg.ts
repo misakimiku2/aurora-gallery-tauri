@@ -25,3 +25,24 @@ export const getFfmpegStatus = async (): Promise<FfmpegStatus | null> => {
     return null;
   }
 };
+
+/**
+ * 模块级可用性缓存（S3）：进程生命周期内只探测一次。
+ *
+ * 用途：`getVideoCover` 的失败分诊——「无 ffmpeg + 前端也解不了的容器」的封面失败
+ * **不进 60s 负缓存**（否则 S4 下载完成后 60s 内仍不生成；无 ffmpeg 时后端 locate
+ * 短路开销极小，允许反复试探）。设置面板不受此缓存影响（它走 getFfmpegStatus 原始查询）。
+ */
+let availabilityCache: boolean | null = null;
+
+export const isFfmpegAvailable = async (): Promise<boolean> => {
+  if (availabilityCache !== null) return availabilityCache;
+  const status = await getFfmpegStatus();
+  availabilityCache = status?.available ?? false;
+  return availabilityCache;
+};
+
+/** S4 下载完成后调用：清掉缓存让下次判定重新探测 */
+export const invalidateFfmpegAvailability = (): void => {
+  availabilityCache = null;
+};

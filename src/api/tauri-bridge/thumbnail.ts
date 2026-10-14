@@ -8,6 +8,8 @@ import { readFileAsBase64 } from './files';
 // 主色提取已抽到 utils 共享：AVIF 回落 与 视频抽帧（P1.5）必须用同一套口径，否则色差不可控
 import { extractColorsFromImageData } from '../../utils/dominantColors';
 import { extractVideoCover } from '../../utils/videoCover';
+import { isWebDecodableVideo } from '../../utils/mediaExtensions';
+import { isFfmpegAvailable } from './ffmpeg';
 import { isAbsolutePath } from '../../utils/pathUtils';
 
 // 批量请求管理器
@@ -520,10 +522,12 @@ const generateVideoCoverAndColors = async (
 };
 
 /**
- * 视频封面入口（P1.5-A）。
+ * 视频封面入口（P1.5-A 建立，P1.5-B S3 改为后端优先）。
  *
- * 只覆盖 Chromium 原生可解码的 mp4 / m4v / mov / webm；其余容器返回 null，
- * 由调用方退回 VideoIcon 占位（后续 P1.5-B 的 ffmpeg 路径接管的就是这批）。
+ * **B 口径**：封面主生成方是后端 ffmpeg 管线（`get_thumbnails_batch` 视频分支，
+ * 覆盖**所有** 12 种容器，缓存未命中时自动生成）；本函数保留前端 canvas 抓帧
+ * 作为「无 ffmpeg 时的兜底」（仅 mp4/m4v/mov/webm，`extractVideoCover` 内部门禁）。
+ * 链路：磁盘缓存/后端生成优先 → 无 ffmpeg 或后端失败 → 前端兜底 → 失败分诊进负缓存。
  */
 // 在途请求去重：同一个视频在短时间内会被多个 effect 实例重复请求
 // （2026-10-14 实测日志：每张卡片因视口状态变化触发了 3 次），
@@ -595,6 +599,14 @@ export const getVideoCover = async (
     if (res) {
       failedVideoCovers.delete(filePath);
     } else {
+      // 失败分诊（P1.5-B S3）：封面主生成方已是后端 ffmpeg 管线（B 口径）。
+      // 「无 ffmpeg + 前端也解不了的容器」（mkv/avi/…）在下载 ffmpeg 前注定拿不到封面，
+      // **不进负缓存**——否则 S4 下载完成后 60s 内仍不生成（计划 §6 风险表明确要求核对）。
+      // 无 ffmpeg 时后端 locate 短路（纯路径检查，无 spawn），反复试探开销可忽略。
+      // 其余失败（canvas 兜底超时 / 有 ffmpeg 但 extract 失败的坏文件）照旧进负缓存防风暴。
+      if (!isWebDecodableVideo(filePath) && !(await isFfmpegAvailable())) {
+        return res;
+      }
       failedVideoCovers.set(filePath, Date.now());
     }
     return res;

@@ -106,6 +106,55 @@ fn find_existing_video_cover(file_path: &str, cache_root: &Path) -> Option<Strin
     None
 }
 
+/// 视频封面生成（P1.5-B S3，桌面专属）：缓存未命中时用 ffmpeg 后端抽帧。
+///
+/// **B 口径（决策 D0）**：ffmpeg 可用时**所有视频容器**（含 mp4/m4v/mov/webm）都走这条；
+/// 前端 canvas 抓帧降级为「无 ffmpeg 时的兜底」。视频专用小信号量（2）与图片解码分池，
+/// 防止 ffmpeg 进程并发过高在机械盘上 seek 抖动。
+///
+/// 返回 (封面 JPEG 路径, 主色)。ffmpeg 缺失 / 抽帧失败返回 None（调用方降级）。
+#[cfg(not(target_os = "android"))]
+fn generate_video_cover_with_colors(
+    file_path: &str,
+    cache_root: &Path,
+) -> Option<(String, Vec<color_extractor::ColorResult>)> {
+    let _permit = crate::image_utils::acquire_video_cover();
+    crate::ffmpeg_cover::extract(file_path, cache_root).map(|r| (r.cover_path, r.colors))
+}
+
+/// 把抽帧主色落库（P1.5-B S3）。
+///
+/// ⚠️ 顺序照搬 `save_remote_thumbnail` 的死锁教训（2026-10-14）：
+/// 先 `batch_save_colors`（内部自取锁/放锁），**之后**再单独 `get_connection` 做 update_status——
+/// `ColorDbPool` 是单连接 `Arc<Mutex<Connection>>`，持锁期间再调任何池方法 = 同线程自死锁。
+/// 颜色落库失败不拖垮封面（封面已写盘），降级 warn。
+#[cfg(not(target_os = "android"))]
+fn persist_video_cover_colors(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    colors: &[color_extractor::ColorResult],
+) {
+    use crate::color_db::ColorDbPool;
+    use std::sync::Arc;
+
+    // try_state：ColorDbPool 未注册（理论不可能）时静默跳过，绝不 panic 拖垮批量管线
+    let Some(pool) = app.try_state::<Arc<ColorDbPool>>() else {
+        log::warn!("[video_cover] ColorDbPool 未注册，主色跳过落库: {}", file_path);
+        return;
+    };
+    let pool = pool.inner().clone();
+
+    let batch_data = [(file_path, colors)];
+    if let Err(e) = pool.batch_save_colors(&batch_data) {
+        log::warn!("[video_cover] 主色落库失败（封面已生成，不影响显示）: {} - {}", file_path, e);
+        return;
+    }
+    {
+        let mut conn = pool.get_connection();
+        let _ = crate::color_db::update_status(&mut conn, file_path, "completed");
+    }
+}
+
 // Core thumbnail generation (kept synchronous; invoked from spawn_blocking)
 pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
     let image_path = Path::new(file_path);
@@ -115,7 +164,16 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
 
     if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
         if crate::file_types::is_supported_video(ext) {
-            return find_existing_video_cover(file_path, cache_root);
+            if let Some(url) = find_existing_video_cover(file_path, cache_root) {
+                return Some(url);
+            }
+            // P1.5-B S3（B 口径）：缓存未命中 → ffmpeg 后端抽帧（所有视频容器）。
+            // 桌面专属；安卓无 ffmpeg 概念，保持占位。
+            #[cfg(not(target_os = "android"))]
+            if let Some((cover_path, _colors)) = generate_video_cover_with_colors(file_path, cache_root) {
+                return Some(cover_path);
+            }
+            return None;
         }
     }
 
@@ -322,8 +380,11 @@ pub async fn get_thumbnails_batch(
     file_paths: Vec<String>,
     cache_root: String,
     on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
-    _app: tauri::AppHandle
+    app: tauri::AppHandle
 ) -> Result<(), String> {
+    // 安卓端无 ffmpeg 抽帧（桌面专属），app 在安卓下不使用
+    #[cfg(target_os = "android")]
+    let _ = &app;
     let file_paths_clone2 = file_paths;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
@@ -339,8 +400,11 @@ pub async fn get_thumbnails_batch(
                 return;
             }
 
-            // 视频 P1 + P1.5：视频不走图片解码管线；但前端抽帧（P1.5-A）写进同套缓存的
-            // 封面要在这里命中并返回。命中不了就 url=None（前端落 VideoIcon 占位），
+            // 视频 P1 + P1.5 + P1.5-B：视频不走图片解码管线。
+            // 前端抽帧（P1.5-A）写进同套缓存的封面在缓存命中时返回；
+            // **未命中 → ffmpeg 后端抽帧（P1.5-B S3，B 口径：所有视频容器）**，
+            // 主色同时落库并经 channel 回传；ffmpeg 缺失 / 抽帧失败 → url=None
+            //（前端对 web 可解容器走 canvas 兜底，其余保持 VideoIcon 占位），
             // 绝不 fallback 到视频路径去喂 <img>。
             if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
                 if crate::file_types::is_supported_video(ext) {
@@ -354,12 +418,35 @@ pub async fn get_thumbnails_batch(
                             });
                         }
                         None => {
-                            let _ = on_event.send(ThumbnailBatchResult {
-                                path: path.clone(),
-                                url: None,
-                                colors: None,
-                                from_cache: false,
-                            });
+                            #[cfg(not(target_os = "android"))]
+                            match generate_video_cover_with_colors(path, root) {
+                                Some((url, colors)) => {
+                                    persist_video_cover_colors(&app, path, &colors);
+                                    let _ = on_event.send(ThumbnailBatchResult {
+                                        path: path.clone(),
+                                        url: Some(url),
+                                        colors: Some(colors),
+                                        from_cache: false,
+                                    });
+                                }
+                                None => {
+                                    let _ = on_event.send(ThumbnailBatchResult {
+                                        path: path.clone(),
+                                        url: None,
+                                        colors: None,
+                                        from_cache: false,
+                                    });
+                                }
+                            }
+                            #[cfg(target_os = "android")]
+                            {
+                                let _ = on_event.send(ThumbnailBatchResult {
+                                    path: path.clone(),
+                                    url: None,
+                                    colors: None,
+                                    from_cache: false,
+                                });
+                            }
                         }
                     }
                     return;
