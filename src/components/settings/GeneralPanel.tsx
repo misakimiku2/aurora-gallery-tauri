@@ -1,11 +1,12 @@
 import React from 'react';
-import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers } from 'lucide-react';
+import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { DEFAULT_FOLDER_ICON_STYLE } from '../../constants';
 import { Folder3DIcon } from '../Folder3DIcon';
 import { Folder3DIconCanvas } from '../Folder3DIconCanvas';
 import { FolderTilesIconCanvas } from '../FolderTilesIconCanvas';
 import { isSpriteSupportedSafe } from '../../utils/spriteCache';
+import { getFfmpegStatus, FfmpegStatus } from '../../api/tauri-bridge/ffmpeg';
 
 // 通用设置 + 外观设置面板组件
 interface GeneralPanelProps {
@@ -34,6 +35,21 @@ const isTilesForcedDom = (() => {
 })();
 
 const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onUpdateSettingsData }) => {
+  // 视频封面引擎状态（P1.5-B S1）：桌面端查询一次 ffmpeg 三态。
+  // ffmpegStatus === null 仅在 invoke 失败（异常）时出现；正常未安装拿到 available:false。
+  const [ffmpegStatus, setFfmpegStatus] = React.useState<FfmpegStatus | null>(null);
+  const [ffmpegChecked, setFfmpegChecked] = React.useState(false);
+  React.useEffect(() => {
+    if (isAndroid) return;
+    let cancelled = false;
+    getFfmpegStatus().then((s) => {
+      if (cancelled) return;
+      setFfmpegStatus(s);
+      setFfmpegChecked(true);
+    });
+    return () => { cancelled = true; };
+  }, [isAndroid]);
+
   return (
     <div className="space-y-8 animate-fade-in">
       <section>
@@ -105,6 +121,37 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                 >
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.hoverPlayVideos ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
+              </div>
+            )}
+
+            {/* 视频封面引擎（P1.5-B S1）：ffmpeg 三态显示（系统 / 未安装 + 版本行）。
+                下载与重装入口在 S5 接入；安卓端不注册 ffmpeg_status，不显示。 */}
+            {!isAndroid && (
+              <div className="flex items-center justify-between pt-3 border-subtle">
+                <div className="min-w-0 pr-4">
+                  <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.videoCoverEngine')}</div>
+                  <div
+                    className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate"
+                    title={ffmpegStatus?.version ?? ffmpegStatus?.path ?? undefined}
+                  >
+                    {!ffmpegChecked || ffmpegStatus === null
+                      ? t('settings.ffmpegUnknown')
+                      : ffmpegStatus.available
+                        ? `${t('settings.ffmpegReady')} · ${ffmpegStatus.version ?? ''}`
+                        : t('settings.ffmpegMissing')}
+                  </div>
+                </div>
+                <div className="flex-shrink-0" title={t('settings.videoCoverEngine')}>
+                  {!ffmpegChecked || ffmpegStatus === null ? (
+                    <Loader2 size={18} className="animate-spin text-gray-400" />
+                  ) : ffmpegStatus.available ? (
+                    ffmpegStatus.source === 'downloaded'
+                      ? <CheckCircle2 size={18} className="text-green-500" />
+                      : <Clapperboard size={18} className="text-blue-500" />
+                  ) : (
+                    <AlertCircle size={18} className="text-amber-500" />
+                  )}
+                </div>
               </div>
             )}
 

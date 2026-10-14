@@ -43,9 +43,9 @@ const VIDEO_COVER_CACHE_VERSION: u32 = 2;
 
 /// 计算缓存文件名：size + mtime + 首 4096 字节 → md5 前 24 位。
 /// 视频额外混入 `VIDEO_COVER_CACHE_VERSION`（**图片不受影响**）。
-/// 所有读写路径（`thumbnail_cache_paths` / `process_single_thumbnail` / `save_remote_thumbnail`）
-/// 必须共用本函数，否则前端写进去的封面后端找不到。
-fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> String {
+/// 所有读写路径（`thumbnail_cache_paths` / `process_single_thumbnail` / `save_remote_thumbnail`
+/// / `ffmpeg_cover::extract_with_ffmpeg`）必须共用本函数，否则前端写进去的封面后端找不到。
+pub(crate) fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> String {
     let size = metadata.len();
     let modified = metadata
         .modified()

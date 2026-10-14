@@ -396,6 +396,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "fast_image_resize",
+ "ffmpeg-sidecar",
  "flate2",
  "fs_extra",
  "futures",
@@ -1797,6 +1798,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4316185f709b23713e41e3195f90edef7fb00c3ed4adc79769cf09cc762a3b29"
 dependencies = [
  "log",
+]
+
+[[package]]
+name = "ffmpeg-sidecar"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dda44234b3193d5c95339dac1ed87dc2b3f3d04495182aa68c7efcc1e7462d1"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
