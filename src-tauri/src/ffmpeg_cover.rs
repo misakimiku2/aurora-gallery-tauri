@@ -289,6 +289,56 @@ fn target_size_256(src_w: u32, src_h: u32) -> (u32, u32) {
     }
 }
 
+// ── 时长健全性（S6 实测发现：revelo 对 AVI+AVC 的 duration 误报）─────────────
+
+/// revelo 时长可疑阈值：时长 <1s 但文件 >1MB（正常 <1s 视频极少有 >1MB）。
+const SUSPICIOUS_DURATION_SECS: f64 = 1.0;
+const SUSPICIOUS_SIZE_BYTES: u64 = 1_000_000;
+
+/// 解析 `ffmpeg -i` stderr 里的 `Duration: 00:00:09.30` 行（秒）。
+/// ⚠️ 行首可能带 `[info]` 前缀（FfmpegCommand 构造自动 `-loglevel level+info`），
+/// 所以用「包含 Duration:」匹配、取其后文本；行尾还带其它字段（`, start: ...`），
+/// 逐段截取到非数字为止。
+fn parse_ffmpeg_duration_line(stderr: &str) -> Option<f64> {
+    let line = stderr.lines().find(|l| l.contains("Duration:"))?;
+    let t = line
+        .split("Duration:")
+        .nth(1)?
+        .trim();
+    let mut parts = t.split(':');
+    let h: f64 = parts.next()?.trim().parse().ok()?;
+    let m: f64 = parts.next()?.trim().parse().ok()?;
+    // 秒字段形如 "09.30, start: 0.000000"——只取第一个 token 再剥掉非数字尾巴
+    let sec_token = parts.next()?.trim();
+    let sec_str: String = sec_token
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let sec: f64 = sec_str.parse().ok()?;
+    let d = h * 3600.0 + m * 60.0 + sec;
+    if d > 0.0 {
+        Some(d)
+    } else {
+        None
+    }
+}
+
+/// 用 `ffmpeg -i <input>`（无输出任务，读到元数据即退出）复核时长。
+/// 只对「revelo 时长可疑」的文件调用——正常容器零额外开销。
+fn probe_duration_via_ffmpeg(ffmpeg: &Path, input: &str) -> Option<f64> {
+    let mut cmd = FfmpegCommand::new_with_path(ffmpeg);
+    cmd.arg("-i").arg(input);
+    // stdin 置 null + 原生 spawn：同 run_single_frame 的 os error 231 规避注释
+    cmd.as_inner_mut().stdin(std::process::Stdio::null());
+    let mut child = cmd.as_inner_mut().spawn().ok()?;
+    let stderr = child.stderr.take()?;
+    let mut text = String::new();
+    let _ = std::io::BufReader::new(stderr).read_to_string(&mut text);
+    // ffmpeg 打印完元数据后因无输出目标会以错误码退出——正常路径，不算失败
+    let _ = child.wait();
+    parse_ffmpeg_duration_line(&text)
+}
+
 /// 体积感知超时（与前端 `timeoutFor` 同款）：基础 20s + 每 100MB +1s，封顶 120s。
 fn timeout_for(size_bytes: u64) -> Duration {
     Duration::from_millis(
@@ -325,9 +375,22 @@ pub fn extract_with_ffmpeg(
     cache_root: &Path,
 ) -> Option<CoverExtractResult> {
     // 1) 容器元数据：revelo（与 scanner 同源，零额外进程；ffprobe 不在此引入）。
+    let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let meta = crate::video_metadata::read_video_metadata(Path::new(file_path))?;
-    let duration_ms = meta.duration_ms?;
-    let duration = duration_ms as f64 / 1000.0;
+    let mut duration = meta.duration_ms? as f64 / 1000.0;
+    // 时长健全性：revelo 对部分容器（实测 AVI+AVC：General.Duration=61ms、fps=600，
+    // 真实 9.3s）会误报——候选点全被压到开头。可疑时用 `ffmpeg -i` stderr 复核。
+    if duration < SUSPICIOUS_DURATION_SECS && file_size > SUSPICIOUS_SIZE_BYTES {
+        if let Some(d) = probe_duration_via_ffmpeg(ffmpeg, file_path) {
+            log::info!(
+                "[ffmpeg_cover] revelo duration 可疑（{:.3}s），ffmpeg 复核: {:.3}s - {}",
+                duration,
+                d,
+                file_path
+            );
+            duration = d;
+        }
+    }
     if !(duration > 0.0) || meta.width == 0 || meta.height == 0 {
         return None;
     }
@@ -558,6 +621,22 @@ mod tests {
         assert_eq!(timeout_for(u64::MAX), Duration::from_millis(120_000));
     }
 
+    #[test]
+    fn parse_ffmpeg_duration_line_works() {
+        // 真实 stderr 形态：level+info 使每行带 [info] 前缀（FfmpegCommand 自动加）
+        let stderr = "[info] ffmpeg version n9.0.2\n[info] Input #0, avi, from 'x.avi':\n[info]   Duration: 00:00:09.30, start: 0.000000, bitrate: 295377 kb/s\n";
+        let d = parse_ffmpeg_duration_line(stderr).unwrap();
+        assert!((d - 9.30).abs() < 0.001);
+        // 无前缀形态也兼容
+        let plain = "Input #0, avi:\n  Duration: 00:00:09.30, start: 0.000000\n";
+        assert!((parse_ffmpeg_duration_line(plain).unwrap() - 9.30).abs() < 0.001);
+        // 带小时位
+        assert!((parse_ffmpeg_duration_line("Duration: 01:02:03.50").unwrap() - 3723.5).abs() < 0.001);
+        // 无 Duration 行 / 零时长 → None
+        assert!(parse_ffmpeg_duration_line("nothing here").is_none());
+        assert!(parse_ffmpeg_duration_line("Duration: 00:00:00.00").is_none());
+    }
+
     // ── 集成测试（需要真实 ffmpeg；本机缺失时优雅跳过）────────────────────
 
     #[test]
@@ -566,9 +645,13 @@ mod tests {
             eprintln!("[skip] 本机无 ffmpeg，跳过抽帧集成测试");
             return;
         };
+        // 样本覆盖两类容器：mp4（前端也能解，验同源）+ mkv/avi（P1.5-B 新增覆盖的
+        // 「Web 解不了」容器代表，`-c copy` remux 自 mp4，S6 验收清单第 1 项）。
         let samples = [
             "../log/SVID_20261006_212831_1.mp4",
             "../log/SVID_20261006_213438_1.mp4",
+            "../log/SVID_20261006_212831_1.mkv",
+            "../log/SVID_20261006_213438_1.avi",
         ];
         let mut ran = false;
         for s in samples {

@@ -184,6 +184,10 @@ mod tests {
             "../log/SVID_20261006_213438_1.mp4",
             "../log/SVID_20261007_002550_1.mp4",
             "../log/SVID_20261007_030932_1.mp4",
+            // P1.5-B S6：remux 自 mp4 的 mkv / avi（覆盖 8 种「Web 解不了」容器的代表），
+            // 核对 revelo 对它们的 duration/width/height 解析（avi 的 duration 曾疑似偏差）。
+            "../log/SVID_20261006_212831_1.mkv",
+            "../log/SVID_20261006_213438_1.avi",
         ];
 
         let mut checked = 0;
