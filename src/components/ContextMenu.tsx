@@ -9,7 +9,7 @@ import {
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
 import { isAndroidSync } from '../utils/androidPlatform';
-import { openPath } from '../api/tauri-bridge/files';
+import { openWithDefaultApp } from '../api/tauri-bridge/files';
 
 interface ContextMenuProps {
   contextMenu: {
@@ -246,6 +246,21 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleOpenInNewTab(contextMenu.targetId!); closeContextMenu(); }}>
             <Layout size={iconSize} className="mr-2 opacity-70" />
             {contextMenu.type === 'folder-single' ? t('context.openFolderInNewTab') : t('context.openInNewTab')}
+          </div>
+        )}
+
+        {/* 2026-10-16：视频 → 用系统播放器打开。位置由指挥官指定：紧贴「在新标签页中打开」下方。
+            P2 兜底：编码不受支持 / 转封装失败时，用户总有一条能真正看到视频的路（桌面端限定）。 */}
+        {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.VIDEO && (
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => {
+            // ⚠️ 必须用 openWithDefaultApp（= 交给系统默认程序）；
+            //    openPath(path, true) 是「在文件管理器中选中」，只跳文件夹不播放
+            const target = files[contextMenu.targetId!];
+            if (target?.path) openWithDefaultApp(target.path).catch(() => {});
+            closeContextMenu();
+          }}>
+            <Play size={iconSize} className="mr-2 opacity-70" />
+            {t('context.openExternalPlayer') || '用系统播放器打开'}
           </div>
         )}
 
@@ -495,22 +510,6 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         }}><XCircle size={iconSize} className="mr-2 opacity-70" /> {t('context.clearPersonInfo')}</div></>)}
         {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && (<div className={pinkItemClass} style={menuItemStyle} onClick={() => { const targetIds = activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : (contextMenu.targetId ? [contextMenu.targetId] : []); setModal('add-to-topic', { fileIds: targetIds }); closeContextMenu(); }}><Layout size={iconSize} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>)}
         {contextMenu.type === 'file-single' && contextMenu.targetId && (<>
-          {/* 2026-10-16：视频 → 用系统播放器打开（P2 兜底：编码不受支持 / 转封装失败时
-              用户总有一条能真正看到视频的路；桌面端限定，安卓用系统 Intent 另论） */}
-          {!isAndroidDevice && (() => {
-            const target = files[contextMenu.targetId!];
-            const isVideo = !!target && target.type === FileType.VIDEO;
-            if (!isVideo) return null;
-            return (
-              <div className={menuItemClass} style={menuItemStyle} onClick={() => {
-                if (target?.path) openPath(target.path, true).catch(() => {});
-                closeContextMenu();
-              }}>
-                <Play size={iconSize} className="mr-2 opacity-70" />
-                {t('context.openExternalPlayer') || '用系统播放器打开'}
-              </div>
-            );
-          })()}
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { setModal('edit-tags', { fileId: contextMenu.targetId! }); closeContextMenu(); }}>
             <Tag size={iconSize} className="mr-2 opacity-70" />
             {t('context.editTags')}

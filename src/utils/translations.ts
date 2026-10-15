@@ -419,7 +419,7 @@ export const translations = {
       fit: '适应窗口',
       copyFrame: '复制当前帧',
       // 2026-10-16（UI 设计 §6）：右侧面板大预览的播放按钮
-      playInViewer: '在查看器中播放',
+      playHere: '在此处播放',
       frameCopied: '已复制当前帧到剪贴板',
       frameCopyFailed: '复制当前帧失败',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
@@ -1671,7 +1671,7 @@ export const translations = {
       fit: 'Fit to Window',
       copyFrame: 'Copy Current Frame',
       // 2026-10-16 (UI design §6): play button on the metadata panel preview
-      playInViewer: 'Play in viewer',
+      playHere: 'Play here',
       frameCopied: 'Frame copied to clipboard',
       frameCopyFailed: 'Failed to copy current frame',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案

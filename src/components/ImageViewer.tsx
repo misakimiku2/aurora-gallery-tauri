@@ -9,7 +9,7 @@ import { VideoControls } from './viewer/VideoControls';
 import { useToasts } from '../hooks/useToasts';
 import { isWebDecodableVideo } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
-import { openPath } from '../api/tauri-bridge/files';
+import { openWithDefaultApp } from '../api/tauri-bridge/files';
 import {
   ensureVideoPlayable, onRemuxProgress, remuxFailureKind,
   type RemuxStateDto,
@@ -2273,7 +2273,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (file.path) openPath(file.path, true).catch(() => {});
+                  // ⚠️ openPath(path, true) 是「在文件管理器中选中」（只跳文件夹），
+                  //    这里要的是交给系统默认程序播放
+                  if (file.path) openWithDefaultApp(file.path).catch(() => {});
                 }}
                 className="mt-3 px-3 py-1.5 text-xs rounded-lg bg-white/15 hover:bg-white/25 transition-colors flex items-center gap-1.5"
               >

@@ -338,6 +338,22 @@ export const openPath = async (path: string, isFile?: boolean): Promise<void> =>
 };
 
 /**
+ * **用系统默认程序打开文件**（视频 P2，2026-10-16）。
+ *
+ * ⚠️ 与 `openPath` 语义不同，别混用：
+ * - `openPath(path, true)` = 在文件管理器里**选中**该文件（后端 `explorer.exe /select,`）；
+ * - 本函数 = **交给系统默认程序打开**（Windows `start ""` / macOS `open` / Linux `xdg-open`）。
+ *   指挥官实机反馈「用系统播放器打开只跳到文件夹」，就是误用了前者。
+ */
+export const openWithDefaultApp = async (path: string): Promise<void> => {
+  try {
+    await invoke('open_file_with_default_app', { path });
+  } catch (error) {
+    throw error;
+  }
+};
+
+/**
  * 创建新文件夹
  * @param path 要创建的文件夹路径
  */

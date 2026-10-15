@@ -2075,6 +2075,8 @@ pub fn run() {
         import_commands::eagle_import_records,
         update_commands::check_for_updates_command,
         system_commands::open_external_link,
+        // 视频 P2（2026-10-16）：用系统默认程序播放（区别于 open_path 的「在管理器中选中」）
+        system_commands::open_file_with_default_app,
         update_commands::start_update_download,
         update_commands::pause_update_download,
         update_commands::resume_update_download,

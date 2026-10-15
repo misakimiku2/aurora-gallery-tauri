@@ -265,6 +265,58 @@ pub async fn read_file_as_base64(file_path: String) -> Result<Option<String>, St
     Ok(Some(format!("data:{};base64,{}", mime_type, base64_str)))
 }
 
+/// **用系统默认程序打开本地文件**（视频 P2 兜底：容器/编码不支持时「用系统播放器打开」）。
+///
+/// ⚠️ 与 [`open_path`] 语义完全不同，不要混用：
+/// - `open_path(path, Some(true))` = 在文件管理器里**选中**该文件（`explorer.exe /select,`）；
+/// - 本函数 = **交给系统默认程序打开**（Windows `start ""`，macOS `open`，Linux `xdg-open`）。
+///   2026-10-16 指挥官实机反馈：「用系统播放器打开」只跳到了文件夹没播放 ——
+///   原因就是误用了前者。
+#[tauri::command]
+pub async fn open_file_with_default_app(path: String) -> Result<(), String> {
+    use std::process::Command;
+
+    if !Path::new(&path).exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // `start ""` 的第一个空参数是窗口标题占位（路径含空格时必须）。
+        // ⚠️ raw_arg：手工给路径包引号 —— std 的自动转义只覆盖「含空格」的参数，
+        // 路径若含 cmd 元字符（& ^ 等）且无空格时会被 cmd 当分隔符解析，打开失败。
+        Command::new("cmd")
+            .args(["/C", "start", ""])
+            .raw_arg(format!("\"{}\"", path))
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn open_external_link(url: String) -> Result<(), String> {
     use std::process::Command;
