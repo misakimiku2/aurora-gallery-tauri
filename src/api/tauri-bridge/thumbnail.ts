@@ -616,6 +616,13 @@ export const getVideoCover = async (
       failedVideoCovers.delete(filePath);
       feLog('video', `done ok ${__n}`);
     } else {
+      // 修复（2026-10-15 排障）：aborted 的「失败」不进负缓存——那是快速滚动时
+      // 请求被批处理剔除的正常结果（后端根本没收到），下次挂载自然重试即可；
+      // 写负缓存会把「滚动路过」误当「生成失败」，叠加「停下不重试」→ 永久空白。
+      if (signal?.aborted) {
+        feLog('video', `done null(aborted,no-negcache) ${__n}`);
+        return res;
+      }
       // 失败分诊（P1.5-B S3）：封面主生成方已是后端 ffmpeg 管线（B 口径）。
       // 「无 ffmpeg + 前端也解不了的容器」（mkv/avi/…）在下载 ffmpeg 前注定拿不到封面，
       // **不进负缓存**——否则 S4 下载完成后 60s 内仍不生成（计划 §6 风险表明确要求核对）。

@@ -201,8 +201,14 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
     const controller = new AbortController();
     let cancelled = false;
+    // 修复（2026-10-15 排障）：失败退避重试——「快速滚动 abort → 60s 负缓存 → 停下
+    // 不重试」曾让视频封面永久空白（6 个大文件实锤）。卡片挂载期间自动重试，
+    // 指数退避 15s/30s/60s/120s（上限 5 次）；滚走（cleanup）即取消。
+    let retryCount = 0;
+    let retryTimer: number | undefined;
 
     const loadCover = async () => {
+      if (cancelled || controller.signal.aborted) return;
       try {
         const { getVideoCover } = await import('../api/tauri-bridge');
         const cover = await getVideoCover(
@@ -213,11 +219,22 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           cachePath,
           size
         );
-        if (cancelled || !cover || controller.signal.aborted) return;
+        if (cancelled || !cover || controller.signal.aborted) {
+          // 失败（或滚动被 abort）→ 安排退避重试；组件已卸载/已滚走则不再安排
+          if (!cancelled && !controller.signal.aborted && !cover && mountedRef.current) {
+            retryCount += 1;
+            if (retryCount <= 5) {
+              const delay = Math.min(15000 * Math.pow(2, retryCount - 1), 120000);
+              feLog('sheet', `retry#${retryCount} in ${delay}ms - ${filePath.split(/[\\/]/).pop() || filePath}`);
+              retryTimer = window.setTimeout(() => { void loadCover(); }, delay);
+            }
+          }
+          return;
+        }
         if (cover === videoUrl) return; // 双保险：绝不让视频地址落到 <img>
         if (mountedRef.current) setThumbnailSrc(cover);
       } catch {
-        // 静默降级：抽不出来就维持占位图标
+        // 静默降级：抽不出来就维持占位图标（重试由上方 null 分支统一安排）
       }
     };
 
@@ -226,6 +243,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     return () => {
       cancelled = true;
       controller.abort();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [filePath, resourceRoot, isInView, wasInView, isVideo, cachePath, size]);
 
