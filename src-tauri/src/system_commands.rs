@@ -342,13 +342,3 @@ pub fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| format!("Failed to get log dir: {}", e))
 }
-
-// ── 临时诊断通道（P1.5-B 视频封面排查专用，**取证后删**）────────────────────
-//
-// WebView 的 console 在 `npm run tauri:dev` 终端不可见，排查「请求是否发出 / 走了哪个
-// 分支」需要把前端事件转发进 tauri-plugin-log（终端可见）。定位完成后本命令与前端
-// `utils/feLog.ts` 一并删除。
-#[tauri::command]
-pub fn frontend_debug_log(scope: String, message: String) {
-    log::info!("[FE:{}] {}", scope, message);
-}

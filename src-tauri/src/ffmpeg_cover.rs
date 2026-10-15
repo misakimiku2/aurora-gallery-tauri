@@ -133,8 +133,37 @@ fn system_ffmpeg_path() -> Option<PathBuf> {
     }
 }
 
-/// ffmpeg 定位（纯路径检查，不 spawn）：① 系统 PATH → ② 已下载副本 → None。
+/// locate 结果缓存（2026-10-15）：抽帧路径**每个视频**都会调一次 locate，而
+/// `system_ffmpeg_path` 内部要 spawn `where.exe`（~30-50ms/次）——缓存「已找到」
+/// 的结果消除这笔开销；路径失效（`is_file` 廉价 syscall）时自动重查。
+/// **未找到不缓存**：要让「新装系统 ffmpeg / 刚下载完成」在下次调用时自动发现。
+static LOCATE_CACHE: once_cell::sync::Lazy<std::sync::Mutex<Option<(PathBuf, FfmpegSource)>>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(None));
+
+/// ffmpeg 定位：① 系统 PATH（`where.exe`/`which`）→ ② 已下载副本 → None。
+/// 结果缓存见 `LOCATE_CACHE`；S4 清理下载目录后应调 `invalidate_locate_cache()`。
 pub fn locate() -> Option<(PathBuf, FfmpegSource)> {
+    {
+        let cache = LOCATE_CACHE.lock().unwrap();
+        if let Some((p, s)) = cache.as_ref() {
+            if p.is_file() {
+                return Some((p.clone(), s.clone()));
+            }
+        }
+    }
+    let found = locate_uncached();
+    if let Some(v) = &found {
+        *LOCATE_CACHE.lock().unwrap() = Some(v.clone());
+    }
+    found
+}
+
+/// 缓存失效（ffmpeg_download_cleanup 用）。系统副本仍有效时，下次 locate 自动重查命中。
+pub fn invalidate_locate_cache() {
+    *LOCATE_CACHE.lock().unwrap() = None;
+}
+
+fn locate_uncached() -> Option<(PathBuf, FfmpegSource)> {
     if let Some(p) = system_ffmpeg_path() {
         return Some((p, FfmpegSource::System));
     }
@@ -676,19 +705,8 @@ fn pick_by_sequential_seek(
         if started.elapsed() > timeout {
             break;
         }
-        let cand_started = Instant::now();
         let jpeg = run_single_frame(ffmpeg, input, target, w, h, timeout.saturating_sub(started.elapsed()))?;
-        let cand_elapsed = cand_started.elapsed();
         let (luma, score) = score_jpeg(&jpeg)?;
-        log::info!(
-            "[ffmpeg_cover] 逐 seek #{}/{} t={:.2}s {:.2?} luma={:.1} - {}",
-            idx + 1,
-            candidates.len(),
-            target,
-            cand_elapsed,
-            luma,
-            input
-        );
         if best.as_ref().map_or(true, |b| score > b.score) {
             best = Some(FramePick { jpeg, score, luma, frame_no: idx });
         }

@@ -146,6 +146,8 @@ pub fn ffmpeg_download_cleanup() -> Result<(), String> {
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("清理失败: {}", e))?;
     }
+    // locate 结果缓存失效（2026-10-15）：删掉下载副本后必须重查
+    crate::ffmpeg_cover::invalidate_locate_cache();
     log::info!("[ffmpeg_download] cleaned {:?}", dir);
     Ok(())
 }
@@ -235,7 +237,8 @@ fn run_download(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let _ = std::fs::remove_file(&zip_path);
 
-    // 终验：新副本必须能被 locate + probe
+    // 终验：新副本必须能被 locate + probe（先失效 locate 缓存，避免拿到旧结果）
+    crate::ffmpeg_cover::invalidate_locate_cache();
     match crate::ffmpeg_cover::locate() {
         Some((path, source)) => match crate::ffmpeg_cover::probe_version(&path) {
             Some(version) => log::info!("[ffmpeg_download] installed: {:?} ({:?}) {}", path, source, version),
