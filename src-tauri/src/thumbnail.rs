@@ -364,6 +364,73 @@ pub struct ThumbnailBatchResult {
     pub from_cache: bool,
 }
 
+// ── 视频封面专用 worker（P1.5-B S6 性能修复）────────────────────────────────
+//
+// 为什么视频任务不能进 `get_thumbnails_batch` 的 rayon `par_iter`：
+// extract 阻塞等待 ffmpeg 子进程（每张数百 ms），4500 文件夹混排时视频任务
+// 占住 rayon 线程池，把同批图片缩略图任务饿死——2026-10-15 指挥官实机反馈
+// 「生成变慢很多」的根源（P1.5-A 时代视频在渲染进程串行，rayon 独享）。
+// 分流到**单 worker 顺序线程**：图片完全不受影响，视频天然全局串行限流。
+
+/// 单个视频封面任务载荷。
+struct VideoCoverJob {
+    path: String,
+    cache_root: String,
+    app: tauri::AppHandle,
+    on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
+}
+
+/// 单例 worker（进程级，lazily 启动）：从队列顺序取任务处理。
+/// fire-and-forget：批量命令把任务入队即返回（Channel 结果异步送达前端），
+/// 不阻塞 rayon / invoke。
+fn video_cover_worker_sender() -> &'static crossbeam_channel::Sender<VideoCoverJob> {
+    static SENDER: once_cell::sync::Lazy<crossbeam_channel::Sender<VideoCoverJob>> =
+        once_cell::sync::Lazy::new(|| {
+            let (tx, rx) = crossbeam_channel::unbounded::<VideoCoverJob>();
+            let _ = std::thread::Builder::new()
+                .name("video-cover-worker".into())
+                .spawn(move || {
+                    while let Ok(job) = rx.recv() {
+                        process_video_cover_job(job);
+                    }
+                });
+            tx
+        });
+    &SENDER
+}
+
+/// 处理单个视频封面任务：缓存命中即返回；未命中 → ffmpeg 抽帧（桌面）+ 主色落库。
+fn process_video_cover_job(job: VideoCoverJob) {
+    let VideoCoverJob { path, cache_root, app, on_event } = job;
+    let root = Path::new(&cache_root);
+    let send = |url: Option<String>,
+                colors: Option<Vec<color_extractor::ColorResult>>,
+                from_cache: bool| {
+        let _ = on_event.send(ThumbnailBatchResult {
+            path: path.clone(),
+            url,
+            colors,
+            from_cache,
+        });
+    };
+
+    match find_existing_video_cover(&path, root) {
+        Some(url) => send(Some(url), None, true),
+        None => {
+            #[cfg(not(target_os = "android"))]
+            match generate_video_cover_with_colors(&path, root) {
+                Some((url, colors)) => {
+                    persist_video_cover_colors(&app, &path, &colors);
+                    send(Some(url), Some(colors), false);
+                }
+                None => send(None, None, false),
+            }
+            #[cfg(target_os = "android")]
+            send(None, None, false);
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -382,15 +449,33 @@ pub async fn get_thumbnails_batch(
     on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
     app: tauri::AppHandle
 ) -> Result<(), String> {
-    // 安卓端无 ffmpeg 抽帧（桌面专属），app 在安卓下不使用
-    #[cfg(target_os = "android")]
-    let _ = &app;
     let file_paths_clone2 = file_paths;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
         if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
 
-        file_paths_clone2.par_iter().for_each(|path| {
+        // 视频路径分流到专用 worker（见 VideoCoverJob 注释）：extract 阻塞等待
+        // ffmpeg 子进程不能占 rayon 线程池。任务入队即返回，结果经 Channel 异步送达。
+        let video_tx = video_cover_worker_sender();
+        let (video_jobs, image_paths): (Vec<String>, Vec<String>) = file_paths_clone2
+            .into_iter()
+            .partition(|p| {
+                Path::new(p)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(crate::file_types::is_supported_video)
+                    .unwrap_or(false)
+            });
+        for p in video_jobs {
+            let _ = video_tx.send(VideoCoverJob {
+                path: p,
+                cache_root: cache_root.clone(),
+                app: app.clone(),
+                on_event: on_event.clone(),
+            });
+        }
+
+        image_paths.par_iter().for_each(|path| {
             use std::fs;
             use std::io::Read;
 
@@ -398,59 +483,6 @@ pub async fn get_thumbnails_batch(
             if !image_path.exists() || path.contains(".Aurora_Cache") {
                 let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false });
                 return;
-            }
-
-            // 视频 P1 + P1.5 + P1.5-B：视频不走图片解码管线。
-            // 前端抽帧（P1.5-A）写进同套缓存的封面在缓存命中时返回；
-            // **未命中 → ffmpeg 后端抽帧（P1.5-B S3，B 口径：所有视频容器）**，
-            // 主色同时落库并经 channel 回传；ffmpeg 缺失 / 抽帧失败 → url=None
-            //（前端对 web 可解容器走 canvas 兜底，其余保持 VideoIcon 占位），
-            // 绝不 fallback 到视频路径去喂 <img>。
-            if let Some(ext) = image_path.extension().and_then(|e| e.to_str()) {
-                if crate::file_types::is_supported_video(ext) {
-                    match find_existing_video_cover(path, root) {
-                        Some(url) => {
-                            let _ = on_event.send(ThumbnailBatchResult {
-                                path: path.clone(),
-                                url: Some(url),
-                                colors: None,
-                                from_cache: true,
-                            });
-                        }
-                        None => {
-                            #[cfg(not(target_os = "android"))]
-                            match generate_video_cover_with_colors(path, root) {
-                                Some((url, colors)) => {
-                                    persist_video_cover_colors(&app, path, &colors);
-                                    let _ = on_event.send(ThumbnailBatchResult {
-                                        path: path.clone(),
-                                        url: Some(url),
-                                        colors: Some(colors),
-                                        from_cache: false,
-                                    });
-                                }
-                                None => {
-                                    let _ = on_event.send(ThumbnailBatchResult {
-                                        path: path.clone(),
-                                        url: None,
-                                        colors: None,
-                                        from_cache: false,
-                                    });
-                                }
-                            }
-                            #[cfg(target_os = "android")]
-                            {
-                                let _ = on_event.send(ThumbnailBatchResult {
-                                    path: path.clone(),
-                                    url: None,
-                                    colors: None,
-                                    from_cache: false,
-                                });
-                            }
-                        }
-                    }
-                    return;
-                }
             }
 
             let metadata = match fs::metadata(image_path) { Ok(m) => m, Err(_) => { let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false }); return; } };
