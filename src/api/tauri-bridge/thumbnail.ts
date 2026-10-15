@@ -11,6 +11,8 @@ import { extractVideoCover } from '../../utils/videoCover';
 import { isWebDecodableVideo } from '../../utils/mediaExtensions';
 import { isFfmpegAvailable } from './ffmpeg';
 import { isAbsolutePath } from '../../utils/pathUtils';
+// 临时诊断（视频封面排查，取证后删）：前端分支事件转发进终端日志
+import { feLog, feBaseName } from '../../utils/feLog';
 
 // 批量请求管理器
 class ThumbnailBatcher {
@@ -155,6 +157,8 @@ class ThumbnailBatcher {
 
       // 并行发送所有分组的批量请求
       await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
+        // 临时诊断（取证后删）：本批发出的路径 basename 列表——定位「请求是否发出」
+        feLog('batch', `send n=${paths.length} :: ${paths.map(feBaseName).join(' | ')}`);
         try {
           // 创建通道
           const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null; fromCache?: boolean }>();
@@ -552,11 +556,20 @@ export const getVideoCover = async (
   if (!filePath || filePath.trim() === '') return null;
   if (signal?.aborted) return null;
 
+  const __n = feBaseName(filePath);
+  feLog('video', `req ${__n}`);
+
   const inflight = inflightVideoCovers.get(filePath);
-  if (inflight) return inflight;
+  if (inflight) {
+    feLog('video', `inflight-hit ${__n}`);
+    return inflight;
+  }
 
   const failedAt = failedVideoCovers.get(filePath);
-  if (failedAt && Date.now() - failedAt < VIDEO_COVER_NEGATIVE_CACHE_MS) return null;
+  if (failedAt && Date.now() - failedAt < VIDEO_COVER_NEGATIVE_CACHE_MS) {
+    feLog('video', `negcache-hit ${__n}`);
+    return null;
+  }
 
   const work = (async (): Promise<string | null> => {
   const cachePath = resolveThumbCachePath(rootPath, cachePathOverride);
@@ -572,12 +585,14 @@ export const getVideoCover = async (
   if (!_isAndroid) {
     try {
       const cached = await getThumbnail(filePath, undefined, undefined, signal, undefined, cachePath);
+      feLog('video', `thumb ${cached ? 'hit' : 'miss'} ${__n}`);
       // 双保险：缓存里绝不允许是视频自身的 asset:// 地址（记忆 §2.1 污染形态）
       if (cached && cached !== convertFileSrc(filePath)) {
         return cached;
       }
     } catch {
       // 磁盘查询失败不阻断抽帧主链路
+      feLog('video', `thumb throw ${__n}`);
     }
     if (signal?.aborted) return null;
   }
@@ -585,6 +600,7 @@ export const getVideoCover = async (
   const timerId = performanceMonitor.start('getVideoCover', undefined, true);
   try {
     const res = await generateVideoCoverAndColors(filePath, cachePath, onColors, signal, sizeBytes);
+    feLog('video', `gen ${res ? 'ok' : 'null'} ${__n}`);
     performanceMonitor.end(timerId, 'getVideoCover', { success: !!res });
     return res;
   } catch (err) {
@@ -598,6 +614,7 @@ export const getVideoCover = async (
     const res = await work;
     if (res) {
       failedVideoCovers.delete(filePath);
+      feLog('video', `done ok ${__n}`);
     } else {
       // 失败分诊（P1.5-B S3）：封面主生成方已是后端 ffmpeg 管线（B 口径）。
       // 「无 ffmpeg + 前端也解不了的容器」（mkv/avi/…）在下载 ffmpeg 前注定拿不到封面，
@@ -605,9 +622,11 @@ export const getVideoCover = async (
       // 无 ffmpeg 时后端 locate 短路（纯路径检查，无 spawn），反复试探开销可忽略。
       // 其余失败（canvas 兜底超时 / 有 ffmpeg 但 extract 失败的坏文件）照旧进负缓存防风暴。
       if (!isWebDecodableVideo(filePath) && !(await isFfmpegAvailable())) {
+        feLog('video', `done null(no-ffmpeg,no-negcache) ${__n}`);
         return res;
       }
       failedVideoCovers.set(filePath, Date.now());
+      feLog('video', `done null(negcache-set) ${__n}`);
     }
     return res;
   } finally {

@@ -9,6 +9,8 @@ import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { isVideoFile, formatVideoDuration } from '../utils/mediaExtensions';
+// 临时诊断（视频封面排查，取证后删）
+import { feLog } from '../utils/feLog';
 
 // 视频扩展名判定已收敛到 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
 // 视频 P1（设计方案 §2.7 口径 C / UI 设计 §5.2）。
@@ -177,6 +179,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     if (!isVideo || !filePath || !resourceRoot) return;
     // 远程（LAN / 安卓）视频暂不支持前端抽帧：Thumbnail 需要本地文件，保持占位
     if (isRemote(filePath)) return;
+    // 临时诊断（视频封面排查，取证后删）：effect 触发记录
+    feLog('sheet', `eff ${filePath.split(/[\\/]/).pop() || filePath}`);
     // 刻意**不**按 isInView 门控：图片缩略图路径同样不门控（挂载即请求），
     // FileGrid 本身是虚拟化窗口，挂载的卡片本就在渲染窗口内；
     // 抽帧的并发压力由 utils/videoCover 的串行队列 + 体积上限兜底。
