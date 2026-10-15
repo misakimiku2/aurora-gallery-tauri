@@ -7,6 +7,13 @@ import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUr
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { VideoControls } from './viewer/VideoControls';
 import { useToasts } from '../hooks/useToasts';
+import { isWebDecodableVideo } from '../utils/mediaExtensions';
+import { isAndroidSync } from '../utils/androidPlatform';
+import { openPath } from '../api/tauri-bridge/files';
+import {
+  ensureVideoPlayable, onRemuxProgress, remuxFailureKind,
+  type RemuxStateDto,
+} from '../api/tauri-bridge/videoRemux';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -529,13 +536,88 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     (window as any).__isImmersive = isImmersiveMode;
   }, [isImmersiveMode]);
 
+  // ── 视频 P2：A 类容器转封装状态（2026-10-15）──
+  // 只有「本地 + 非 Web 可解容器 + 桌面端」会用到，其余情形保持全 null（= 走原路径）。
+  const [remuxOutput, setRemuxOutput] = useState<string | null>(null);
+  const [remuxPending, setRemuxPending] = useState(false);
+  const [remuxProgress, setRemuxProgress] = useState(0);
+  const [remuxFailure, setRemuxFailure] = useState<string | null>(null);
+  /** 「直播失败 → 强制转封装」兜底只做一次（防：产物也失败 → 又回到直播 → 无限循环） */
+  const forceRemuxTriedRef = useRef(false);
+  /** 失败归类（"no_ffmpeg" = 缺组件，可引导去设置面板安装；其余是真失败） */
+  const failureKind: 'no_ffmpeg' | 'remux_failed' | null = remuxFailure
+    ? remuxFailureKind(remuxFailure)
+    : null;
+
   // ── 视频：播放源分派（与图片一致的分派规则）──
-  // 本地：convertFileSrc（桌面端 asset protocol 支持 Range，总文档 §3.2）；
-  // 远程：沿用图片的远程 URL 解析（LAN 视频串流需服务端 Range，属 P3）。
+  // ① 本地原生可解容器（mp4/m4v/mov/webm）→ 直接 convertFileSrc(源文件)（Range 由 asset 协议兜）；
+  // ② 本地其余容器（mkv/avi/…）→ P2：先经后端 `-c copy` 转封装，播**产物**（MP4）；
+  // ③ 远程：沿用图片的远程 URL 解析（LAN 视频串流需服务端 Range，属 P3）。
+  // ⚠️ `remuxPending` 期间**不给 src**——否则 <video> 会先对着源容器报 SRC_NOT_SUPPORTED(4)，
+  //    错误卡与进度卡叠在一起（2026-10-15）。
   const videoSrc = useMemo(() => {
     if (!isVideo || !file.path) return '';
-    return isRemotePath(file.path) ? getRemoteImageUrl(file.path) : convertFileSrc(file.path);
+    if (remuxPending) return '';
+    if (isRemotePath(file.path)) return getRemoteImageUrl(file.path);
+    return convertFileSrc(remuxOutput || file.path);
+  }, [isVideo, file.path, remuxOutput, remuxPending]);
+
+  useEffect(() => {
+    forceRemuxTriedRef.current = false;
+    if (!isVideo || !file.path) {
+      setRemuxPending(false);
+      setRemuxOutput(null);
+      setRemuxFailure(null);
+      return;
+    }
+    // 远程（LAN）与安卓端不参与；原生可解容器**默认**不打扰（mkv 属此类） ——
+    // 真播不出来时由 <video> 的 onError 走「强制转封装」兜底一次。
+    if (isRemotePath(file.path) || isAndroidSync() || isWebDecodableVideo(file.path)) {
+      setRemuxPending(false);
+      setRemuxOutput(null);
+      setRemuxFailure(null);
+      return;
+    }
+    let cancelled = false;
+    setRemuxFailure(null);
+    setRemuxProgress(0);
+    (async () => {
+      const st = await ensureVideoPlayable(file.path);
+      if (cancelled) return;
+      if (st.status === 'ready') {
+        setRemuxOutput(st.output_path);
+        setRemuxPending(false);
+      } else if (st.status === 'pending') {
+        setRemuxPending(true);
+      } else if (st.status === 'failed') {
+        setRemuxPending(false);
+        setRemuxFailure(st.message);
+      } else {
+        setRemuxPending(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [isVideo, file.path]);
+
+  // 转封装进度/完成：后端任务跑完会推一次终态事件（同一路径才处理）
+  useEffect(() => {
+    if (!remuxPending) return;
+    let mounted = true;
+    let unlisten: (() => void) | null = null;
+    onRemuxProgress((st: RemuxStateDto) => {
+      if (!mounted || st.path !== file.path) return;
+      if (st.status === 'pending') {
+        setRemuxProgress(st.progress);
+      } else if (st.status === 'ready') {
+        setRemuxOutput(st.output_path);
+        setRemuxPending(false);
+      } else if (st.status === 'failed') {
+        setRemuxPending(false);
+        setRemuxFailure(st.message);
+      }
+    }).then((u) => { if (mounted && u) unlisten = u; else if (u) u(); });
+    return () => { mounted = false; unlisten?.(); };
+  }, [remuxPending, file.path]);
 
   // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
   // 稳定化：总文档 §3.2 的 asset protocol 按 ≤1MB 分片返回，单次 seek/播放会多次触发
@@ -2011,8 +2093,38 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               preload="metadata"
               draggable={false}
               onError={(e) => {
-                // 2026-10-15：MKV/AVI 等容器 WebView 解不了 → 显示降级提示而非黑屏
-                setVideoErrorCode(e.currentTarget.error?.code ?? 0);
+                // 2026-10-15：容器 WebView 解不了 → 显示降级提示而非黑屏。
+                // 2026-10-16：**先尝试一次转封装兜底** —— 容器「可解」不等于「播得了」
+                //（mkv 里装 FLAC/PCM 音轨、或编码不受支持时直播照样失败，
+                //  换成 MP4 + AAC 往往就活了）。只在「还没用过产物」且「没试过兜底」时触发一次。
+                const code = e.currentTarget.error?.code ?? 0;
+                if (
+                  !remuxOutput &&
+                  !remuxPending &&
+                  !remuxFailure &&
+                  !forceRemuxTriedRef.current &&
+                  file.path &&
+                  !isRemotePath(file.path) &&
+                  !isAndroidSync()
+                ) {
+                  forceRemuxTriedRef.current = true;
+                  setRemuxPending(true);
+                  ensureVideoPlayable(file.path, true).then((st) => {
+                    if (st.status === 'ready') {
+                      setRemuxOutput(st.output_path);
+                      setRemuxPending(false);
+                      setVideoErrorCode(null);
+                    } else if (st.status === 'pending') {
+                      // 等事件推送终态（下方 effect 已订阅 remuxPending）
+                    } else {
+                      setRemuxPending(false);
+                      setRemuxFailure(st.message);
+                      setVideoErrorCode(code);
+                    }
+                  });
+                  return;
+                }
+                setVideoErrorCode(code);
               }}
             />
           )}
@@ -2114,18 +2226,60 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
         )}
 
-        {/* 播放失败提示（2026-10-15）：MKV/AVI 等 8 种容器 Web 解不了（P2 remux 未做）
-            ——此前黑屏无提示。SRC_NOT_SUPPORTED(4) 与其余错误分开文案。 */}
-        {isVideo && videoErrorCode !== null && (
+        {/* 视频 P2：转封装进度卡（2026-10-15）—— mkv/avi 等 A 类容器首次点开时的等待反馈。
+            此时 <video> 没有 src（避免它抢先报「不支持」），所以这张卡是唯一可见反馈。 */}
+        {isVideo && remuxPending && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
             <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4">
+              <Loader2 className="animate-spin text-white/90 mb-2" size={28} />
+              <div className="text-sm font-medium">{t('video.remuxing')}</div>
+              <div className="text-xs text-white/70 mt-1">{t('video.remuxingHint')}</div>
+              <div className="w-48 h-1 mt-3 rounded-full bg-white/20 overflow-hidden">
+                <div
+                  className="h-full bg-white/80 transition-[width] duration-200"
+                  style={{ width: `${Math.round(Math.max(remuxProgress, 0.04) * 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 播放失败提示（2026-10-15）：Web 解不了的容器点开此前是「黑屏无提示」。
+            P2 之后：① 转封装失败 → 说明真实原因；② 其余 → SRC_NOT_SUPPORTED(4) 与其
+            它错误分开文案。两种情况都给「用系统播放器打开」兜底（D5）。 */}
+        {isVideo && !remuxPending && (failureKind !== null || videoErrorCode !== null) && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
+            <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4 pointer-events-auto">
               <AlertTriangle size={28} className="mb-2 text-amber-400" />
               <div className="text-sm font-medium">
-                {videoErrorCode === 4 ? t('video.cannotPlay') : t('video.cannotPlayFailed')}
+                {failureKind === 'no_ffmpeg'
+                  ? t('video.remuxNoFfmpeg')
+                  : failureKind !== null
+                    ? t('video.remuxFailed')
+                    : videoErrorCode === 4
+                      ? t('video.cannotPlay')
+                      : t('video.cannotPlayFailed')}
               </div>
               <div className="text-xs text-white/70 mt-1">
-                {videoErrorCode === 4 ? t('video.cannotPlayHint') : t('video.cannotPlayFailedHint')}
+                {failureKind === 'no_ffmpeg'
+                  ? t('video.remuxNoFfmpegHint')
+                  : failureKind !== null
+                    ? `${t('video.remuxFailedHint')}（${remuxFailure}）`
+                    : videoErrorCode === 4
+                      ? t('video.cannotPlayHint')
+                      : t('video.cannotPlayFailedHint')}
               </div>
+              {/* D5 兜底：无论哪种原因，用户总有一条能真正看到视频的路 */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (file.path) openPath(file.path, true).catch(() => {});
+                }}
+                className="mt-3 px-3 py-1.5 text-xs rounded-lg bg-white/15 hover:bg-white/25 transition-colors flex items-center gap-1.5"
+              >
+                <ExternalLink size={14} />
+                {t('video.openExternalPlayer')}
+              </button>
             </div>
           </div>
         )}

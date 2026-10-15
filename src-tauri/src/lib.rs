@@ -26,6 +26,9 @@ pub mod ffmpeg_cover;
 // 视频封面 P1.5-B：ffmpeg 下载器（BtbN LGPL 静态源 + SHA256 pin），桌面专属。
 #[cfg(not(target_os = "android"))]
 pub mod ffmpeg_download;
+// 视频 P2：桌面端播放格式兜底 —— A 类容器（mkv/avi/flv/ts/3gp）remux 成 MP4 后播放，桌面专属。
+#[cfg(not(target_os = "android"))]
+pub mod video_remux;
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -1988,6 +1991,11 @@ pub fn run() {
         ffmpeg_download::ffmpeg_download_resume,
         ffmpeg_download::ffmpeg_download_cancel,
         ffmpeg_download::ffmpeg_download_cleanup,
+        // 视频 P2（2026-10-15）：A 类容器播放兜底 —— remux 成 MP4 后交给 asset 协议播放
+        video_remux::video_remux_ensure,
+        video_remux::video_remux_probe,
+        video_remux::video_remux_stats,
+        video_remux::video_remux_clear,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2, Download, Pause, Play, X, RotateCcw } from 'lucide-react';
+import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers, Clapperboard, CheckCircle2, AlertCircle, Loader2, Download, Pause, Play, X, RotateCcw, Trash2 } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { DEFAULT_FOLDER_ICON_STYLE } from '../../constants';
 import { Folder3DIcon } from '../Folder3DIcon';
@@ -20,6 +20,12 @@ import {
   FfmpegStatus,
   FfmpegDownloadProgress,
 } from '../../api/tauri-bridge/ffmpeg';
+// 视频 P2：播放缓存（A 类容器 remux 产物）占用与清理
+import {
+  getVideoRemuxStats,
+  clearVideoRemuxCache,
+  RemuxStats,
+} from '../../api/tauri-bridge/videoRemux';
 
 // 通用设置 + 外观设置面板组件
 interface GeneralPanelProps {
@@ -105,6 +111,27 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
       unlisten?.();
     };
   }, [isAndroid, refreshFfmpegStatus]);
+
+  // 视频 P2：播放缓存（remux 产物）占用与清理
+  const [remuxStats, setRemuxStats] = React.useState<RemuxStats | null>(null);
+  const [clearingCache, setClearingCache] = React.useState(false);
+  const refreshRemuxStats = React.useCallback(() => {
+    getVideoRemuxStats().then((s) => setRemuxStats(s));
+  }, []);
+  React.useEffect(() => {
+    if (isAndroid) return;
+    refreshRemuxStats();
+  }, [isAndroid, refreshRemuxStats]);
+
+  const clearVideoCache = async () => {
+    setClearingCache(true);
+    try {
+      const s = await clearVideoRemuxCache();
+      setRemuxStats(s);
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   const startFfmpegDownload = async () => {
     setStartingDownload(true);
@@ -339,6 +366,32 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* 视频播放缓存（P2，2026-10-15）：mkv/avi 等 A 类容器的 remux 产物。
+                产物与原视频等大，靠 LRU 上限（后端 4GB）自动淘汰，这里给一个手动出口。 */}
+            {!isAndroid && (
+              <div className="pt-3 border-subtle">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0 pr-4">
+                    <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.videoPlaybackCache')}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {remuxStats === null
+                        ? t('settings.videoCacheUnknown')
+                        : `${t('settings.videoCacheUsage')} ${formatBytes(remuxStats.bytes)} · ${remuxStats.files} ${t('settings.videoCacheFiles')} · ${t('settings.videoCacheLimit')} ${formatBytes(remuxStats.limit_bytes)}`}
+                    </div>
+                  </div>
+                  <button
+                    onClick={clearVideoCache}
+                    disabled={clearingCache || remuxStats === null}
+                    className="px-2.5 py-1.5 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center disabled:opacity-50"
+                    title={t('settings.videoCacheClearTip')}
+                  >
+                    {clearingCache ? <Loader2 size={12} className="animate-spin mr-1" /> : <Trash2 size={12} className="mr-1" />}
+                    {t('settings.videoCacheClear')}
+                  </button>
+                </div>
               </div>
             )}
 

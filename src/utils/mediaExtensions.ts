@@ -41,16 +41,23 @@ export const isVideoFile = (filePath?: string | null, format?: string): boolean 
 };
 
 /**
- * Chromium / WebView2 原生可解码的容器子集 —— 视频 P1.5-A（前端抽帧）的适用边界。
+ * Chromium / WebView2 原生可解码的容器子集 —— 视频 P1.5-A（前端抽帧）与 P2（播放）的共同边界。
  *
- * 判断依据：这就是 P0 播放器已经能播的那批（MP4/MOV/M4V 装 H.264 + AAC，WebM 装 VP8/VP9）。
- * 其余 8 种 Chromium 解不了，只能交给后端 ffmpeg（P1.5-B）。
+ * **依据（2026-10-16 更正）**：chromium.org/audio-video 的官方容器清单 =
+ * `MP4 / Ogg / WebM / WAV / Matroska / HLS` —— **MKV（Matroska）是原生可播的**，
+ * 而 **AVI 不在清单里**（Chromium 的 ffmpeg 构建不含 AVI 解复用器）。
+ * 指挥官实机佐证：上一会话「MKV 点开直接播放、AVI 播不了」，与本表修正后的结论一致。
+ * ⚠️ 旧表把 mkv 列为不可播（源于设计方案 §3.3 的误判，已就地更正），
+ *    导致 P2 首版对 MKV 也做了转封装 —— 白占磁盘、白等一次（现已改回直播）。
  *
- * ⚠️ 不要凭猜改这张表：加容器前先在 WebView 里实际播一遍。
+ * 注意：**容器可解 ≠ 一定播得了** —— MKV 里装 HEVC/VC-1/FLAC 等仍可能失败，
+ * 所以播放侧还有一层「直播失败 → 自动转封装」的兜底（ImageViewer）。
+ *
+ * ⚠️ 不要凭猜改这张表：加容器前先在 WebView 里实际播一遍（或查 chromium.org 清单）。
  */
-export const WEB_DECODABLE_VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm'];
+export const WEB_DECODABLE_VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm', 'mkv'];
 
-/** 其余容器：Chromium 解不了 → 走后端 ffmpeg 抽帧（P1.5-B） */
+/** 其余容器：Chromium 解不了 → 走后端 ffmpeg 抽帧（P1.5-B）/ 转封装（P2） */
 export const FFMPEG_ONLY_VIDEO_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS.filter(
   (ext) => !WEB_DECODABLE_VIDEO_EXTENSIONS.includes(ext)
 );
