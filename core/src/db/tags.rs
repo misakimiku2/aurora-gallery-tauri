@@ -148,7 +148,7 @@ pub fn images_with_any_tag(conn: &Connection, tags: &[String]) -> Result<Vec<Fil
         .join(", ");
     let sql = format!(
         "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
-                width, height, format, duration_ms, frame_rate, rotation \
+                width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate \
          FROM file_index f \
          WHERE f.file_type IN ('Image', 'Video') \
            AND EXISTS (SELECT 1 FROM file_tags t WHERE t.file_id = f.file_id AND t.tag IN ({})) \
@@ -173,6 +173,8 @@ pub fn images_with_any_tag(conn: &Connection, tags: &[String]) -> Result<Vec<Fil
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
     rows.collect()

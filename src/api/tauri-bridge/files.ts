@@ -34,6 +34,9 @@ interface RustFileNode {
     durationMs?: number | null;
     frameRate?: number | null;
     rotation?: number | null;
+    // 2026-10-16 补：编码 / 码率（信息块展开区）
+    videoCodec?: string | null;
+    bitRate?: number | null;
   } | null;
   description?: string | null;
   sourceUrl?: string | null;
@@ -111,6 +114,8 @@ export const scanDirectory = async (
           durationMs: node.meta.durationMs ?? undefined,
           frameRate: node.meta.frameRate ?? undefined,
           rotation: node.meta.rotation ?? undefined,
+          videoCodec: node.meta.videoCodec ?? undefined,
+          bitRate: node.meta.bitRate ?? undefined,
         } : undefined,
       };
 
@@ -176,6 +181,8 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
           durationMs: node.meta.durationMs ?? undefined,
           frameRate: node.meta.frameRate ?? undefined,
           rotation: node.meta.rotation ?? undefined,
+          videoCodec: node.meta.videoCodec ?? undefined,
+          bitRate: node.meta.bitRate ?? undefined,
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
@@ -521,6 +528,8 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
         durationMs: rustFile.meta.durationMs ?? undefined,
         frameRate: rustFile.meta.frameRate ?? undefined,
         rotation: rustFile.meta.rotation ?? undefined,
+        videoCodec: rustFile.meta.videoCodec ?? undefined,
+        bitRate: rustFile.meta.bitRate ?? undefined,
       } : undefined,
       description: rustFile.description || undefined,
       sourceUrl: rustFile.sourceUrl || undefined,

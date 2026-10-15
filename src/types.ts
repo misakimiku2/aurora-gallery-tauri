@@ -28,6 +28,10 @@ export interface ImageMeta {
   frameRate?: number;
   /** 视频旋转标记（0/90/180/270）。width/height 存编码尺寸，显示尺寸按 rotation 派生（视频 P1 元数据） */
   rotation?: number;
+  /** 视频编码（如 AVC / HEVC；2026-10-16 补，信息块展开区展示） */
+  videoCodec?: string;
+  /** 总码率（bps；2026-10-16 补） */
+  bitRate?: number;
 }
 
 export interface AiFace {
@@ -542,7 +546,7 @@ export interface TabState {
   scrollTop: number;
 }
 
-export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'lanShare' | 'about';
+export type SettingsCategory = 'general' | 'video' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'lanShare' | 'about';
 
 export interface PreviewTag {
   name: string;

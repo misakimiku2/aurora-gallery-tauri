@@ -262,6 +262,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         duration_ms: entry.duration_ms,
                         frame_rate: entry.frame_rate,
                         rotation: entry.rotation,
+                        video_codec: entry.video_codec.clone(),
+                        bit_rate: entry.bit_rate,
                     });
                 }
 
@@ -438,6 +440,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                 let mut cached_duration_ms = None;
                 let mut cached_frame_rate = None;
                 let mut cached_rotation = None;
+                // 2026-10-16 补：编码/码率同样要被「缓存命中」逻辑保留（否则重扫覆盖成 NULL）。
+                let mut cached_video_codec: Option<String> = None;
+                let mut cached_bit_rate: Option<i64> = None;
 
                 if let Some(c) = cached {
                     if c.modified_at == mtime && c.size == metadata.len() {
@@ -451,6 +456,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         cached_duration_ms = c.duration_ms;
                         cached_frame_rate = c.frame_rate;
                         cached_rotation = c.rotation;
+                        cached_video_codec = c.video_codec.clone();
+                        cached_bit_rate = c.bit_rate;
                     }
                 }
 
@@ -474,6 +481,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                     let mut duration_ms = None;
                     let mut frame_rate = None;
                     let mut rotation = None;
+                    let mut video_codec: Option<String> = None;
+                    let mut bit_rate: Option<i64> = None;
                     if is_video {
                         // 缓存自愈（2026-10-15）：缓存里的 duration 可疑（<1s 且 >1MB —— revelo
                         // 对 AVI+AVC 的误报形态，实测 71ms/112MB）时，即使缓存命中也要重读复核，
@@ -495,11 +504,15 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                 );
                                 frame_rate = vm.frame_rate;
                                 rotation = vm.rotation;
+                                video_codec = vm.video_codec.clone();
+                                bit_rate = vm.bit_rate;
                             }
                         } else {
                             duration_ms = cached_duration_ms;
                             frame_rate = cached_frame_rate;
                             rotation = cached_rotation;
+                            video_codec = cached_video_codec;
+                            bit_rate = cached_bit_rate;
                         }
                     } else if !has_cached_dims && force {
                         let dims = get_image_dimensions(&entry_path.to_string_lossy());
@@ -526,6 +539,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                             duration_ms,
                             frame_rate,
                             rotation,
+                            video_codec,
+                            bit_rate,
                         }),
                     };
                     Some((file_id, file_node, p_path))
@@ -579,6 +594,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         let (w, h, fmt) = node.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
         // 视频 P1（设计方案 §6）：视频元数据经 ImageMeta 带到这里落库。
         let (dur, fps, rot) = node.meta.as_ref().map_or((None, None, None), |m| (m.duration_ms, m.frame_rate, m.rotation));
+        let (codec, br) = node.meta.as_ref().map_or((None, None), |m| (m.video_codec.clone(), m.bit_rate));
         let c_at = node.created_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
         let m_at = node.updated_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
 
@@ -590,7 +606,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Video => "Video".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
             size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
             created_at: c_at, modified_at: m_at,
-            duration_ms: dur, frame_rate: fps, rotation: rot,
+            duration_ms: dur, frame_rate: fps, rotation: rot, video_codec: codec, bit_rate: br,
         });
 
         all_files.insert(id, node);
@@ -678,7 +694,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                     entries.push(db::file_index::FileIndexEntry {
                                         file_id: id, parent_id: None, path: path.clone(), name, file_type: "Image".to_string(),
                                         size: md.len(), width: Some(w), height: Some(h), format: fmt, created_at: c_at, modified_at: m_at,
-                                        duration_ms: None, frame_rate: None, rotation: None,
+                                        duration_ms: None, frame_rate: None, rotation: None, video_codec: None, bit_rate: None,
                                     });
                                 }
                             }

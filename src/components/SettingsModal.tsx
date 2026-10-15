@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Database, Brain, BarChart2, Trash2, Info, Sparkles, Wifi } from 'lucide-react';
+import { Settings, Sliders, Database, Brain, BarChart2, Trash2, Info, Sparkles, Wifi, Clapperboard } from 'lucide-react';
 import { AppState, AppSettings, UpdateInfo, DownloadProgress } from '../types';
 import { isAndroidPlatform } from '../utils/androidPlatform';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
@@ -10,6 +10,7 @@ import AboutPanel from './settings/AboutPanel';
 import AIVisionPanel from './settings/AIVisionPanel';
 import PerformancePanel from './settings/PerformancePanel';
 import GeneralPanel from './settings/GeneralPanel';
+import VideoPanel from './settings/VideoPanel';
 import StoragePanel from './settings/StoragePanel';
 import AISettingsPanel from './settings/AISettingsPanel';
 
@@ -77,6 +78,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             >
               <Sliders size={18} className="mr-3" /> {t('settings.catGeneral')}
             </button>
+            {/* 视频设置独立分类（2026-10-16，指挥官反馈：原来全挤在常规下）。桌面专属——
+                三块内容（悬停预览 / ffmpeg 引擎 / 播放缓存）均桌面限定。 */}
+            {!isAndroid && (
+              <button
+                onClick={() => onUpdateSettings({ settingsCategory: 'video' })}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'video' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
+              >
+                <Clapperboard size={18} className="mr-3" /> {t('settings.catVideo')}
+              </button>
+            )}
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'storage' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'storage' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
@@ -136,6 +147,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           {isAndroid && <style dangerouslySetInnerHTML={{ __html: '#settings-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />}
           {state.settingsCategory === 'general' && (
             <GeneralPanel
+              t={t}
+              settings={state.settings}
+              isAndroid={isAndroid}
+              onUpdateSettingsData={onUpdateSettingsData}
+            />
+          )}
+          {state.settingsCategory === 'video' && (
+            <VideoPanel
               t={t}
               settings={state.settings}
               isAndroid={isAndroid}

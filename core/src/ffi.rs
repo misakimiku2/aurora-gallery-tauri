@@ -434,6 +434,8 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         })
         .collect();
 
@@ -454,6 +456,8 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         })
         .collect();
 
@@ -502,6 +506,8 @@ pub fn upsert_media_image(image: MediaImage) -> Result<(), AuroraError> {
         duration_ms: None,
         frame_rate: None,
         rotation: None,
+        video_codec: None,
+        bit_rate: None,
     };
     let p = pool();
     let mut guard = p.get_connection();

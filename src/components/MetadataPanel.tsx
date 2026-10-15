@@ -5,7 +5,7 @@ import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic, AppSettings, AppState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout, Activity } from 'lucide-react';
+import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout, Activity, Gauge, Clapperboard, RotateCw } from 'lucide-react';
 import { useAIRename } from '../hooks/useAIRename';
 import ImagePreview from './metadata/ImagePreview';
 import FileCoverImg from './metadata/FileCoverImg';
@@ -25,7 +25,7 @@ import { findImagesDeeply } from '../utils/folderCoverImages';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { getSourceUrls, appendSourceUrl, removeSourceUrl, replaceSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
-import { formatVideoDuration, isVideoFile } from '../utils/mediaExtensions';
+import { formatVideoDuration, formatBitRate, isVideoFile } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
 
 
@@ -534,6 +534,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 文件夹预览图，与主界面保持一�?
     const [folderPreviewImages, setFolderPreviewImages] = useState<string[]>([]);
     const [folderPreviewLoaded, setFolderPreviewLoaded] = useState(false);
+    // 视频信息块「展开更多」（2026-10-16）：默认收起 = 现有 6 项；展开补充 码率 / 视频编码 / 旋转。
+    // 跨文件保持展开状态（连续浏览一批视频时不想每次再点一次）。
+    const [showMoreVideoInfo, setShowMoreVideoInfo] = useState(false);
 
     // 当文件或资源根目录变化时，更新文件夹预览�?
     useEffect(() => {
@@ -1643,8 +1646,22 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* Detailed Info Grid */}
                 {!isMulti && file && (
                     <div>
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                            {t('meta.details')}
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                {t('meta.details')}
+                            </div>
+                            {/* 视频信息块展开/收起（2026-10-16）：默认收起 = 6 项（4 专属 + 2 通用）；
+                                展开补充 码率 / 视频编码 / 旋转（有值才显示）。 */}
+                            {file.type === FileType.VIDEO && (
+                                <button
+                                    onClick={() => setShowMoreVideoInfo(v => !v)}
+                                    className="flex items-center text-[11px] text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+                                    title={t('meta.moreDetails')}
+                                >
+                                    {showMoreVideoInfo ? <ChevronUp size={12} className="mr-0.5" /> : <ChevronDown size={12} className="mr-0.5" />}
+                                    {t('meta.moreDetails')}
+                                </button>
+                            )}
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-sm">
                             {file.type === FileType.IMAGE && file.meta && (
@@ -1686,9 +1703,39 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.format?.toUpperCase() || '---'}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Activity size={10} className="mr-1" /> {t('meta.frameRate')}</div>
-                                        <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.frameRate ? `${file.meta.frameRate} fps` : '---'}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><HardDrive size={10} className="mr-1" /> {t('meta.size')}</div>
+                                        <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.sizeKb !== undefined ? formatSize(file.meta.sizeKb) : '---'}</div>
                                     </div>
+                                    {/* 展开区（2026-10-16）：帧率 / 码率 / 视频编码（数据 2026-10-16 起入库）；
+                                        旋转仅在有值且非 0 时显示。
+                                        2026-10-16 调整（指挥官）：文件大小取代帧率进常驻 4 项（大小比帧率重要），
+                                        帧率移入本展开区。 */}
+                                    {showMoreVideoInfo && (
+                                        <>
+                                            <div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Activity size={10} className="mr-1" /> {t('meta.frameRate')}</div>
+                                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.frameRate ? `${file.meta.frameRate} fps` : '---'}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Gauge size={10} className="mr-1" /> {t('meta.bitRate')}</div>
+                                                <div className="font-medium text-gray-800 dark:text-gray-200">{formatBitRate(file.meta.bitRate) || '---'}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><Clapperboard size={10} className="mr-1" /> {t('meta.videoCodec')}</div>
+                                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.videoCodec || '---'}</div>
+                                            </div>
+                                            {(() => {
+                                                const rot = file.meta.rotation;
+                                                if (rot === undefined || rot === null || rot === 0) return null;
+                                                return (
+                                                    <div>
+                                                        <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><RotateCw size={10} className="mr-1" /> {t('meta.rotation')}</div>
+                                                        <div className="font-medium text-gray-800 dark:text-gray-200">{rot}°</div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </>
+                                    )}
                                 </>
                             )}
                             {file.type === FileType.FOLDER && folderStats && (

@@ -112,7 +112,8 @@ pub fn generate_id(path: &str) -> String {
 /// 历史：
 /// - `0`：未标记（视频支持之前的旧库）
 /// - `2`：支持视频（P1，2026-10-12）
-pub const SCANNER_CAPABILITY: i64 = 2;
+/// - `3`：视频信息块补列（video_codec / bit_rate，2026-10-16，需全量回填）
+pub const SCANNER_CAPABILITY: i64 = 3;
 
 /// 读取库的扫描能力版本（旧库缺省 `0`）。
 pub fn get_scanner_capability(conn: &Connection) -> i64 {

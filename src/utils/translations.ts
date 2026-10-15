@@ -331,6 +331,11 @@ export const translations = {
       resolution: '分辨率',
       containerFormat: '容器格式',
       frameRate: '帧率',
+      // 2026-10-16：信息块展开区（码率/编码 2026-10-16 起入库）
+      bitRate: '码率',
+      videoCodec: '视频编码',
+      rotation: '旋转',
+      moreDetails: '更多详情',
       totalSize: '总大小',
       created: '创建',
       updated: '更新',
@@ -466,6 +471,8 @@ export const translations = {
     settings: {
       title: '设置',
       catGeneral: '常规',
+      // 2026-10-16：视频设置独立分类（从「常规」迁出）
+      catVideo: '视频',
       catAppearance: '外观',
       catNetwork: '网络',
       catStorage: '存储',
@@ -1588,6 +1595,11 @@ export const translations = {
       resolution: 'Resolution',
       containerFormat: 'Container',
       frameRate: 'Frame Rate',
+      // 2026-10-16: expanded info block (bit rate / codec are stored since 2026-10-16)
+      bitRate: 'Bit Rate',
+      videoCodec: 'Video Codec',
+      rotation: 'Rotation',
+      moreDetails: 'More Details',
       totalSize: 'Total Size',
       created: 'Created',
       updated: 'Updated',
@@ -1722,6 +1734,8 @@ export const translations = {
     settings: {
       title: 'Settings',
       catGeneral: 'General',
+      // 2026-10-16: video settings moved out of "General" into its own category
+      catVideo: 'Video',
       catAppearance: 'Appearance',
       catNetwork: 'Network',
       catStorage: 'Storage',

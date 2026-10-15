@@ -106,3 +106,10 @@ export const formatVideoDuration = (durationMs?: number | null): string => {
   const pad = (n: number) => n.toString().padStart(2, '0');
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
 };
+
+/** 码率格式化（bps → `"4.5 Mbps"` / `"523 kbps"`）。拿不到 / 非法值返回空串（调用方显示 '---'）。 */
+export const formatBitRate = (bps?: number | null): string => {
+  if (!bps || !Number.isFinite(bps) || bps <= 0) return '';
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Mbps`;
+  return `${Math.max(1, Math.round(bps / 1000))} kbps`;
+};

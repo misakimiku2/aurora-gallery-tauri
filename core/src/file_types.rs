@@ -46,6 +46,13 @@ pub struct ImageMeta {
     /// 旋转标记（0 / 90 / 180 / 270）。`width/height` 存编码尺寸不交换，显示尺寸由 rotation 派生。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<i64>,
+    // 视频信息块补列（2026-10-16，设计方案 §6「码率/编码」）。图片一律 None。
+    /// 视频编码（如 `AVC` / `HEVC`；Video 流 Format，非容器）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video_codec: Option<String>,
+    /// 总码率（bps）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bit_rate: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

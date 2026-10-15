@@ -20,6 +20,12 @@ pub struct VideoMetadata {
     pub duration_ms: Option<i64>,
     pub frame_rate: Option<f64>,
     pub rotation: Option<i64>,
+    /// 视频编码（Video 流的 `Format`，如 `AVC` / `HEVC` / `VP9`；2026-10-16 补）。
+    /// ⚠️ 与 General 流的 `Format`（容器，如 `AVI` / `MPEG-4`）**不同源**，不可混用。
+    pub video_codec: Option<String>,
+    /// 总码率（bps）。General 的 `OverallBitRate` 优先（MediaInfo 口径），退化 Video 的 `BitRate`。
+    /// 2026-10-16 补：设计 §6「视频信息块・码率」由本字段供给。
+    pub bit_rate: Option<i64>,
 }
 
 /// 读取单个视频文件的容器元数据；解析失败（或不是视频）返回 `None`，不 panic。
@@ -36,10 +42,31 @@ pub fn read_video_metadata(path: &Path) -> Option<VideoMetadata> {
     // 优先采用；Video 流的 `Duration` 只是视频轨时长。字段已存在时不覆盖，
     // 因此 Video 只补 General 缺失的项（width/height/frame rate/rotation 基本都在 Video）。
     for (key, value) in meta.general() {
-        apply_field(&mut vm, &normalize_key(key), value);
+        let k = normalize_key(key);
+        // 总码率（bps）：General 优先；Video 的 BitRate 只作兜底（见下）。
+        if (k == "overallbitrate" || k == "overallbitratebps") && vm.bit_rate.is_none() {
+            vm.bit_rate = parse_bit_rate(value);
+            continue;
+        }
+        apply_field(&mut vm, &k, value);
     }
     for (key, value) in meta.video() {
-        apply_field(&mut vm, &normalize_key(key), value);
+        let k = normalize_key(key);
+        // Video 流的 Format = **视频编码**（如 AVC / HEVC）——不能与 General 的
+        // Format（容器）混用，故不走通用 apply_field。
+        if k == "format" && vm.video_codec.is_none() {
+            let v = value.trim();
+            if !v.is_empty() {
+                vm.video_codec = Some(v.to_string());
+            }
+            continue;
+        }
+        // 视频轨码率：仅在 General 无 OverallBitRate 时兜底。
+        if (k == "bitrate" || k == "bitratebps") && vm.bit_rate.is_none() {
+            vm.bit_rate = parse_bit_rate(value);
+            continue;
+        }
+        apply_field(&mut vm, &k, value);
     }
 
     Some(vm)
@@ -123,6 +150,32 @@ fn parse_f64(value: &str) -> Option<f64> {
 ///
 /// revelo 是 MediaInfoLib 的移植，Duration 通常以毫秒整数给出；这里同时兼容
 /// "1234"（毫秒）、"12.34"（秒，含小数点时按秒）、"1 h 2 min 3 s" 一类描述串。
+/// 解析码率字符串 → bps。
+///
+/// revelo 实测（2026-10-16 样本 dump）给的是纯数字 bps（如 `295377573`）；
+/// 带单位形态（`4523 kb/s`）只作防御——按单位换算到 bps。
+fn parse_bit_rate(value: &str) -> Option<i64> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    if let Ok(bps) = v.parse::<i64>() {
+        return Some(bps);
+    }
+    let num = parse_f64(v)?;
+    let lower = v.to_lowercase();
+    let mult = if lower.contains("gb") {
+        1_000_000_000.0
+    } else if lower.contains("mb") {
+        1_000_000.0
+    } else if lower.contains("kb") {
+        1_000.0
+    } else {
+        1.0
+    };
+    Some((num * mult).round() as i64)
+}
+
 fn parse_duration_ms(value: &str) -> Option<i64> {
     let v = value.trim();
     if v.is_empty() {
@@ -172,6 +225,17 @@ fn parse_duration_ms(value: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// 2026-10-16：码率解析——纯数字 bps 是 revelo 实测主路径；单位形态作防御。
+    #[test]
+    fn parse_bit_rate_handles_units() {
+        assert_eq!(parse_bit_rate("295377573"), Some(295377573));
+        assert_eq!(parse_bit_rate(" 4523 "), Some(4523));
+        assert_eq!(parse_bit_rate("4523 kb/s"), Some(4523000));
+        assert_eq!(parse_bit_rate("5.5 Mb/s"), Some(5500000));
+        assert_eq!(parse_bit_rate(""), None);
+        assert_eq!(parse_bit_rate("abc"), None);
+    }
+
     /// 视频 P1 实测（设计方案 §10.5）：读取本仓 `log/` 下的 4 个手机拍摄样本，
     /// 打印 duration / width / height / fps / rotation。样本不存在时优雅跳过。
     ///
@@ -210,8 +274,8 @@ mod tests {
             }
             match read_video_metadata(path) {
                 Some(vm) => println!(
-                    "=> {} : {}x{} duration_ms={:?} fps={:?} rotation={:?}",
-                    s, vm.width, vm.height, vm.duration_ms, vm.frame_rate, vm.rotation
+                    "=> {} : {}x{} duration_ms={:?} fps={:?} rotation={:?} codec={:?} bit_rate={:?}",
+                    s, vm.width, vm.height, vm.duration_ms, vm.frame_rate, vm.rotation, vm.video_codec, vm.bit_rate
                 ),
                 None => println!("=> {} : 解析失败（None）", s),
             }

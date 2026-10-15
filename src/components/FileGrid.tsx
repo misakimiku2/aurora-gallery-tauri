@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic, SortOption, SortDirection } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
-import { formatVideoDuration, isVideoFile } from '../utils/mediaExtensions';
+import { isVideoFile } from '../utils/mediaExtensions';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
@@ -787,10 +787,10 @@ const FileCard = React.memo(({
                 <MarqueeText active={isSelected} title={file.name}>{file.name}</MarqueeText>
                 {(file.type === FileType.IMAGE || file.type === FileType.VIDEO) && (
                 <div className={`text-[9px] font-normal truncate mt-0.5 ${isSelected ? 'text-white/90' : 'text-gray-400 dark:text-gray-500'}`}>
-                  {/* 视频 P1（UI 设计 §5.2）：卡片名下显示时长而非分辨率（分辨率已在右侧面板） */}
-                  {file.type === FileType.VIDEO
-                    ? formatVideoDuration(file.meta?.durationMs)
-                    : (file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : '')}
+                  {/* 2026-10-16（指挥官）：视频与图片统一显示「尺寸」。时长的展示位在缩略图
+                      右下角已有角标，名下再显示时长属重复（推翻 P1 时 §5.2 的旧决策）。
+                      口径与图片/面板「分辨率」一致：编码尺寸（meta.width/height，不按 rotation 交换）。 */}
+                  {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
                 </div>
                 )}
             </div>

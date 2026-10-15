@@ -23,6 +23,13 @@ pub struct FileIndexEntry {
     pub frame_rate: Option<f64>,
     #[serde(default)]
     pub rotation: Option<i64>,
+    // Video specific（2026-10-16 补，设计方案 §6「码率/编码」）：图片行一律 None。
+    /// 视频编码（如 `AVC` / `HEVC`；Video 流 Format，非容器）。
+    #[serde(default)]
+    pub video_codec: Option<String>,
+    /// 总码率（bps）。
+    #[serde(default)]
+    pub bit_rate: Option<i64>,
 }
 
 pub fn create_table(conn: &Connection) -> Result<()> {
@@ -81,6 +88,10 @@ pub fn create_table(conn: &Connection) -> Result<()> {
     let _ = conn.execute("ALTER TABLE file_index ADD COLUMN duration_ms INTEGER", []);
     let _ = conn.execute("ALTER TABLE file_index ADD COLUMN frame_rate REAL", []);
     let _ = conn.execute("ALTER TABLE file_index ADD COLUMN rotation INTEGER", []);
+    // 视频信息块补列（2026-10-16）：编码（AVC/HEVC…）与总码率（bps）。
+    // 配合 SCANNER_CAPABILITY 2→3：旧库升级后自动全扫一次回填这两列。
+    let _ = conn.execute("ALTER TABLE file_index ADD COLUMN video_codec TEXT", []);
+    let _ = conn.execute("ALTER TABLE file_index ADD COLUMN bit_rate INTEGER", []);
 
     Ok(())
 }
@@ -93,8 +104,8 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
             "INSERT INTO file_index (
                 file_id, parent_id, path, name, file_type, size, 
                 created_at, modified_at, width, height, format,
-                duration_ms, frame_rate, rotation
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                duration_ms, frame_rate, rotation, video_codec, bit_rate
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(file_id) DO UPDATE SET
                 parent_id = excluded.parent_id,
                 path = excluded.path,
@@ -108,7 +119,9 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
                 format = excluded.format,
                 duration_ms = excluded.duration_ms,
                 frame_rate = excluded.frame_rate,
-                rotation = excluded.rotation"
+                rotation = excluded.rotation,
+                video_codec = excluded.video_codec,
+                bit_rate = excluded.bit_rate"
         )?;
 
         for entry in entries {
@@ -126,7 +139,9 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
                 entry.format,
                 entry.duration_ms,
                 entry.frame_rate,
-                entry.rotation
+                entry.rotation,
+                entry.video_codec,
+                entry.bit_rate
             ])?;
         }
     }
@@ -137,7 +152,7 @@ pub fn batch_upsert(conn: &mut Connection, entries: &[FileIndexEntry]) -> Result
 
 pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<FileIndexEntry>> {
     let pattern = format!("{}%", root_path);
-    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE path LIKE ?1")?;
+    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate FROM file_index WHERE path LIKE ?1")?;
     let rows = stmt.query_map(params![pattern], |row| {
         Ok(FileIndexEntry {
             file_id: row.get(0)?,
@@ -154,6 +169,8 @@ pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
 
@@ -165,7 +182,7 @@ pub fn get_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<
 }
 
 pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
-    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index")?;
+    let mut stmt = conn.prepare("SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate FROM file_index")?;
     let rows = stmt.query_map([], |row| {
         Ok(FileIndexEntry {
             file_id: row.get(0)?,
@@ -182,6 +199,8 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
 
@@ -222,6 +241,8 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
 
@@ -273,6 +294,8 @@ pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileI
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
     let mut by_id: HashMap<String, FileIndexEntry> = HashMap::new();
@@ -325,6 +348,8 @@ pub fn get_minimal_entries_under_path(conn: &Connection, root_path: &str) -> Res
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         })
     })?;
 
@@ -390,6 +415,8 @@ mod reconcile_tests {
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         }
     }
 
@@ -672,6 +699,8 @@ mod bench_tests {
                 duration_ms: None,
                 frame_rate: None,
                 rotation: None,
+                video_codec: None,
+                bit_rate: None,
             });
         }
 
@@ -945,9 +974,9 @@ pub fn search_by_name(conn: &Connection, query: &str, scope: &str) -> Result<Vec
     
     let sql = match scope {
         // 视频 P1：文件搜索放开到 Video（列表类口径）。
-        "file" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1 AND file_type IN ('Image', 'Video')",
-        "folder" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Folder'",
-        _ => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation FROM file_index WHERE lower(name) LIKE ?1",
+        "file" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate FROM file_index WHERE lower(name) LIKE ?1 AND file_type IN ('Image', 'Video')",
+        "folder" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Folder'",
+        _ => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate FROM file_index WHERE lower(name) LIKE ?1",
     };
     
     let mut stmt = conn.prepare(sql)?;
@@ -967,6 +996,8 @@ pub fn search_by_name(conn: &Connection, query: &str, scope: &str) -> Result<Vec
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
 
@@ -1001,6 +1032,8 @@ pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Resu
             duration_ms: row.get(11)?,
             frame_rate: row.get(12)?,
             rotation: row.get(13)?,
+            video_codec: row.get(14)?,
+            bit_rate: row.get(15)?,
         })
     })?;
 
@@ -1183,6 +1216,8 @@ mod folder_info_batch_tests {
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         }
     }
 
@@ -1202,6 +1237,8 @@ mod folder_info_batch_tests {
             duration_ms: None,
             frame_rate: None,
             rotation: None,
+            video_codec: None,
+            bit_rate: None,
         }
     }
 
