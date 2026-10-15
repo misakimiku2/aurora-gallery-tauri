@@ -2917,6 +2917,8 @@ export const App: React.FC = () => {
           onPerformSearch={onPerformSearch}
           handlePerformSearch={handlePerformSearch}
           toggleColorPicker={toggleColorPicker}
+          // 2026-10-16（UI 设计 §6）：右侧面板大预览的播放按钮 → 打开查看器播放视频
+          onOpenFile={(fileId: string) => updateActiveTab({ viewingFileId: fileId })}
         />
         </div>
         <TaskProgressModal

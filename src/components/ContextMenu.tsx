@@ -4,11 +4,12 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
 import { isAndroidSync } from '../utils/androidPlatform';
+import { openPath } from '../api/tauri-bridge/files';
 
 interface ContextMenuProps {
   contextMenu: {
@@ -494,6 +495,22 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         }}><XCircle size={iconSize} className="mr-2 opacity-70" /> {t('context.clearPersonInfo')}</div></>)}
         {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && (<div className={pinkItemClass} style={menuItemStyle} onClick={() => { const targetIds = activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : (contextMenu.targetId ? [contextMenu.targetId] : []); setModal('add-to-topic', { fileIds: targetIds }); closeContextMenu(); }}><Layout size={iconSize} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>)}
         {contextMenu.type === 'file-single' && contextMenu.targetId && (<>
+          {/* 2026-10-16：视频 → 用系统播放器打开（P2 兜底：编码不受支持 / 转封装失败时
+              用户总有一条能真正看到视频的路；桌面端限定，安卓用系统 Intent 另论） */}
+          {!isAndroidDevice && (() => {
+            const target = files[contextMenu.targetId!];
+            const isVideo = !!target && target.type === FileType.VIDEO;
+            if (!isVideo) return null;
+            return (
+              <div className={menuItemClass} style={menuItemStyle} onClick={() => {
+                if (target?.path) openPath(target.path, true).catch(() => {});
+                closeContextMenu();
+              }}>
+                <Play size={iconSize} className="mr-2 opacity-70" />
+                {t('context.openExternalPlayer') || '用系统播放器打开'}
+              </div>
+            );
+          })()}
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { setModal('edit-tags', { fileId: contextMenu.targetId! }); closeContextMenu(); }}>
             <Tag size={iconSize} className="mr-2 opacity-70" />
             {t('context.editTags')}

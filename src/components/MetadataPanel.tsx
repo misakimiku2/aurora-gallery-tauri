@@ -19,11 +19,14 @@ import PaletteSection from './metadata/PaletteSection';
 import FolderInfoSection from './metadata/FolderInfoSection';
 import AIAnalysisSection from './metadata/AIAnalysisSection';
 import EditSection from './metadata/EditSection';
-import { findImagesDeeply } from '../utils/fileTree';
+// 2026-10-16：改用 folderCoverImages 的唯一实现（支持视频候选 + 排序 + 缓存），
+// 与文件夹封面（FolderThumbnail）同源，避免两份 findImagesDeeply 行为分叉。
+import { findImagesDeeply } from '../utils/folderCoverImages';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { getSourceUrls, appendSourceUrl, removeSourceUrl, replaceSourceUrl, toSourceUrlFields } from '../utils/sourceUrls';
 import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
 import { formatVideoDuration, isVideoFile } from '../utils/mediaExtensions';
+import { isAndroidSync } from '../utils/androidPlatform';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
@@ -54,13 +57,18 @@ interface MetadataProps {
     filesVersion?: number;
     settings?: AppSettings;
     aiConnectionStatus?: AppState['aiConnectionStatus'];
+    /**
+     * 2026-10-16（UI 设计 §6）：大预览的播放按钮 → 跳查看器播放。
+     * 由上层注入（App 侧 `updateActiveTab({ viewingFileId })`），面板自身不持有导航状态。
+     */
+    onOpenFile?: (fileId: string) => void;
 }
 
 
 
 
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus, onOpenFile }) => {
     const isMulti = selectedFileIds.length > 1;
     const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
 
@@ -540,15 +548,30 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             return;
         }
 
-        // 1. 深度查找文件夹内的图�?
-        const imageChildren = findImagesDeeply(file, files, 3);
+        // 1. 深度查找文件夹内的**候选文件**（2026-10-16：桌面端候选含视频，与文件夹
+        //    封面同权 —— 此前只取 IMAGE，导致纯视频文件夹的预览条永远空着）。
+        //    复用 folderCoverImages 的唯一实现（含排序/缓存/视频开关），安卓端保持仅图片。
+        const imageChildren = findImagesDeeply(
+            file,
+            (id: string) => files[id],
+            3,
+            undefined,
+            undefined,
+            !isAndroidSync(),
+        );
 
         // 2. 检查全局缓存中是否已有缩略图
         const cache = getGlobalCache();
         if (cache) {
             // 尝试映射所有子文件到缓存中�?URL
             const cachedUrls = imageChildren.map((child: FileNode) => {
-                return cache.get(child.path) || null;
+                const url = cache.get(child.path);
+                // 防污染：缓存里绝不允许是视频自身的 asset:// 地址（记忆 §2.1）
+                if (url && isVideoFile(child.path, child.meta?.format) && url === convertFileSrc(child.path)) {
+                    cache.delete(child.path);
+                    return null;
+                }
+                return url || null;
             });
 
             // 过滤�?null �?
@@ -564,18 +587,28 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         if (imageChildren.length > 0) {
             const loadPreviews = async () => {
                 try {
-                    const { getThumbnail } = await import('../api/tauri-bridge');
+                    const { getThumbnail, getVideoCover } = await import('../api/tauri-bridge');
 
-                    // 并行请求所有子文件的缩略图
+                    // 并行请求所有子文件的缩略图（视频走抽帧封面链路，不能走 getThumbnail）
                     const promises = imageChildren.map(async (img: FileNode) => {
                         // 先查缓存，如果有就不请求�?
                         const cache = getGlobalCache();
                         if (cache) {
                             const cached = cache.get(img.path);
-                            if (cached) return cached;
+                            // 防污染（记忆 §2.1）：视频缓存值若是视频自身 asset:// 地址则剔除
+                            if (cached) {
+                                if (isVideoFile(img.path, img.meta?.format) && cached === convertFileSrc(img.path)) {
+                                    cache.delete(img.path);
+                                } else {
+                                    return cached;
+                                }
+                            }
                         }
 
-                        // 请求新图
+                        // 请求新图：视频 → 抽帧封面；图片 → 缩略图
+                        if (isVideoFile(img.path, img.meta?.format)) {
+                            return await getVideoCover(img.path, resourceRoot);
+                        }
                         const url = await getThumbnail(img.path, img.updatedAt, resourceRoot);
                         return url;
                     });
@@ -1543,7 +1576,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* Large Preview Image (Single Image Only) */}
                 {/* 视频播放UI设计 §6：大预览对视频放开（非文件夹即可），显示的是抽帧封面（P1.5） */}
                 {!isMulti && file && file.type !== FileType.FOLDER && (
-                    <ImagePreview file={file} resourceRoot={resourceRoot} cachePath={cachePath} t={t} />
+                    <ImagePreview
+                        file={file}
+                        resourceRoot={resourceRoot}
+                        cachePath={cachePath}
+                        t={t}
+                        onPlay={onOpenFile ? (id) => onOpenFile(id) : undefined}
+                    />
                 )}
 
                 {/* Color Palette (8 Card Grid) */}
