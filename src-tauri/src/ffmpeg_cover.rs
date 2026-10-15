@@ -431,9 +431,42 @@ pub fn extract_with_ffmpeg(
     //    两端 duration 来源不同（前端=解码器、这里=容器元数据），候选点可能有毫秒级
     //    差异——打分对照用例保证的是「同一像素输入 → 同一分值」。
     let candidates = seek_candidates(duration);
+    log::info!(
+        "[ffmpeg_cover] extract 开始: dur={:.2}s size={} 候选={:?} - {}",
+        duration,
+        file_size,
+        candidates.iter().map(|t| format!("{:.2}", t)).collect::<Vec<_>>(),
+        file_path
+    );
+    let extract_started = Instant::now();
+    let select_started = Instant::now();
     let pick = match run_multi_frame_pick(ffmpeg, file_path, &candidates, w, h, timeout) {
-        Some(p) => Some(p),
-        None => pick_by_sequential_seek(ffmpeg, file_path, &candidates, w, h, timeout),
+        Some(p) => {
+            log::info!(
+                "[ffmpeg_cover] select 模式 {:.2?} 取帧序号 {} (luma={:.1}) - {}",
+                select_started.elapsed(),
+                p.frame_no,
+                p.luma,
+                file_path
+            );
+            Some(p)
+        }
+        None => {
+            log::info!(
+                "[ffmpeg_cover] select 模式无产出 {:.2?}，回退逐 seek - {}",
+                select_started.elapsed(),
+                file_path
+            );
+            let seq_started = Instant::now();
+            let r = pick_by_sequential_seek(ffmpeg, file_path, &candidates, w, h, timeout);
+            log::info!(
+                "[ffmpeg_cover] 逐 seek 模式 {:.2?} 取帧序号 {:?} - {}",
+                seq_started.elapsed(),
+                r.as_ref().map(|p| p.frame_no),
+                file_path
+            );
+            r
+        }
     };
     let pick = pick?;
     let seek = candidates
@@ -441,8 +474,6 @@ pub fn extract_with_ffmpeg(
         .copied()
         .unwrap_or(candidates[candidates.len() - 1]);
     let best_jpeg = pick.jpeg;
-    let _ = pick.score;
-    let _ = pick.luma;
 
     // 6) 写缓存（只写封面 JPEG）+ 主色（与图片主色同源）。
     if !cache_root.exists() {
@@ -451,6 +482,13 @@ pub fn extract_with_ffmpeg(
     std::fs::write(&jpg_path, &best_jpeg).ok()?;
     let img = image::load_from_memory(&best_jpeg).ok()?;
     let colors = crate::color_extractor::get_dominant_colors(&img, 8);
+
+    log::info!(
+        "[ffmpeg_cover] extract 完成（含写盘/主色）总耗时 {:.2?} seek={:.2}s - {}",
+        extract_started.elapsed(),
+        seek,
+        file_path
+    );
 
     Some(CoverExtractResult {
         cover_path: jpg_path.to_str()?.to_string(),
@@ -490,6 +528,7 @@ fn run_multi_frame_pick(
         expr.push_str(&format!("between(t,{:.3},{:.3})", (t - 0.05).max(0.0), t + 0.05));
     }
     let vf = format!("select='{}',scale={}:{}", expr, w, h);
+    let vf_len = vf.len();
 
     let mut cmd = FfmpegCommand::new_with_path(ffmpeg);
     cmd.args(["-y", "-loglevel", "error"])
@@ -500,8 +539,15 @@ fn run_multi_frame_pick(
         .args(["-fps_mode", "passthrough", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-"]);
     // stdin 置 null + 原生 spawn：同 run_single_frame 的 os error 231 规避注释
     cmd.as_inner_mut().stdin(std::process::Stdio::null());
+    let spawn_started = Instant::now();
     let mut child: std::process::Child = cmd.as_inner_mut().spawn().ok()?;
     let stdout = child.stdout.take()?;
+    log::info!(
+        "[ffmpeg_cover] multi-frame spawn {:.2?} vf.len={} - {}",
+        spawn_started.elapsed(),
+        vf_len,
+        input
+    );
 
     // 读线程：按块读 stdout，增量切分连续 JPEG 流（FFD8..FFD9），经 channel 发主线程。
     // 不提前丢弃已收字节（流总量 ≈ 候选数 × ~40KB，内存无谓）——切分逻辑保持简单正确。
@@ -551,11 +597,17 @@ fn run_multi_frame_pick(
 
     // 主线程：收帧打分，亮度达标即 kill（后续候选不再解码 = 早退语义）
     let deadline = Instant::now() + timeout;
+    let loop_started = Instant::now();
     let mut best: Option<FramePick> = None;
     let mut frame_no = 0usize;
     let mut done = false;
     while !done {
         if Instant::now() >= deadline {
+            log::info!(
+                "[ffmpeg_cover] multi-frame 超时 kill，已收 {} 帧 - {}",
+                frame_no,
+                input
+            );
             let _ = child.kill();
             let _ = child.wait();
             break;
@@ -564,6 +616,13 @@ fn run_multi_frame_pick(
             // 进程已退出：排干 channel 剩余帧后收工
             while let Ok(jpeg) = rx.try_recv() {
                 if let Some((luma, score)) = score_jpeg(&jpeg) {
+                    log::info!(
+                        "[ffmpeg_cover] 收帧 #{} luma={:.1} score={:.1} - {}",
+                        frame_no,
+                        luma,
+                        score,
+                        input
+                    );
                     if best.as_ref().map_or(true, |b| score > b.score) {
                         best = Some(FramePick { jpeg, score, luma, frame_no });
                     }
@@ -575,6 +634,14 @@ fn run_multi_frame_pick(
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(jpeg) => {
                 if let Some((luma, score)) = score_jpeg(&jpeg) {
+                    log::info!(
+                        "[ffmpeg_cover] 收帧 #{} luma={:.1} score={:.1} 累计{:.2?} - {}",
+                        frame_no,
+                        luma,
+                        score,
+                        loop_started.elapsed(),
+                        input
+                    );
                     if best.as_ref().map_or(true, |b| score > b.score) {
                         best = Some(FramePick { jpeg, score, luma, frame_no });
                     }
@@ -583,6 +650,12 @@ fn run_multi_frame_pick(
                         let _ = child.kill();
                         let _ = child.wait();
                         done = true;
+                        log::info!(
+                            "[ffmpeg_cover] 亮度早退（luma≥{}）kill 进程，已收 {} 帧 - {}",
+                            GOOD_LUMA as u32,
+                            frame_no + 1,
+                            input
+                        );
                     }
                 }
                 frame_no += 1;
@@ -604,6 +677,14 @@ fn run_multi_frame_pick(
     if !done {
         let _ = child.wait(); // 非 kill 路径收尸，防僵尸
     }
+    log::info!(
+        "[ffmpeg_cover] multi-frame 结束: 共收 {} 帧 pick={:?} 早退={} 总耗时 {:.2?} - {}",
+        frame_no,
+        best.as_ref().map(|b| b.frame_no),
+        done,
+        loop_started.elapsed(),
+        input
+    );
     best
 }
 
@@ -623,9 +704,19 @@ fn pick_by_sequential_seek(
         if started.elapsed() > timeout {
             break;
         }
-        let remaining = timeout.saturating_sub(started.elapsed());
-        let jpeg = run_single_frame(ffmpeg, input, target, w, h, remaining)?;
+        let cand_started = Instant::now();
+        let jpeg = run_single_frame(ffmpeg, input, target, w, h, timeout.saturating_sub(started.elapsed()))?;
+        let cand_elapsed = cand_started.elapsed();
         let (luma, score) = score_jpeg(&jpeg)?;
+        log::info!(
+            "[ffmpeg_cover] 逐 seek #{}/{} t={:.2}s {:.2?} luma={:.1} - {}",
+            idx + 1,
+            candidates.len(),
+            target,
+            cand_elapsed,
+            luma,
+            input
+        );
         if best.as_ref().map_or(true, |b| score > b.score) {
             best = Some(FramePick { jpeg, score, luma, frame_no: idx });
         }
@@ -633,6 +724,11 @@ fn pick_by_sequential_seek(
             break;
         }
     }
+    log::info!(
+        "[ffmpeg_cover] 逐 seek 结束: 总耗时 {:.2?} - {}",
+        started.elapsed(),
+        input
+    );
     best
 }
 

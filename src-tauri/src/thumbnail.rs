@@ -403,6 +403,7 @@ fn video_cover_worker_sender() -> &'static crossbeam_channel::Sender<VideoCoverJ
 fn process_video_cover_job(job: VideoCoverJob) {
     let VideoCoverJob { path, cache_root, app, on_event } = job;
     let root = Path::new(&cache_root);
+    let started = std::time::Instant::now();
     let send = |url: Option<String>,
                 colors: Option<Vec<color_extractor::ColorResult>>,
                 from_cache: bool| {
@@ -415,15 +416,36 @@ fn process_video_cover_job(job: VideoCoverJob) {
     };
 
     match find_existing_video_cover(&path, root) {
-        Some(url) => send(Some(url), None, true),
+        Some(url) => {
+            log::info!(
+                "[video-cover] 缓存命中 {:.2?} - {}",
+                started.elapsed(),
+                path
+            );
+            send(Some(url), None, true)
+        }
         None => {
+            log::info!("[video-cover] 未命中，开始抽帧 - {}", path);
             #[cfg(not(target_os = "android"))]
             match generate_video_cover_with_colors(&path, root) {
                 Some((url, colors)) => {
+                    log::info!(
+                        "[video-cover] 抽帧完成 {:.2?} seek={} - {}",
+                        started.elapsed(),
+                        url,
+                        path
+                    );
                     persist_video_cover_colors(&app, &path, &colors);
                     send(Some(url), Some(colors), false);
                 }
-                None => send(None, None, false),
+                None => {
+                    log::info!(
+                        "[video-cover] 抽帧失败 {:.2?} - {}",
+                        started.elapsed(),
+                        path
+                    );
+                    send(None, None, false)
+                }
             }
             #[cfg(target_os = "android")]
             send(None, None, false);
