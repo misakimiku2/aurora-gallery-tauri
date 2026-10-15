@@ -12,7 +12,7 @@ import {
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette, Clipboard,
-  Scan
+  Scan, AlertTriangle
 } from 'lucide-react';
 
 
@@ -542,6 +542,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // waiting↔canplay；直连 boolean 会让遮罩反复挂载、animate-spin 每次从 0° 重播（闪烁）。
   // 故同样采用「延迟显示 + 最短展示」吸收抖动。图片模式不涉及，行为保持不变。
   const [isVideoBuffering, setIsVideoBuffering] = useState(false);
+  // 播放失败态（2026-10-15）：MKV/AVI 等 Web 不解容器点开此前是「黑屏无提示」——
+  // onError 时显示降级提示卡（SRC_NOT_SUPPORTED(4) →「格式不支持」；其余 →「加载失败」）。
+  const [videoErrorCode, setVideoErrorCode] = useState<number | null>(null);
+  useEffect(() => { setVideoErrorCode(null); }, [file.id]);
   // 拖拽进度条中（尚未 seek，§3）：由 VideoControls 回调同步，期间不显示中央遮罩
   const [isVideoScrubbing, setIsVideoScrubbing] = useState(false);
   const isVideoScrubbingRef = useRef(false);
@@ -2006,6 +2010,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               playsInline
               preload="metadata"
               draggable={false}
+              onError={(e) => {
+                // 2026-10-15：MKV/AVI 等容器 WebView 解不了 → 显示降级提示而非黑屏
+                setVideoErrorCode(e.currentTarget.error?.code ?? 0);
+              }}
             />
           )}
 
@@ -2097,11 +2105,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         </div>
 
         {/* 视频缓冲/seek 等待遮罩：1MB 分片上限使大文件 seek 有等待，必须给反馈（§3）；
-            拖拽进度条中（未 seek）不显示，避免拖拽期闪烁 */}
-        {isVideo && isVideoBuffering && !isVideoScrubbing && (
+            拖拽进度条中（未 seek）不显示，避免拖拽期闪烁；加载失败时不显示（改出错误卡） */}
+        {isVideo && isVideoBuffering && !isVideoScrubbing && videoErrorCode === null && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
             <div className="p-3 rounded-full bg-black/40">
               <Loader2 className="animate-spin text-white/90" size={36} />
+            </div>
+          </div>
+        )}
+
+        {/* 播放失败提示（2026-10-15）：MKV/AVI 等 8 种容器 Web 解不了（P2 remux 未做）
+            ——此前黑屏无提示。SRC_NOT_SUPPORTED(4) 与其余错误分开文案。 */}
+        {isVideo && videoErrorCode !== null && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
+            <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4">
+              <AlertTriangle size={28} className="mb-2 text-amber-400" />
+              <div className="text-sm font-medium">
+                {videoErrorCode === 4 ? t('video.cannotPlay') : t('video.cannotPlayFailed')}
+              </div>
+              <div className="text-xs text-white/70 mt-1">
+                {videoErrorCode === 4 ? t('video.cannotPlayHint') : t('video.cannotPlayFailedHint')}
+              </div>
             </div>
           </div>
         )}

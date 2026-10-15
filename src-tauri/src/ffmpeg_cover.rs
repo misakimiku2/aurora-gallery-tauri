@@ -425,6 +425,45 @@ fn probe_duration_via_ffmpeg(ffmpeg: &Path, input: &str) -> Option<f64> {
     parse_ffmpeg_duration_line(&text)
 }
 
+/// 时长健全性判定（扫描入库 / 抽帧共用）：`<1s 且 >1MB` —— revelo 误报的典型形态
+/// （正常 <1s 视频极少 >1MB；实测 AVI+AVC 误报 71ms / 112MB）。
+pub fn is_suspicious_duration(duration_ms: i64, file_size: u64) -> bool {
+    (duration_ms as f64) < SUSPICIOUS_DURATION_SECS * 1000.0 && file_size > SUSPICIOUS_SIZE_BYTES
+}
+
+/// 扫描入库用的时长健全性修正（2026-10-15）：
+/// revelo 对 AVI+AVC 等非标准封装误报（实测 duration≈71ms，真实 10.8s）——
+/// **入库前**复核，否则 UI 时长显示 00:00 且永不纠正（扫描路径此前无兜底，
+/// 抽帧路径的兜底只保证封面对位置）。可疑时用 `ffmpeg -i` 复核时长；
+/// 无 ffmpeg / 复核失败 → 原值返回（不劣化）。
+///
+/// 注：**帧率不做复核**——ffmpeg 的 `fps` / `tbr` 字段对畸形容器同样不可靠
+/// （实测 AVI 头声明 600fps 且 600tbr，真实约 60；同源 mp4 的 fps/tbr 也互相打架），
+/// 拿真实帧率需要数帧，成本与收益不成比例。
+pub fn sane_video_duration_ms(
+    file_path: &str,
+    file_size: u64,
+    duration_ms: Option<i64>,
+) -> Option<i64> {
+    let Some(ms) = duration_ms else { return duration_ms };
+    if !is_suspicious_duration(ms, file_size) {
+        return duration_ms;
+    }
+    let Some((ffmpeg, _)) = locate() else { return duration_ms };
+    let fixed = probe_duration_via_ffmpeg(&ffmpeg, file_path)
+        .map(|d| (d * 1000.0).round() as i64)
+        .unwrap_or(ms);
+    if fixed != ms {
+        log::info!(
+            "[ffmpeg_cover] scanner 时长可疑（{}ms），ffmpeg 复核: {}ms - {}",
+            ms,
+            fixed,
+            file_path
+        );
+    }
+    Some(fixed)
+}
+
 /// 体积感知超时（与前端 `timeoutFor` 同款）：基础 20s + 每 100MB +1s，封顶 120s。
 fn timeout_for(size_bytes: u64) -> Duration {
     Duration::from_millis(
@@ -958,6 +997,40 @@ mod tests {
         // 无 Duration 行 / 零时长 → None
         assert!(parse_ffmpeg_duration_line("nothing here").is_none());
         assert!(parse_ffmpeg_duration_line("Duration: 00:00:00.00").is_none());
+    }
+
+    #[test]
+    fn suspicious_duration_detection() {
+        // AVI 误报形态（71ms + 112MB）→ 可疑
+        assert!(is_suspicious_duration(71, 117_909_383));
+        // duration=0（读不到）也触发复核
+        assert!(is_suspicious_duration(0, 117_909_383));
+        // 正常时长 → 不可疑
+        assert!(!is_suspicious_duration(10_830, 117_909_383));
+        // <1s 但 <1MB（可能真实短片）→ 不可疑
+        assert!(!is_suspicious_duration(500, 500_000));
+    }
+
+    /// 2026-10-15：AVI+AVC 时长误报的**入库前**修正（sane_video_duration_ms）。
+    /// 传 revelo 实测误报值（71ms），应被 ffmpeg 复核为 ~10830ms；正常值不被改动。
+    #[test]
+    fn sane_video_duration_ms_fixes_avi_misreport() {
+        if locate().is_none() {
+            eprintln!("[skip] 本机无 ffmpeg，跳过");
+            return;
+        }
+        let avi = "../log/GameEX-A.avi";
+        if !Path::new(avi).exists() {
+            eprintln!("[skip] 样本不存在: {}", avi);
+            return;
+        }
+        let size = std::fs::metadata(avi).map(|m| m.len()).unwrap_or(0);
+        let d = sane_video_duration_ms(avi, size, Some(71));
+        println!("sane_video_duration_ms => {:?}", d);
+        let d = d.expect("时长应被修正（非 None）");
+        assert!(d >= 10_000 && d <= 11_000, "AVI 时长应修正到 ~10830ms，实际 {}", d);
+        // 正常值不可疑 → 原样返回（不触发复核）
+        assert_eq!(sane_video_duration_ms(avi, size, Some(10_830)), Some(10_830));
     }
 
     // ── S5：安装信息契约（字段名与前端 ffmpeg.ts / GeneralPanel 对齐）─────────

@@ -1,5 +1,6 @@
 use crate::db::{self, generate_id, normalize_path, AppDbPool};
 use crate::file_types::{FileType, FileNode, ImageMeta, ScanProgress, is_supported_image, is_supported_video};
+use crate::ffmpeg_cover::{is_suspicious_duration, sane_video_duration_ms};
 use crate::video_metadata::read_video_metadata;
 use crate::image_utils::get_image_dimensions;
 use rayon::prelude::*;
@@ -474,11 +475,24 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                     let mut frame_rate = None;
                     let mut rotation = None;
                     if is_video {
-                        if !has_cached_dims || force {
+                        // 缓存自愈（2026-10-15）：缓存里的 duration 可疑（<1s 且 >1MB —— revelo
+                        // 对 AVI+AVC 的误报形态，实测 71ms/112MB）时，即使缓存命中也要重读复核，
+                        // 否则误报值永远赖在库里（UI 时长显示 00:00）。
+                        let cached_duration_suspicious = cached_duration_ms
+                            .map(|ms| is_suspicious_duration(ms, metadata.len()))
+                            .unwrap_or(false);
+                        if !has_cached_dims || force || cached_duration_suspicious {
                             if let Some(vm) = read_video_metadata(&entry_path) {
+                                // 入库前时长健全性修正：revelo 对 AVI+AVC 误报（实测 71ms）
+                                // 用 `ffmpeg -i` 复核（无 ffmpeg 时原值返回，不劣化）；
+                                // 帧率不修正（ffmpeg fps/tbr 对畸形容器同样不可靠，见函数注释）
                                 width = vm.width;
                                 height = vm.height;
-                                duration_ms = vm.duration_ms;
+                                duration_ms = sane_video_duration_ms(
+                                    &full_path,
+                                    metadata.len(),
+                                    vm.duration_ms,
+                                );
                                 frame_rate = vm.frame_rate;
                                 rotation = vm.rotation;
                             }

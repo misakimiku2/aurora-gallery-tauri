@@ -420,6 +420,11 @@ export const translations = {
       frameCopyFailed: '复制当前帧失败',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: '抽帧封面生成后显示',
+      // 2026-10-15：播放失败降级提示（MKV/AVI 等 Web 不解容器此前黑屏无提示）
+      cannotPlay: '此格式暂不支持播放',
+      cannotPlayHint: 'MKV / AVI 等容器将在后续版本支持（可返回网格查看封面）',
+      cannotPlayFailed: '视频加载失败',
+      cannotPlayFailedHint: '文件可能已损坏或无法访问',
     },
     viewer: {
       toggleSidebar: '切换侧边栏',
@@ -1647,6 +1652,10 @@ export const translations = {
       frameCopyFailed: 'Failed to copy current frame',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: 'Cover appears after frame extraction',
+      cannotPlay: 'Playback is not supported for this format',
+      cannotPlayHint: 'MKV / AVI containers are planned for a future version (cover is still available in the grid)',
+      cannotPlayFailed: 'Failed to load video',
+      cannotPlayFailedHint: 'The file may be corrupted or inaccessible',
     },
     viewer: {
       toggleSidebar: 'Toggle Sidebar',
