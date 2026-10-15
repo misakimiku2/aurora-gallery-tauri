@@ -380,20 +380,29 @@ struct VideoCoverJob {
     on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
 }
 
-/// 单例 worker（进程级，lazily 启动）：从队列顺序取任务处理。
-/// fire-and-forget：批量命令把任务入队即返回（Channel 结果异步送达前端），
-/// 不阻塞 rayon / invoke。
+/// 单例 worker 池（进程级，lazily 启动）：**2 个消费者线程**共享同一队列，
+/// 处理时持锁只发生在「取任务」瞬间（recv 阻塞持锁 = 空闲等待，任务到达即放锁），
+/// 处理并行——天然负载均衡。并发 2 与 `acquire_video_cover` 信号量口径一致：
+/// 图片缩略图（rayon）已与视频完全隔离，这里适度并行消化暗片批次
+///（暗片上限 ~1.8s/张，2 并发把一屏视频的总时长减半）。
 fn video_cover_worker_sender() -> &'static crossbeam_channel::Sender<VideoCoverJob> {
     static SENDER: once_cell::sync::Lazy<crossbeam_channel::Sender<VideoCoverJob>> =
         once_cell::sync::Lazy::new(|| {
             let (tx, rx) = crossbeam_channel::unbounded::<VideoCoverJob>();
-            let _ = std::thread::Builder::new()
-                .name("video-cover-worker".into())
-                .spawn(move || {
-                    while let Ok(job) = rx.recv() {
-                        process_video_cover_job(job);
-                    }
-                });
+            let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
+            for worker_id in 0..2 {
+                let rx = std::sync::Arc::clone(&rx);
+                let _ = std::thread::Builder::new()
+                    .name(format!("video-cover-worker-{}", worker_id))
+                    .spawn(move || loop {
+                        // recv 阻塞在锁内：空闲期只有一个线程在等任务，处理期不持锁
+                        let job = rx.lock().expect("video-cover worker mutex poisoned").recv();
+                        match job {
+                            Ok(job) => process_video_cover_job(job),
+                            Err(_) => break, // 发送端全部关闭（进程退出）
+                        }
+                    });
+            }
             tx
         });
     &SENDER

@@ -425,49 +425,21 @@ pub fn extract_with_ffmpeg(
     // 4) 所有候选共享同一体积感知超时预算（与前端一致）。
     let timeout = timeout_for(file_meta.len());
 
-    // 5) 抽帧打分：优先 **select 模式**（一次 spawn 输出全部候选，流式亮度早退）——
-    //    逐候选模式在 Windows 上每次 spawn 冷启动 ~100-200ms，暗片 6 候选放大成 1s+
-    //    （2026-10-15 指挥官实机反馈「明显变慢」）；select 整体失败才回退逐 seek。
-    //    两端 duration 来源不同（前端=解码器、这里=容器元数据），候选点可能有毫秒级
-    //    差异——打分对照用例保证的是「同一像素输入 → 同一分值」。
+    // 5) 抽帧打分：**逐候选 spawn（输入侧 seek）为主路径**。
+    //    ⚠️ 2026-10-15 实机日志复盘：select 一次-spawn 模式在**暗片/长视频**上灾难性
+    //    退化——找不到 luma≥85 就从 t=0 解码到 85% 位置（Apex 65s 片第一个候选就要
+    //    2.97s；Games 暗片全跑 5.46s），比逐 seek（每候选 ~300ms、上限 ~1.8s）慢得多；
+    //    亮片上逐 seek 也只是略快转略慢（基准 287-345 vs 377-403ms）。select 实现
+    //    保留（bench 对照 + 未来按片长分派的可能），主路径回归逐候选。
     let candidates = seek_candidates(duration);
+    let extract_started = Instant::now();
+    let pick = pick_by_sequential_seek(ffmpeg, file_path, &candidates, w, h, timeout);
     log::info!(
-        "[ffmpeg_cover] extract 开始: dur={:.2}s size={} 候选={:?} - {}",
-        duration,
-        file_size,
-        candidates.iter().map(|t| format!("{:.2}", t)).collect::<Vec<_>>(),
+        "[ffmpeg_cover] 逐 seek 模式 {:.2?} 取帧序号 {:?} - {}",
+        extract_started.elapsed(),
+        pick.as_ref().map(|p| p.frame_no),
         file_path
     );
-    let extract_started = Instant::now();
-    let select_started = Instant::now();
-    let pick = match run_multi_frame_pick(ffmpeg, file_path, &candidates, w, h, timeout) {
-        Some(p) => {
-            log::info!(
-                "[ffmpeg_cover] select 模式 {:.2?} 取帧序号 {} (luma={:.1}) - {}",
-                select_started.elapsed(),
-                p.frame_no,
-                p.luma,
-                file_path
-            );
-            Some(p)
-        }
-        None => {
-            log::info!(
-                "[ffmpeg_cover] select 模式无产出 {:.2?}，回退逐 seek - {}",
-                select_started.elapsed(),
-                file_path
-            );
-            let seq_started = Instant::now();
-            let r = pick_by_sequential_seek(ffmpeg, file_path, &candidates, w, h, timeout);
-            log::info!(
-                "[ffmpeg_cover] 逐 seek 模式 {:.2?} 取帧序号 {:?} - {}",
-                seq_started.elapsed(),
-                r.as_ref().map(|p| p.frame_no),
-                file_path
-            );
-            r
-        }
-    };
     let pick = pick?;
     let seek = candidates
         .get(pick.frame_no)
