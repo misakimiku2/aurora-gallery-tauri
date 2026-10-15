@@ -70,3 +70,6 @@ release-out/
 
 # 本地诊断产物（模拟器截图/取证的数据库副本等，2026-10-08 起）
 aurora_diag_tmp/
+
+# vitest 模块交换目录（vitest.config.ts 把 TEMP 重定向到这里——沙箱适配，2026-10-16）
+.vitest-tmp/
