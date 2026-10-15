@@ -57,18 +57,13 @@ interface MetadataProps {
     filesVersion?: number;
     settings?: AppSettings;
     aiConnectionStatus?: AppState['aiConnectionStatus'];
-    /**
-     * 2026-10-16（UI 设计 §6）：大预览的播放按钮 → 跳查看器播放。
-     * 由上层注入（App 侧 `updateActiveTab({ viewingFileId })`），面板自身不持有导航状态。
-     */
-    onOpenFile?: (fileId: string) => void;
 }
 
 
 
 
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus, onOpenFile }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus }) => {
     const isMulti = selectedFileIds.length > 1;
     const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
 
@@ -1575,13 +1570,17 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 {/* Large Preview Image (Single Image Only) */}
                 {/* 视频播放UI设计 §6：大预览对视频放开（非文件夹即可），显示的是抽帧封面（P1.5） */}
+                {/* 视频大预览：播放按钮在面板内就地播放（2026-10-16），无需上层注入回调 */}
+                {/* 2026-10-16 二：openedInViewer（查看器打开本文件 → 小窗停播退封面、不显示播放按钮）；
+                    viewerVideoOpen（查看器开着视频 → 小窗空格让路，防双触发） */}
                 {!isMulti && file && file.type !== FileType.FOLDER && (
                     <ImagePreview
                         file={file}
                         resourceRoot={resourceRoot}
                         cachePath={cachePath}
                         t={t}
-                        onPlay={onOpenFile ? (id) => onOpenFile(id) : undefined}
+                        openedInViewer={activeTab.viewingFileId === file.id}
+                        viewerVideoOpen={!!(activeTab.viewingFileId && files[activeTab.viewingFileId]?.type === FileType.VIDEO)}
                     />
                 )}
 

@@ -21,8 +21,6 @@ interface RightPanelProps {
   onPerformSearch: (query: string) => void;
   handlePerformSearch: (query: string) => void;
   toggleColorPicker: () => void;
-  /** 2026-10-16（UI 设计 §6）：右侧面板大预览的播放按钮 → 打开查看器播放 */
-  onOpenFile?: (fileId: string) => void;
 }
 
 // 右侧面板：元数据面板（桌面）+ 颜色选择器面板（安卓）
@@ -43,7 +41,6 @@ export const RightPanel = ({
   onPerformSearch,
   handlePerformSearch,
   toggleColorPicker,
-  onOpenFile,
 }: RightPanelProps) => {
   return (
     <>
@@ -76,7 +73,6 @@ export const RightPanel = ({
             filesVersion={filesVersion}
             settings={state.settings}
             aiConnectionStatus={state.aiConnectionStatus}
-            onOpenFile={onOpenFile}
           />
         </div>
       </div>

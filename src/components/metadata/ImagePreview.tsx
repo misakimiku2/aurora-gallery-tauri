@@ -1,10 +1,14 @@
-import { useState, useEffect } from 'react';
-import { Image as ImageIcon, Video as VideoIcon, Play } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Image as ImageIcon, Video as VideoIcon, Play, Loader2, ExternalLink } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { FileNode } from '../../types';
 import { getBlobCacheSync } from '../ImageViewer';
 import { getGlobalCache } from '../../utils/thumbnailCache';
 import { useVideoCover } from '../../hooks/useVideoCover';
-import { formatVideoDuration } from '../../utils/mediaExtensions';
+import { formatVideoDuration, isWebDecodableVideo } from '../../utils/mediaExtensions';
+import { ensureVideoPlayable } from '../../api/tauri-bridge/videoRemux';
+import { openWithDefaultApp } from '../../api/tauri-bridge/files';
+import { MiniVideoControls } from './MiniVideoControls';
 
 // 视频 P1（UI 设计 §5 / §6）：视频大预览显示抽帧封面（P1.5 生成）。
 // 在封面就绪前，绝不对 mp4 走 getThumbnail / convertFileSrc / 缩略图缓存——
@@ -13,14 +17,82 @@ import { formatVideoDuration } from '../../utils/mediaExtensions';
 //
 // 2026-10-16（UI 设计 §6「叠加时长角标与播放按钮」）：
 // 视频预览叠加右下角时长角标 + 居中播放按钮；点播放 → 跳查看器播放（onPlay）。
-const ImagePreview = ({ file, resourceRoot, cachePath, t, onPlay }: {
+const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewerVideoOpen }: {
     file: FileNode,
     resourceRoot?: string,
     cachePath?: string,
     t?: (key: string) => string,
-    /** 点播放按钮时回调（跳查看器）；不传则只显示角标、按钮不可点 */
-    onPlay?: (fileId: string) => void,
+    /** 该文件正被查看器打开「播放查看」→ 小窗停播退回封面、不显示播放按钮（2026-10-16 指挥官指定） */
+    openedInViewer?: boolean,
+    /** 查看器正开着视频 → 小窗空格让路（防双触发） */
+    viewerVideoOpen?: boolean,
 }) => {
+    // 2026-10-16 修正（指挥官实机反馈）：播放按钮**在面板内就地播放**，不是跳查看器。
+    // 原生容器直接播源；非原生容器先走 P2 转封装（产物 MP4），准备期间显示进度。
+    const [playSrc, setPlaySrc] = useState<string | null>(null);
+    const [preparing, setPreparing] = useState(false);
+    const [playFailed, setPlayFailed] = useState(false);
+    // startInlinePlayback 的异步流程（remux 轮询可达 30s）要用最新值判断，
+    // 闭包里的 openedInViewer 是点击时的旧值，所以走 ref。
+    const openedInViewerRef = useRef(false);
+    openedInViewerRef.current = !!openedInViewer;
+
+    // 换文件即停止就地播放
+    useEffect(() => {
+        setPlaySrc(null);
+        setPreparing(false);
+        setPlayFailed(false);
+    }, [file.id]);
+
+    // 查看器打开本文件（播放查看）→ 小窗停播退回封面（与查看器双播/双入口是混乱之源）。
+    // 用「清状态」而非仅隐藏渲染：否则关闭查看器后 playSrc 仍在 → 小窗会自动复播。
+    useEffect(() => {
+        if (openedInViewer) {
+            setPlaySrc(null);
+            setPreparing(false);
+            setPlayFailed(false);
+        }
+    }, [openedInViewer]);
+
+    const startInlinePlayback = async () => {
+        if (playSrc || preparing || !file.path) return;
+        setPreparing(true);
+        setPlayFailed(false);
+        try {
+            let target = file.path;
+            if (!isWebDecodableVideo(file.path, file.meta?.format)) {
+                let st = await ensureVideoPlayable(file.path);
+                // 非原生容器需要转封装（实测秒级）；后端同路径只跑一个任务，轮询安全
+                let waited = 0;
+                while (st.status === 'pending' && waited < 30_000) {
+                    await new Promise((r) => setTimeout(r, 400));
+                    waited += 400;
+                    st = await ensureVideoPlayable(file.path);
+                }
+                if (st.status === 'ready' && st.output_path) {
+                    target = st.output_path;
+                } else {
+                    setPlayFailed(true);
+                    return;
+                }
+            }
+            // 异步准备期间查看器可能已接管本文件（播放查看）→ 放弃就地播，避免双播
+            if (openedInViewerRef.current) return;
+            setPlaySrc(convertFileSrc(target));
+        } finally {
+            setPreparing(false);
+        }
+    };
+
+    // 就地播放的 <video> 句柄：MiniVideoControls 经它绑定事件 / 控制播放（查看器同款模式）
+    const videoRef = useRef<HTMLVideoElement>(null);
+    // 点击视频本体 = 播放/暂停（小窗常用交互；与控件栏按钮同一逻辑，各自独立入口）
+    const toggleVideoPlayback = () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused) void v.play().catch(() => { /* 自动播放策略 / 解码失败：忽略 */ });
+        else v.pause();
+    };
     // 视频判定 + 抽帧封面解析（P1.5-A 消费方）：hook 对非视频返回 null，图片路径不受影响
     const { isVideo, coverUrl } = useVideoCover(
         file.path,
@@ -132,6 +204,26 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, onPlay }: {
                     // 视频占位 / 抽帧封面（P1.5-A）：封面就绪显示封面 JPEG；
                     // 抽帧失败 → VideoIcon + 说明。外层 relative 承载角标与播放按钮。
                     <div className="relative w-full flex flex-col items-center justify-center">
+                        {playSrc ? (
+                            // 就地播放（2026-10-16）：crossOrigin 必带，
+                            // 否则 asset:// 会污染 canvas（记忆 §2.4），后续截图/取色会抛 SecurityError。
+                            // 2026-10-16 二次修正（指挥官实机反馈）：浏览器原生 controls 过于繁杂，
+                            // 换 MiniVideoControls 迷你控件（仅 播放/暂停 · 进度条 · 静音）。
+                            <div className="relative inline-flex max-w-full">
+                                <video
+                                    ref={videoRef}
+                                    src={playSrc}
+                                    autoPlay
+                                    playsInline
+                                    crossOrigin="anonymous"
+                                    className="max-w-full max-h-[300px] rounded bg-black cursor-pointer"
+                                    onError={() => setPlayFailed(true)}
+                                    onClick={toggleVideoPlayback}
+                                />
+                                {/* 播放失败（onError）时收起控件，让位给下方「用系统播放器打开」兜底按钮 */}
+                                {!playFailed && <MiniVideoControls videoRef={videoRef} t={t} viewerVideoOpen={viewerVideoOpen} />}
+                            </div>
+                        ) : (<>
                         {coverUrl ? (
                             <img
                                 src={coverUrl}
@@ -158,15 +250,37 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, onPlay }: {
                                 {durationLabel}
                             </span>
                         )}
-                        {onPlay && (
+                        {/* 播放按钮：查看器已打开本文件（播放查看）时不显示 —— 该视频的播放入口
+                            已在查看器，小窗保留播放入口会造成双播/双入口（2026-10-16 指挥官指定） */}
+                        {!openedInViewer && (
                             <button
-                                onClick={() => onPlay(file.id)}
-                                title={t ? t('video.playInViewer') : '在查看器中播放'}
+                                onClick={startInlinePlayback}
+                                title={t ? t('video.playHere') : '在此处播放'}
                                 className="absolute inset-0 flex items-center justify-center group cursor-pointer"
                             >
                                 <span className="w-12 h-12 rounded-full bg-black/45 group-hover:bg-black/70 flex items-center justify-center transition-colors">
-                                    <Play size={22} className="text-white ml-0.5" fill="currentColor" />
+                                    {preparing ? (
+                                        <Loader2 size={20} className="animate-spin text-white" />
+                                    ) : (
+                                        <Play size={22} className="text-white ml-0.5" fill="currentColor" />
+                                    )}
                                 </span>
+                            </button>
+                        )}
+                        {preparing && (
+                            <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/70 text-white text-[11px] pointer-events-none">
+                                {t ? t('video.remuxing') : '正在准备播放…'}
+                            </span>
+                        )}
+                        </>)}
+                        {/* 就地播放失败 → 给「用系统播放器打开」兜底（与查看器/右键同一出口） */}
+                        {playFailed && file.path && (
+                            <button
+                                onClick={() => openWithDefaultApp(file.path).catch(() => {})}
+                                className="mt-2 px-2.5 py-1 text-xs rounded border border-subtle text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center gap-1.5"
+                            >
+                                <ExternalLink size={12} />
+                                {t ? t('video.openExternalPlayer') : '用系统播放器打开'}
                             </button>
                         )}
                     </div>
