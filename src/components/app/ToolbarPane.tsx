@@ -177,6 +177,8 @@ export const ToolbarPane = ({
           onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
           onPerformSearch={handlePerformSearch}
           onSetToolbarQuery={setToolbarQuery}
+          // U3 媒体类型筛选（2026-10-16）
+          onMediaTypeFilterChange={(f) => updateActiveTab({ mediaTypeFilter: f })}
           onSetPersonSearchQuery={setPersonSearchQuery}
           personSearchQuery={personSearchQuery}
           onLayoutModeChange={(mode) => {

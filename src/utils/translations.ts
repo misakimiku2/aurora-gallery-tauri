@@ -109,6 +109,11 @@ export const translations = {
       generateThumbnails: '生成缩略图',
       // 2026-10-16：视频右键 → 用系统播放器打开（B 类 / 转封装失败时的兜底入口）
       openExternalPlayer: '用系统播放器打开',
+      // 2026-10-16 U3：媒体类型筛选（TopBar 入口 + FilterChipsBar chip）
+      mediaTypeFilter: '媒体类型',
+      mediaAll: '全部',
+      mediaImages: '仅图片',
+      mediaVideos: '仅视频',
       newTag: '新建标签',
       newTagDefault: '新标签',
       enterTagName: '请输入新标签名称:',
@@ -1361,6 +1366,11 @@ export const translations = {
       generateThumbnails: 'Generate Thumbnails',
       // 2026-10-16: video right-click → open with the system player
       openExternalPlayer: 'Open with system player',
+      // 2026-10-16 U3: media type filter (TopBar entry + FilterChipsBar chip)
+      mediaTypeFilter: 'Media Type',
+      mediaAll: 'All',
+      mediaImages: 'Images only',
+      mediaVideos: 'Videos only',
       newTag: 'New Tag',
       newTagDefault: 'New Tag',
       enterTagName: 'Enter new tag name:',

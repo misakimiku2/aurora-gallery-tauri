@@ -48,13 +48,14 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     activePersonId: activeTab.activePersonId,
     activeTopicId: activeTab.activeTopicId,
     dateFilter: activeTab.dateFilter,
+    mediaTypeFilter: activeTab.mediaTypeFilter,
     folderId: activeTab.folderId,
     sortBy: state.sortBy,
     sortDirection: state.sortDirection
   }), [
     activeTab.searchQuery, activeTab.searchScope, activeTab.aiFilter, 
     activeTab.activeTags, activeTab.activePersonId, activeTab.activeTopicId,
-    activeTab.dateFilter, activeTab.folderId, state.sortBy, state.sortDirection
+    activeTab.dateFilter, activeTab.mediaTypeFilter, activeTab.folderId, state.sortBy, state.sortDirection
   ]);
 
   // 3. 核心检索逻辑：在主线程运行（68K 数据耗时约 10-20ms，远快于 Worker 通信开销）
@@ -163,6 +164,13 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
         const t = new Date(dStr).getTime();
         return t >= min && t < max;
       });
+    }
+
+    // U3 媒体类型过滤（2026-10-16）：仅图片 / 仅视频。
+    // 两种筛选都排除文件夹（文件夹不是媒体；想导航文件夹时关掉筛选即可）。
+    if (searchCriteria.mediaTypeFilter === 'image' || searchCriteria.mediaTypeFilter === 'video') {
+      const wantType = searchCriteria.mediaTypeFilter === 'video' ? FileType.VIDEO : FileType.IMAGE;
+      candidates = candidates.filter(f => f.type === wantType);
     }
 
     // 排序

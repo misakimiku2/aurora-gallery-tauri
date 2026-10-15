@@ -1,5 +1,5 @@
 import React from 'react';
-import { Filter, FileText, Tag, Folder, Globe, X, Brain, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Filter, FileText, Tag, Folder, Globe, X, Brain, Calendar, ChevronLeft, ChevronRight, Image as ImageIcon, Film } from 'lucide-react';
 import { Person, TabState } from '../../types';
 
 interface FilterChipsBarProps {
@@ -29,7 +29,7 @@ export const FilterChipsBar = ({
   pageSize,
 }: FilterChipsBarProps) => {
   return (
-    (activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
+    (activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || (activeTab.mediaTypeFilter && activeTab.mediaTypeFilter !== 'all') || totalResults > pageSize) && (
       <div className="flex items-center px-4 py-2 bg-content space-x-2 overflow-x-auto shrink-0 z-20">
         <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
           <Filter size={12} className="mr-1" />
@@ -88,6 +88,15 @@ export const FilterChipsBar = ({
           </div>
         )}
 
+        {/* U3 媒体类型筛选 chip（2026-10-16） */}
+        {activeTab.mediaTypeFilter && activeTab.mediaTypeFilter !== 'all' && (
+          <div className="flex items-center bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 px-2 py-0.5 rounded-full text-xs border border-teal-200 dark:border-teal-800 whitespace-nowrap">
+            {activeTab.mediaTypeFilter === 'video' ? <Film size={10} className="mr-1" /> : <ImageIcon size={10} className="mr-1" />}
+            <span>{activeTab.mediaTypeFilter === 'video' ? t('context.mediaVideos') : t('context.mediaImages')}</span>
+            <button onClick={() => updateActiveTab({ mediaTypeFilter: 'all' })} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
+          </div>
+        )}
+
         {activeTab.activePersonId && peopleWithDisplayCounts[activeTab.activePersonId] && (
           <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
             <Brain size={10} className="mr-1" />
@@ -110,6 +119,7 @@ export const FilterChipsBar = ({
             activePersonId: null,
             searchQuery: '',
             dateFilter: { start: null, end: null, mode: 'created' as const },
+            mediaTypeFilter: 'all',
             aiFilter: null
           });
         }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>

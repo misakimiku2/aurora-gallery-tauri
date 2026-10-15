@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection } from '../types';
+import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, MediaTypeFilter } from '../types';
 import { debounce } from '../utils/debounce';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { ColorPickerPopover } from './ColorPickerPopover';
@@ -8,7 +8,7 @@ import {
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate,
   ArrowDownUp, Calendar, PanelRight, X, Tag,
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload, MoreVertical
+  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload, MoreVertical, Film
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -38,6 +38,8 @@ interface TopBarProps {
   isColorPickerVisible?: boolean;
   onToggleSettings: () => void;
   onUpdateDateFilter: (filter: DateFilter) => void;
+  /** U3 媒体类型筛选（2026-10-16） */
+  onMediaTypeFilterChange: (filter: MediaTypeFilter) => void;
   groupBy: GroupByOption;
   onGroupByChange: (option: GroupByOption) => void;
   isAISearchEnabled: boolean;
@@ -538,6 +540,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   isColorPickerVisible,
   onToggleSettings,
   onUpdateDateFilter,
+  onMediaTypeFilterChange,
   groupBy,
   onGroupByChange,
   isAISearchEnabled,
@@ -573,6 +576,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [mediaMenuOpen, setMediaMenuOpen] = useState(false);
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false);
   const [personSortMenuOpen, setPersonSortMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -730,13 +734,14 @@ export const TopBar: React.FC<TopBarProps> = ({
         (window as any).__androidBackHandled = true;
         return;
       }
-      const openMenus = [sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen];
+      const openMenus = [sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, mediaMenuOpen];
       if (openMenus.some(Boolean)) {
         setSortMenuOpen(false);
         setFilterMenuOpen(false);
         setTagsMenuOpen(false);
         setScopeMenuOpen(false);
         setViewMenuOpen(false);
+        setMediaMenuOpen(false);
         (window as any).__androidBackHandled = true;
         return;
       }
@@ -747,7 +752,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     };
     window.addEventListener('android-back-press', handleAndroidBack);
     return () => window.removeEventListener('android-back-press', handleAndroidBack);
-  }, [isAndroid, moreMenuOpen, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, isColorPickerVisible, onToggleColorPicker]);
+  }, [isAndroid, moreMenuOpen, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, mediaMenuOpen, isColorPickerVisible, onToggleColorPicker]);
 
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const isPaletteSearchQuery = useMemo(() => toolbarQuery.startsWith('palette:'), [toolbarQuery]);
@@ -1516,6 +1521,69 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
           )}
           </>
+        )}
+
+        {/* U3 Media Type Filter（2026-10-16）：仅图片 / 仅视频（显示条件同 Date Filter） */}
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
+        <div className="relative">
+           <button
+             onClick={() => setMediaMenuOpen(!mediaMenuOpen)}
+             className={`${isAndroid ? 'w-10 h-10 rounded-xl' : 'w-9 h-9 rounded-lg'} flex items-center justify-center hover:bg-surface ${mediaMenuOpen || (activeTab.mediaTypeFilter && activeTab.mediaTypeFilter !== 'all') ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             title={t('context.mediaTypeFilter')}
+           >
+             <Film size={18} />
+           </button>
+           {mediaMenuOpen && (
+             isAndroid ? (
+               <>
+                 <div className="fixed inset-0 z-[200] bg-black/50" onClick={() => setMediaMenuOpen(false)}></div>
+                 <div className="fixed bottom-0 left-0 right-0 z-[201] animate-slide-up pb-[env(safe-area-inset-bottom)]">
+                   <div className="flex justify-center pt-2 pb-1">
+                     <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+                   </div>
+                   <div className="bg-[#fafafa] dark:bg-[#3a3a3a] rounded-t-2xl pt-1 pb-6">
+                     {[
+                       { id: 'all', label: t('context.mediaAll') },
+                       { id: 'image', label: t('context.mediaImages') },
+                       { id: 'video', label: t('context.mediaVideos') },
+                     ].map(opt => (
+                       <button
+                         key={opt.id}
+                         onClick={() => { onMediaTypeFilterChange(opt.id as MediaTypeFilter); setMediaMenuOpen(false); }}
+                         className="w-full px-6 flex items-center justify-between text-gray-700 dark:text-gray-200 active:bg-black/5 dark:active:bg-white/10"
+                         style={{ height: '50px', fontSize: '15px' }}
+                       >
+                         {opt.label}
+                         {(activeTab.mediaTypeFilter || 'all') === opt.id && <Check size={16} className="text-blue-500" />}
+                       </button>
+                     ))}
+                   </div>
+                 </div>
+               </>
+             ) : (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setMediaMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('context.mediaTypeFilter')}</div>
+                   {[
+                     { id: 'all', label: t('context.mediaAll') },
+                     { id: 'image', label: t('context.mediaImages') },
+                     { id: 'video', label: t('context.mediaVideos') },
+                   ].map(opt => (
+                     <button
+                       key={opt.id}
+                       onClick={() => onMediaTypeFilterChange(opt.id as MediaTypeFilter)}
+                       className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                     >
+                       {opt.label}
+                       {(activeTab.mediaTypeFilter || 'all') === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
+                     </button>
+                   ))}
+                 </div>
+               </>
+             )
+           )}
+        </div>
         )}
 
         {/* Date Filter (hidden on topics view) */}

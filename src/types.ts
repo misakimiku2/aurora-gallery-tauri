@@ -454,6 +454,9 @@ export interface AppSettings {
   };
 }
 
+/** U3 媒体类型筛选（2026-10-16）：undefined / 'all' = 不筛选；image / video = 仅该类型（均排除文件夹） */
+export type MediaTypeFilter = 'all' | 'image' | 'video';
+
 export interface DateFilter {
   start: string | null;
   end: string | null;
@@ -522,6 +525,8 @@ export interface TabState {
   activeTopicId: string | null;
   selectedTopicIds: string[];
   dateFilter: DateFilter;
+  /** U3 媒体类型筛选（2026-10-16）：旧持久化数据无此字段 = 不筛选 */
+  mediaTypeFilter?: MediaTypeFilter;
   selectedFileIds: string[];
   lastSelectedId: string | null;
   selectedTagIds: string[];
