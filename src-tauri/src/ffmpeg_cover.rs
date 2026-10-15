@@ -375,6 +375,22 @@ fn target_size_256(src_w: u32, src_h: u32) -> (u32, u32) {
     }
 }
 
+/// 显示尺寸：编码尺寸按 rotation 交换（±90 → swap；0 / 180 / None → 原样）。
+///
+/// **2026-10-16 修复（rotation 样本实测）**：ffmpeg 抽帧**默认应用显示旋转**（autorotate）
+/// ——带 display matrix 的输入（手机竖屏视频的常见形态）输出的是「显示姿态」帧，
+/// 而 `meta.width/height` 是**编码尺寸**（不按 rotation 交换，见 video_metadata.rs 注释）。
+/// 按编码尺寸算 scale（如 590x1280+rot90 → `scale=256:556` 套在 1280x590 的帧上）
+/// 会把画面强行拉伸成竖图 → 封面几何变形。必须先交换到显示尺寸再算 target；
+/// 前端 canvas 抓帧用 `video.videoWidth/Height`（本就是显示尺寸），两端口径因此重新对齐。
+fn display_size(w: u32, h: u32, rotation: Option<i64>) -> (u32, u32) {
+    if matches!(rotation, Some(r) if r.rem_euclid(180) == 90) {
+        (h, w)
+    } else {
+        (w, h)
+    }
+}
+
 // ── 时长健全性（S6 实测发现：revelo 对 AVI+AVC 的 duration 误报）─────────────
 
 /// revelo 时长可疑阈值：时长 <1s 但文件 >1MB（正常 <1s 视频极少有 >1MB）。
@@ -540,7 +556,10 @@ pub fn extract_with_ffmpeg(
     }
 
     // 2) 目标尺寸（与前端短边 256 同口径）。
-    let (w, h) = target_size_256(meta.width, meta.height);
+    //    ⚠️ 2026-10-16 修复：ffmpeg 抽帧默认 autorotate（输出显示姿态帧），必须按
+    //    **显示尺寸**算 scale，否则带 rotation 元数据的视频封面被强行拉伸（见 display_size 注释）。
+    let (dw, dh) = display_size(meta.width, meta.height, meta.rotation);
+    let (w, h) = target_size_256(dw, dh);
 
     // 3) 缓存名：与读路径/前端共用同一函数（视频带 -vc{N} 版本位）。
     let file_meta = std::fs::metadata(file_path).ok()?;
@@ -974,6 +993,19 @@ mod tests {
         assert_eq!(target_size_256(500, 500), (256, 256));
     }
 
+    /// 2026-10-16（rotation 样本实测）：±90 交换、其余原样；端到端口径示例
+    /// 「590x1280 编码 + rot90 → 显示 1280x590 → target (555, 256)」。
+    #[test]
+    fn display_size_swaps_on_rotation() {
+        assert_eq!(display_size(590, 1280, Some(90)), (1280, 590));
+        assert_eq!(display_size(590, 1280, Some(270)), (1280, 590));
+        assert_eq!(display_size(590, 1280, Some(0)), (590, 1280));
+        assert_eq!(display_size(590, 1280, Some(180)), (590, 1280));
+        assert_eq!(display_size(590, 1280, None), (590, 1280));
+        let (dw, dh) = display_size(590, 1280, Some(90));
+        assert_eq!(target_size_256(dw, dh), (555, 256));
+    }
+
     #[test]
     fn timeout_matches_ts() {
         assert_eq!(timeout_for(0), Duration::from_millis(20_000));
@@ -1086,7 +1118,8 @@ mod tests {
                     duration = d;
                 }
             }
-            let (w, h) = target_size_256(meta.width, meta.height);
+            let (dw, dh) = display_size(meta.width, meta.height, meta.rotation);
+            let (w, h) = target_size_256(dw, dh);
             let candidates = seek_candidates(duration);
             let timeout = timeout_for(size);
 

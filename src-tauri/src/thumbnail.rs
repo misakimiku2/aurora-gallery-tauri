@@ -39,7 +39,9 @@ fn is_avif(buffer: &[u8]) -> bool {
 /// 缓存名默认只由「文件大小 + mtime + 首 4096 字节」决定，**不含算法信息** ——
 /// 于是算法改了、旧封面文件还在，老视频永远不会重抽。2026-10-14 把选帧从
 /// 「非黑即收」改为「多候选取最亮」时踩到，故引入版本位，让旧封面自然失效。
-const VIDEO_COVER_CACHE_VERSION: u32 = 2;
+/// v3（2026-10-16）：rotation 修复 —— 带 display matrix 的视频改按显示尺寸算 scale
+/// （此前封面被强行拉伸），产物内容变化，旧封面必须失效重抽。
+const VIDEO_COVER_CACHE_VERSION: u32 = 3;
 
 /// 计算缓存文件名：size + mtime + 首 4096 字节 → md5 前 24 位。
 /// 视频额外混入 `VIDEO_COVER_CACHE_VERSION`（**图片不受影响**）。
