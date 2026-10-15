@@ -250,14 +250,25 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                               ? `${t('settings.ffmpegReady')} · ${ffmpegStatus.version ?? ''}`
                               : t('settings.ffmpegMissing')}
                     </div>
+                    {/* S5：来源未校验警示（latest 回退）。两个来源：本次会话的 completed
+                        事件（dlWarning）/ 持久化的 install-info.json（installSource，
+                        重启后仍在）。下载进行中不显示（进度态有其他展示）。 */}
+                    {(ffmpegStatus?.installSource === 'latest' || (!!dlWarning && !!ffmpegStatus?.available)) && !dlProgress && (
+                      <div className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-start">
+                        <AlertCircle size={12} className="mr-1 mt-0.5 flex-shrink-0" />
+                        <span>{t('settings.ffmpegUnverifiedSource')}</span>
+                      </div>
+                    )}
                   </div>
                 <div className="flex-shrink-0 flex items-center gap-1.5">
                     {!ffmpegChecked || ffmpegStatus === null ? (
                       <Loader2 size={18} className="animate-spin text-gray-400" />
                     ) : ffmpegStatus.available ? (
-                      ffmpegStatus.source === 'downloaded'
-                        ? <CheckCircle2 size={18} className="text-green-500" />
-                        : <Clapperboard size={18} className="text-blue-500" />
+                      ffmpegStatus.installSource === 'latest'
+                        ? <AlertCircle size={18} className="text-amber-500" />
+                        : ffmpegStatus.source === 'downloaded'
+                          ? <CheckCircle2 size={18} className="text-green-500" />
+                          : <Clapperboard size={18} className="text-blue-500" />
                     ) : (
                       <AlertCircle size={18} className="text-amber-500" />
                     )}

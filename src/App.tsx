@@ -8,7 +8,7 @@ import { reloadPeople, reloadTopics } from './utils/peopleTopics';
 import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
+import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, getVideoCover, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection, SettingsCategory } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
@@ -1955,7 +1955,13 @@ export const App: React.FC = () => {
 
 
   const handleGenerateThumbnails = async (folderIds: string[]) => {
-    const getAllImageFilesInFolder = (folderId: string): string[] => {
+    // D5 手动版（2026-10-15）：从「仅图片」扩为「图片 + 视频」——视频走 getVideoCover
+    // （Rust ffmpeg 管线，含磁盘缓存优先 / inflight 去重 / 负缓存），图片走 getThumbnail。
+    // 语义即「文件夹级封面预生成」的手动入口：整个文件夹的封面后台抽好，不依赖滚动。
+    // 安卓端不纳入视频：本地抽帧链路未覆盖（P3），getVideoCover 在安卓会落到前端
+    // canvas 兜底且大概率失败。
+    const isDesktop = !isAndroidPlatformCached();
+    const getAllThumbnailableFilesInFolder = (folderId: string): string[] => {
       const folder = state.files[folderId];
       if (!folder) return [];
 
@@ -1977,7 +1983,7 @@ export const App: React.FC = () => {
             if (child) {
               if (child.type === FileType.FOLDER) {
                 stack.push(childId);
-              } else if (child.type === FileType.IMAGE) {
+              } else if (child.type === FileType.IMAGE || (isDesktop && child.type === FileType.VIDEO)) {
                 fileIds.push(childId);
               }
             }
@@ -1987,27 +1993,27 @@ export const App: React.FC = () => {
       return fileIds;
     };
 
-    // Collect all image IDs from selected folders
-    let allImageIds: string[] = [];
+    // Collect all file IDs (images + desktop-side videos) from selected folders
+    let allFileIds: string[] = [];
     for (const fid of folderIds) {
-      allImageIds = [...allImageIds, ...getAllImageFilesInFolder(fid)];
+      allFileIds = [...allFileIds, ...getAllThumbnailableFilesInFolder(fid)];
     }
 
     // Deduplicate
-    allImageIds = Array.from(new Set(allImageIds));
+    allFileIds = Array.from(new Set(allFileIds));
 
-    if (allImageIds.length === 0) {
+    if (allFileIds.length === 0) {
       showToast(t('tasks.noImagesFound'));
       return;
     }
 
     const taskId = startTask('thumbnail', [], t('tasks.generatingThumbnails'), false);
-    updateTask(taskId, { total: allImageIds.length, current: 0 });
+    updateTask(taskId, { total: allFileIds.length, current: 0 });
 
     // Use a simple concurrency control
     let completed = 0;
     const MAX_CONCURRENT = 20;
-    const queue = [...allImageIds];
+    const queue = [...allFileIds];
     const activePromises: Promise<void>[] = [];
 
     const processNext = async () => {
@@ -2017,8 +2023,12 @@ export const App: React.FC = () => {
 
       if (file) {
         try {
-          // getThumbnail handles batching internally, but we await it to track progress
-          await getThumbnail(file.path, file.updatedAt, state.settings.paths.resourceRoot);
+          // getThumbnail / getVideoCover handle batching internally, but we await to track progress
+          if (file.type === FileType.VIDEO) {
+            await getVideoCover(file.path, state.settings.paths.resourceRoot);
+          } else {
+            await getThumbnail(file.path, file.updatedAt, state.settings.paths.resourceRoot);
+          }
         } catch (e) {
           console.error('Thumbnail gen error', e);
         }
@@ -2034,7 +2044,7 @@ export const App: React.FC = () => {
     };
 
     // Start initial batch
-    for (let i = 0; i < Math.min(MAX_CONCURRENT, allImageIds.length); i++) {
+    for (let i = 0; i < Math.min(MAX_CONCURRENT, allFileIds.length); i++) {
       activePromises.push(processNext());
     }
 

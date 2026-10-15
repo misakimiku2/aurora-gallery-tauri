@@ -217,17 +217,28 @@ pub struct FfmpegStatus {
     pub path: Option<String>,
     /// `ffmpeg -version` 的首行；不可用时为 null。
     pub version: Option<String>,
+    /// S5：下载副本的安装来源——"pinned"（SHA256 校验过的固定源）/ "latest"
+    /// （404 回退的未校验源，UI 必须警示「来源未校验」）。系统副本 / 未安装 /
+    /// 旧副本（无 install-info.json）时为 null。
+    pub install_source: Option<String>,
 }
 
 pub fn detect_status() -> FfmpegStatus {
     match locate() {
         Some((path, source)) => {
             let version = probe_version(&path);
+            // S5：仅下载副本读 install-info.json（系统副本不适用；旧副本无文件 → None）
+            let install_source = if matches!(source, FfmpegSource::Downloaded) {
+                read_install_info().map(|i| i.source)
+            } else {
+                None
+            };
             FfmpegStatus {
                 available: version.is_some(),
                 source: Some(source.as_str()),
                 path: Some(path.to_string_lossy().into_owned()),
                 version,
+                install_source,
             }
         }
         None => FfmpegStatus {
@@ -235,8 +246,54 @@ pub fn detect_status() -> FfmpegStatus {
             source: None,
             path: None,
             version: None,
+            install_source: None,
         },
     }
+}
+
+// ── 安装信息（S5）：下载副本的来源 / 校验状态落盘 ───────────────────────────
+//
+// 缺口（S4 遗留）：回退 latest 的告警只在**下载完成事件**里带一次，重启后
+// `ffmpeg_status` 无法告知「这份副本来源未校验」→ 面板警示消失。
+// 处理：下载器终验通过后把来源写入 `install-info.json`（与 exe 同目录），
+// `detect_status` 读取并经 `installSource` 透传给前端。
+
+/// 下载副本的安装信息（`install-info.json`，与 `SOURCE.txt` 同目录）。
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FfmpegInstallInfo {
+    /// "pinned"（SHA256 校验过的固定源）| "latest"（回退的未校验源）。
+    pub source: String,
+    /// 实际使用的下载 URL。
+    pub url: String,
+    /// 是否通过 SHA256 固定校验（latest 回退时为 false）。
+    pub verified: bool,
+    /// 安装时间（Unix 秒）。
+    pub installed_at: u64,
+    /// 安装时探测的 `ffmpeg -version` 首行。
+    pub version: Option<String>,
+}
+
+/// `install-info.json` 路径（与下载副本同目录）。
+fn install_info_path() -> Option<PathBuf> {
+    Some(downloaded_ffmpeg_path()?.parent()?.join("install-info.json"))
+}
+
+/// 读取安装信息：不存在 / 解析失败 → None（旧副本无此文件属正常，不视为错误）。
+pub fn read_install_info() -> Option<FfmpegInstallInfo> {
+    let path = install_info_path()?;
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// 写入安装信息（S4 下载器终验通过后调用；写失败由调用方降级为 warn，不算安装失败）。
+pub(crate) fn write_install_info(info: &FfmpegInstallInfo) -> Result<(), String> {
+    let path = install_info_path().ok_or_else(|| "无法解析 ffmpeg 安装目录".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(info).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
 // ── 选帧算法（与前端 videoCover.ts 同规格；改这里必须同步改前端）────────────
@@ -903,6 +960,29 @@ mod tests {
         assert!(parse_ffmpeg_duration_line("Duration: 00:00:00.00").is_none());
     }
 
+    // ── S5：安装信息契约（字段名与前端 ffmpeg.ts / GeneralPanel 对齐）─────────
+
+    #[test]
+    fn install_info_json_roundtrip() {
+        let info = FfmpegInstallInfo {
+            source: "latest".to_string(),
+            url: "https://example.com/x.zip".to_string(),
+            verified: false,
+            installed_at: 1_761_000_000,
+            version: Some("ffmpeg version test".to_string()),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        // 前端契约：serde camelCase（installedAt）；改动字段名必须同步 ffmpeg.ts
+        assert!(json.contains("\"installedAt\""), "应输出 camelCase: {}", json);
+        assert!(json.contains("\"source\""));
+        assert!(json.contains("\"verified\""));
+        let back: FfmpegInstallInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.source, "latest");
+        assert!(!back.verified);
+        assert_eq!(back.installed_at, 1_761_000_000);
+        assert_eq!(back.version.as_deref(), Some("ffmpeg version test"));
+    }
+
     // ── 集成测试（需要真实 ffmpeg；本机缺失时优雅跳过）────────────────────
 
     /// S6 性能基准：select 模式（一次 spawn 全候选）vs 逐 seek 模式（N 次 spawn）。
@@ -967,11 +1047,15 @@ mod tests {
         };
         // 样本覆盖两类容器：mp4（前端也能解，验同源）+ mkv/avi（P1.5-B 新增覆盖的
         // 「Web 解不了」容器代表，`-c copy` remux 自 mp4，S6 验收清单第 1 项）。
+        // GameEX-*（2026-10-15 新增）：真实 NVIDIA 游戏录像（3440×1440 60fps），
+        // B = 全片 luma≈22.8 的最暗场景（选帧算法最难路径，无早退走满 6 候选）。
         let samples = [
             "../log/SVID_20261006_212831_1.mp4",
             "../log/SVID_20261006_213438_1.mp4",
             "../log/SVID_20261006_212831_1.mkv",
             "../log/SVID_20261006_213438_1.avi",
+            "../log/GameEX-B.mkv",
+            "../log/GameEX-A.avi",
         ];
         let mut ran = false;
         for s in samples {
@@ -999,5 +1083,40 @@ mod tests {
             }
         }
         let _ = ran;
+    }
+
+    /// S6 验收：同一内容 mp4 与 remux mkv 选出**同一时间点**（暗片场景）。
+    /// 样本 = GameEX-B（13.5s，全片 luma≈22.8 的游戏录像；两文件比特级同源）。
+    /// 容器不同但码流一致 → 候选帧内容一致 → 选帧结果必须一致（算法容器无关性）。
+    #[test]
+    fn remux_consistency_mp4_vs_mkv() {
+        let Some((ffmpeg, _)) = locate() else {
+            eprintln!("[skip] 本机无 ffmpeg，跳过一致性测试");
+            return;
+        };
+        let mp4 = "../log/GameEX-B.mp4";
+        let mkv = "../log/GameEX-B.mkv";
+        if !Path::new(mp4).exists() || !Path::new(mkv).exists() {
+            eprintln!("[skip] 一致性样本不存在（GameEX-B.mp4 / .mkv）");
+            return;
+        }
+        let tmp = std::env::temp_dir().join("aurora_ffmpeg_cover_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let a = extract_with_ffmpeg(&ffmpeg, mp4, &tmp).expect("mp4 抽取失败");
+        let b = extract_with_ffmpeg(&ffmpeg, mkv, &tmp).expect("mkv 抽取失败");
+        println!(
+            "mp4 seek={:.3}s colors={} | mkv seek={:.3}s colors={}",
+            a.seek_time,
+            a.colors.len(),
+            b.seek_time,
+            b.colors.len()
+        );
+        assert!(
+            (a.seek_time - b.seek_time).abs() < 1e-6,
+            "同源内容应选出同一时间点: {} vs {}",
+            a.seek_time,
+            b.seek_time
+        );
+        assert_eq!(a.colors.len(), b.colors.len(), "同源内容主色数量应一致");
     }
 }

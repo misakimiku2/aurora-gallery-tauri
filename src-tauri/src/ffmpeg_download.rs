@@ -197,8 +197,6 @@ fn run_download(app: &tauri::AppHandle) -> Result<(), String> {
             (FALLBACK_URL, false)
         }
     };
-    let _ = url;
-
     emit_progress(
         app,
         FfmpegDownloadProgress {
@@ -241,7 +239,27 @@ fn run_download(app: &tauri::AppHandle) -> Result<(), String> {
     crate::ffmpeg_cover::invalidate_locate_cache();
     match crate::ffmpeg_cover::locate() {
         Some((path, source)) => match crate::ffmpeg_cover::probe_version(&path) {
-            Some(version) => log::info!("[ffmpeg_download] installed: {:?} ({:?}) {}", path, source, version),
+            Some(version) => {
+                log::info!("[ffmpeg_download] installed: {:?} ({:?}) {}", path, source, version);
+                // S5：落盘安装信息（来源 / 校验状态 / 版本 / 时间）——设置面板重启后
+                // 仍能警示「latest 回退 = 来源未校验」；顺带生成人读的 SOURCE.txt（§8 合规）
+                let info = crate::ffmpeg_cover::FfmpegInstallInfo {
+                    source: if pinned { "pinned".to_string() } else { "latest".to_string() },
+                    url: url.to_string(),
+                    verified: pinned,
+                    installed_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    version: Some(version),
+                };
+                if let Err(e) = crate::ffmpeg_cover::write_install_info(&info) {
+                    log::warn!("[ffmpeg_download] 写入 install-info.json 失败（不影响安装）: {}", e);
+                }
+                if let Err(e) = write_source_notice(&dir, &info) {
+                    log::warn!("[ffmpeg_download] 写入 SOURCE.txt 失败（不影响安装）: {}", e);
+                }
+            }
             None => return Err("安装后 ffmpeg -version 验证失败".to_string()),
         },
         None => return Err("安装后 locate 失败".to_string()),
@@ -417,4 +435,35 @@ fn copy_entry(
     std::io::copy(entry, &mut out).map_err(|e| format!("解压 {} 失败: {}", dest.display(), e))?;
     log::info!("[ffmpeg_download] extracted {}", dest.display());
     Ok(())
+}
+
+/// S5-b（合规 §8）：在安装目录生成 `SOURCE.txt`——来源 / 版本 / 校验状态 / 许可说明。
+/// 运行时获取的 LGPL 二进制落盘后保留「来源与许可」文字说明（人读；机器读走 install-info.json）。
+fn write_source_notice(
+    dir: &std::path::Path,
+    info: &crate::ffmpeg_cover::FfmpegInstallInfo,
+) -> Result<(), String> {
+    let verified_line = if info.verified {
+        format!("Verified:  yes - SHA-256 pinned ({})", PIN_SHA256)
+    } else {
+        "Verified:  NO - latest fallback source (content varies daily, no official checksum)".to_string()
+    };
+    let text = format!(
+        "FFmpeg binaries - source and license notice\n\
+         ===========================================\n\
+         ffmpeg.exe / ffprobe.exe in this directory were downloaded by AURORA Gallery.\n\
+         \n\
+         Build:     BtbN FFmpeg-Builds (win64, LGPL - no GPL-only components)\n\
+         Version:   {version}\n\
+         Source:    {url}\n\
+         {verified}\n\
+         \n\
+         FFmpeg is licensed under the GNU Lesser General Public License v3 (LGPLv3).\n\
+         License text: https://www.gnu.org/licenses/lgpl-3.0.txt\n\
+         Project:      https://ffmpeg.org/\n",
+        version = info.version.as_deref().unwrap_or("(unknown)"),
+        url = info.url,
+        verified = verified_line,
+    );
+    std::fs::write(dir.join("SOURCE.txt"), text).map_err(|e| e.to_string())
 }

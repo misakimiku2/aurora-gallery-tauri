@@ -15,6 +15,12 @@ export interface FfmpegStatus {
   path: string | null;
   /** `ffmpeg -version` 首行，如 "ffmpeg version n7.1-latest_lgpl..." */
   version: string | null;
+  /**
+   * S5：下载副本的安装来源（读 install-info.json）。
+   * "pinned" = SHA256 校验过的固定源；"latest" = 404 回退的**未校验**源（UI 需警示）。
+   * 系统副本 / 未安装 / 旧副本（无 install-info.json）时为 null。
+   */
+  installSource: 'pinned' | 'latest' | null;
 }
 
 /** 查询 ffmpeg 三态状态；invoke 失败（如安卓端无此命令）返回 null，由调用方按「未知」处理 */
