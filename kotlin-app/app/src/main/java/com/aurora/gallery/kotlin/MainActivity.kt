@@ -1177,6 +1177,16 @@ class MainActivity : ComponentActivity() {
         viewModel.stopMediaStoreObservation()
     }
 
+    /**
+     * 视频 P3-A2：查看器里正在播的视频不能在后台继续出声（系统相册/图库同形制）。
+     * 停在暂停帧上，回前台由用户自己按播放续——不自动续播是刻意的，
+     * 打断来源可能是来电/系统面板，回来直接响一下更像故障。
+     */
+    override fun onPause() {
+        super.onPause()
+        viewer?.pauseVideoForBackground()
+    }
+
     /** M6b 阶段 2：通知「取消」action → core 取消注册表（生产接收器，常驻注册）。 */
     private val aiCancelReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {

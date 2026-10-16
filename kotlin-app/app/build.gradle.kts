@@ -115,6 +115,11 @@ dependencies {
     // M6a 0.7 spike（D33）：扫码。自带 zxing core（编码/解码都齐）；其 CaptureActivity
     // 需要 appcompat 主题（上面已依赖 appcompat 1.6.1）。minSdk 24 与本 app 对齐
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // 视频 P3-A2：播放器选型 = media3 / ExoPlayer（P3 计划拍板 P2）。只取 exoplayer 与 ui
+    // 两块，ui 这边消费的是 DefaultTimeBar（自带缓冲段）与 AspectRatioFrameLayout（信箱适配）。
+    // minSdk 24 兼容；APK 增量记在 P3 实施计划。
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // M6a 阶段 7：对等服务端 HTTP 引擎（D30a Kotlin 原生 10 端点；单 jar 无传递依赖，APK 增量阶段 8 记录）
     implementation("org.nanohttpd:nanohttpd:2.3.1")

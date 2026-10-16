@@ -303,7 +303,21 @@ class SlideshowView(
 
     private fun loadImage(view: ImageView, index: Int, onSuccess: () -> Unit) {
         val item = images.getOrNull(index) ?: run { onSuccess(); return }
-        val request = coilSource(ImageRequest.Builder(context), imageSourceFor(item, context.contentResolver, "slideshow"))
+        // 视频 P3-A2：幻灯片里视频退化成**封面静帧**——原图 URL 是 mp4，进 Coil 必失败，
+        // 而且 HttpUri fetcher 会先把整只文件拉下来（放映连翻就是几十 MB 起）。
+        // 「放映里到底要不要播视频」属 A6 之后的议题，这里先把结构性失败堵掉。
+        val source = if (item.isVideo) {
+            val cover = item.thumbnailUrl
+            if (cover.isNullOrEmpty()) {
+                Log.i(TAG, "slideshow skip video (no cover): index=$index name=${item.name}")
+                onSuccess()
+                return
+            }
+            CoilSource(cover, null, null)
+        } else {
+            imageSourceFor(item, context.contentResolver, "slideshow")
+        }
+        val request = coilSource(ImageRequest.Builder(context), source)
             .target(
                 onSuccess = { drawable ->
                     view.setImageDrawable(drawable)

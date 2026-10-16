@@ -346,6 +346,10 @@ internal fun NativeGalleryView.makeTextButton(text: String, onClick: () -> Unit)
  */
 internal fun NativeGalleryView.applyDrawerProgress(progress: Float) {
     drawerPanelProgress = progress
+    // 视频 P3-A2：抽屉一离开全关位就让位并暂停——两种形制都会压缩图片区（横屏挤宽、竖屏
+    // 挤高）并把封面切成填充裁切，而视频层按信箱适配，两套几何口径对不上；且竖屏面板
+    // 正压在播控条那一条上。回到 0 由本函数同一入口交还
+    videoLayer.setDrawerOccluded(progress > 0.01f)
     val extent = drawerExtentPx
     val totalWidth = width.toFloat()
     if (!isCompactPortrait) {
@@ -357,8 +361,9 @@ internal fun NativeGalleryView.applyDrawerProgress(progress: Float) {
         // 图片宽度 + 填充进度（在 layoutParams 之前设置，确保 onSizeChanged→resetToCenter 读到最新值）
         primaryView.drawerFillProgress = progress
         secondaryView.drawerFillProgress = progress
-        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突
-        val allowZoom = progress <= 0.01f
+        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突；
+        // 视频动态位同样禁缩（缩的是视频底下那张封面，见 applyVideoZoomLock）
+        val allowZoom = progress <= 0.01f && !videoLayer.isStarted
         primaryView.allowZoom = allowZoom
         secondaryView.allowZoom = allowZoom
         // 设置全屏宽度基准，供 resetToCenter 计算 fitS（固定），避免 vw 减小时 fitS 先降后升
@@ -378,9 +383,9 @@ internal fun NativeGalleryView.applyDrawerProgress(progress: Float) {
         metadataDrawer.translationX = 0f
         primaryView.drawerFillProgress = progress
         secondaryView.drawerFillProgress = progress
-        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充
-        // 逻辑冲突（横屏同款）
-        val allowZoom = progress <= 0.01f
+        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与抽屉填充
+        // 逻辑冲突（横屏同款）；视频动态位一并锁（见 applyVideoZoomLock）
+        val allowZoom = progress <= 0.01f && !videoLayer.isStarted
         primaryView.allowZoom = allowZoom
         secondaryView.allowZoom = allowZoom
         primaryView.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, imageH)

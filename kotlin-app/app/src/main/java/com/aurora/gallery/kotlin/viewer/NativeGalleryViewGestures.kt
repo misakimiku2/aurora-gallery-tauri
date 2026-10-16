@@ -30,6 +30,9 @@ internal fun NativeGalleryView.setupZoomableListeners(view: ZoomableImageView) {
             if (dx == 0f) return
             val actView = v.activeView
             actView.translationX = dx
+            // 视频层浮在两张图之上，双 buffer 的位移机制管不到它——不跟着走就会「封面滑走、
+            // 画面留下」（P3-A2）
+            if (v.videoLayer.isBound) v.videoLayer.translationX = dx
             val dir = if (dx > 0) -1 else 1
             val adjacentIndex = v.currentIndex + dir
             if (adjacentIndex < 0 || adjacentIndex >= v.images.size) return
@@ -79,6 +82,8 @@ internal fun NativeGalleryView.setupZoomableListeners(view: ZoomableImageView) {
             val actView = v.activeView
             actView.animate().cancel()
             actView.translationX = 0f
+            v.videoLayer.animate().cancel()
+            v.videoLayer.translationX = 0f
             v.cleanupSwipeAdjacentImmediate()
             // 取消正在进行的抽屉动画，跟手接管——取消后必须按权威进度回写
             // drawerOpen：松手判定（onVerticalSwipeEnd/把手拖拽/toggleDrawer）先把
@@ -104,6 +109,10 @@ internal fun NativeGalleryView.setupZoomableListeners(view: ZoomableImageView) {
             Log.i("NativeViewer", "onSingleTapConfirmed: drawerOpen=${v.drawerOpen} isImmersive=${v.isImmersive} isOpen=${v.isOpen}")
             if (v.drawerOpen) return
             // 幻灯片播放时本视图被 SlideshowView 覆盖，不会收到此回调
+            // 视频 P3-A2：视频项的单击语义换成「起播 / 播停」（对齐 UI 设计 §3「点画面本身
+            // 也切换，与图片查看器的点击语义要区分开」）。视频层不吃画面区的触摸，事件
+            // 照旧落到这里，翻页/拉抽屉那些手势因此一个都没少。
+            if (v.videoLayer.isBound && v.videoLayer.handleTap()) return
             v.toggleImmersive()
         }
         override fun onVerticalSwipeDrag(dy: Float) {
@@ -200,6 +209,8 @@ private fun NativeGalleryView.navigateFromSwipe(direction: Int) {
 
     val cw = effectiveViewWidth() + swipeGapPx
     val duration = 280L
+    silenceVideoForPageSwitch()
+    slideVideoLayerOutWith(outgoing, -direction * cw, duration)
     outgoing.animate()
         .translationX(-direction * cw)
         .setDuration(duration)
@@ -221,6 +232,7 @@ private fun NativeGalleryView.navigateFromSwipe(direction: Int) {
             swipeCachedAdjacentView = null
             swipeCachedWidth = 0f
             setSwipeHardwareLayers(false)
+            syncVideoLayer()
             listener?.onNavigate(currentIndex)
             preloadNeighbors()
             thumbnailAdapter.highlight(currentIndex)
@@ -233,6 +245,7 @@ private fun NativeGalleryView.navigateFromSwipe(direction: Int) {
 private fun NativeGalleryView.bounceBackSwipe(dir: Int) {
     val cw = swipeCachedWidth
     val duration = 280L
+    slideVideoLayerBack(duration)
     activeView.animate()
         .translationX(0f)
         .setDuration(duration)

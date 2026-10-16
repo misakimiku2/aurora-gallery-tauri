@@ -52,6 +52,10 @@ internal fun Image.toViewerItem(
         width = width?.toInt() ?: 0,
         height = height?.toInt() ?: 0,
         isLan = isLan,
+        // 视频 P3-A2：类型与时长的真源都是 FFI 直通值（A1 的 fileType / A4 的 durationMs），
+        // 安卓侧不再查第五遍扩展名表（设计方案 §2.7 的六套表教训）。
+        isVideo = fileType.equals("Video", ignoreCase = true),
+        durationMs = durationMs ?: 0L,
         thumbnailUrl = contentUri.takeIf { isLan },
         // LAN 置空：contentUri 的本地图语义（ContentResolver 开流）不适用于 http URL，
         // 免得任何本地兜底分支把 URL 误当 URI 用。

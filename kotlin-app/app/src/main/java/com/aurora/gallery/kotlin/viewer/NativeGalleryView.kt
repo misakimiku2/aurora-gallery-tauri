@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalette
 import com.aurora.gallery.kotlin.ui.theme.AuroraPalettes
 import com.aurora.gallery.kotlin.ui.theme.withAlpha
+import com.aurora.gallery.kotlin.ui.components.formatVideoDuration
 import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
@@ -161,6 +162,13 @@ class NativeGalleryView @JvmOverloads constructor(
         val width: Int,
         val height: Int,
         val isLan: Boolean,
+        /**
+         * 视频 P3-A2：类型真源=FFI [uniffi.aurora_core.Image.fileType]（见 ViewerItems）。
+         * 查看器据此决定「大图请求发不发 Coil」与「视频层绑不绑」——不在这里再判扩展名。
+         */
+        val isVideo: Boolean = false,
+        /** 时长毫秒，图片项恒 0；来自 [uniffi.aurora_core.Image.durationMs]（A4 同源）。 */
+        val durationMs: Long = 0L,
         val thumbnailUrl: String?, // LAN 缩略图 URL 或本地缩略图路径
         val contentUri: String = "", // 本地图片的 content:// URI（优先使用，兼容 Scoped Storage）
         // 元数据（用于抽屉展示）
@@ -312,6 +320,13 @@ class NativeGalleryView @JvmOverloads constructor(
     internal val primaryView: ZoomableImageView
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal val secondaryView: ZoomableImageView // 用于切换动画时的另一张
+    /**
+     * 视频层（P3-A2）：压在图片双 buffer 之上、chrome 之下——选 TextureView 就是为了
+     * 走普通合成，顶栏/播控条永远盖得住画面（桌面端被硬件视频层坑的那三条 commit 同源）。
+     * 恒 MATCH_PARENT：抽屉半开时本层让位（见 [VideoLayerView.setDrawerOccluded]），
+     * 于是「视频可见」的那些帧图片视图必然是满幅，两者几何口径一致。
+     */
+    internal val videoLayer: VideoLayerView
     // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
     internal val progressBar: ProgressBar
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
@@ -456,6 +471,18 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         addView(primaryView)
         addView(secondaryView)
+
+        // 视频 P3-A2：排在两张图之后、进度条与 chrome 之前——IDLE 态本层透明，下层封面照常
+        // 上屏（退出过渡取 Drawable 的 currentImageDrawable() 因此一行都不用改）。
+        videoLayer = VideoLayerView(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            visibility = GONE
+            onPlayError = { code ->
+                Toast.makeText(context, "播放失败（$code）", Toast.LENGTH_SHORT).show()
+            }
+            onStartedChange = { this@NativeGalleryView.applyVideoZoomLock() }
+        }
+        addView(videoLayer)
 
         // 进度条
         progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleLarge).apply {
@@ -907,13 +934,22 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerFolderView.text = item.parentName.ifEmpty { "—" }
 
         // Section 3: 全览图（用 Coil 加载缩略图或原图）
+        // 视频 P3-A2：视频项只认封面。本地视频（A5）在封面打通前**不发**原图请求——
+        // mp4 进 Coil 必失败，且本地分支会把整只文件读进 ByteBuffer（见 imageSourceFor）。
         val previewUrl = item.thumbnailUrl ?: item.path
-        val previewSrc = if (item.isLan) CoilSource(previewUrl, null, null) else coilSourceOf(item, "preview")
-        val req = coilSource(ImageRequest.Builder(context), previewSrc)
-            .target(drawerPreviewImage)
-            .precision(Precision.INEXACT)
-            .build()
-        imageLoader.enqueue(req)
+        val previewSrc =
+            if (item.isVideo && item.thumbnailUrl.isNullOrEmpty()) null
+            else if (item.isLan) CoilSource(previewUrl, null, null)
+            else coilSourceOf(item, "preview")
+        if (previewSrc == null) {
+            drawerPreviewImage.setImageDrawable(null)
+        } else {
+            val req = coilSource(ImageRequest.Builder(context), previewSrc)
+                .target(drawerPreviewImage)
+                .precision(Precision.INEXACT)
+                .build()
+            imageLoader.enqueue(req)
+        }
 
         // Section 4: 主色调（圆形色块横排，单行，点击触发颜色搜索）
         // LAN 项整节隐藏：颜色库键语义=file_id 只覆盖本地文件，远端项提取必然失败
@@ -1399,6 +1435,7 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         // 重新刷新当前图片的抽屉内容（标题色块等会用到主题色）
         images.getOrNull(currentIndex)?.let { updateDrawer(it) }
+        applyVideoPalette()
     }
 
     // —— 进出过渡动画（2026-10-08，覆盖层本体见 [ViewerTransition]）——
@@ -1460,11 +1497,17 @@ class NativeGalleryView @JvmOverloads constructor(
     fun hideForTransition() {
         holdHiddenForTransition = false
         if (!isOpen) return
+        // 退出过渡开始 = 播放到此为止：覆盖层飞回卡片用的是下层封面 Drawable，视频层留着
+        // 只会「画面已缩回网格、声音还在响」
+        videoLayer.detach()
         visibility = INVISIBLE
     }
 
     fun close() {
         cleanupSlideshow()
+        // 视频 P3-A2：退出即断流，查看器关闭后绝不能留一路出声的播放器
+        //（UI 设计 §3「切换时暂停并重置上一个视频」的退出半边）。
+        videoLayer.detach()
         cleanupSwipeAdjacentImmediate()
         activeView.animate().cancel()
         activeView.translationX = 0f
@@ -1514,8 +1557,12 @@ class NativeGalleryView @JvmOverloads constructor(
 
     fun destroy() {
         cleanupSlideshow()
+        videoLayer.release()
         imageLoader.shutdown()
     }
+
+    /** 宿主 onPause：视频出声必须跟着退到后台停（回前台不自动续播，停在暂停帧）。 */
+    fun pauseVideoForBackground() = videoLayer.pauseForBackground()
 
     /** 切换到上一张/下一张。[direction] -1=prev, 1=next。 */
     fun navigate(direction: Int, animate: Boolean = true) {
@@ -1535,6 +1582,8 @@ class NativeGalleryView @JvmOverloads constructor(
         cleanupSwipeAdjacentImmediate()
         activeView.animate().cancel()
         activeView.translationX = 0f
+        videoLayer.animate().cancel()
+        videoLayer.translationX = 0f
 
         val direction = if (newIndex > currentIndex) 1 else -1
         currentIndex = newIndex
@@ -1562,6 +1611,8 @@ class NativeGalleryView @JvmOverloads constructor(
         loadIntoView(incoming, currentIndex)
 
         val duration = 280L
+        silenceVideoForPageSwitch()
+        slideVideoLayerOutWith(outgoing, -direction * cw, duration)
         outgoing.animate()
             .translationX(-direction * cw)
             .setDuration(duration)
@@ -1578,6 +1629,7 @@ class NativeGalleryView @JvmOverloads constructor(
             .setInterpolator(SWIPE_INTERPOLATOR)
             .withEndAction {
                 isAnimating.set(false)
+                syncVideoLayer()
                 listener?.onNavigate(currentIndex)
                 preloadNeighbors()
                 thumbnailAdapter.highlight(currentIndex)
@@ -1604,7 +1656,9 @@ class NativeGalleryView @JvmOverloads constructor(
         deleteBtn.visibility = if (isCompactPortrait || (item.isLan && !lanAllowEdit)) GONE else VISIBLE
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
-        bottomInfoText.text = "${item.name}\n$sizeStr"
+        // 视频 P3-A2：底部信息补时长，与网格角标同一个格式函数、同一份 durationMs 真源
+        val durationLabel = if (item.isVideo) formatVideoDuration(item.durationMs) else ""
+        bottomInfoText.text = "${item.name}\n$sizeStr" + if (durationLabel.isEmpty()) "" else " · $durationLabel"
         // 同步抽屉
         updateDrawer(item)
     }
@@ -1637,6 +1691,8 @@ class NativeGalleryView @JvmOverloads constructor(
         // B2：沉浸=真全屏剧场态——背景转纯黑 + 系统栏隐藏；退出两者一并还原。
         // 容器恒全屏（不吃 insets），故隐藏系统栏不引起任何 resize，图片全程不动。
         setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
+        // 视频层的信箱底色与本类背景同源，沉浸切换要一起重涂（否则黑剧场里嵌一块主题色底）
+        applyVideoPalette()
         onImmersiveBarsChange?.invoke(isImmersive)
         val targetTop = if (isImmersive) topBarHideTranslation() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
@@ -2104,6 +2160,8 @@ class NativeGalleryView @JvmOverloads constructor(
     private fun startSlideshow() {
         if (images.isEmpty()) return
         if (slideshowView != null) return
+        // 幻灯片是黑底全屏覆盖层，视频层排在它下面：不停就会「看不见画面但一直在出声」
+        videoLayer.detach()
         val sv = SlideshowView(
             context = context,
             imageLoader = imageLoader,

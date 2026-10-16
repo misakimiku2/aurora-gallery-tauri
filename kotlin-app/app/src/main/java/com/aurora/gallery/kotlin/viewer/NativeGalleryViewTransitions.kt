@@ -35,6 +35,7 @@ internal fun NativeGalleryView.coilSourceOf(item: NativeGalleryView.ImageItem, v
 
 internal fun NativeGalleryView.loadCurrent(animateIn: Boolean) {
     loadIntoView(activeView, currentIndex)
+    syncVideoLayer()
     preloadNeighbors()
 }
 
@@ -50,6 +51,7 @@ internal fun NativeGalleryView.loadIntoView(view: ZoomableImageView, index: Int,
 
     // 先加载缩略图（如果有），再加载原图
     val thumbUrl = item.thumbnailUrl
+    val videoCoverOnly = item.isVideo
     if (!thumbUrl.isNullOrEmpty()) {
         val thumbRequest = ImageRequest.Builder(context)
             .data(thumbUrl)
@@ -67,11 +69,35 @@ internal fun NativeGalleryView.loadIntoView(view: ZoomableImageView, index: Int,
                         return@target
                     }
                     view.setImageDrawable(drawable)
+                    if (videoCoverOnly) {
+                        // 视频项的封面就是它在「静态位」上的最终画面（动态位归视频层），
+                        // 本轮请求到此为止：进度条没有别的成功回调可以等它了
+                        view.isFullResShown = true
+                        if (showProgress) progressBar.visibility = View.GONE
+                    }
+                },
+                // 视频项的封面是它唯一的静态位来源：取不到也得把进度条收掉，
+                // 否则这一页只剩一个永远转不完的圈（大图请求已明确不发）
+                onError = {
+                    if (videoCoverOnly && view.boundLoadGeneration == generation && showProgress) {
+                        Log.e(NativeGalleryView.TAG, "video cover failed: index=$index name=${item.name}")
+                        progressBar.visibility = View.GONE
+                    }
                 },
             )
             .precision(Precision.INEXACT)
             .build()
         imageLoader.enqueue(thumbRequest)
+    }
+
+    if (videoCoverOnly) {
+        // 视频 P3-A2：大图请求**不发**。mp4 进 Coil 两头都是坑——解码必失败（表现成一句
+        // Failed to load 的 Toast），且 HttpUri fetcher 会把整只文件拉进磁盘缓存（LAN 录屏
+        // 上百 MB）。A1/A3/A4 那几轮就是靠这条注定失败的请求「看起来无害」混过去的。
+        if (showProgress && thumbUrl.isNullOrEmpty()) progressBar.visibility = View.GONE
+        // 换页动画进行中不做同步：那会让新一页的播放键在旧页还在滑出时就亮在屏幕正中
+        if (index == currentIndex && !isAnimating.get()) syncVideoLayer()
+        return
     }
 
     val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
@@ -110,6 +136,10 @@ internal fun NativeGalleryView.preloadNeighbors() {
         val idx = currentIndex + offset
         if (idx < 0 || idx >= images.size) continue
         val item = images[idx]
+        // 视频项跳过：这里的请求形制与大图请求相同（喂的是原图 URL），预加载等于提前
+        // 把整只 mp4 拉进缓存。视频的「邻接预热」只该预热封面，而封面走 thumbnailUrl，
+        // 由翻页那一刻的 loadIntoView 现取（LAN 的封面是服务端缓存帧，本就快）
+        if (item.isVideo) continue
         val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
             .precision(Precision.INEXACT)
             .build()
