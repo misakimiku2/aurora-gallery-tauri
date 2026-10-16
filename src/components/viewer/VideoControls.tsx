@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FileNode } from '../../types';
 import {
   Play, Pause, StepBack, StepForward, Rewind, FastForward,
-  Volume2, Volume1, VolumeX, Repeat, Maximize, Minimize, Loader2,
+  Volume2, Volume1, VolumeX, Repeat, Maximize, Minimize,
 } from 'lucide-react';
 
 /**
@@ -10,7 +10,9 @@ import {
  *
  * 设计依据：docs/视频播放UI设计.md
  *  - §2 控制条分组：传输（播放/暂停 · 上一帧 · 下一帧）· 跳转（±5s）·
- *       进度（当前时间 · 进度条 · 总时长）· 辅助（静音/音量 · 倍速 · 循环 · 全屏）
+ *       进度（当前时间 · 进度条 · 总时长）· 进度条右侧（倍速 · 静音 · 循环 · 全屏）。
+ *       音量是**悬停静音按钮才出现的竖排弹窗**，不常驻控制条 —— 常驻横条会把宽度
+ *       从进度条上抢走（指挥官 2026-10-16）
  *  - §3 实现要点：拖拽中只更新时间文字，松手才真正 seek（避免连续请求打爆 asset protocol）；
  *       无 fps 时逐帧按钮置灰（不按 1/30 猜，§1.3）
  *  - 进度条必须显示缓冲进度：总文档 §3.2 的 1MB 分片上限会让大文件 seek 有等待，
@@ -21,13 +23,6 @@ import {
  */
 
 const RATES = [0.5, 1, 1.25, 1.5, 2];
-
-// ── 等待状态稳定化参数（详见组件内 applyWaiting 注释）──
-// 总文档 §3.2：asset protocol 单次 Range ≤1,024,000 字节，一次 seek/播放会被拆成
-// 多次 waiting↔canplay，若把媒体事件直连 boolean，会反复卸载/重挂载 <Loader2>，
-// CSS animate-spin 每次从 0° 重播 → 肉眼即「转圈反复跳动」的闪烁。
-const WAIT_SHOW_DELAY_MS = 120; // 短于此时长的等待不显示：瞬时 seek 不再闪一下
-const WAIT_MIN_SHOW_MS = 320;   // spinner 一旦显示，至少保持此时长：吸收高频抖动
 
 const formatTime = (sec: number): string => {
   if (!isFinite(sec) || sec < 0) return '00:00';
@@ -67,18 +62,11 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState(false);
-  const [isWaiting, setIsWaiting] = useState(false);
   // 拖拽中只更新时间文字，松手才真正 seek（§3）
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const scrubbingRef = useRef(false);
   const scrubValueRef = useRef(0);
-
-  // 稳定化等待状态的内部记账（配合下方 applyWaiting）
-  const waitingRef = useRef(false);          // 当前是否已「显示」等待
-  const waitingShownAtRef = useRef(0);       // 显示时刻，用于最短展示时长
-  const waitShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 延迟显示
-  const waitHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 延迟隐藏
 
   const frameRate = file.meta?.frameRate;
   const canStepFrame = typeof frameRate === 'number' && frameRate > 0;
@@ -94,45 +82,6 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     return v.buffered.end(v.buffered.length - 1);
   }, [videoRef]);
 
-  // 稳定化的等待状态机（对应 WAIT_SHOW_DELAY_MS / WAIT_MIN_SHOW_MS）：
-  //  next=true（waiting/stalled/seeking）→ 延迟 120ms 后显示，期间若 ready 则取消；
-  //  next=false（seeked/canplay/playing）→ 已显示的需满足最短展示时长 320ms 才隐藏；
-  // 这样既保留真实长等待（大文件 seek）的反馈，又消除高频 true/false 抖动造成的重挂载闪烁。
-  const applyWaiting = useCallback((next: boolean) => {
-    if (next) {
-      // 保持显示：取消待隐藏；已在延迟窗口内则忽略重复事件（避免定时器抖动）
-      if (waitHideTimerRef.current) {
-        clearTimeout(waitHideTimerRef.current);
-        waitHideTimerRef.current = null;
-      }
-      if (waitingRef.current || waitShowTimerRef.current) return;
-      waitShowTimerRef.current = setTimeout(() => {
-        waitShowTimerRef.current = null;
-        waitingRef.current = true;
-        waitingShownAtRef.current = performance.now();
-        setIsWaiting(true);
-      }, WAIT_SHOW_DELAY_MS);
-      return;
-    }
-    // 等待结束：先取消尚未到点的延迟显示（瞬时 seek 不闪）
-    if (waitShowTimerRef.current) {
-      clearTimeout(waitShowTimerRef.current);
-      waitShowTimerRef.current = null;
-    }
-    if (!waitingRef.current) return;
-    const remain = WAIT_MIN_SHOW_MS - (performance.now() - waitingShownAtRef.current);
-    if (remain <= 0) {
-      waitingRef.current = false;
-      setIsWaiting(false);
-    } else if (!waitHideTimerRef.current) {
-      waitHideTimerRef.current = setTimeout(() => {
-        waitHideTimerRef.current = null;
-        waitingRef.current = false;
-        setIsWaiting(false);
-      }, remain);
-    }
-  }, []);
-
   // 绑定视频元素事件，并同步初始瞬时状态
   useEffect(() => {
     const v = videoRef.current;
@@ -146,11 +95,6 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     setRate(v.playbackRate);
     setLoop(v.loop);
     setBufferedEnd(readBufferedEnd());
-    // 切换文件时重置稳定化等待状态（清掉上一支视频残留的等待/定时器）
-    if (waitShowTimerRef.current) { clearTimeout(waitShowTimerRef.current); waitShowTimerRef.current = null; }
-    if (waitHideTimerRef.current) { clearTimeout(waitHideTimerRef.current); waitHideTimerRef.current = null; }
-    waitingRef.current = false;
-    setIsWaiting(false);
 
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
@@ -166,12 +110,6 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     const onProgress = () => setBufferedEnd(readBufferedEnd());
     const onVolume = () => { setVolume(v.volume); setMuted(v.muted); };
     const onRate = () => setRate(v.playbackRate);
-    // waiting / stalled / seeking：seek 或网络等待时给反馈（§3「seek 中/缓冲中显示 waiting 状态」）
-    // 拖拽中尚未 seek（§3），此刻的 waiting 属播放流下的背景缓冲噪声，不显示 → 消除拖拽期闪烁
-    const onWaiting = () => { if (!scrubbingRef.current) applyWaiting(true); };
-    const onSeeked = () => applyWaiting(false);
-    const onCanPlay = () => applyWaiting(false);
-    const onPlaying = () => applyWaiting(false);
 
     v.addEventListener('play', onPlay);
     v.addEventListener('pause', onPause);
@@ -182,12 +120,6 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     v.addEventListener('progress', onProgress);
     v.addEventListener('volumechange', onVolume);
     v.addEventListener('ratechange', onRate);
-    v.addEventListener('waiting', onWaiting);
-    v.addEventListener('stalled', onWaiting);
-    v.addEventListener('seeking', onWaiting);
-    v.addEventListener('seeked', onSeeked);
-    v.addEventListener('canplay', onCanPlay);
-    v.addEventListener('playing', onPlaying);
 
     return () => {
       v.removeEventListener('play', onPlay);
@@ -199,20 +131,8 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       v.removeEventListener('progress', onProgress);
       v.removeEventListener('volumechange', onVolume);
       v.removeEventListener('ratechange', onRate);
-      v.removeEventListener('waiting', onWaiting);
-      v.removeEventListener('stalled', onWaiting);
-      v.removeEventListener('seeking', onWaiting);
-      v.removeEventListener('seeked', onSeeked);
-      v.removeEventListener('canplay', onCanPlay);
-      v.removeEventListener('playing', onPlaying);
     };
-  }, [videoRef, readBufferedEnd, applyWaiting, file.id]);
-
-  // 卸载时清理等待状态定时器，避免在已卸载组件上 setState
-  useEffect(() => () => {
-    if (waitShowTimerRef.current) clearTimeout(waitShowTimerRef.current);
-    if (waitHideTimerRef.current) clearTimeout(waitHideTimerRef.current);
-  }, []);
+  }, [videoRef, readBufferedEnd, file.id]);
 
   const togglePlay = async () => {
     const v = videoRef.current;
@@ -253,6 +173,29 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     v.muted = clamped === 0;
   };
 
+  // ── 悬停弹窗的竖排音量 ──
+  // 上 = 1.0、下 = 0；按下即拖，pointer capture 保证指针滑出滑条也继续跟随。
+  // 不占控制条宽度，也不参与全局键位（↑ ↓ 仍由 ImageViewer 调音量）。
+  const volumeTrackRef = useRef<HTMLDivElement>(null);
+  const volumeDraggingRef = useRef(false);
+  const applyVolumeAt = (clientY: number) => {
+    const el = volumeTrackRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.height <= 0) return;
+    const ratio = 1 - (clientY - rect.top) / rect.height;
+    changeVolume(Math.round(ratio * 100) / 100);
+  };
+  const beginVolumeDrag = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    volumeDraggingRef.current = true;
+    applyVolumeAt(e.clientY);
+  };
+  const moveVolumeDrag = (e: React.PointerEvent) => {
+    if (volumeDraggingRef.current) applyVolumeAt(e.clientY);
+  };
+  const endVolumeDrag = () => { volumeDraggingRef.current = false; };
+
   const toggleMute = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -281,11 +224,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     scrubValueRef.current = t;
     setScrubValue(t);
     setIsScrubbing(true);
-    // 拖拽尚未 seek（§3），清除任何残留等待态/定时器，并通知容器隐藏中央遮罩
-    if (waitShowTimerRef.current) { clearTimeout(waitShowTimerRef.current); waitShowTimerRef.current = null; }
-    if (waitHideTimerRef.current) { clearTimeout(waitHideTimerRef.current); waitHideTimerRef.current = null; }
-    waitingRef.current = false;
-    setIsWaiting(false);
+    // 拖拽期间通知容器隐藏中央缓冲遮罩（§3：此刻尚未 seek，遮罩会闪）
     onScrubbingChange?.(true);
   };
   // 拖拽中只更新时间文字；对非有限值做防护，避免出现 NaN 导致文字/进度条抖动
@@ -330,11 +269,14 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   const bufferedPct = dur > 0 ? Math.min(100, (bufferedEnd / dur) * 100) : 0;
 
   const VolumeIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
+  const volumePct = Math.round((muted ? 0 : volume) * 100);
 
   const iconBtn = 'p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed';
 
   return (
-    <div className="h-12 shrink-0 flex items-center gap-1.5 px-4 bg-white dark:bg-[#262626] border-t border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 z-30">
+    <div className={`h-12 shrink-0 flex items-center gap-1.5 px-4 border-t text-gray-700 dark:text-gray-200 z-30 ${
+      isFullscreen ? 'bg-black border-white/10' : 'bg-white dark:bg-[#262626] border-gray-200 dark:border-gray-800'
+    }`}>
       {/* 传输：播放/暂停（主按钮）· 上一帧 · 下一帧 */}
       <button onClick={togglePlay} className={iconBtn} title={isPlaying ? t('video.pause') : t('video.play')}>
         {isPlaying ? <Pause size={18} /> : <Play size={18} />}
@@ -383,7 +325,14 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
           step={0.01}
           value={dur > 0 ? displayTime : 0}
           tabIndex={-1}
-          // 不拦截键盘：← → 仍由全局键位接管为「上一个/下一个文件」（U1）；
+          // 点过进度条后它会持有焦点：原生 range 会用 ← →/Home/End 挪自己的值，
+          // 与全局键位（← → = 快退/快进 5s）打架。只挡默认行为、不阻止冒泡，
+          // 让键位继续交给 ImageViewer 的全局处理（§4）。
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+              e.preventDefault();
+            }
+          }}
           // 拖拽中只更新时间文字，松手（pointerup）才 seek（§3）
           onPointerDown={beginScrub}
           onChange={onScrubChange}
@@ -395,32 +344,46 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       </div>
       <span className="text-xs tabular-nums w-14 select-none">{formatTime(dur)}</span>
 
-      {/* 缓冲/等待反馈：固定占位宽度，避免出现/消失时控制条整体位移（抖动）；
-          拖拽中（未 seek，§3）一律不显示，消除拖拽期闪烁 */}
-      <span className="w-[18px] h-[18px] shrink-0 flex items-center justify-center">
-        {!isScrubbing && isWaiting && <Loader2 size={14} className="animate-spin text-blue-500" />}
-      </span>
-
-      {/* 辅助：静音/音量 · 倍速 · 循环 · 全屏 */}
-      <button onClick={toggleMute} className={iconBtn} title={muted ? t('video.unmute') : t('video.mute')}>
-        <VolumeIcon size={16} />
-      </button>
-      <input
-        type="range"
-        min={0}
-        max={1}
-        step={0.01}
-        value={muted ? 0 : volume}
-        tabIndex={-1}
-        // 音量条允许方向键原生调节；仅阻止冒泡以免触发全局视频键位
-        onKeyDown={(e) => { if (e.key === 'Escape') return; e.stopPropagation(); }}
-        onChange={(e) => changeVolume(Number(e.target.value))}
-        className="w-16 h-1 accent-blue-500 cursor-pointer shrink-0"
-        aria-label={t('video.volume')}
-      />
-      <button onClick={cycleRate} className="px-2 py-1 text-xs rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12" title={t('video.rate')}>
+      {/* 倍速：紧跟进度条右侧。定宽 w-12 是按最宽的「1.25x」算的（换档时不推挤后面的按钮），
+          文字左对齐 —— 否则居中会让它的字形比左侧图标按钮多内缩约 9px，进度条两侧间距就不等了 */}
+      <button onClick={cycleRate} className="px-2 py-1 text-xs text-left rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12 shrink-0" title={t('video.rate')}>
         {rate}x
       </button>
+
+      {/* 静音按钮 + 悬停弹窗音量。横向音量条不再常驻控制条 —— 它从进度条上抢宽度 */}
+      <div className="relative group shrink-0">
+        <button onClick={toggleMute} className={iconBtn} title={muted ? t('video.unmute') : t('video.mute')}>
+          <VolumeIcon size={16} />
+        </button>
+        {/* pb-1 让弹窗与按钮连成一片连续悬停区：鼠标从按钮移进弹窗不会中途断开 */}
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 hidden group-hover:flex flex-col items-center pb-1">
+          <div className="px-2 py-2 rounded-lg bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 shadow-lg">
+            {/* 竖排音量自绘，不用原生 range：index.css 的全局 range 样式是按横排写的
+                （track 高 4px、thumb 靠负 margin 居中），竖排得整套改写，不值当 */}
+            <div
+              ref={volumeTrackRef}
+              role="slider"
+              aria-orientation="vertical"
+              aria-label={t('video.volume')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={volumePct}
+              className="relative w-5 h-24 cursor-pointer select-none touch-none"
+              onPointerDown={beginVolumeDrag}
+              onPointerMove={moveVolumeDrag}
+              onPointerUp={endVolumeDrag}
+              onPointerCancel={endVolumeDrag}
+            >
+              <div className="absolute left-1/2 -translate-x-1/2 inset-y-0 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-1 rounded-full bg-blue-500" style={{ height: `${volumePct}%` }} />
+              <div
+                className="absolute left-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-blue-500 border border-white dark:border-[#262626] shadow pointer-events-none"
+                style={{ bottom: `calc(${volumePct}% - 6px)` }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
       <button
         onClick={toggleLoop}
         className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${loop ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}

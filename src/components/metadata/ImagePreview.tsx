@@ -216,7 +216,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
                                     autoPlay
                                     playsInline
                                     crossOrigin="anonymous"
-                                    className="max-w-full max-h-[300px] rounded bg-black cursor-pointer"
+                                    className="max-w-full max-h-[300px] rounded bg-transparent cursor-pointer"
                                     onError={() => setPlayFailed(true)}
                                     onClick={toggleVideoPlayback}
                                 />

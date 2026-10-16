@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { TabState } from '../types';
+import { isTextEditingTarget } from '../utils/keyboardTarget';
 
 type Opts = {
   tabs: TabState[];
@@ -64,6 +65,8 @@ export function useKeyboardShortcuts(opts: Opts) {
 
       // Delete: Delete selected files/folders
       if (e.key === 'Delete') {
+        // 在输入框里删字符不该顺手删文件（查看器开着时右侧面板就是可编辑的）
+        if (e.isComposing || isTextEditingTarget(e.target)) return;
         if (selectedFileIds && selectedFileIds.length > 0) {
           e.preventDefault();
           onRequestDelete(selectedFileIds);

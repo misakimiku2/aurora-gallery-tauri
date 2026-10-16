@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState, FileType } from '../types';
 import { debounce } from '../utils/debounce';
 import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
+import { isTextEditingTarget } from '../utils/keyboardTarget';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { VideoControls } from './viewer/VideoControls';
 import { useToasts } from '../hooks/useToasts';
@@ -26,6 +27,9 @@ import {
 // 全局高分辨率图片 Blob 缓存 - 增大容量�?200 �?
 const blobCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 50;
+
+// 视频全屏时，顶部工具栏与底部控制条静止多久后自动隐藏
+const CHROME_IDLE_MS = 3000;
 
 const loadingPromises = new Map<string, Promise<string>>();
 
@@ -1249,14 +1253,29 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       e.preventDefault();
       e.stopPropagation();
 
-      const ZOOM_SPEED = 0.3; // 显著提高缩放步长，提升缩放效率
       const direction = Math.sign(e.deltaY);
+      if (direction === 0) return;
 
-      if (!imgRef.current || !containerRef.current) return;
+      // 视频：滚轮 = 音量（播放器直觉），Shift+滚轮才沿用图片的缩放。
+      // 音量变化由 <video> 的 volumechange 事件回流到 VideoControls，无需额外 HUD。
+      if (isVideo && !e.shiftKey) {
+        const v = videoRef.current;
+        if (!v) return;
+        v.muted = false;
+        const next = Math.round((v.volume + (direction < 0 ? 0.05 : -0.05)) * 100) / 100;
+        v.volume = Math.max(0, Math.min(1, next));
+        return;
+      }
+
+      const ZOOM_SPEED = 0.3; // 显著提高缩放步长，提升缩放效率
+
+      if (!containerRef.current) return;
 
       const rect = container.getBoundingClientRect();
-      const { naturalWidth, naturalHeight } = imgRef.current;
-      if (!naturalWidth || !naturalHeight) return;
+      // 视频用 videoWidth/Height，图片用 naturalWidth/Height（此前只认 imgRef，视频上滚轮等于失效）
+      const natural = getMediaNaturalSize();
+      if (!natural) return;
+      const { w: naturalWidth, h: naturalHeight } = natural;
 
       // 1. 计算当前逻辑上的图片边界（不依赖实时 DOM，消除抖动）
       const containerW = rect.width;
@@ -1322,7 +1341,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       container.removeEventListener('wheel', handleWheel);
       if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
     };
-  }, [slideshowActive]);
+    // isVideo 必须进依赖：滚轮命令按类型分派，闭包不能停留在挂载时的类型上
+  }, [slideshowActive, isVideo]);
 
   // 幻灯片间隔驱动（图片/视频通用）。加入 file.id：每个条目获得完整间隔，
   // 配合下方视频「播完」事件实现 U5/R2：切换条件 = 播完 或 播满间隔，取二者较小。
@@ -1365,6 +1385,68 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       setIsFullscreen(false);
     }
   };
+
+  // ── 视频全屏：顶部工具栏与底部控制条自动隐藏 ──
+  // 全屏时两条工具条改成浮层（absolute），画面占满整屏；显隐因此不改变容器尺寸，
+  // 画面不会跟着跳。隐藏后任意鼠标移动即唤回；指针停在工具条上时不隐藏，
+  // 否则进度条拖到一半条就消失了。
+  const chromeOverlay = isFullscreen && isVideo && !slideshowActive;
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const chromeIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topBarRef = useRef<HTMLDivElement>(null);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
+  // 最近一次鼠标位置：到点隐藏前用它判断指针是否正停在某条工具条上
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+
+  const wakeChrome = useCallback(() => {
+    setChromeHidden(false);
+    if (chromeIdleTimerRef.current) clearTimeout(chromeIdleTimerRef.current);
+    chromeIdleTimerRef.current = setTimeout(() => {
+      const p = pointerRef.current;
+      if (p) {
+        const inside = (el: HTMLDivElement | null) => {
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          return p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+        };
+        // 指针停在工具条上（含拖进度条、悬停音量弹窗）→ 这一轮不隐藏，
+        // 也不重新计时：下一次鼠标移动会再来一轮
+        if (inside(topBarRef.current) || inside(bottomBarRef.current)) return;
+      }
+      setChromeHidden(true);
+    }, CHROME_IDLE_MS);
+  }, []);
+
+  // 唤回手段尽量堆足：window 与 document 两处、鼠标移动/指针/按下/滚轮/键盘/触摸/右键都听，
+  // 且都在捕获阶段。全屏 + 硬件视频层这套组合下，只依赖某一条事件路径不可靠
+  // （实测过：React 委托到 #root 的 mousemove 在应用里收不到，而右键菜单那条状态路径正常）。
+  useEffect(() => {
+    if (!chromeOverlay) {
+      setChromeHidden(false);
+      return;
+    }
+    const wake = (e: Event) => {
+      const p = e as MouseEvent;
+      if (typeof p.clientX === 'number') pointerRef.current = { x: p.clientX, y: p.clientY };
+      wakeChrome();
+    };
+    const targets: EventTarget[] = [window, document];
+    const types = ['mousemove', 'pointermove', 'mousedown', 'wheel', 'keydown', 'touchstart', 'contextmenu', 'pointerover'];
+    targets.forEach((t) => types.forEach((type) => t.addEventListener(type, wake, true)));
+    wakeChrome();
+    return () => {
+      targets.forEach((t) => types.forEach((type) => t.removeEventListener(type, wake, true)));
+      if (chromeIdleTimerRef.current) clearTimeout(chromeIdleTimerRef.current);
+    };
+  }, [chromeOverlay, wakeChrome]);
+
+  // 卸载时收掉可能还挂着的静止计时
+  useEffect(() => () => {
+    if (chromeIdleTimerRef.current) clearTimeout(chromeIdleTimerRef.current);
+  }, []);
+
+  // 拖进度条拖过 3 秒、或右键菜单开着时，不隐藏
+  const chromeGone = chromeOverlay && chromeHidden && !contextMenu.visible && !isVideoScrubbing;
 
   const immersivePrevLayoutRef = useRef<{ sidebar: boolean; metadata: boolean }>({ sidebar: false, metadata: false });
 
@@ -1483,14 +1565,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         if (e.key === 'Enter') handleSearchSubmit();
         return;
       }
+      // 焦点在标签/描述/重命名等文本框里，或输入法正在组合：键位原样放行。
+      // 否则打个 "film" 就会触发全屏与静音，字符本身还被 preventDefault 吞掉。
+      if (e.isComposing || isTextEditingTarget(e.target)) return;
 
-      // ── 视频键位（设计文档 §4）──
-      // U1：← → 仍为「上一个/下一个文件」，故不在此拦截，落到下方既有逻辑。
-      if (isVideo) {
+      // ── 视频键位（设计文档 §4，2026-10-16 定稿）──
+      // 播放器口径：← → = 快退/快进 5s；上/下一个文件让给 Shift+← →（以及 [ ]）。
+      // 带 Ctrl/Meta/Alt 的组合一律不属于这里（Ctrl+F 搜索由下方共用逻辑接手），
+      // 否则 Ctrl+L 会变成前进 5s、Ctrl+M 会变成静音。
+      if (isVideo && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const v = videoRef.current;
+        const duration = v && isFinite(v.duration) ? v.duration : 0;
+
+        // 0-9：跳到全片 0%…90%
+        if (/^[0-9]$/.test(e.key)) {
+          e.preventDefault();
+          if (v && duration > 0) v.currentTime = (duration * Number(e.key)) / 10;
+          return;
+        }
+
         switch (e.key) {
           case ' ':
           case 'Spacebar':
+          case 'k':
+          case 'K':
             e.preventDefault();
             if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); }
             return;
@@ -1512,6 +1610,40 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             e.preventDefault();
             videoNudge(5);
             return;
+          case 'ArrowLeft':
+            if (e.shiftKey) break; // Shift+← → 落到下方「上一个/下一个文件」
+            e.preventDefault();
+            videoNudge(-5);
+            return;
+          case 'ArrowRight':
+            if (e.shiftKey) break;
+            e.preventDefault();
+            videoNudge(5);
+            return;
+          case '[':
+            e.preventDefault();
+            onPrevRef.current();
+            return;
+          case ']':
+            e.preventDefault();
+            onNextRef.current();
+            return;
+          case 'Home':
+            e.preventDefault();
+            if (v) v.currentTime = 0;
+            return;
+          case 'End':
+            e.preventDefault();
+            if (v && duration > 0) v.currentTime = duration;
+            return;
+          case '<':
+            e.preventDefault();
+            if (v) v.playbackRate = Math.max(0.25, Math.round((v.playbackRate - 0.25) * 100) / 100);
+            return;
+          case '>':
+            e.preventDefault();
+            if (v) v.playbackRate = Math.min(4, Math.round((v.playbackRate + 0.25) * 100) / 100);
+            return;
           case 'ArrowUp':
             e.preventDefault();
             if (v) { v.muted = false; v.volume = Math.min(1, v.volume + 0.1); }
@@ -1527,7 +1659,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             return;
           case 'f':
           case 'F':
-            if (e.ctrlKey || e.metaKey) break; // Ctrl+F 交给下方搜索
             e.preventDefault();
             toggleFullscreen();
             return;
@@ -1843,7 +1974,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   return (
     <div
       ref={rootRef}
-      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'}`}
+      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode || chromeOverlay ? 'bg-black' : 'bg-white dark:bg-[#262626]'} ${chromeGone ? 'cursor-none' : ''} ${chromeOverlay ? 'dark' : ''}`}
       onClick={(e) => {
         setContextMenu({ ...contextMenu, visible: false });
         setIsColorPickerOpen(false);
@@ -1860,8 +1991,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       )}
 
 
-      <div className={`h-14 bg-white dark:bg-[#262626] flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
+      <div
+        ref={topBarRef}
+        className={`h-14 flex items-center px-4 justify-between shrink-0 transition-all duration-300 ${
+          chromeOverlay
+            // 全屏：条子本身也是黑的（与画面同色），文字/图标走 dark 变体 —— 根节点已挂 .dark
+            ? `bg-black absolute top-0 inset-x-0 z-[45] ${chromeGone ? '-translate-y-full opacity-0 pointer-events-none' : ''}`
+            : `bg-white dark:bg-[#262626] z-20 ${slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`
+        }`}
+      >
 
+        {/* 全屏视频：侧栏/信息面板的展开按钮与前进后退都没意义（面板本身不在屏上），整组不渲染 */}
+        {!chromeOverlay && (
         <div className="flex items-center space-x-2">
           <button
             onClick={() => onLayoutToggle('sidebar')}
@@ -1888,6 +2029,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </button>
           </div>
         </div>
+        )}
 
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           {showSearch ? (
@@ -2027,6 +2169,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </button>
           </>
 
+          {!chromeOverlay && (
           <button
             onClick={() => onLayoutToggle('metadata')}
             className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
@@ -2034,12 +2177,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           >
             <PanelRight size={18} />
           </button>
+          )}
         </div>
       </div>
 
       <div
         ref={containerRef}
-        className={`flex-1 overflow-hidden relative transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'} ${!slideshowActive && !isVideo ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        className={`flex-1 overflow-hidden relative transition-colors ${
+          chromeOverlay
+            // 视频全屏：一进全屏就是纯黑底，不跟随工具条显隐（因此这里不需要颜色过渡）
+            ? 'bg-black duration-0'
+            : `${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'} duration-300`
+        } ${!slideshowActive && !isVideo ? 'cursor-grab active:cursor-grabbing' : ''}`}
         style={{
           ...(slideshowActive ? { cursor: 'none' } : {}),
         }}
@@ -2082,9 +2231,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 width: '100%',
                 height: '100%',
                 objectFit: 'contain',
-                background: '#000',
+                // 与图片同一底色：信箱区透出容器主题色（bg-white / dark:#262626），
+                // 幻灯片与沉浸模式容器本身是 bg-black，因此仍为黑。
+                background: 'transparent',
                 transformOrigin: 'center center',
-                pointerEvents: 'auto',
+                // 全屏影院态下视频不当指针目标：硬件视频层会吞掉落在它上面的 mousemove
+                // （mousedown / contextmenu 不受影响，所以只有「移动唤回」失效、右键能唤回）。
+                // 改成 none 后命中目标落到容器上，事件照常派发；点击/拖拽/滚轮本来就挂在
+                // 容器上，行为不变。
+                pointerEvents: chromeOverlay ? 'none' : 'auto',
                 zIndex: 2,
                 // 复用图片的变换状态：支持滚轮/拖拽平移与 1:1 缩放（§7.2 原始尺寸/适应窗口）
                 transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
@@ -2308,17 +2463,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         )}
       </div>
 
-      {/* 视频控制条：仅视频时显示，图片时隐藏（§1.1：只有底部控制条随类型切换，容器不卸载） */}
+      {/* 视频控制条：仅视频时显示，图片时隐藏（§1.1：只有底部控制条随类型切换，容器不卸载）。
+          全屏时这层壳把它变成浮层，与顶部工具栏一起随静止计时显隐。 */}
       {isVideo && !slideshowActive && (
-        <VideoControls
-          key={file.id}
-          videoRef={videoRef}
-          file={file}
-          isFullscreen={isFullscreen}
-          onToggleFullscreen={toggleFullscreen}
-          t={t}
-          onScrubbingChange={handleVideoScrubbingChange}
-        />
+        <div
+          ref={bottomBarRef}
+          className={
+            chromeOverlay
+              ? `absolute bottom-0 inset-x-0 z-[45] transition-all duration-300 ${chromeGone ? 'translate-y-full opacity-0 pointer-events-none' : ''}`
+              : 'shrink-0'
+          }
+        >
+          <VideoControls
+            key={file.id}
+            videoRef={videoRef}
+            file={file}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={toggleFullscreen}
+            t={t}
+            onScrubbingChange={handleVideoScrubbingChange}
+          />
+        </div>
       )}
 
       {contextMenu.visible && (() => {

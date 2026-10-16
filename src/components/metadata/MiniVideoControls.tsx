@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
+import { isTextEditingTarget } from '../../utils/keyboardTarget';
 
 /**
  * 右侧面板「就地播放」小窗的迷你控制条（2026-10-16，指挥官实机反馈后重设计）。
@@ -102,7 +103,8 @@ export const MiniVideoControls = ({ videoRef, t, viewerVideoOpen }: MiniVideoCon
             if (e.isComposing) return; // 输入法组合中的空格（选字），放行
             if (viewerVideoOpen) return;
             const target = e.target as HTMLElement | null;
-            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+            // 只让路给文本编辑目标：小窗自己的 range 滑条持有焦点时，空格仍该是播放/暂停
+            if (isTextEditingTarget(target)) return;
             e.preventDefault(); // 拦下页面滚动：空格已被小窗消费
             togglePlay();
         };
@@ -189,6 +191,9 @@ export const MiniVideoControls = ({ videoRef, t, viewerVideoOpen }: MiniVideoCon
                     step={0.01}
                     value={dur > 0 ? displayTime : 0}
                     tabIndex={-1}
+                    // 焦点在进度条上时方向键就地调本窗进度，不冒泡给查看器的「← → 快退/快进」，
+                    // 免得小窗与查看器同时 seek（与 viewer/VideoControls 的音量条同一口径）
+                    onKeyDown={(e) => { if (e.key.startsWith('Arrow')) e.stopPropagation(); }}
                     onPointerDown={beginScrub}
                     onChange={onScrubChange}
                     onPointerUp={endScrub}
