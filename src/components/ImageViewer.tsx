@@ -29,7 +29,7 @@ const blobCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 50;
 
 // 视频全屏时，顶部工具栏与底部控制条静止多久后自动隐藏
-const CHROME_IDLE_MS = 3000;
+const CHROME_IDLE_MS = 1500;
 
 const loadingPromises = new Map<string, Promise<string>>();
 
@@ -1417,9 +1417,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }, CHROME_IDLE_MS);
   }, []);
 
-  // 唤回手段尽量堆足：window 与 document 两处、鼠标移动/指针/按下/滚轮/键盘/触摸/右键都听，
-  // 且都在捕获阶段。全屏 + 硬件视频层这套组合下，只依赖某一条事件路径不可靠
-  // （实测过：React 委托到 #root 的 mousemove 在应用里收不到，而右键菜单那条状态路径正常）。
+  // 唤回手段堆得比较满：window 与 document 两处、鼠标移动/指针/按下/滚轮/键盘/触摸/右键都听，
+  // 且都在捕获阶段。事后看这一堆并不都是必需的（真凶是硬件视频层盖住 UI，见 §2），
+  // 但多挂几类事件对「静止判定」本身有用：光听 mousemove 会漏掉只用键盘的人。
   useEffect(() => {
     if (!chromeOverlay) {
       setChromeHidden(false);
@@ -1445,7 +1445,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     if (chromeIdleTimerRef.current) clearTimeout(chromeIdleTimerRef.current);
   }, []);
 
-  // 拖进度条拖过 3 秒、或右键菜单开着时，不隐藏
+  // 正在拖进度条、或右键菜单开着时，不隐藏
   const chromeGone = chromeOverlay && chromeHidden && !contextMenu.visible && !isVideoScrubbing;
 
   const immersivePrevLayoutRef = useRef<{ sidebar: boolean; metadata: boolean }>({ sidebar: false, metadata: false });
@@ -1996,7 +1996,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         className={`h-14 flex items-center px-4 justify-between shrink-0 transition-all duration-300 ${
           chromeOverlay
             // 全屏：条子本身也是黑的（与画面同色），文字/图标走 dark 变体 —— 根节点已挂 .dark
-            ? `bg-black absolute top-0 inset-x-0 z-[45] ${chromeGone ? '-translate-y-full opacity-0 pointer-events-none' : ''}`
+            ? `bg-black absolute inset-x-0 z-[45] ${chromeGone ? 'top-[-3.5rem] opacity-0 pointer-events-none' : 'top-0'}`
             : `bg-white dark:bg-[#262626] z-20 ${slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`
         }`}
       >
@@ -2235,18 +2235,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 // 幻灯片与沉浸模式容器本身是 bg-black，因此仍为黑。
                 background: 'transparent',
                 transformOrigin: 'center center',
-                // 全屏影院态下视频不当指针目标：硬件视频层会吞掉落在它上面的 mousemove
-                // （mousedown / contextmenu 不受影响，所以只有「移动唤回」失效、右键能唤回）。
-                // 改成 none 后命中目标落到容器上，事件照常派发；点击/拖拽/滚轮本来就挂在
-                // 容器上，行为不变。
-                pointerEvents: chromeOverlay ? 'none' : 'auto',
-                // 关键的一条：影院态下主动让视频放弃硬件视频 overlay。
-                // overlay 生效期间 Blink 不把 mousemove 派发给页面 → 隐藏后鼠标唤不回，
-                // 且时好时坏（overlay 是按播放状态/遮挡关系临时申请释放的，暂停或画面上
-                // 压一层不透明内容时就没了 —— 实测过：叠一个诊断面板就"突然好了"）。
-                // opacity<1 让图层判定为需要混合，Blink 便不再申请 overlay；
-                // 解码仍是硬件的，只多一次全屏合成，0.999 肉眼不可见。
-                opacity: chromeOverlay ? 0.999 : 1,
+                // 外层媒体包裹是 pointer-events-none，这里必须显式打开（否则视频自身收不到
+                // 事件）；点击/滚轮/拖拽的处理挂在容器上，靠冒泡接住。
+                pointerEvents: 'auto',
+                // 影院态下强制取消硬件视频 overlay（真因见 docs/视频播放UI设计.md §2）：
+                // overlay 平面直接扫出、压在 UI 层之上，16:9 视频铺满整屏时把上下两条
+                // 工具栏整个盖住 —— CSS 侧量出来 op=1 / vis=visible / z=45 全对，就是看不见。
+                // 实测否掉的两条路：pointerEvents:none（事件本来就正常派发，与病无关）、
+                // opacity<1（D3D overlay 支持 alpha，取不到资格）。filter 要走独立渲染通道，
+                // Blink 便不再把它当 overlay 候选；亮度 1.0001 肉眼不可见。
+                filter: chromeOverlay ? 'brightness(1.0001)' : 'none',
                 zIndex: 2,
                 // 复用图片的变换状态：支持滚轮/拖拽平移与 1:1 缩放（§7.2 原始尺寸/适应窗口）
                 transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
@@ -2477,7 +2475,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           ref={bottomBarRef}
           className={
             chromeOverlay
-              ? `absolute bottom-0 inset-x-0 z-[45] transition-all duration-300 ${chromeGone ? 'translate-y-full opacity-0 pointer-events-none' : ''}`
+              ? `absolute inset-x-0 z-[45] transition-all duration-300 ${chromeGone ? 'bottom-[-3rem] opacity-0 pointer-events-none' : 'bottom-0'}`
               : 'shrink-0'
           }
         >
