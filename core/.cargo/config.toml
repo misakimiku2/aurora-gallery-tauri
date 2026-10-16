@@ -1,0 +1,16 @@
+# core 必须用【自己的】target 目录，不能和仓库根 .cargo/config.toml 的 C:/cargo-target 共用。
+#
+# 原因（2026-10-16 踩过一次，App 端 74 个 error[E0308]/[E0277]）：
+# core 与 src-tauri 是两个独立 workspace，各有一份 Cargo.lock，
+# 同一批依赖解析出的版本并不相同（serde_json 1.0.151 vs 1.0.148、palette 0.7.7 vs 0.7.6、
+# serde_core 1.0.229 vs 1.0.228）。在 core/ 里跑 cargo 时 core 是**根包**，
+# 产物会按无哈希名落盘（libaurora_core.rlib）；src-tauri 构建时 cargo 把 aurora-core
+# 判成"新鲜"直接吃下这份，跨 workspace 的类型就对不上，报成
+# "there are multiple different versions of crate ..."。
+# 触发点不是手工操作，是 `npm test` 本身：groupedTags 用例设计成现编 Rust
+# （`cargo run --example` 且 cwd=core），所以每跑一次测试就会污染一次 App 构建。
+#
+# 与仓库根那份配置同样的多机前提：target 落在本机 C: 上，
+# 代码在 NAS/SMB 上共享、由哪台机器编译都各自解析，互不覆写。
+[build]
+target-dir = "C:/cargo-target-core"
