@@ -142,6 +142,11 @@ pub struct BrowseItem {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    /// video 项：时长（毫秒）。视频 P3-A3 新增——安卓/网页端网格的**时长角标**依赖它，
+    /// 此前协议里根本没有这个字段，视频卡片与图片卡片在视觉上无法区分。
+    /// 非视频项缺省（不序列化）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified_at: Option<i64>,
     /// image 项：图片创建时间（秒级，file_index.created_at；0/缺省 = 无日期）。

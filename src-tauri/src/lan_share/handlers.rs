@@ -1226,24 +1226,34 @@ pub async fn handle_browse(
                                     preview_images: preview_paths,
                                     width: None,
                                     height: None,
+                                    duration_ms: None,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
                                     // 直接子图最新创建时间（DB 无直接子图时无此数据，走无日期兜底）
                                     created_at: None,
                                     latest_created_at: if db_latest_created > 0 { Some(db_latest_created) } else { None },
                                     palette: None,
                                 });
-                            } else if entry.file_type == "Image" {
+                            } else if entry.file_type == "Image" || entry.file_type == "Video" {
                                 known_file_names.insert(entry.name.clone());
+                                // 视频 P3-A3：本分支原先只认 `Image`，而 `get_children_by_parent_path`
+                                // 的 WHERE 从视频 P1 起就含 `'Video'` —— 于是**索引里明明有视频行，
+                                // 这里却把它静默丢掉**，再由下面的 FS 补扫以「无宽高」的形态加回来，
+                                // 前端把 3440x1440 的录屏排成 1:1 正方形（实机在 Game.exe 目录看到）。
+                                // 顺带把 thumbnail 也给视频：封面端点是通的
+                                // （`process_single_thumbnail` 有视频分支），此前 None 让局域网网页
+                                // 客户端的视频一直没有封面。
+                                let is_video = entry.file_type == "Video";
                                 let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
                                 images.push(BrowseItem {
                                     name: entry.name,
                                     path: relative_item_path,
-                                    item_type: "image".to_string(),
+                                    item_type: if is_video { "video".to_string() } else { "image".to_string() },
                                     size: Some(entry.size),
                                     thumbnail: Some(thumbnail_url),
                                     preview_images: None,
                                     width: entry.width,
                                     height: entry.height,
+                                    duration_ms: entry.duration_ms,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
                                     created_at: if entry.created_at > 0 { Some(entry.created_at) } else { None },
                                     latest_created_at: None,
@@ -1252,7 +1262,8 @@ pub async fn handle_browse(
                             }
                         }
 
-                        // 视频不在数据库索引中，需要从文件系统补充扫描
+                        // 索引没覆盖到的视频（该目录尚未被扫描器走到）才需要从文件系统补扫；
+                        // 已在索引里的由上面 Video 分支带出，靠 known_file_names 去重。
                         if let Ok(fs_entries) = std::fs::read_dir(&root_path_clone.join(&normalized_parent_path_clone)) {
                             for fs_entry in fs_entries.flatten() {
                                 let fs_name = fs_entry.file_name();
@@ -1269,19 +1280,26 @@ pub async fn handle_browse(
                                         .and_then(|m| m.modified().ok())
                                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                         .map(|d| d.as_secs() as i64);
+                                    // 视频 P3-A3：FS 补扫出来的视频此前 width/height 一律 None →
+                                    // 客户端把 3440x1440 的录屏排成 1:1。这里直接读容器头补齐
+                                    // （revelo，纯 Rust、不开子进程；扫描器入库时用的就是它）。
+                                    let vid_meta = crate::video_metadata::read_video_metadata(&fs_path);
+                                    // 先算 URL：下面 path 字段会把 relative_item_path 移走
+                                    let vid_thumbnail = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
                                     images.push(BrowseItem {
                                         name: fs_name_str,
                                         path: relative_item_path,
                                         item_type: "video".to_string(),
                                         size,
-                                        thumbnail: None,
+                                        thumbnail: Some(vid_thumbnail),
                                         preview_images: None,
-                                        width: None,
-                                    height: None,
-                                    modified_at: vid_modified,
-                                    // 视频不在索引中，无创建时间口径
-                                    created_at: None,
-                                    latest_created_at: None,
+                                        width: vid_meta.as_ref().and_then(|m| (m.width > 0).then_some(m.width)),
+                                        height: vid_meta.as_ref().and_then(|m| (m.height > 0).then_some(m.height)),
+                                        duration_ms: vid_meta.as_ref().and_then(|m| m.duration_ms),
+                                        modified_at: vid_modified,
+                                        // 视频不在索引中，无创建时间口径
+                                        created_at: None,
+                                        latest_created_at: None,
                                     palette: None,
                                 });
                                 }
@@ -1381,6 +1399,7 @@ pub async fn handle_browse(
                         preview_images,
                         width: None,
                         height: None,
+                        duration_ms: None,
                         modified_at: folder_modified,
                         // 纯 FS 回退：直接子图 created_at 从 fs 元数据尽力而为
                         // （平台不支持 created() 时为 None = 无日期兜底）
@@ -1445,14 +1464,27 @@ pub async fn handle_browse(
         };
         
         image_entries.into_iter().zip(dimensions.iter())
-            .map(|((_, name, relative_item_path, size), &(width, height))| {
+            .map(|((path, name, relative_item_path, size), &(width, height))| {
                 let is_video = is_video_file(&name);
                 let item_type = if is_video { "video" } else { "image" }.to_string();
-                // 视频没有缩略图端点，只返回图片的缩略图 URL
-                let thumbnail_url = if is_video {
-                    None
+                // 视频 P3-A3：旧注释写「视频没有缩略图端点」是错的——实机核对
+                // `/api/thumbnail` 对 .mp4 回 200 image/jpeg（`process_single_thumbnail`
+                // 有视频分支：缓存命中或 ffmpeg 抽帧）。图片与视频一律给 URL。
+                let thumbnail_url = Some(format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path)));
+                // 上面那条 dimensions 批查只覆盖图片；本（纯 FS 回退）分支里的视频要自己
+                // 读容器头补齐，否则客户端拿到 None 会按 1:1 排版、也没有时长角标。
+                // revelo 纯 Rust、只读头部，不开子进程（扫描器入库时用的就是它）。
+                let (width, height, duration_ms) = if is_video {
+                    match crate::video_metadata::read_video_metadata(&path) {
+                        Some(m) => (
+                            (m.width > 0).then_some(m.width).or(width),
+                            (m.height > 0).then_some(m.height).or(height),
+                            m.duration_ms,
+                        ),
+                        None => (width, height, None),
+                    }
                 } else {
-                    Some(format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path)))
+                    (width, height, None)
                 };
                 BrowseItem {
                     name,
@@ -1461,8 +1493,9 @@ pub async fn handle_browse(
                     size,
                     thumbnail: thumbnail_url,
                     preview_images: None,
-                    width: if is_video { None } else { width },
-                    height: if is_video { None } else { height },
+                    width,
+                    height,
+                    duration_ms,
                     modified_at: None,
                     // 纯 FS 回退：无索引 created_at（协议：0/缺省 = 无日期）
                     created_at: None,
@@ -2067,22 +2100,27 @@ pub async fn handle_search(
                                 preview_images,
                                 width: None,
                                 height: None,
+                                duration_ms: None,
                                 modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
                                 created_at: None,
                                 latest_created_at: None,
                                 palette: None,
                             });
-                        } else if entry.file_type == "Image" {
+                        } else if entry.file_type == "Image" || entry.file_type == "Video" {
+                            // 视频 P3-A3：与 handle_browse 同源的漏——索引查询含 'Video' 而本分支
+                            // 只认 Image，视频搜索结果因此没有宽高（排成 1:1）也没有封面。
+                            let is_video = entry.file_type == "Video";
                             let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
                             found_images.push(BrowseItem {
                                 name: entry.name,
                                 path: relative_item_path,
-                                item_type: "image".to_string(),
+                                item_type: if is_video { "video".to_string() } else { "image".to_string() },
                                 size: Some(entry.size),
                                 thumbnail: Some(thumbnail_url),
                                 preview_images: None,
                                 width: entry.width,
                                 height: entry.height,
+                                duration_ms: entry.duration_ms,
                                 modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
                                 created_at: if entry.created_at > 0 { Some(entry.created_at) } else { None },
                                 latest_created_at: None,
@@ -2149,6 +2187,7 @@ pub async fn handle_search(
                                     preview_images,
                                     width: None,
                                     height: None,
+                                    duration_ms: None,
                                     modified_at: None,
                                     created_at: None,
                                     latest_created_at: None,
@@ -2173,6 +2212,7 @@ pub async fn handle_search(
                                     preview_images: None,
                                     width,
                                     height,
+                                    duration_ms: None,
                                     modified_at: None,
                                     created_at: None,
                                     latest_created_at: None,
@@ -2182,15 +2222,21 @@ pub async fn handle_search(
                         } else if is_video_file(&name) {
                             if (scope == "all" || scope == "file") && name_lower.contains(search_term) {
                                 let size = entry.metadata().ok().map(|m| m.len());
+                                // 视频 P3-A3：与 browse 的 FS 补扫同款补齐——读容器头拿宽高+时长，
+                                // 并给封面 URL（端点对视频是通的）。
+                                let vid = crate::video_metadata::read_video_metadata(&path);
+                                // 先算 URL：下面 path 字段会把 relative_item_path 移走
+                                let vid_thumbnail = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
                                 images.push(BrowseItem {
                                     name,
                                     path: relative_item_path,
                                     item_type: "video".to_string(),
                                     size,
-                                    thumbnail: None,
+                                    thumbnail: Some(vid_thumbnail),
                                     preview_images: None,
-                                    width: None,
-                                    height: None,
+                                    width: vid.as_ref().and_then(|m| (m.width > 0).then_some(m.width)),
+                                    height: vid.as_ref().and_then(|m| (m.height > 0).then_some(m.height)),
+                                    duration_ms: vid.as_ref().and_then(|m| m.duration_ms),
                                     modified_at: None,
                                     created_at: None,
                                     latest_created_at: None,
@@ -2289,6 +2335,7 @@ pub async fn handle_all_image_folders(
                                 preview_images: None,
                                 width: img.width,
                                 height: img.height,
+                                duration_ms: None,
                                 modified_at: if img.modified_at > 0 { Some(img.modified_at) } else { None },
                                 created_at: if img.created_at > 0 { Some(img.created_at) } else { None },
                                 latest_created_at: None,
@@ -2386,6 +2433,7 @@ pub async fn handle_all_image_folders(
                             preview_images: if preview_paths.is_empty() { None } else { Some(preview_paths) },
                             width: cover_width,
                             height: cover_height,
+                            duration_ms: None,
                             modified_at: if latest_modified > 0 { Some(latest_modified) } else { None },
                             created_at: None,
                             latest_created_at: if latest_created > 0 { Some(latest_created) } else { None },
@@ -2428,6 +2476,7 @@ pub async fn handle_all_image_folders(
                                     preview_images: None,
                                     width: None,
                                     height: None,
+                                    duration_ms: None,
                                     modified_at: if entry.modified_at > 0 { Some(entry.modified_at) } else { None },
                                     created_at: None,
                                     latest_created_at: None,
@@ -2574,6 +2623,7 @@ fn all_image_folders_filesystem(
                             preview_images: None,
                             width: if w > 0 { Some(w) } else { None },
                             height: if h > 0 { Some(h) } else { None },
+                            duration_ms: None,
                             modified_at: img_modified,
                             created_at: img_created,
                             latest_created_at: None,
@@ -2634,6 +2684,7 @@ fn all_image_folders_filesystem(
                     preview_images: if preview_paths.is_empty() { None } else { Some(preview_paths) },
                     width: cover_width,
                     height: cover_height,
+                    duration_ms: None,
                     modified_at: latest_modified,
                     created_at: None,
                     latest_created_at: latest_created,
