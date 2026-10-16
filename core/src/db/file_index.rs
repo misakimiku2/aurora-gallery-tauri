@@ -221,7 +221,7 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
 /// 函数，因此这两处暂不含视频——待 P1.5 视频算主色时再单独评估。
 pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation 
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate \
          FROM file_index 
          WHERE file_type = 'Image'"
     )?;
@@ -270,8 +270,7 @@ pub fn images_by_ids(conn: &Connection, file_ids: &[String]) -> Result<Vec<FileI
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, \
-                width, height, format, duration_ms, frame_rate, rotation \
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate \
          FROM file_index \
          WHERE file_type IN ('Image', 'Video') AND file_id IN ({})",
         marks
@@ -658,6 +657,65 @@ mod reconcile_tests {
             (count, members)
         }
     }
+
+    /// 视频 P1 之后又补了 `video_codec` / `bit_rate` 两列，当时**三个只读函数漏改 SELECT、
+    /// MediaStore 对账的 INSERT 漏改这两列**——前者让调用方直接 `InvalidColumnIndex(14)`
+    /// 报错（专题/人物封面、画布装箱、CLIP 输入源全断），后者让安卓扫完这两列永远 NULL，
+    /// 而 `unwrap_or_default()` 的调用点还会把报错吞成「库里没有图片」。
+    /// 这里把「SELECT 列清单 ↔ FileIndexEntry 行映射 ↔ INSERT 列清单」钉成一条不变式。
+    #[test]
+    fn all_readers_round_trip_every_file_index_column() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        crate::db::init_db(&conn).expect("init db");
+
+        let parent = "/storage/emulated/0/DCIM/Camera";
+        // `get_children_by_parent_path` 是按 `generate_id(parent_path)` 反查 parent_id 的，
+        // 所以测试里的 folder_id 必须用同一套 id 生成，不能随手编。
+        let folder_id = crate::db::generate_id(parent);
+        let with_meta = |id: &str, name: &str, ftype: &str| FileIndexEntry {
+            duration_ms: Some(4_321),
+            frame_rate: Some(29.97),
+            rotation: Some(90),
+            video_codec: Some("AVC".into()),
+            bit_rate: Some(5_000_000),
+            width: Some(1_920),
+            height: Some(1_080),
+            format: Some("mp4".into()),
+            ..entry(id, Some(&folder_id), &format!("{parent}/{name}"), name, ftype)
+        };
+        reconcile_mediastore_snapshot(
+            &mut conn,
+            &[entry(&folder_id, None, parent, "Camera", "Folder")],
+            &[
+                with_meta("i1", "a.jpg", "Image"),
+                with_meta("v1", "b.mp4", "Video"),
+            ],
+            &[],
+        )
+        .expect("reconcile 写入 16 列");
+
+        let assert_columns = |reader: &str, rows: Vec<FileIndexEntry>| {
+            assert!(!rows.is_empty(), "{reader} 没读到任何行");
+            for e in rows.iter().filter(|e| e.file_type != "Folder") {
+                assert_eq!(e.video_codec.as_deref(), Some("AVC"), "{reader} 丢了 video_codec（{}）", e.name);
+                assert_eq!(e.bit_rate, Some(5_000_000), "{reader} 丢了 bit_rate（{}）", e.name);
+                assert_eq!(e.rotation, Some(90), "{reader} 丢了 rotation（{}）", e.name);
+            }
+        };
+        assert_columns("get_all_entries", get_all_entries(&conn).expect("get_all_entries"));
+        assert_columns(
+            "get_all_image_files",
+            get_all_image_files(&conn).expect("get_all_image_files"),
+        );
+        assert_columns(
+            "images_by_ids",
+            images_by_ids(&conn, &["i1".into(), "v1".into()]).expect("images_by_ids"),
+        );
+        assert_columns(
+            "get_children_by_parent_path",
+            get_children_by_parent_path(&conn, parent).expect("get_children_by_parent_path"),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -759,8 +817,8 @@ pub fn reconcile_mediastore_snapshot(
             "INSERT INTO file_index (
                 file_id, parent_id, path, name, file_type, size,
                 created_at, modified_at, width, height, format,
-                duration_ms, frame_rate, rotation
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                duration_ms, frame_rate, rotation, video_codec, bit_rate
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
             ON CONFLICT(file_id) DO UPDATE SET
                 parent_id = excluded.parent_id,
                 path = excluded.path,
@@ -774,7 +832,9 @@ pub fn reconcile_mediastore_snapshot(
                 format = excluded.format,
                 duration_ms = excluded.duration_ms,
                 frame_rate = excluded.frame_rate,
-                rotation = excluded.rotation"
+                rotation = excluded.rotation,
+                video_codec = excluded.video_codec,
+                bit_rate = excluded.bit_rate"
         )?;
         for entry in folder_entries.iter().chain(image_entries) {
             upsert.execute(params![
@@ -791,7 +851,9 @@ pub fn reconcile_mediastore_snapshot(
                 entry.format,
                 entry.duration_ms,
                 entry.frame_rate,
-                entry.rotation
+                entry.rotation,
+                entry.video_codec,
+                entry.bit_rate
             ])?;
         }
 
@@ -1012,7 +1074,7 @@ pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Resu
     let parent_id = crate::db::generate_id(parent_path);
     
     let mut stmt = conn.prepare(
-        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation 
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate \
          FROM file_index WHERE parent_id = ?1"
     )?;
     
