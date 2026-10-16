@@ -186,9 +186,9 @@ fun LanFolderPickerDialog(
                         }
                         else -> {
                             val folders = result?.folders.orEmpty()
-                            // 图片行：type=="video" 的项不显示——全 App 对视频的支持未定
-                            //（阶段 4 远端网格同款过滤先例），头像选择只认非视频项。
-                            // 共享根级散图就是 browse(null) 返回的 images，同一份数据自然列出。
+                            // 头像候选仍只认图片：**举证例外**——LAN 侧视频没有封面帧端点
+                            //（服务端 browse 对 video 项 thumbnail_url=None），选出来必是碎图。
+                            // 待 P3 的 LAN 视频封面落地后随桌面 CropAvatarModal 一并放开。
                             val images = result?.images.orEmpty().filter { it.type != "video" }
                             if (folders.isEmpty() && images.isEmpty()) {
                                 Text(

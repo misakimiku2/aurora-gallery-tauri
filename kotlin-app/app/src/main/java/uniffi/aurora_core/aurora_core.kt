@@ -2752,6 +2752,14 @@ data class Image (
      * MIME 子类型（jpeg / png / webp…），type 分组用。
      */
     var `format`: kotlin.String?
+    , 
+    /**
+     * `file_index.file_type` 直通值（`Image` / `Video` / `Folder`）。
+     *
+     * 视频 P3 前安卓端**没有任何类型字段可用**，判类型只能靠扩展名表 —— 而全仓已因
+     * 「六套互不一致的扩展名表」翻过车（设计方案 §2.7），这里把 DB 真值直出去当唯一真源。
+     */
+    var `fileType`: kotlin.String
     
 ){
     
@@ -2777,6 +2785,7 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
         )
     }
 
@@ -2789,7 +2798,8 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.allocationSize(value.`size`) +
             FfiConverterLong.allocationSize(value.`createdAt`) +
             FfiConverterLong.allocationSize(value.`modifiedAt`) +
-            FfiConverterOptionalString.allocationSize(value.`format`)
+            FfiConverterOptionalString.allocationSize(value.`format`) +
+            FfiConverterString.allocationSize(value.`fileType`)
     )
 
     override fun write(value: Image, buf: ByteBuffer) {
@@ -2802,6 +2812,7 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.write(value.`createdAt`, buf)
             FfiConverterLong.write(value.`modifiedAt`, buf)
             FfiConverterOptionalString.write(value.`format`, buf)
+            FfiConverterString.write(value.`fileType`, buf)
     }
 }
 

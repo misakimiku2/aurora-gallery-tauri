@@ -146,8 +146,7 @@ private suspend fun GalleryViewModel.refreshLanLibraryInternal(session: LanManag
         }.awaitAll()
     }
     val library = (browsed.filterNotNull().flatMap { it.images } + lanRootImages.value)
-        .filter { it.type != "video" } // 网格口径不含视频（reloadLanImages 同款），缓存保持一致
-        .associateBy { it.path }
+        .associateBy { it.path } // 视频 P3-A：视频项与图片同权入网格（设计方案 §0.2「默认同权」）
     lanLibraryImages.value = library
     Log.i(
         GalleryViewModel.TAG,
@@ -291,6 +290,10 @@ internal fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: L
     // （TopBar 日期筛选放开 LAN 后 filterImages 的 UPDATED 分支不至于永远筛不出图）。
     modifiedAt = item.createdAt,
     format = item.name.substringAfterLast('.', "").takeIf { it.isNotEmpty() }?.lowercase(Locale.US),
+    // 视频 P3-A：服务端 `type` 直通到 FFI [Image.fileType]，取值与本地库同源（`Image` /
+    // `Video`）。类型判定只有这一条真源——不再靠扩展名表（设计方案 §2.7 的六份互不一致
+    // 清单即前车之鉴）。
+    fileType = if (item.type == "video") "Video" else "Image",
 )
 
 /**
@@ -322,8 +325,9 @@ internal fun GalleryViewModel.lanThumbnailUrlOf(): ((String) -> String)? {
  *  - 人物/专题成员筛选虚拟目录（`lan:person:<id>` / `lan:topic:<id>`，M6b 阶段 5）=
  *    [pendingMemberPaths] 内存过滤会话缓存（同 tag 分支形制），集缺失/过期时按
  *    folderId 解出 id 重拉 D40 端点（[lanMemberPaths]）；
- *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**过滤不进列表**
- *    （登记差异：React LAN 浏览含视频项；Kotlin 全 App 视频支持待定 M8+）。
+ *  - 其余远端目录 = LanClient.browse(path)，`type=video` 的项**与图片同权入列**
+ *    （视频 P3-A，设计方案 §5.5 第 3 条；原「Kotlin 全 App 视频支持待定 M8+」的登记
+ *    差异已随 P3 开工作废）。
  *
  * 阶段 8 起 browse/根散图分支尾随目录级元数据增量刷新（[refreshLanMetaFor]）：
  * 桌面反向写后目录内下拉刷新即可见，不必回总览刷新或重连。
@@ -449,7 +453,7 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
         // 尾部门禁位同步：验收人中途放开 allow_upload 后，上传入口无需重连即可用
         lanAllowEdit.value = result.allowEdit
         lanAllowUpload.value = result.allowUpload
-        val fresh = result.images.filter { it.type != "video" }
+        val fresh = result.images
         // 阶段 8：目录级元数据增量刷新——桌面反向写描述/标签后，目录内下拉刷新即可见，
         // 不必回总览全量刷新或重连（黑盒用例⑤发现的缺口）
         refreshLanMetaFor(fresh)
@@ -461,7 +465,7 @@ internal suspend fun GalleryViewModel.reloadLanImages(folderId: String) {
         images.value = imgs
         cachePutImages(key, imgs)
         imagesPending.value = false
-        Log.i(GalleryViewModel.TAG, "[Lan] 目录就绪 ${imgs.size} 张（视频项已过滤）")
+        Log.i(GalleryViewModel.TAG, "[Lan] 目录就绪 ${imgs.size} 项（图片+视频同权）")
     }
 }
 

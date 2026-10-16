@@ -130,6 +130,11 @@ pub struct Image {
     pub modified_at: i64,
     /// MIME 子类型（jpeg / png / webp…），type 分组用。
     pub format: Option<String>,
+    /// `file_index.file_type` 直通值（`Image` / `Video` / `Folder`）。
+    ///
+    /// 视频 P3 前安卓端**没有任何类型字段可用**，判类型只能靠扩展名表 —— 而全仓已因
+    /// 「六套互不一致的扩展名表」翻过车（设计方案 §2.7），这里把 DB 真值直出去当唯一真源。
+    pub file_type: String,
 }
 
 /// `db::persons::FaceBox` 的 FFI 镜像。
@@ -583,7 +588,7 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
     let mut stmt = conn
         .prepare(
             // 视频 P1（设计方案 §5.2 / §2.7 口径 F）：安卓本地网格数据源放开到视频。
-            "SELECT file_id, name, path, width, height, size, created_at, modified_at, format \
+            "SELECT file_id, name, path, width, height, size, created_at, modified_at, format, file_type \
              FROM file_index \
              WHERE parent_id = ?1 AND file_type IN ('Image', 'Video') ORDER BY modified_at DESC",
         )
@@ -600,6 +605,7 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
                 created_at: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
                 modified_at: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
                 format: row.get(8)?,
+                file_type: row.get(9)?,
             })
         })
         .expect("query list_images");
@@ -634,6 +640,7 @@ pub fn list_images_by_tags(tags: Vec<String>) -> Result<Vec<Image>, AuroraError>
             created_at: e.created_at,
             modified_at: e.modified_at,
             format: e.format,
+            file_type: e.file_type,
         })
         .collect())
 }
@@ -657,6 +664,7 @@ pub fn list_images_by_ids(file_ids: Vec<String>) -> Result<Vec<Image>, AuroraErr
             created_at: e.created_at,
             modified_at: e.modified_at,
             format: e.format,
+            file_type: e.file_type,
         })
         .collect())
 }

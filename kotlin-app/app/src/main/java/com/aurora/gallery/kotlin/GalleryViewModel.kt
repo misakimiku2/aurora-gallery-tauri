@@ -309,8 +309,8 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // 远端词表的新词只进下面这几份缓存，桌面词表由服务端自行维护。
 
     /**
-     * 远端库图片缓存：path → browse 项（全部远端目录 + 根散图合并；type=video 不进，
-     * 对齐 [reloadLanImages] 的网格过滤口径）。tag 筛选虚拟目录的数据源，不再 browse。
+     * 远端库图片缓存：path → browse 项（全部远端目录 + 根散图合并；视频项与图片同权
+     * 入缓存，视频 P3-A）。tag 筛选虚拟目录的数据源，不再 browse。
      */
     val lanLibraryImages = mutableStateOf<Map<String, LanRemoteImage>>(emptyMap())
 

@@ -353,8 +353,8 @@ internal fun GalleryViewModel.performLanSearch(query: String) {
                     lanSearchFailureToast(result.exceptionOrNull(), "LAN 搜索失败")
                     return@launch
                 }
-                // 文本命中无分值概念：score 恒 1.0（排序稳定）；视频项过滤口径同 browse
-                browsed.images.filter { it.type != "video" }.map { it.path to 1.0 }
+                // 文本命中无分值概念：score 恒 1.0（排序稳定）；视频项与图片同权入命中
+                browsed.images.map { it.path to 1.0 }
             }
             lanSearchHits.value = hits
             appState.openFolder(LAN_SEARCH_FOLDER_ID)
