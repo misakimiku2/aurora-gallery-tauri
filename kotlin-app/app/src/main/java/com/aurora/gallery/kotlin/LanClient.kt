@@ -99,6 +99,11 @@ data class LanRemoteImage(
      * 0 语义与本地一致：查看器抽屉显示「—」、日期分组落 Unknown、DATE 排序按无日期。
      */
     val createdAt: Long = 0,
+    /**
+     * 服务端 `duration_ms`（视频 P3-A3 协议扩展，毫秒；图片项/旧服务端 = null）。
+     * 消费方 = 网格卡片的时长角标（视频 P3-A4）。
+     */
+    val durationMs: Long? = null,
 )
 
 /** `GET /api/browse` / `GET /api/search` 的响应（两者同形，契约 §1）。 */
@@ -892,6 +897,9 @@ class LanClient(private val http: OkHttpClient) {
                 height = o.optInt("height", 0).takeIf { it > 0 },
                 // 2026-10 协议扩展：图片创建时间（旧服务端缺省 0 = 无日期）
                 createdAt = o.optLong("created_at", 0L),
+                // 视频 P3-A3 协议扩展：时长毫秒（视频 P3-A4 消费——卡片时长角标）。
+                // 旧服务端/图片项缺省 0 → null（不显示角标）
+                durationMs = o.optLong("duration_ms", 0L).takeIf { it > 0 },
             )
         }
     }

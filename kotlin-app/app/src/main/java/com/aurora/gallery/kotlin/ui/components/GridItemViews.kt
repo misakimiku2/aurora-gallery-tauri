@@ -215,6 +215,8 @@ internal class PhotoRefs(
     val border: View,
     val check: View,
     val name: TextView,
+    /** 视频时长角标（右下角）。图片项 GONE——没有它视频卡片与图片卡片无法区分。 */
+    val duration: TextView,
 )
 
 /** 分组标题行：折叠箭头 + 标题 + 数量。 */
@@ -252,6 +254,17 @@ internal fun buildPhotoView(
 
     val border = buildSelectBorder(context, radiusDp = 12)
     val check = buildCheckBadge(context)
+    val duration = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        setTextColor(0xFFFFFFFF.toInt())
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding(context.dp(6), context.dp(1), context.dp(6), context.dp(2))
+        background = GradientDrawable().apply {
+            cornerRadius = context.dp(4).toFloat()
+            setColor(0x99000000.toInt())
+        }
+        visibility = View.GONE
+    }
 
     val name = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -286,6 +299,18 @@ internal fun buildPhotoView(
                 Gravity.TOP or Gravity.START,
             ).apply { setMargins(context.dp(8), context.dp(8), 0, 0) },
         )
+
+        // 视频时长角标（右下角），对齐桌面端卡片口径。
+        // 用普通 TextView + 圆角半透明底，而不是再加一个自绘 Drawable：CoverFrame 的子项
+        // MATCH 会撑破封面高度钳制，而角标本就只占一角。
+        addView(
+            duration,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.END,
+            ).apply { setMargins(0, 0, context.dp(6), context.dp(6)) },
+        )
     }
 
     val root = LinearLayout(context).apply {
@@ -306,7 +331,23 @@ internal fun buildPhotoView(
         )
     }
 
-    return PhotoRefs(root, cover, border, check, name)
+    return PhotoRefs(root, cover, border, check, name, duration)
+}
+
+/**
+ * 视频时长角标文案（毫秒 → `mm:ss` / `h:mm:ss`）。
+ *
+ * 逐条对齐桌面端唯一真源 `src/utils/mediaExtensions.ts::formatVideoDuration`：
+ * 不足一小时**分钟位仍补零**（`00:10` 而不是 `0:10`）、小时位不补零、非法/≤0 返回空串。
+ * 改这里之前先看那份 TS，两边不一致时桌面端为准。
+ */
+internal fun formatVideoDuration(ms: Long?): String {
+    if (ms == null || ms <= 0L) return ""
+    val totalSeconds = ms / 1000L
+    val h = totalSeconds / 3600
+    val m = (totalSeconds % 3600) / 60
+    val s = totalSeconds % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }
 
 /** 构建分组标题行（可点击折叠，箭头指示折叠状态）。 */

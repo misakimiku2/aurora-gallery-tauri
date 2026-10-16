@@ -294,6 +294,10 @@ internal fun GalleryViewModel.lanImageOf(session: LanManager.LanSession, item: L
     // `Video`）。类型判定只有这一条真源——不再靠扩展名表（设计方案 §2.7 的六份互不一致
     // 清单即前车之鉴）。
     fileType = if (item.type == "video") "Video" else "Image",
+    // 视频 P3-A4：时长直通服务端 duration_ms，与本地库共用 FFI [Image.durationMs] 这一条
+    // 通道（本地项由 list_images 从 file_index.duration_ms 填）——不在 Kotlin 侧另开
+    // path→时长 的映射，否则 P3-B 的本地视频卡片还得再造一遍。
+    durationMs = item.durationMs,
 )
 
 /**

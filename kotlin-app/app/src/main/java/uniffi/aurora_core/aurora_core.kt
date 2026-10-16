@@ -2760,6 +2760,14 @@ data class Image (
      * 「六套互不一致的扩展名表」翻过车（设计方案 §2.7），这里把 DB 真值直出去当唯一真源。
      */
     var `fileType`: kotlin.String
+    , 
+    /**
+     * 视频时长（毫秒），图片项恒 None。视频 P3-A4：网格卡片的**时长角标**依赖它——
+     * 没有它，视频卡片与图片卡片在视觉上完全无法区分（实机验收人指出）。
+     * 本地库取 `file_index.duration_ms`；LAN 项由 Kotlin 侧把服务端 browse 的
+     * `duration_ms` 原样填进来，两端共用这一条通道。
+     */
+    var `durationMs`: kotlin.Long?
     
 ){
     
@@ -2786,6 +2794,7 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -2799,7 +2808,8 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.allocationSize(value.`createdAt`) +
             FfiConverterLong.allocationSize(value.`modifiedAt`) +
             FfiConverterOptionalString.allocationSize(value.`format`) +
-            FfiConverterString.allocationSize(value.`fileType`)
+            FfiConverterString.allocationSize(value.`fileType`) +
+            FfiConverterOptionalLong.allocationSize(value.`durationMs`)
     )
 
     override fun write(value: Image, buf: ByteBuffer) {
@@ -2813,6 +2823,7 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.write(value.`modifiedAt`, buf)
             FfiConverterOptionalString.write(value.`format`, buf)
             FfiConverterString.write(value.`fileType`, buf)
+            FfiConverterOptionalLong.write(value.`durationMs`, buf)
     }
 }
 

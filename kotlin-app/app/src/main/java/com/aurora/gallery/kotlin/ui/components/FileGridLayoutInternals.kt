@@ -1027,6 +1027,13 @@ internal class FileGridAdapter(
         val item = items[position] as? GridItem.Photo ?: return
         val image = item.image
         holder.refs.name.text = image.name
+        // 视频 P3-A4：右下角时长角标。类型判定读 FFI 的 fileType（唯一真源），不查扩展名表；
+        // 空串（图片项 / 旧服务端没给 duration_ms）时隐藏，不留空底块。形制同桌面端
+        // ImageThumbnail.tsx 的 durationLabel。
+        val durationLabel =
+            if (image.fileType.equals("Video", ignoreCase = true)) formatVideoDuration(image.durationMs) else ""
+        holder.refs.duration.text = durationLabel
+        holder.refs.duration.visibility = if (durationLabel.isEmpty()) View.GONE else View.VISIBLE
         // 主题换色（M4c）：封面占位底在 onCreateViewHolder 上色后随池复用，bind 重刷
         holder.refs.cover.setBackgroundColor(surfaceColor)
 

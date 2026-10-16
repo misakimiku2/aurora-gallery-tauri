@@ -135,6 +135,11 @@ pub struct Image {
     /// 视频 P3 前安卓端**没有任何类型字段可用**，判类型只能靠扩展名表 —— 而全仓已因
     /// 「六套互不一致的扩展名表」翻过车（设计方案 §2.7），这里把 DB 真值直出去当唯一真源。
     pub file_type: String,
+    /// 视频时长（毫秒），图片项恒 None。视频 P3-A4：网格卡片的**时长角标**依赖它——
+    /// 没有它，视频卡片与图片卡片在视觉上完全无法区分（实机验收人指出）。
+    /// 本地库取 `file_index.duration_ms`；LAN 项由 Kotlin 侧把服务端 browse 的
+    /// `duration_ms` 原样填进来，两端共用这一条通道。
+    pub duration_ms: Option<i64>,
 }
 
 /// `db::persons::FaceBox` 的 FFI 镜像。
@@ -588,7 +593,7 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
     let mut stmt = conn
         .prepare(
             // 视频 P1（设计方案 §5.2 / §2.7 口径 F）：安卓本地网格数据源放开到视频。
-            "SELECT file_id, name, path, width, height, size, created_at, modified_at, format, file_type \
+            "SELECT file_id, name, path, width, height, size, created_at, modified_at, format, file_type, duration_ms \
              FROM file_index \
              WHERE parent_id = ?1 AND file_type IN ('Image', 'Video') ORDER BY modified_at DESC",
         )
@@ -606,6 +611,7 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
                 modified_at: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
                 format: row.get(8)?,
                 file_type: row.get(9)?,
+                duration_ms: row.get(10)?,
             })
         })
         .expect("query list_images");
@@ -641,6 +647,7 @@ pub fn list_images_by_tags(tags: Vec<String>) -> Result<Vec<Image>, AuroraError>
             modified_at: e.modified_at,
             format: e.format,
             file_type: e.file_type,
+            duration_ms: e.duration_ms,
         })
         .collect())
 }
@@ -665,6 +672,7 @@ pub fn list_images_by_ids(file_ids: Vec<String>) -> Result<Vec<Image>, AuroraErr
             modified_at: e.modified_at,
             format: e.format,
             file_type: e.file_type,
+            duration_ms: e.duration_ms,
         })
         .collect())
 }
