@@ -2240,6 +2240,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 // 改成 none 后命中目标落到容器上，事件照常派发；点击/拖拽/滚轮本来就挂在
                 // 容器上，行为不变。
                 pointerEvents: chromeOverlay ? 'none' : 'auto',
+                // 关键的一条：影院态下主动让视频放弃硬件视频 overlay。
+                // overlay 生效期间 Blink 不把 mousemove 派发给页面 → 隐藏后鼠标唤不回，
+                // 且时好时坏（overlay 是按播放状态/遮挡关系临时申请释放的，暂停或画面上
+                // 压一层不透明内容时就没了 —— 实测过：叠一个诊断面板就"突然好了"）。
+                // opacity<1 让图层判定为需要混合，Blink 便不再申请 overlay；
+                // 解码仍是硬件的，只多一次全屏合成，0.999 肉眼不可见。
+                opacity: chromeOverlay ? 0.999 : 1,
                 zIndex: 2,
                 // 复用图片的变换状态：支持滚轮/拖拽平移与 1:1 缩放（§7.2 原始尺寸/适应窗口）
                 transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
