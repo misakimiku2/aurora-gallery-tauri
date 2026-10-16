@@ -242,6 +242,8 @@ export const TabBar: React.FC<TabBarProps> = ({
   // Handle manual drag start for Tauri (needed when transform animation breaks WebkitAppRegion)
   const handleDragStart = async (e: React.MouseEvent) => {
     if (isTauriEnvironment()) {
+      // 全屏期间绝不接管拖拽：此时没有标题栏可拖，动了只会把整个全屏挪走
+      if (document.fullscreenElement) return;
       // Only start dragging if clicking on the drag area (not on interactive elements)
       const target = e.target as HTMLElement;
       if (target.closest('[data-no-drag]') || target.closest('button') || target.closest('.no-drag')) {
@@ -292,6 +294,17 @@ export const TabBar: React.FC<TabBarProps> = ({
       }
     }
   };
+
+  // 全屏（HTML5 Fullscreen API）期间交掉窗口拖拽权。
+  // app-region: drag 的命中区是按主文档布局算的，全屏时顶部那条 drag 区仍然抓得住
+  // OS 窗口 —— 于是「拖顶部工具栏 = 把整个全屏挪走」。
+  const [isDocFullscreen, setIsDocFullscreen] = useState(false);
+  useEffect(() => {
+    const onChange = () => setIsDocFullscreen(!!document.fullscreenElement);
+    onChange();
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -353,7 +366,7 @@ export const TabBar: React.FC<TabBarProps> = ({
       )}
       <div
         className="flex items-center bg-main h-[41px] select-none w-full"
-        style={{ WebkitAppRegion: 'drag' } as any}
+        style={{ WebkitAppRegion: isDocFullscreen ? 'no-drag' : 'drag' } as any}
       >
         {/* Ultra compact mode: only show close button */}
         {isUltraCompact && isReferenceMode ? (
