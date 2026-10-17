@@ -5,6 +5,7 @@ package com.aurora.gallery.kotlin.viewer
 // 装配与生命周期在 NativeGalleryView，手势侧消费点在 NativeGalleryViewGestures。
 
 import android.view.View
+import com.aurora.gallery.kotlin.ui.theme.withAlpha
 
 /** 当前这一张是视频才返回它（图片项一律 null，调用方据此走原图片路径）。 */
 internal fun NativeGalleryView.videoItem(): NativeGalleryView.ImageItem? =
@@ -21,9 +22,12 @@ internal fun NativeGalleryView.syncVideoLayer() {
     val item = videoItem()
     if (item == null) {
         videoLayer.detach()
-        return
+    } else {
+        videoLayer.bind(item.fileId, item.path, item.durationMs, item.width, item.height)
     }
-    videoLayer.bind(item.fileId, item.path, item.durationMs, item.width, item.height)
+    // 影院态跟着当前项类型走（视频↔图片来回翻时黑底/白字/居中标题要一起换）。
+    // 不判"变没变"是因为 currentIndex 已经改过了，这里读到的就是新状态，直接重涂最省事。
+    applyChromeColors()
 }
 
 /**
@@ -91,18 +95,22 @@ internal fun NativeGalleryView.toggleVideoLoop() {
 }
 
 /**
- * 视频层重涂：信箱底=本类当前背景色值（沉浸态那个是纯黑，与 [NativeGalleryView.applyTheme]
- * 的分支同源），文字/图标=主文字色，播控条底=背景加不透明度（与底部信息栏同一档）。
+ * 视频层重涂。**影院态（视频项或沉浸态）下信箱底=纯黑、文字图标=白、播控条底=白低透明**
+ * ——黑底上再涂主题色面板是看不见的，所以面板改走「黑底加一层白」那条读法。
+ * 非影院态（浅色主题看视频时不会发生，留着给以后改主意）走主题色。
  */
 internal fun NativeGalleryView.applyVideoPalette() {
+    val stage = isVideoStage() || isImmersive
+    val ink = if (stage) android.graphics.Color.WHITE else colorTextPrimary()
     videoLayer.applyPalette(
-        bgColor = if (isImmersive) android.graphics.Color.BLACK else colorBg(),
-        textColor = colorTextPrimary(),
-        panelColor = colorBgAlpha(0xE6),
+        bgColor = if (stage) android.graphics.Color.BLACK else colorBg(),
+        textColor = ink,
+        panelColor = if (stage) withAlpha(android.graphics.Color.WHITE, 0x14) else colorBgAlpha(0xE6),
         accentColor = colorAccent(),
     )
-    // 循环钮的着色跟着主题走（开着循环=主色，关着=主文字色）
+    // 循环钮：开着循环=主色，关着=当前 chrome 墨色（影院态那个是白，不能用主题墨色，
+    // 否则黑顶栏上会留下一个深色钮）
     if (isTopBarBuilt()) {
-        loopBtn.setColorFilter(if (videoLayer.isLooping) colorAccent() else colorTextPrimary())
+        loopBtn.setColorFilter(if (videoLayer.isLooping) colorAccent() else ink)
     }
 }

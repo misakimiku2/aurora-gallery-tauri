@@ -58,12 +58,15 @@ import kotlin.math.min
 @UnstableApi
 internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
-    /** 循环顺序按验收人给的清单：1:1 → 适应屏幕 → 拉伸 → 裁切 →（回到 1:1）。 */
-    enum class SurfaceMode(val label: String) {
-        ONE_TO_ONE("1:1"),
-        FIT("适应"),
-        FILL("拉伸"),
-        ZOOM("裁切"),
+    /**
+     * 画面大小四档，循环顺序按验收人给的清单：1:1 → 适应屏幕 → 拉伸 → 裁切 →（回到 1:1）。
+     * 钮面用图形图标（验收人：不要文字档名），[label] 只在切换瞬间的浮层里出现一次。
+     */
+    enum class SurfaceMode(val label: String, val iconRes: Int) {
+        ONE_TO_ONE("1:1（原始像素）", R.drawable.ic_video_actual_size),
+        FIT("适应屏幕", R.drawable.ic_video_fit),
+        FILL("拉伸铺满", R.drawable.ic_video_stretch),
+        ZOOM("裁切填满", R.drawable.ic_video_crop),
     }
 
     companion object {
@@ -88,7 +91,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private val prevBtn: ImageButton
     private val playPauseBtn: ImageButton
     private val nextBtn: ImageButton
-    private val scaleChip: TextView
+    private val scaleChip: ImageButton
     private val gestureHint: TextView
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -251,9 +254,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             addView(seekBar)
             addView(durationText)
         }
-        prevBtn = controlButton(R.drawable.ic_lucide_skip_back, "上一条") { onPageRequest?.invoke(-1) }
-        playPauseBtn = controlButton(R.drawable.ic_lucide_play, "播放/暂停") { togglePlay() }
-        nextBtn = controlButton(R.drawable.ic_lucide_skip_forward, "下一条") { onPageRequest?.invoke(1) }
+        prevBtn = controlButton(R.drawable.ic_lucide_skip_back, 18f, "上一条") { onPageRequest?.invoke(-1) }
+        playPauseBtn = controlButton(R.drawable.ic_lucide_play, 18f, "播放/暂停") { togglePlay() }
+        nextBtn = controlButton(R.drawable.ic_lucide_skip_forward, 18f, "下一条") { onPageRequest?.invoke(1) }
         val transport = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -264,24 +267,26 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             addView(playPauseBtn)
             addView(nextBtn)
         }
-        scaleChip = TextView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                marginStart = dp(4f).toInt()
+        // 画面大小档：图形图标、放这一行的**最右**（验收人 2026-10-17 第二轮）
+        scaleChip = ImageButton(context).apply {
+            val size = dp(44f).toInt()
+            layoutParams = LayoutParams(size, size).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                marginEnd = dp(2f).toInt()
             }
-            text = surfaceMode.label
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            val padH = dp(10f).toInt()
-            val padV = dp(6f).toInt()
-            setPadding(padH, padV, padH, padV)
+            setImageResource(surfaceMode.iconRes)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            val pad = dp(11f).toInt()
+            setPadding(pad, pad, pad, pad)
             background = GradientDrawable().apply {
                 cornerRadius = dp(12f)
                 setColor(Color.parseColor("#40000000"))
             }
             contentDescription = "画面大小"
-            setOnClickListener { cycleSurfaceMode() }
+            setOnClickListener {
+                cycleSurfaceMode()
+                showChrome()
+            }
         }
         val buttonRow = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -620,9 +625,10 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private fun cycleSurfaceMode() {
         surfaceMode = SurfaceMode.entries[(surfaceMode.ordinal + 1) % SurfaceMode.entries.size]
         userScale = 1f
-        scaleChip.text = surfaceMode.label
+        scaleChip.setImageResource(surfaceMode.iconRes)
         applySurfaceGeometry()
-        showChrome()
+        // 图标本身不带字，切换瞬间用浮层报一次档名（否则用户不知道按到了哪一档）
+        showHint("画面：${surfaceMode.label}")
     }
 
     /**
@@ -702,10 +708,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         refreshLayerState()
     }
 
-    private fun controlButton(iconRes: Int, description: String, onClick: () -> Unit): ImageButton =
+    private fun controlButton(iconRes: Int, gapDp: Float, description: String, onClick: () -> Unit): ImageButton =
         ImageButton(context).apply {
             val size = dp(44f).toInt()
-            layoutParams = LinearLayout.LayoutParams(size, size)
+            // 三个传输键各自左右留 gapDp（验收人：再分开一些）——相邻两键之间 = 2×gap
+            val gap = dp(gapDp).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginStart = gap
+                marginEnd = gap
+            }
             setImageResource(iconRes)
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
             val pad = dp(9f).toInt()
@@ -740,7 +751,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private fun showHint(text: String) {
         gestureHint.text = text
         gestureHint.visibility = VISIBLE
+        // 每次出现都重新计时：拖动过程中连续调用不能把计时器续成永不消失
         mainHandler.removeCallbacks(hideHint)
+        mainHandler.postDelayed(hideHint, HINT_HIDE_MS)
     }
 
     private val hideHint = Runnable { gestureHint.visibility = GONE }
@@ -800,7 +813,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         for (v in listOf(prevBtn, playPauseBtn, nextBtn, playFab)) v.setColorFilter(textColor)
         positionText.setTextColor(textColor)
         durationText.setTextColor(textColor)
-        scaleChip.setTextColor(textColor)
+        scaleChip.setColorFilter(textColor)
         chrome.background = GradientDrawable().apply {
             cornerRadius = dp(12f)
             setColor(panelColor)

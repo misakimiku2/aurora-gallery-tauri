@@ -25,9 +25,12 @@ import android.widget.TextView
 internal fun NativeGalleryView.applyTopBarFormFactor() {
     if (!isTopBarBuilt()) return
     val collapsed = isCompactPortrait
-    slideshowBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
+    // 视频 P3-A2.5：幻灯片是图片功能，它的 ▶ 图标在视频顶栏上会被直接读成「播放」——
+    // 视频项一律藏掉（放映入口仍在「更多」菜单里，与竖屏收敛同一条路）
+    slideshowBtn.visibility = if (collapsed || isVideoStage()) View.GONE else View.VISIBLE
     screenRotateBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
     infoBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
+    centerTitleOnStage(if (isVideoStage()) 1f else 0f)
 }
 
 /**

@@ -1390,28 +1390,58 @@ class NativeGalleryView @JvmOverloads constructor(
         applyTheme()
     }
 
-    /** 应用当前主题到所有 UI 元素。 */
-    // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
-    internal fun applyTheme() {
-        // 沉浸态背景恒黑（翻页/切主题的重涂不该把剧场态刷回主题色）
-        setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
-        // 顶栏/底栏/缩略图条背景
-        topBar.setBackgroundColor(colorBgAlpha(0x4D))
-        bottomInfo.setBackgroundColor(colorBgAlpha(0xCC))
-        thumbnailStrip.setBackgroundColor(colorBgAlpha(0xE6))
-        // 顶栏所有文字（按钮+标题）
-        titleView.setTextColor(colorTextPrimary())
+    /**
+     * 影院态（视频态）：当前项是视频就整层转黑——背景、顶栏底、文字图标、视频层信箱
+     * 一起走深色，与桌面端视频全屏那套同口径（UI 设计 §2「渲染区底色」+ 影院态转黑）。
+     * 与 [isImmersive] 是两条独立来源，落到同一个深色分支上。
+     */
+    internal fun isVideoStage(): Boolean = images.getOrNull(currentIndex)?.isVideo == true
+
+    /**
+     * 背景 + 顶栏 + 底部信息 + 视频层的成套着色。抽出来是因为**换页也会改它**（图片↔视频
+     * 之间来回），而 [applyTheme] 还要重建抽屉、比这条路重得多。
+     */
+    internal fun applyChromeColors() {
+        val stage = isVideoStage() || isImmersive
+        val ink = if (stage) Color.WHITE else colorTextPrimary()
+        setBackgroundColor(if (stage) Color.BLACK else colorBg())
+        topBar.setBackgroundColor(if (stage) withAlpha(Color.BLACK, 0xB3) else colorBgAlpha(0x4D))
+        titleView.setTextColor(ink)
         for (i in 0 until topBar.childCount) {
             when (val child = topBar.getChildAt(i)) {
-                is TextView -> child.setTextColor(colorTextPrimary())
-                is ImageView -> child.setColorFilter(colorTextPrimary())
+                is TextView -> child.setTextColor(ink)
+                is ImageView -> child.setColorFilter(ink)
             }
         }
         // 删除按钮保持红色（覆盖上面的统一着色）
         if (this::deleteBtn.isInitialized) {
             deleteBtn.setColorFilter(colorDanger())
         }
-        bottomInfoText.setTextColor(colorTextPrimary())
+        bottomInfo.setBackgroundColor(if (stage) withAlpha(Color.BLACK, 0xCC) else colorBgAlpha(0xCC))
+        bottomInfoText.setTextColor(ink)
+        thumbnailStrip.setBackgroundColor(colorBgAlpha(0xE6))
+        applyVideoPalette()
+    }
+
+    /**
+     * 顶栏标题居中补偿。标题框夹在「返回」与右侧键组之间，两侧不等宽时它的中心本来就偏，
+     * 只改 gravity 会得到一个「看起来居中其实偏左」的标题——这里按已布局出的框位平移回去。
+     * [factor] 0=还原靠左（图片项原形制），1=居中（视频影院态）。
+     */
+    internal fun centerTitleOnStage(factor: Float) {
+        // 走 titleView 的父层而不是 topBar 字段：buildTopBar 末尾就会经
+        // applyTopBarFormFactor 调到这里，那时字段还没赋值（实测 NPE 崩在构造期）
+        val bar = titleView.parent as? View ?: return
+        if (bar.width <= 0 || titleView.width <= 0) return
+        val contentCenter = (bar.paddingLeft + bar.width - bar.paddingRight) / 2f
+        val boxCenter = (titleView.left + titleView.right) / 2f
+        titleView.translationX = (contentCenter - boxCenter) * factor
+    }
+
+    /** 应用当前主题到所有 UI 元素。 */
+    // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
+    internal fun applyTheme() {
+        applyChromeColors()
         // 抽屉（M8b-8：重涂收敛到 applyDrawerBackground——原 setBackgroundColor(纯色) 会把
         // 横屏渐变边/竖屏顶部圆角抹掉；把手条颜色也随主题走）
         applyDrawerBackground()
@@ -1439,7 +1469,6 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         // 重新刷新当前图片的抽屉内容（标题色块等会用到主题色）
         images.getOrNull(currentIndex)?.let { updateDrawer(it) }
-        applyVideoPalette()
     }
 
     // —— 进出过渡动画（2026-10-08，覆盖层本体见 [ViewerTransition]）——
@@ -1650,6 +1679,17 @@ class NativeGalleryView @JvmOverloads constructor(
             return
         }
         titleView.text = item.name
+        // 视频 P3-A2.5：影院态顶栏的文件名居中显示（图片项维持靠左的原形制）。
+        // 只改 gravity 还不够——标题框夹在「返回」与右侧键组之间，两侧不等宽时中心
+        // 本来就偏左，所以再按两侧宽度差的一半平移一次（centerTitleOnStage）。
+        val centerTitle = item.isVideo
+        titleView.gravity = if (centerTitle) {
+            android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.CENTER_HORIZONTAL
+        } else {
+            android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.START
+        }
+        centerTitleOnStage(if (centerTitle) 1f else 0f)
+        post { if (isOpen) centerTitleOnStage(if (item.isVideo) 1f else 0f) }
         // M6a 阶段 6：LAN 项的顶栏删除键按编辑门禁位显隐——allow_edit 直通时与本地同款
         // 确认弹窗 → confirmDelete（查看器自己摘项前进，宿主 onDelete 分流远端删除链路）；
         // 403 门禁态仍隐藏（门禁关闭时删除对远端不可用，M4a「不适用的项不出现」先例）。
@@ -1699,9 +1739,8 @@ class NativeGalleryView @JvmOverloads constructor(
         isImmersive = !isImmersive
         // B2：沉浸=真全屏剧场态——背景转纯黑 + 系统栏隐藏；退出两者一并还原。
         // 容器恒全屏（不吃 insets），故隐藏系统栏不引起任何 resize，图片全程不动。
-        setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
-        // 视频层的信箱底色与本类背景同源，沉浸切换要一起重涂（否则黑剧场里嵌一块主题色底）
-        applyVideoPalette()
+        // 背景/顶栏/视频层信箱一起重涂（沉浸态与视频态共用那条深色分支）
+        applyChromeColors()
         onImmersiveBarsChange?.invoke(isImmersive)
         val targetTop = if (isImmersive) topBarHideTranslation() else 0f
         val targetBottom = if (isImmersive) height.toFloat() else 0f
