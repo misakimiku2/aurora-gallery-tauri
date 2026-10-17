@@ -11,7 +11,9 @@ import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import com.aurora.gallery.kotlin.canvas.AddResult
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -44,6 +46,19 @@ internal fun MainActivity.ensureViewer(): NativeGalleryView = viewer ?: NativeGa
             onDone(null)
         } else {
             lifecycleScope.launch { onDone(viewModel.thumbnailLoader.loadFastLimited(id, video = true)) }
+        }
+    }
+    // 视频 P3-A5.5.2：§7.4 那两项的落盘侧。写/删都是磁盘活，同样在宿主发异步、主线程回调
+    it.setLocalVideoCover = { contentUri, bitmap, onDone ->
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) { viewModel.thumbnailLoader.setUserVideoCover(contentUri, bitmap) }
+            onDone(ok)
+        }
+    }
+    it.resetLocalVideoCover = { contentUri, onDone ->
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) { viewModel.thumbnailLoader.clearVideoCovers(contentUri) }
+            onDone(ok)
         }
     }
     viewer = it

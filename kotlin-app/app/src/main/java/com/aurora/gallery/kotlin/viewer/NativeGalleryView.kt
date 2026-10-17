@@ -325,6 +325,15 @@ class NativeGalleryView @JvmOverloads constructor(
      */
     var localVideoCover: ((contentUri: String, onDone: (android.graphics.Bitmap?) -> Unit) -> Unit)? = null
 
+    /**
+     * 宿主注入：**存 / 清 本地视频封面**（视频 P3-A5.5.2，UI §7.4 那两项）。
+     * 两个都回调在**主线程**，参数 = 是否成功；文案由调用方决定，宿主不掺和。
+     * 分两条而不是一条带开关：一个要传位图、一个不传，混在一起调用方反而要想清楚传什么。
+     */
+    var setLocalVideoCover:
+        ((contentUri: String, bitmap: android.graphics.Bitmap, onDone: (Boolean) -> Unit) -> Unit)? = null
+    var resetLocalVideoCover: ((contentUri: String, onDone: (Boolean) -> Unit) -> Unit)? = null
+
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun colorBg() = palette.main
     // DialogTheme 的 15 个 colorXxx()/isDarkTheme() 取值实现已抽到 PaletteContract.kt
@@ -2178,6 +2187,38 @@ class NativeGalleryView @JvmOverloads constructor(
                                 listener?.onFindSimilar(item.fileId)
                             }
                         )
+                    }
+                    // 视频 P3-A5.5.2：UI §7.4 那两项。**只在本地视频项出现**——LAN 项的封面是
+                    // 服务端 ffmpeg 抽帧存进桌面那个库的，在安卓上改它属于改远端资产，另一回事。
+                    if (item.isVideo && !item.isLan) {
+                        add(MoreMenuItem("从当前帧设为封面", colorTextPrimary(), iconRes = R.drawable.ic_lucide_image) {
+                            val frame = videoLayer.currentFrame()
+                            if (frame == null) {
+                                // 静态位/缓冲中拿不到帧，此时设封面只会存下一张黑场——宁可不设
+                                Toast.makeText(context, "先播到想要的那一帧，再选这项", Toast.LENGTH_SHORT).show()
+                            } else {
+                                setLocalVideoCover?.invoke(item.path, frame) { ok ->
+                                    Toast.makeText(
+                                        context,
+                                        if (ok) "已把当前帧设为封面" else "设为封面失败",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    // 立刻换成这一帧：等下一次读盘的话，用户按完看到的还是旧封面
+                                    if (ok) activeView.setImageDrawable(BitmapDrawable(context.resources, frame))
+                                }
+                            }
+                        })
+                        add(MoreMenuItem("重新抽帧", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_ccw) {
+                            resetLocalVideoCover?.invoke(item.path) { ok ->
+                                Toast.makeText(
+                                    context,
+                                    if (ok) "已清除封面，进来时重抽一帧" else "没有可清除的封面",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                // 清掉之后重走一遍取图，静态位当场换回新抽的那帧
+                                if (ok) loadIntoView(activeView, currentIndex)
+                            }
+                        })
                     }
                     add(MoreMenuItem("重命名", colorTextPrimary(), iconRes = R.drawable.ic_lucide_pencil) {
                         showRenameDialog()

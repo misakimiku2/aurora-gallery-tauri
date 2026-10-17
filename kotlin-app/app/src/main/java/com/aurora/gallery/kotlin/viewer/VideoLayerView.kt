@@ -5,6 +5,7 @@ package com.aurora.gallery.kotlin.viewer
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -406,6 +407,11 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (videoSize.width <= 0 || videoSize.height <= 0) return
+                Log.i(
+                    TAG,
+                    "VideoSize 编码 ${videoSize.width}x${videoSize.height} " +
+                        "unapplied=${videoSize.unappliedRotationDegrees} sar=${videoSize.pixelWidthHeightRatio}",
+                )
                 val sar = if (videoSize.pixelWidthHeightRatio > 0f) videoSize.pixelWidthHeightRatio else 1f
                 val wide = videoSize.width * sar
                 val tall = videoSize.height.toFloat()
@@ -459,6 +465,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     }
 
     // —— 宿主 API ——
+
+    /**
+     * 取**当前正在显示**的那一帧（A5.5.2「从当前帧设为封面」的数据源）。
+     *
+     * `TextureView.getBitmap()` 在还没出过帧时返回 null（静态位、纯缓冲都算），所以调用方
+     * 必须接受失败——把封面设成黑场比不设糟得多。拿到的是**已按旋转渲染好**的显示尺寸。
+     */
+    fun currentFrame(): Bitmap? =
+        if (!firstFrameRendered) null else runCatching { surfaceView.bitmap }.getOrNull()
 
     /**
      * 绑定当前项。**不预加载**：只记 URL，数据要等 [start] 才拉——LAN 的录屏动辄上百 MB，

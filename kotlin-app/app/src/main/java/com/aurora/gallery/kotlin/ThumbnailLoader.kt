@@ -109,14 +109,82 @@ class ThumbnailLoader(context: Context) {
 
     /**
      * 视频封面的磁盘缓存（P3-A5.5）。放 `cacheDir` 是有意的：抽帧是**可重生成**的派生物，
-     * 清缓存的代价只是重抽一次；将来「从当前帧设为封面」那种用户手挑的成品不可重生成，
-     * 那一份要单独放 `filesDir`（A5.5.2）。
+     * 清缓存的代价只是重抽一次。
      */
     private val videoCoverDir = File(appContext.cacheDir, "video_covers").apply { mkdirs() }
+
+    /**
+     * 用户手挑的封面（A5.5.2「从当前帧设为封面」）放 **`filesDir`**，与上面那条分开：
+     * 这一份**不可重生成**——它是用户在某一帧上按的，清缓存把它一起清掉等于偷偷改掉
+     * 用户已经做出的选择。读取顺序见 [loadFast] 的视频分支：手挑 > 自抽 > 系统兜底。
+     */
+    private val userVideoCoverDir = File(appContext.filesDir, "video_covers").apply { mkdirs() }
 
     private fun videoCoverFile(contentUri: String): File {
         val digest = java.security.MessageDigest.getInstance("MD5").digest(contentUri.toByteArray())
         return File(videoCoverDir, digest.joinToString("") { "%02x".format(it) } + ".jpg")
+    }
+
+    private fun userVideoCoverFile(contentUri: String): File {
+        val digest = java.security.MessageDigest.getInstance("MD5").digest(contentUri.toByteArray())
+        return File(userVideoCoverDir, digest.joinToString("") { "%02x".format(it) } + ".jpg")
+    }
+
+    /** 抽帧/读盘的内存键要从 uri 反推 id——两处写入入口都要作废同一个键，别让它们各算各的。 */
+    private fun videoMemoryKeyOf(contentUri: String): String? =
+        runCatching { videoKey(ContentUris.parseId(Uri.parse(contentUri))) }.getOrNull()
+
+    /**
+     * 存一张用户手挑的封面（A5.5.2）。**在 IO 线程调**。
+     * 同时作废内存键并抹掉自抽那份：留着它，下次读到的顺序万一走错就会拿旧抽帧盖掉用户的选择。
+     *
+     * 收进来先缩到长边 [COVER_STORE_LONG_SIDE]：调用方给的是 `TextureView.getBitmap()`，
+     * 那是**显示尺寸**——实测平板上一按就是 2560×1180 / 150KB，而这份东西的唯一用途是当缩略图。
+     */
+    fun setUserVideoCover(contentUri: String, bitmap: Bitmap): Boolean {
+        val file = userVideoCoverFile(contentUri)
+        val stored = scaleToLongSide(bitmap, COVER_STORE_LONG_SIDE)
+        val ok = runCatching {
+            val tmp = File(file.absolutePath + ".tmp")
+            tmp.outputStream().use { stored.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+            if (tmp.renameTo(file)) true else { tmp.delete(); false }
+        }.getOrDefault(false)
+        // 尺寸要在 recycle 之前拿：回收后的 Bitmap 再调 getWidth() 会抛
+        val storedW = stored.width
+        val storedH = stored.height
+        if (stored !== bitmap) stored.recycle()
+        if (!ok) return false
+        videoMemoryKeyOf(contentUri)?.let { memoryCache.remove(it) }
+        runCatching { videoCoverFile(contentUri).delete() }
+        Log.i(TAG, "[Thumb] 用户封面已存 ${file.name} ${storedW}x$storedH")
+        return true
+    }
+
+    /** 长边超过 [longSide] 才缩放；等比，且不碰调用方传进来的原图。 */
+    private fun scaleToLongSide(source: Bitmap, longSide: Int): Bitmap {
+        val wide = maxOf(source.width, source.height)
+        if (wide <= longSide) return source
+        val k = longSide.toFloat() / wide
+        return Bitmap.createScaledBitmap(
+            source,
+            (source.width * k).roundToInt().coerceAtLeast(1),
+            (source.height * k).roundToInt().coerceAtLeast(1),
+            true,
+        )
+    }
+
+    /**
+     * 清除封面（A5.5.2「重新抽帧」）：手挑与自抽两份一起抹，下一次读走重抽。**在 IO 线程调**。
+     * 返回是否真的删掉过东西——两张都不存在时不该报「已重新抽帧」。
+     */
+    fun clearVideoCovers(contentUri: String): Boolean {
+        val user = userVideoCoverFile(contentUri)
+        val auto = videoCoverFile(contentUri)
+        val removed = (if (user.exists()) runCatching { user.delete() }.getOrDefault(false) else false) ||
+            (if (auto.exists()) runCatching { auto.delete() }.getOrDefault(false) else false)
+        if (removed) videoMemoryKeyOf(contentUri)?.let { memoryCache.remove(it) }
+        Log.i(TAG, "[Thumb] 清封面 uri=$contentUri removed=$removed")
+        return removed
     }
 
     /**
@@ -163,6 +231,8 @@ class ThumbnailLoader(context: Context) {
             val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
                 ?.toIntOrNull()
                 ?: 0
+            // 临时诊断（本轮用完删）：raw 到底是编码朝向还是显示朝向，决定我们要不要再转一次
+            Log.i(TAG, "[Thumb] 抽帧原始 ${raw.width}x${raw.height} rotation=$rotation uri=$uri")
             val upright = if (rotation % 360 == 0) {
                 raw
             } else {
@@ -170,6 +240,8 @@ class ThumbnailLoader(context: Context) {
                 Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
             }
             if (upright !== raw) raw.recycle()
+            // 临时诊断（A5.5 定完就删）：三方对不上时用这一行分锅——raw 是 getFrameAtTime 给的
+            Log.i(TAG, "[Thumb] 原始帧 ${raw.width}x${raw.height} rotation=$rotation")
             val longSide = maxOf(upright.width, upright.height)
             val scaled = if (longSide <= THUMB_SIZE) {
                 upright
@@ -289,10 +361,19 @@ class ThumbnailLoader(context: Context) {
             }
         }
 
-        // 视频 P3-A5.5：封面优先级排在自己头上——磁盘命中 → 没有就抽一帧并落盘。
-        // 抽不到（容器不支持 / 权限被收回 / 文件坏）才继续往下退系统缩略图那条 A5.4 的路，
-        // 那条首轮 ~1s 且不落盘，只当兜底用。
+        // 视频 P3-A5.5：封面优先级排在自己头上——**手挑 > 自抽 > 系统兜底**。
+        // 手挑那份放 filesDir（不可重生成），自抽放 cacheDir（可重生成），两份都算「磁盘命中」，
+        // 读出来一律不再抽帧。抽不到（容器不支持 / 权限被收回 / 文件坏）才继续往下退
+        // 系统缩略图那条 A5.4 的路，那条首轮 ~1s 且不落盘，只当兜底用。
         if (video) {
+            val picked = userVideoCoverFile(uri.toString())
+            if (picked.exists()) {
+                BitmapFactory.decodeFile(picked.absolutePath)?.let {
+                    memoryCache.put(key, it)
+                    Log.d(TAG, "[Thumb] 用户封面命中 id=$imageId ${it.width}x${it.height}")
+                    return it
+                }
+            }
             val coverFile = videoCoverFile(uri.toString())
             if (coverFile.exists()) {
                 BitmapFactory.decodeFile(coverFile.absolutePath)?.let {
@@ -546,6 +627,12 @@ class ThumbnailLoader(context: Context) {
         private const val MEMORY_CACHE_SIZE_KB = 128 * 1024 // 128 MB
         private const val FAST_MAX_CONCURRENCY = 4 // 快速缩略图并发上限
         private const val THUMB_SIZE = 512
+
+        /**
+         * 用户手挑封面的存储长边（A5.5.2）。比缩略图大一档是故意的：这一张既要当网格/静态位
+         * 封面，也是 A5.5.3「加入画布」打算用的那张位图（UI §7.6），512 对后者太糊。
+         */
+        private const val COVER_STORE_LONG_SIDE = 1280
         /**
          * 裁剪页取图源的目标长边（#6）。
          *
