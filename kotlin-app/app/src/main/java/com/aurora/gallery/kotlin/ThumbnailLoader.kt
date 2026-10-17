@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
@@ -107,6 +108,92 @@ class ThumbnailLoader(context: Context) {
     }
 
     /**
+     * 视频封面的磁盘缓存（P3-A5.5）。放 `cacheDir` 是有意的：抽帧是**可重生成**的派生物，
+     * 清缓存的代价只是重抽一次；将来「从当前帧设为封面」那种用户手挑的成品不可重生成，
+     * 那一份要单独放 `filesDir`（A5.5.2）。
+     */
+    private val videoCoverDir = File(appContext.cacheDir, "video_covers").apply { mkdirs() }
+
+    private fun videoCoverFile(contentUri: String): File {
+        val digest = java.security.MessageDigest.getInstance("MD5").digest(contentUri.toByteArray())
+        return File(videoCoverDir, digest.joinToString("") { "%02x".format(it) } + ".jpg")
+    }
+
+    /**
+     * 视频封面落盘。**不复用 [persistToDisk]**：那条的第一行是
+     * `if (file.exists() || bitmap.hasAlpha()) return`，而 `getFrameAtTime` 给的帧是
+     * ARGB_8888 —— 拿它当「不透明才存」的判据，结果就是一张都存不下来、每次都重抽。
+     */
+    private fun persistVideoCover(file: File, bitmap: Bitmap) {
+        if (file.exists()) return
+        runCatching {
+            val tmp = File(file.absolutePath + ".tmp")
+            tmp.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, THUMB_JPEG_QUALITY, it) }
+            if (!tmp.renameTo(file)) tmp.delete()
+        }.onFailure { Log.w(TAG, "[Thumb] 视频封面落盘失败 ${file.name}: ${it.message}") }
+    }
+
+    /**
+     * 自己抽一张封面帧（P3-A5.5；A5.4 那期吃的是系统 `loadThumbnail`，首轮 ~1s 且不落盘）。
+     *
+     * 三个不显然的点：
+     *  - **取 10% 处而不是第 0 帧**：录屏与相机成品的头一帧常是黑场/台标，拿它当封面等于
+     *    一整夹黑块（桌面端 ffmpeg 那条链路也是这个取向）。时长读不出来时退回第一个关键帧。
+     *  - **自己补 rotation**：`getFrameAtTime` 返回的是**未旋转的原始帧**，而 ExoPlayer 渲染时
+     *    已经按容器的 rotate 位转过——不补这一步，静态位和起播后的画面就横竖不一致。
+     *    A5.4 实测撞到过：系统给那只 `.rot90` 的封面是 800×369（横），MediaStore 存的编码
+     *    宽高是 590×1280（竖）。见 P3 清单 §8.7 末那条疑点。
+     *  - **抽完立刻缩到长边 [THUMB_SIZE] 再进缓存/落盘**：原帧可能是 3440×1440，
+     *    一张 ARGB_8888 就是 ~20MB，留在 128MB 的池里几张就把整池挤光。
+     */
+    private fun extractVideoCover(uri: Uri): Bitmap? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(appContext, uri)
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?: 0L
+            val frameUs = if (durationMs > 0L) durationMs * 1000L / 10L else 0L
+            val raw = retriever.getFrameAtTime(frameUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            if (raw == null) {
+                Log.w(TAG, "[Thumb] 视频抽帧拿不到帧 uri=$uri durationMs=$durationMs")
+                return null
+            }
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull()
+                ?: 0
+            val upright = if (rotation % 360 == 0) {
+                raw
+            } else {
+                val m = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+                Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
+            }
+            if (upright !== raw) raw.recycle()
+            val longSide = maxOf(upright.width, upright.height)
+            val scaled = if (longSide <= THUMB_SIZE) {
+                upright
+            } else {
+                val k = THUMB_SIZE.toFloat() / longSide
+                Bitmap.createScaledBitmap(
+                    upright,
+                    (upright.width * k).roundToInt().coerceAtLeast(1),
+                    (upright.height * k).roundToInt().coerceAtLeast(1),
+                    true,
+                )
+            }
+            if (scaled !== upright) upright.recycle()
+            scaled
+        } catch (e: Exception) {
+            // 不支持的容器 / 权限被收回 / 文件损坏都从这里出去，调用方退回系统缩略图那条
+            Log.w(TAG, "[Thumb] 视频抽帧异常 uri=$uri: ${e.javaClass.simpleName} ${e.message}")
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    /**
      * LAN 缩略图快速取图（阻塞版，调用方自行切线程/限并发）：
      * 内存 → 磁盘（`lan_thumbs/<urlHash>`，存服务端原始字节不重编码）→ okhttp 拉取。
      * 无本地 HD 升级语义——服务端给的 size=256 就是网格要的尺寸。
@@ -168,8 +255,8 @@ class ThumbnailLoader(context: Context) {
             return it
         }
 
-        // 视频封面第一期**不落盘、也不走 HD 升级**：thumbDir 与 generateHd 那套都是
-        // 「按 id 解原图」的语义，喂 mp4 只会白跑一次解码。滚动时重复取帧的代价先记在账上。
+        // 视频封面走的是另一条磁盘目录（videoCoverDir），不碰 thumbDir/generateHd 那套
+        // 「按 id 解原图」的语义——喂 mp4 只会白跑一次解码。见 A5.5 那段。
         val diskFile = hdFile(imageId)
         if (!video && diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
@@ -199,6 +286,33 @@ class ThumbnailLoader(context: Context) {
                 memoryCache.put(key, sub)
                 persistToDisk(diskFile, sub)
                 return sub
+            }
+        }
+
+        // 视频 P3-A5.5：封面优先级排在自己头上——磁盘命中 → 没有就抽一帧并落盘。
+        // 抽不到（容器不支持 / 权限被收回 / 文件坏）才继续往下退系统缩略图那条 A5.4 的路，
+        // 那条首轮 ~1s 且不落盘，只当兜底用。
+        if (video) {
+            val coverFile = videoCoverFile(uri.toString())
+            if (coverFile.exists()) {
+                BitmapFactory.decodeFile(coverFile.absolutePath)?.let {
+                    memoryCache.put(key, it)
+                    Log.d(TAG, "[Thumb] 视频封面磁盘命中 id=$imageId ${it.width}x${it.height}")
+                    return it
+                }
+            }
+            val t = SystemClock.elapsedRealtime()
+            val frame = extractVideoCover(uri)
+            val cost = SystemClock.elapsedRealtime() - t
+            if (frame != null) {
+                if (cost >= SLOW_LOG_MS) {
+                    Log.w(TAG, "[Thumb] 抽帧 id=$imageId ${frame.width}x${frame.height} cost=${cost}ms")
+                } else {
+                    Log.i(TAG, "[Thumb] 抽帧 id=$imageId ${frame.width}x${frame.height} cost=${cost}ms")
+                }
+                memoryCache.put(key, frame)
+                persistVideoCover(coverFile, frame)
+                return frame
             }
         }
 
