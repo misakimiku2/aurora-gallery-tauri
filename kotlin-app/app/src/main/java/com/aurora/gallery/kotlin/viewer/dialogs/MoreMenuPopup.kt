@@ -188,19 +188,26 @@ class MoreMenuPopup(
         val measuredWidth = menuView.measuredWidth.coerceAtLeast(minItemWidth)
         val measuredHeight = menuView.measuredHeight
 
-        val loc = IntArray(2)
-        anchor.getLocationOnScreen(loc)
         val screenWidth = context.resources.displayMetrics.widthPixels
         val screenHeight = context.resources.displayMetrics.heightPixels
 
-        var menuX = loc[0] + anchor.width - measuredWidth
-        // gap 8dp：菜单贴按钮正下方，与 AuroraDropdown 的 gap = 8.dp 一致（原 4dp）
-        var menuY = loc[1] + anchor.height + (density * 8).toInt()
-
-        if (menuX < 0) menuX = 0
-        if (menuX + measuredWidth > screenWidth) menuX = screenWidth - measuredWidth
-        if (menuY + measuredHeight > screenHeight) menuY = screenHeight - measuredHeight
-        if (menuY < 0) menuY = 0
+        /**
+         * 落点：锚点正下方右对齐 + 屏边夹取；gap 8dp 菜单贴按钮正下方，与 AuroraDropdown
+         * 的 gap = 8.dp 一致（原 4dp）。锚点坐标**每次现读**——初算用一次、显示后的自校准
+         * 再用一次，两次之间锚点动过（视频态系统栏回弹会挪顶栏）就跟到新位，不会钉在旧锚上。
+         */
+        val menuPos = {
+            val loc = IntArray(2)
+            anchor.getLocationOnScreen(loc)
+            var x = loc[0] + anchor.width - measuredWidth
+            var y = loc[1] + anchor.height + (density * 8).toInt()
+            if (x < 0) x = 0
+            if (x + measuredWidth > screenWidth) x = screenWidth - measuredWidth
+            if (y + measuredHeight > screenHeight) y = screenHeight - measuredHeight
+            if (y < 0) y = 0
+            x to y
+        }
+        val (menuX, menuY) = menuPos()
 
         // 抓宿主窗口菜单正后方的区域做毛玻璃底（区域=菜单最终落点，宿主窗口
         // edge-to-edge 故窗口系≈屏幕系，与 AuroraDropdown 同款口径）
@@ -240,6 +247,13 @@ class MoreMenuPopup(
 
         dialog.show()
         dialog.window?.let { window ->
+            // 首帧不落笔（视频态真机实测：菜单打开时自己挪一下，图片态没有）。定位是两步：
+            // 先按 getLocationOnScreen 的屏幕系初算，窗口布局完成后拿实际落点做一次自校准
+            // （见本块末尾）——中间那帧只要画出来，读起来就是「背景动了一下」。图片态初算
+            // 本来就准（校准位移为 0，画两帧同一个位置看不出来），视频影院态把系统栏藏了、
+            // 子窗口内容框原点与屏幕系的差值不再是 0，位移暴露。整层压到校准落地再显，
+            // 菜单只在最终位出现一次；兜底的延时显形防止校准那趟 post 在个别机型上没跑到。
+            window.decorView.alpha = 0f
             window.setGravity(Gravity.TOP or Gravity.START)
             val params = window.attributes
             params.x = menuX
@@ -266,20 +280,24 @@ class MoreMenuPopup(
             // 显示后自校准（M8b-9）：上面的 statusTop 扣减建立在「insets 与父窗口内容框
             // 同步」的假设上——查看器有沉浸/系统栏隐藏态（用户真机实测：状态栏隐藏时
             // 菜单仍下坠一个 statusTop，insets 已报 0 而子窗口内容框原点滞后）。这里读
-            // 弹窗实际落点与目标屏幕坐标（menuX/menuY，锚点 getLocationOnScreen 系）的
-            // 差值一次修正——对任何坐标系偏差自洽，不再依赖系统栏状态假设。
+            // 弹窗实际落点与**当下重算**的锚点落点（menuPos，屏幕系）的差值一次修正——
+            // 对任何坐标系偏差自洽，不再依赖系统栏状态假设，且两次之间顶栏真挪过也跟得上。
             menuView.post {
                 val actual = IntArray(2)
                 window.decorView.getLocationOnScreen(actual)
-                val dx = menuX - actual[0]
-                val dy = menuY - actual[1]
+                val target = menuPos()
+                val dx = target.first - actual[0]
+                val dy = target.second - actual[1]
                 if (dx != 0 || dy != 0) {
+                    android.util.Log.d("AuroraMenu", "弹层自校准位移 dx=$dx dy=$dy（非 0 即初算与真实内容框有差）")
                     val p = window.attributes
                     p.x += dx
                     p.y += dy
                     window.attributes = p
                 }
+                window.decorView.alpha = 1f
             }
+            window.decorView.postDelayed({ window.decorView.alpha = 1f }, 120L)
         }
     }
 }

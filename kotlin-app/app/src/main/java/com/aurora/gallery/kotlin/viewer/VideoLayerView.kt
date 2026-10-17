@@ -160,6 +160,20 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /** 左下角的旋转屏幕钮：翻转的是宿主钉的屏幕方向，本层只发信号。 */
     var onRotateRequest: (() -> Unit)? = null
 
+    /**
+     * 竖屏窄宽形制：把倍速与画面大小两颗从播控条摘掉，动作改走宿主「更多」菜单
+     * （验收人 2026-10-18 真机：右组会压到下一条视频上）。由宿主在形制收敛处唯一写入，
+     * 与顶栏收敛同一个判据（`isCompactPortrait`），两条不会走岔。
+     */
+    var compactControls = false
+        set(value) {
+            if (field == value) return
+            field = value
+            val target = if (value) GONE else VISIBLE
+            speedChip.visibility = target
+            scaleChip.visibility = target
+        }
+
     val isBound: Boolean get() = boundFileId != null
 
     // —— 手势状态 ——
@@ -302,17 +316,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
             val pad = dp(11f).toInt()
             setPadding(pad, pad, pad, pad)
-            background = GradientDrawable().apply {
-                cornerRadius = dp(12f)
-                setColor(Color.parseColor("#40000000"))
-            }
+            // 无底：与其余播控键同一形制（验收人 2026-10-18：圆角矩形框是多余的一层）
+            background = null
             contentDescription = "画面大小"
             setOnClickListener {
                 cycleSurfaceMode()
                 showChrome()
             }
         }
-        // 倍速档：钮面直接是数字（档位本身就是可读的值，比图标好认），底色与圆角同画面大小那颗
+        // 倍速档：钮面直接是数字（档位本身就是可读的值，比图标好认）
         speedChip = TextView(context).apply {
             val size = dp(44f).toInt()
             // 与 scaleChip 一样在 rightGroup（LinearLayout）里，参数类型必须是 LinearLayout.LayoutParams
@@ -321,10 +333,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             includeFontPadding = false
-            background = GradientDrawable().apply {
-                cornerRadius = dp(12f)
-                setColor(Color.parseColor("#40000000"))
-            }
+            background = null
             contentDescription = "倍速"
             text = SPEEDS[speedIdx].second
             setTextColor(inkColor)
@@ -733,8 +742,10 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /**
      * 点一下换一档。与循环那颗同一口径：**档位跨页保留**（换到下一条视频仍是这个倍速），
      * 不跟着 bind 归 1——两条都是「用户按过一次就该记住」的档，不是每条片子自己的属性。
+     *
+     * 公开：竖屏时本层的这两颗钮收进宿主「更多」菜单，菜单行直接调这里（[speedLabel] 给行标题）。
      */
-    private fun cycleSpeed() {
+    fun cycleSpeed() {
         speedIdx = (speedIdx + 1) % SPEEDS.size
         applySpeed()
         showHint("倍速 ${SPEEDS[speedIdx].second}")
@@ -754,7 +765,14 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         speedChip.setTextColor(if (SPEEDS[speedIdx].first == 1f) inkColor else accentColor)
     }
 
-    private fun cycleSurfaceMode() {
+    /** 当前倍速档文字：宿主把这一档挪进「更多」菜单时给行标题（行首图标固定，值在文字里）。 */
+    fun speedLabel(): String = SPEEDS[speedIdx].second
+
+    /** 当前画面档的文字与图标：同上，图标沿用播控条那颗的图形，菜单行跟着档位变。 */
+    fun surfaceModeLabel(): String = surfaceMode.label
+    fun surfaceModeIcon(): Int = surfaceMode.iconRes
+
+    fun cycleSurfaceMode() {
         surfaceMode = SurfaceMode.entries[(surfaceMode.ordinal + 1) % SurfaceMode.entries.size]
         userScale = 1f
         scaleChip.setImageResource(surfaceMode.iconRes)

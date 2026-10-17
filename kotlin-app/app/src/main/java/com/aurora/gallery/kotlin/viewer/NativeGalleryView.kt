@@ -1478,21 +1478,6 @@ class NativeGalleryView @JvmOverloads constructor(
         onStageChromeChange?.invoke(black)
     }
 
-    /**
-     * 顶栏标题居中补偿。标题框夹在「返回」与右侧键组之间，两侧不等宽时它的中心本来就偏，
-     * 只改 gravity 会得到一个「看起来居中其实偏左」的标题——这里按已布局出的框位平移回去。
-     * [factor] 0=还原靠左（图片项原形制），1=居中（视频影院态）。
-     */
-    internal fun centerTitleOnStage(factor: Float) {
-        // 走 titleView 的父层而不是 topBar 字段：buildTopBar 末尾就会经
-        // applyTopBarFormFactor 调到这里，那时字段还没赋值（实测 NPE 崩在构造期）
-        val bar = titleView.parent as? View ?: return
-        if (bar.width <= 0 || titleView.width <= 0) return
-        val contentCenter = (bar.paddingLeft + bar.width - bar.paddingRight) / 2f
-        val boxCenter = (titleView.left + titleView.right) / 2f
-        titleView.translationX = (contentCenter - boxCenter) * factor
-    }
-
     /** 应用当前主题到所有 UI 元素。 */
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun applyTheme() {
@@ -1742,17 +1727,9 @@ class NativeGalleryView @JvmOverloads constructor(
             return
         }
         titleView.text = item.name
-        // 视频 P3-A2.5：影院态顶栏的文件名居中显示（图片项维持靠左的原形制）。
-        // 只改 gravity 还不够——标题框夹在「返回」与右侧键组之间，两侧不等宽时中心
-        // 本来就偏左，所以再按两侧宽度差的一半平移一次（centerTitleOnStage）。
-        val centerTitle = item.isVideo
-        titleView.gravity = if (centerTitle) {
-            android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.CENTER_HORIZONTAL
-        } else {
-            android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.START
-        }
-        centerTitleOnStage(if (centerTitle) 1f else 0f)
-        post { if (isOpen) centerTitleOnStage(if (item.isVideo) 1f else 0f) }
+        // 标题恒靠左（buildTopBar 创建时给的 gravity）。视频影院态曾把它居中并配一段
+        // 两侧宽度差平移补偿，验收人 2026-10-18 真机看完要求改回与图片同一位置，那条链路
+        // （centerTitleOnStage）已整体删除。
         // M6a 阶段 6：LAN 项的顶栏删除键按编辑门禁位显隐——allow_edit 直通时与本地同款
         // 确认弹窗 → confirmDelete（查看器自己摘项前进，宿主 onDelete 分流远端删除链路）；
         // 403 门禁态仍隐藏（门禁关闭时删除对远端不可用，M4a「不适用的项不出现」先例）。
@@ -2113,21 +2090,40 @@ class NativeGalleryView @JvmOverloads constructor(
             listener?.onAddToCanvas(item.fileId)
         }
         // 竖屏收敛（applyTopBarFormFactor）收起的三个动作补进菜单头部：幻灯片/横屏查看/
-        // 图片信息——与顶栏收敛一一对应，播放中文案随态切「幻灯片暂停」（isSlideshowPlaying
+        // 详细信息——与顶栏收敛一一对应，播放中文案随态切「幻灯片暂停」（isSlideshowPlaying
         // 与顶栏 updateSlideshowButtonIcon 同源，图标随态切 pause/play）；删除菜单里
         // 本就有（置底），不重复加。非竖屏该列表为空，菜单与原状完全一致。
+        // 视频项两处例外（验收人 2026-10-18 真机）：幻灯片是图片功能、▶ 在视频顶栏上会被
+        // 读成「播放」，菜单里也不出（与顶栏 slideshowBtn 的 isVideoStage() 门同一个口径）。
         val collapsedItems = if (isCompactPortrait) {
             buildList<MoreMenuItem> {
-                add(
-                    MoreMenuItem(
-                        if (isSlideshowPlaying()) "幻灯片暂停" else "幻灯片播放",
-                        colorTextPrimary(),
-                        iconRes = if (isSlideshowPlaying()) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play,
-                    ) { toggleSlideshow() }
-                )
+                if (!item.isVideo) {
+                    add(
+                        MoreMenuItem(
+                            if (isSlideshowPlaying()) "幻灯片暂停" else "幻灯片播放",
+                            colorTextPrimary(),
+                            iconRes = if (isSlideshowPlaying()) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play,
+                        ) { toggleSlideshow() }
+                    )
+                }
                 add(MoreMenuItem("横屏查看", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_cw) { toggleScreenOrientation() })
-                add(MoreMenuItem("图片信息", colorTextPrimary(), iconRes = R.drawable.ic_lucide_info) { toggleDrawer() })
+                add(MoreMenuItem("详细信息", colorTextPrimary(), iconRes = R.drawable.ic_lucide_info) { toggleDrawer() })
             }
+        } else {
+            emptyList()
+        }
+        // 竖屏窄宽下播控条右组会压到下一条视频上，倍速/画面大小两颗跟着顶栏一起摘掉
+        // （videoLayer.compactControls = 同一个 collapsed 判据），动作在这里补回来。
+        // 行标题带当前档位：菜单是逐次现算的，档位又是跨页保留的，不带值就只读得出「切一档」。
+        val videoStageItems = if (isCompactPortrait && item.isVideo) {
+            listOf(
+                MoreMenuItem("倍速 ${videoLayer.speedLabel()}", colorTextPrimary(), iconRes = R.drawable.ic_lucide_gauge) {
+                    videoLayer.cycleSpeed()
+                },
+                MoreMenuItem("画面 ${videoLayer.surfaceModeLabel()}", colorTextPrimary(), iconRes = videoLayer.surfaceModeIcon()) {
+                    videoLayer.cycleSurfaceMode()
+                },
+            )
         } else {
             emptyList()
         }
@@ -2146,15 +2142,18 @@ class NativeGalleryView @JvmOverloads constructor(
                 // 复制/移动需要远端目录选择器，查看器内暂不挂 LanFolderPicker（网格选中集
                 // 已可批量操作）。加入画布走本地取流管线，同样不适用。
                 buildList {
+                    addAll(videoStageItems)
                     addAll(collapsedItems)
                     add(
                         MoreMenuItem("保存到设备", colorTextPrimary(), iconRes = R.drawable.ic_lucide_download) {
                             listener?.onSaveToDevice(item.fileId, item.path)
                         }
                     )
-                    add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
-                        showSlideshowSettingsDialog()
-                    })
+                    if (!item.isVideo) {
+                        add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
+                            showSlideshowSettingsDialog()
+                        })
+                    }
                     if (lanAllowEdit) {
                         add(MoreMenuItem("删除", colorDanger(), iconRes = R.drawable.ic_lucide_trash) {
                             showDeleteConfirmDialog()
@@ -2163,6 +2162,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 }
             } else {
                 buildList {
+                    addAll(videoStageItems)
                     addAll(collapsedItems)
                     // 视频 P3-A6：两条读位图的 AI 命令对视频项不出现（总文档边界 B3 + UI §7.3）。
                     // **加入画布在 A5.5.3 放回来了**：视频以封面位图进画布（UI §7.6），
@@ -2232,9 +2232,12 @@ class NativeGalleryView @JvmOverloads constructor(
                             listener?.onMoveToFolder(item.fileId)
                         }
                     )
-                    add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
-                        showSlideshowSettingsDialog()
-                    })
+                    // 幻灯片是图片功能：视频项菜单不出幻灯片设置（验收人 2026-10-18）
+                    if (!item.isVideo) {
+                        add(MoreMenuItem("幻灯片设置", colorTextPrimary(), iconRes = R.drawable.ic_lucide_settings_2) {
+                            showSlideshowSettingsDialog()
+                        })
+                    }
                     add(MoreMenuItem("删除", colorDanger(), iconRes = R.drawable.ic_lucide_trash) {
                         showDeleteConfirmDialog()
                     })

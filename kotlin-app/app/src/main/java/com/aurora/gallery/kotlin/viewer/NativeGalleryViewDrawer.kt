@@ -16,7 +16,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * 按竖屏形制收敛/展开顶栏次级钮（幻灯片/旋转/图片信息）。删除键的显隐不在这里管：
+ * 按竖屏形制收敛/展开顶栏次级钮（幻灯片/旋转/详细信息），并把视频播控条上的倍速与
+ * 画面大小两颗一起交给同一个判据（`videoLayer.compactControls`）。删除键的显隐不在这里管：
  * 它要叠加 LAN 编辑门禁（updateTitle），两处各写一半会互相覆盖，归 updateTitle 一处。
  * 收敛用 View.GONE 而非不 addView：slideshowBtn/deleteBtn 是 lateinit 成员，
  * updateSlideshowButtonIcon、applyTheme 的 childCount 遍历、沉浸/抽屉动画都握着引用，
@@ -31,7 +32,9 @@ internal fun NativeGalleryView.applyTopBarFormFactor() {
     // 视频项的旋转钮在底部播控条最左（A2.5 第二轮），顶栏这颗跟着藏
     screenRotateBtn.visibility = if (collapsed || isVideoStage()) View.GONE else View.VISIBLE
     infoBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
-    centerTitleOnStage(if (isVideoStage()) 1f else 0f)
+    // 竖屏窄宽下播控条右组会压到下一条视频上（验收人 2026-10-18 真机）：这两颗跟着顶栏
+    // 一起收敛，动作改由「更多」菜单出项（showMoreMenu 的 videoStageItems，同一判据）
+    videoLayer.compactControls = collapsed
 }
 
 /**
@@ -245,7 +248,7 @@ internal fun NativeGalleryView.buildTopBar(): LinearLayout {
         // 语义由描述/菜单文案承载——描述随钉屏态在 updateScreenRotateButtonIcon 同步
         //（updateSlideshowButtonIcon 先例）。
         screenRotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "横屏查看") { toggleScreenOrientation() }
-        infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
+        infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "详细信息") { toggleDrawer() }
         deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
         val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
         moreBtn = makeIconButton(R.drawable.ic_lucide_more_vertical, contentDescription = "更多") { showMoreMenu(moreBtn) }
