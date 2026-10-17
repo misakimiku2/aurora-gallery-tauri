@@ -38,6 +38,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +68,7 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import java.text.Collator
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.FfiTopic
@@ -208,19 +210,18 @@ internal fun AddImagesToCanvasDialog(
     val visible = images?.filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
     val visibleCount = visible?.size ?: 0
 
+    // 确认按钮要把选中项映射成装箱输入，而视频项可能**现抽一帧封面**（实测冷抽 0.5~0.8s/只）——
+    // 这活儿不能在点击线程上做，所以整个映射挪 IO；回到主线程再回调 onConfirm。
+    val uiScope = rememberCoroutineScope()
+
     fun confirmChecked() {
-        val sources = images
-            ?.filter { it.id in checked }
-            ?.map { img ->
-                CanvasPackSource(
-                    id = img.id,
-                    width = img.width?.toFloat() ?: 1000f,
-                    height = img.height?.toFloat() ?: 750f,
-                    contentUri = img.contentUri,
-                )
-            }
-            .orEmpty()
-        onConfirm(sources)
+        // 映射走 ThumbnailLoader.packSourceOf（与 VM 的 canvasSourcesFor 同一个出口）：
+        // 视频项在那儿换成封面位图文件，拿不到封面的项被跳过——两处各写一遍迟早不一致。
+        val picked = images?.filter { it.id in checked }.orEmpty()
+        uiScope.launch {
+            val sources = withContext(Dispatchers.IO) { picked.mapNotNull { img -> thumbnailLoader.packSourceOf(img) } }
+            onConfirm(sources)
+        }
     }
 
     Dialog(
@@ -735,8 +736,11 @@ private fun PickerCell(
             contentAlignment = Alignment.Center,
         ) {
             val imageId = remember(image.contentUri) { thumbnailLoader.extractImageId(image.contentUri) }
-            val bmp by produceState<android.graphics.Bitmap?>(initialValue = null, imageId) {
-                value = withContext(Dispatchers.IO) { thumbnailLoader.loadFastLimited(imageId) }
+            // 视频 P3-A5.5.3：弹窗里的视频项也要吃**视频**那条取源（拿图片集合的 URI 查同一个
+            // id 必然取不到），否则列表里视频一格全空白，用户根本不知道自己能选它。
+            val isVideo = image.fileType.equals("Video", ignoreCase = true)
+            val bmp by produceState<android.graphics.Bitmap?>(initialValue = null, imageId, isVideo) {
+                value = withContext(Dispatchers.IO) { thumbnailLoader.loadFastLimited(imageId, isVideo) }
             }
             bmp?.let {
                 Image(

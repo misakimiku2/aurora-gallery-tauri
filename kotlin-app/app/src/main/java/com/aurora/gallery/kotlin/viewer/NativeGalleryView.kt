@@ -2164,11 +2164,10 @@ class NativeGalleryView @JvmOverloads constructor(
             } else {
                 buildList {
                     addAll(collapsedItems)
-                    // 视频 P3-A6：三条「读这张图的位图」的命令对视频项一律不出现
-                    //（总文档边界 B3 + UI §7.3/§7.6）。**加入画布**按 §7.6 本该放封面位图，
-                    // 但画布管线拿的是 content URI 再自己解码（CanvasView 的 canvasSourceFor），
-                    // 喂 mp4 只会解不出图——要等 A5.5 把封面落成真位图才放开，这一轮先摘掉。
-                    if (isTablet && !item.isVideo) add(canvasItem)
+                    // 视频 P3-A6：两条读位图的 AI 命令对视频项不出现（总文档边界 B3 + UI §7.3）。
+                    // **加入画布在 A5.5.3 放回来了**：视频以封面位图进画布（UI §7.6），
+                    // 换源发生在 ThumbnailLoader.packSourceOf 那一处，不在这里判类型。
+                    if (isTablet) add(canvasItem)
                     // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
                     // 分析写本地库，对远端图无意义）。2026-10-11 菜单精简：未连接 AI
                     // 服务器不出现（与网格长按菜单同款门控，不再靠点击后 toast 拦截）

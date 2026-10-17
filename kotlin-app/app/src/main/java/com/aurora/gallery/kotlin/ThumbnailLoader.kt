@@ -160,7 +160,48 @@ class ThumbnailLoader(context: Context) {
         return true
     }
 
-    /** 长边超过 [longSide] 才缩放；等比，且不碰调用方传进来的原图。 */
+    /**
+     * 确保有一张可用的本地视频封面位图，返回它的 `file://` URI（A5.5.3：视频进画布用的就是这张）。
+     *
+     * **拿不到就返回 null，绝不退回 mp4 的 content URI**——画布那条管线是「按 URI 解码位图」
+     * （canvasSourceFor 走 ContentResolver + ImageDecoder），喂 mp4 只会得到一块解不出来的空位，
+     * 比「这一项没加进去」难查得多。走 [loadFast] 的完整三级（手挑 > 自抽 > 系统兜底），
+     * 但只有前两级是落盘文件，系统兜底那张没落盘，所以这里再确认一次文件在不在。
+     * **在 IO 线程调**。
+     */
+    fun videoCoverUri(contentUri: String): String? {
+        val id = runCatching { ContentUris.parseId(Uri.parse(contentUri)) }.getOrNull() ?: return null
+        loadFast(id, video = true)
+        val cover = listOf(userVideoCoverFile(contentUri), videoCoverFile(contentUri)).firstOrNull { it.exists() }
+        return cover?.let { Uri.fromFile(it).toString() }
+    }
+
+    /**
+     * 图库一行 → 画布装箱输入。**两个调用点共用**（VM 的批量入口 `canvasSourcesFor`
+     * 与「添加图片」弹窗的确认按钮）——同一件事写两遍迟早不一致，这条是 10-16 那次
+     * 「加列漏改 4 处」的直接教训。
+     *
+     * 视频项的取源在这里换成**封面位图文件**（UI §7.6：视频以封面位图进画布），
+     * 拿不到封面就返回 null 让调用方跳过——**不能退回 mp4 的 URI**，画布那边是按位图解码的。
+     * **在 IO 线程调**（可能要现抽一帧）。
+     */
+    fun packSourceOf(img: uniffi.aurora_core.Image): com.aurora.gallery.kotlin.canvas.CanvasPackSource? {
+        val uri = if (img.fileType.equals("Video", ignoreCase = true)) {
+            videoCoverUri(img.contentUri) ?: return null
+        } else {
+            img.contentUri
+        }
+        return com.aurora.gallery.kotlin.canvas.CanvasPackSource(
+            id = img.id,
+            width = img.width?.toFloat() ?: 1000f,
+            height = img.height?.toFloat() ?: 750f,
+            contentUri = uri,
+        )
+    }
+
+    /**
+     * 长边超过 [longSide] 才缩放；等比，且不碰调用方传进来的原图。
+     */
     private fun scaleToLongSide(source: Bitmap, longSide: Int): Bitmap {
         val wide = maxOf(source.width, source.height)
         if (wide <= longSide) return source

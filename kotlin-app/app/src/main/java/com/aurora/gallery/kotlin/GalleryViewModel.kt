@@ -631,18 +631,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /**
      * 把一批 file id 解析成画布装箱输入（id/宽高/contentUri 都来自 `list_images_by_ids`，
      * 与网格/查看器的 file id 同源；宽高空缺兜底 React 同款 1000×750）。
+     * 映射一律走 [packSourceOf]（视频项在那儿换成封面位图文件），拿不到封面的项被跳过。
      */
     fun canvasSourcesFor(fileIds: Collection<String>, onReady: (List<com.aurora.gallery.kotlin.canvas.CanvasPackSource>) -> Unit) {
         viewModelScope.launch {
             val sources = withContext(Dispatchers.IO) {
-                listImagesByIds(fileIds.toList()).map { img ->
-                    com.aurora.gallery.kotlin.canvas.CanvasPackSource(
-                        id = img.id,
-                        width = img.width?.toFloat() ?: 1000f,
-                        height = img.height?.toFloat() ?: 750f,
-                        contentUri = img.contentUri,
-                    )
-                }
+                listImagesByIds(fileIds.toList()).mapNotNull { img -> thumbnailLoader.packSourceOf(img) }
             }
             onReady(sources)
         }
