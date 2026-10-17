@@ -174,6 +174,34 @@ internal fun MainActivity.applyWindowTheme(dark: Boolean) {
         ?.isAppearanceLightStatusBars = !dark
 }
 
+/**
+ * 视频影院态的窗口 chrome：状态栏那一条与手势区背后那层刷黑、状态栏图标转白。
+ *
+ * **只写色，不动任何 insets 的显隐**——B2 定稿那条「导航栏一律不碰」禁的是 hide/show
+ * （MagicOS 在「隐藏→重新显示」那一轮后会带系统默认底色常驻盖内容，逐像素对过），
+ * 而 [applyWindowTheme] 常态本来就在写 navigationBarColor，这里是同一条路、同一个属性。
+ *
+ * 还原不自己拼色值：交回 [applyWindowTheme] 那唯一出处，免得又多一个颜色来源
+ * （A2.5 第三轮刚踩过一次：抽屉收尾自己写背景，把影院态黑底刷回浅灰）。
+ */
+internal fun MainActivity.applyViewerStageChrome(black: Boolean) {
+    // 沉浸态正在接管窗口色与系统栏（setViewerImmersiveBars），不跟它抢
+    if (viewerBarsHidden) return
+    if (!black) {
+        applyWindowTheme(isDarkTheme())
+        return
+    }
+    window.setBackgroundDrawable(
+        android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK)
+    )
+    @Suppress("DEPRECATION")
+    window.statusBarColor = android.graphics.Color.BLACK
+    @Suppress("DEPRECATION")
+    window.navigationBarColor = android.graphics.Color.BLACK
+    WindowCompat.getInsetsController(window, window.decorView)
+        ?.isAppearanceLightStatusBars = false
+}
+
 /** 关于页外链（GitHub/Issues，M4c）：系统浏览器打开；无浏览器等失败仅提示。 */
 internal fun MainActivity.openExternalUrl(url: String) {
     runCatching {

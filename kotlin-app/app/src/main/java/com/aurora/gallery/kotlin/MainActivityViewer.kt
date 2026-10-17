@@ -30,6 +30,8 @@ internal fun MainActivity.ensureViewer(): NativeGalleryView = viewer ?: NativeGa
     it.listener = viewerListener(it)
     // 沉浸态的系统栏/窗口色接管：查看器只发「进/出」，动 flags 与色值一律在宿主
     it.onImmersiveBarsChange = { hidden -> setViewerImmersiveBars(hidden) }
+    // 影院态（当前项是视频）的窗口 chrome：同样只发信号，色值归宿主
+    it.onStageChromeChange = { black -> applyViewerStageChrome(black) }
     viewer = it
 }
 

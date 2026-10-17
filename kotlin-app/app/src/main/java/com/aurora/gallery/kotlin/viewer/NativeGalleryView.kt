@@ -215,6 +215,13 @@ class NativeGalleryView @JvmOverloads constructor(
      */
     var onImmersiveBarsChange: ((Boolean) -> Unit)? = null
     /**
+     * 影院态窗口 chrome 接管（宿主注入，[onImmersiveBarsChange] 同款形制）：
+     * true=状态栏那一条与手势区背后那层刷黑。查看器只报「要不要黑」，动窗口属性归宿主。
+     */
+    var onStageChromeChange: ((Boolean) -> Unit)? = null
+    /** 上一次发给宿主的状态。applyChromeColors 每次换页都跑，不去重就会每页写一遍窗口属性。 */
+    private var stageChromeSent: Boolean? = null
+    /**
      * 状态栏高度（权威值，只信窗口 insets）。B2 后查看器容器顶=窗口顶（真全屏），顶栏
      * 必须自补这段，否则标题/按钮钻进状态栏与挖孔区；不读 `status_bar_height` 资源
      * （被挖孔顶高，avd_honor29 实测 182 vs 实际 90）。
@@ -1421,6 +1428,14 @@ class NativeGalleryView @JvmOverloads constructor(
         bottomInfoText.setTextColor(ink)
         thumbnailStrip.setBackgroundColor(colorBgAlpha(0xE6))
         applyVideoPalette()
+        emitStageChrome(isVideoStage())
+    }
+
+    /** 只在真的翻转时发信号（沉浸态下宿主那条会自己让位，这里照发不误）。 */
+    internal fun emitStageChrome(black: Boolean) {
+        if (stageChromeSent == black) return
+        stageChromeSent = black
+        onStageChromeChange?.invoke(black)
     }
 
     /**
@@ -1573,6 +1588,8 @@ class NativeGalleryView @JvmOverloads constructor(
         // B2：系统栏由本类按沉浸态自行接管（不再是会话模型），关闭时必须还原——
         // 否则「沉浸中退出查看器」会把隐藏的系统栏带进网格。
         onImmersiveBarsChange?.invoke(false)
+        // 影院态的窗口 chrome 同理：在视频上退出查看器，状态栏不能留在黑档
+        emitStageChrome(false)
         // 旋转屏幕还原（2026-10-07）：钉横屏只在查看器前台成立，退出写回原方向——
         // 否则网格/画布会停在查看器钉下的横屏
         restoreScreenOrientation()
