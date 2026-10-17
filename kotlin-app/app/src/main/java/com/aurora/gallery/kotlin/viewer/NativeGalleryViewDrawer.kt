@@ -28,7 +28,8 @@ internal fun NativeGalleryView.applyTopBarFormFactor() {
     // 视频 P3-A2.5：幻灯片是图片功能，它的 ▶ 图标在视频顶栏上会被直接读成「播放」——
     // 视频项一律藏掉（放映入口仍在「更多」菜单里，与竖屏收敛同一条路）
     slideshowBtn.visibility = if (collapsed || isVideoStage()) View.GONE else View.VISIBLE
-    screenRotateBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
+    // 视频项的旋转钮在底部播控条最左（A2.5 第二轮），顶栏这颗跟着藏
+    screenRotateBtn.visibility = if (collapsed || isVideoStage()) View.GONE else View.VISIBLE
     infoBtn.visibility = if (collapsed) View.GONE else View.VISIBLE
     centerTitleOnStage(if (isVideoStage()) 1f else 0f)
 }
@@ -244,10 +245,6 @@ internal fun NativeGalleryView.buildTopBar(): LinearLayout {
         // 语义由描述/菜单文案承载——描述随钉屏态在 updateScreenRotateButtonIcon 同步
         //（updateSlideshowButtonIcon 先例）。
         screenRotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "横屏查看") { toggleScreenOrientation() }
-        // 视频 P3-A2.5：循环播放（单条循环）。构建时先藏，显隐由 updateTitle 按当前项类型给；
-        // 开着循环的着色由 toggleVideoLoop / applyVideoPalette 同步（deleteBtn 的 tintColor 先例）。
-        loopBtn = makeIconButton(R.drawable.ic_lucide_repeat, contentDescription = "循环播放") { toggleVideoLoop() }
-        loopBtn.visibility = View.GONE
         infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
         deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
         val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
@@ -257,7 +254,6 @@ internal fun NativeGalleryView.buildTopBar(): LinearLayout {
         addView(titleView)
         addView(slideshowBtn)
         addView(screenRotateBtn)
-        addView(loopBtn)
         addView(infoBtn)
         addView(deleteBtn)
         addView(shareBtn)
@@ -459,7 +455,9 @@ internal fun NativeGalleryView.animateDrawerTo(open: Boolean, fromProgress: Floa
                 // 抽屉关闭：恢复抽屉打开前的沉浸状态。横屏抽屉打开期间不改
                 // isImmersive，也没动过背景与系统栏，这里只需把它落回权威值
                 v.isImmersive = v.immersiveBeforeDrawer
-                v.setBackgroundColor(if (v.immersiveBeforeDrawer) Color.BLACK else v.colorBg())
+                // 背景必须走那条统一判定：视频影院态既不是沉浸也不是主题色，
+                // 这里只写 colorBg() 会把黑底刷回浅灰（开完「详情」返回实测踩过）
+                v.applyChromeColors()
             }
         }
     })

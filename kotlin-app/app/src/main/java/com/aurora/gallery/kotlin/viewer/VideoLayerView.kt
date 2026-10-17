@@ -91,7 +91,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private val prevBtn: ImageButton
     private val playPauseBtn: ImageButton
     private val nextBtn: ImageButton
+    private val rotateBtn: ImageButton
     private val scaleChip: ImageButton
+    private val loopBtn: ImageButton
     private val gestureHint: TextView
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -125,6 +127,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     /** 首帧之前封面仍透在底下（本层不画底）；之后才用 [letterboxColor] 填信箱区。 */
     private var letterboxColor = Color.TRANSPARENT
+    /** 当前 chrome 墨色与主色（循环钮开/关要就地换色，不能等整轮重涂） */
+    private var inkColor = Color.WHITE
+    private var accentColor = Color.WHITE
     private val letterboxBg = GradientDrawable()
 
     var onPlayError: ((String) -> Unit)? = null
@@ -132,9 +137,10 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     var onChromeHiddenChange: ((Boolean) -> Unit)? = null
     /** 静态位横滑翻页：-1=上一条，1=下一条（本层不吃图片视图的手势，翻页得回宿主做）。 */
     var onPageRequest: ((Int) -> Unit)? = null
+    /** 左下角的旋转屏幕钮：翻转的是宿主钉的屏幕方向，本层只发信号。 */
+    var onRotateRequest: (() -> Unit)? = null
 
     val isBound: Boolean get() = boundFileId != null
-    val isLooping: Boolean get() = player.repeatMode == Player.REPEAT_MODE_ONE
 
     // —— 手势状态 ——
 
@@ -270,10 +276,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         // 画面大小档：图形图标、放这一行的**最右**（验收人 2026-10-17 第二轮）
         scaleChip = ImageButton(context).apply {
             val size = dp(44f).toInt()
-            layoutParams = LayoutParams(size, size).apply {
-                gravity = Gravity.END or Gravity.CENTER_VERTICAL
-                marginEnd = dp(2f).toInt()
-            }
+            // 它在 rightGroup（LinearLayout）里，参数类型必须是 LinearLayout.LayoutParams
+            layoutParams = LinearLayout.LayoutParams(size, size)
             setImageResource(surfaceMode.iconRes)
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
             val pad = dp(11f).toInt()
@@ -288,12 +292,38 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 showChrome()
             }
         }
+        rotateBtn = controlButton(R.drawable.ic_lucide_rotate_cw, 0f, "旋转屏幕") {
+            onRotateRequest?.invoke()
+            showChrome()
+        }
+        rotateBtn.layoutParams = LayoutParams(dp(44f).toInt(), dp(44f).toInt()).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            marginStart = dp(2f).toInt()
+        }
+        loopBtn = controlButton(R.drawable.ic_lucide_repeat, 0f, "循环播放") {
+            val on = toggleLoop()
+            refreshLoopTint()
+            showHint(if (on) "循环播放：开" else "循环播放：关")
+            showChrome()
+        }
+        // 右侧一组：画面大小档 + 循环（验收人：循环挪到画面大小右边）
+        val rightGroup = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            }
+            addView(scaleChip)
+            addView(loopBtn)
+        }
         val buttonRow = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48f).toInt(),
             )
             addView(transport)
-            addView(scaleChip)
+            addView(rightGroup)
+            // 旋转屏幕从顶栏挪到这里的最左（验收人：底部播控条左下角）
+            addView(rotateBtn)
         }
         chrome = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -622,6 +652,11 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     // —— 画面几何（四档 + 捏合倍率） ——
 
+    /** 循环钮：开着染主色、关着随 chrome 墨色（图标本身不带状态，只靠颜色区分）。 */
+    private fun refreshLoopTint() {
+        loopBtn.setColorFilter(if (player.repeatMode == Player.REPEAT_MODE_ONE) accentColor else inkColor)
+    }
+
     private fun cycleSurfaceMode() {
         surfaceMode = SurfaceMode.entries[(surfaceMode.ordinal + 1) % SurfaceMode.entries.size]
         userScale = 1f
@@ -810,7 +845,10 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
      */
     fun applyPalette(bgColor: Int, textColor: Int, panelColor: Int, accentColor: Int) {
         letterboxColor = bgColor
-        for (v in listOf(prevBtn, playPauseBtn, nextBtn, playFab)) v.setColorFilter(textColor)
+        inkColor = textColor
+        this.accentColor = accentColor
+        for (v in listOf(prevBtn, playPauseBtn, nextBtn, playFab, rotateBtn)) v.setColorFilter(textColor)
+        refreshLoopTint()
         positionText.setTextColor(textColor)
         durationText.setTextColor(textColor)
         scaleChip.setColorFilter(textColor)

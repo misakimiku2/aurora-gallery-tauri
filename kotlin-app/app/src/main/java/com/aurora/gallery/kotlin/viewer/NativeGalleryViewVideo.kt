@@ -84,20 +84,11 @@ internal fun NativeGalleryView.setVideoChromeHidden(hidden: Boolean) {
 }
 
 /**
- * 循环钮（顶栏，仅视频项出现）：状态回写给按钮着色。
- * 循环位存在播放器上，`stop()` 不清它，所以换页/重开都保持用户上一次的选择。
- */
-internal fun NativeGalleryView.toggleVideoLoop() {
-    val looping = videoLayer.toggleLoop()
-    if (isTopBarBuilt()) {
-        loopBtn.setColorFilter(if (looping) colorAccent() else colorTextPrimary())
-    }
-}
-
-/**
  * 视频层重涂。**影院态（视频项或沉浸态）下信箱底=纯黑、文字图标=白、播控条底=白低透明**
  * ——黑底上再涂主题色面板是看不见的，所以面板改走「黑底加一层白」那条读法。
  * 非影院态（浅色主题看视频时不会发生，留着给以后改主意）走主题色。
+ *
+ * 循环与旋转两颗都在视频层自己的播控条里（A2.5 第二轮），着色也归层里管，这里不碰顶栏。
  */
 internal fun NativeGalleryView.applyVideoPalette() {
     val stage = isVideoStage() || isImmersive
@@ -108,9 +99,4 @@ internal fun NativeGalleryView.applyVideoPalette() {
         panelColor = if (stage) withAlpha(android.graphics.Color.WHITE, 0x14) else colorBgAlpha(0xE6),
         accentColor = colorAccent(),
     )
-    // 循环钮：开着循环=主色，关着=当前 chrome 墨色（影院态那个是白，不能用主题墨色，
-    // 否则黑顶栏上会留下一个深色钮）
-    if (isTopBarBuilt()) {
-        loopBtn.setColorFilter(if (videoLayer.isLooping) colorAccent() else ink)
-    }
 }
