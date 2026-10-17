@@ -4,6 +4,7 @@ import com.aurora.gallery.kotlin.R
 import android.content.Context
 import android.graphics.Color
 import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.text.method.ScrollingMovementMethod
 import android.os.Build
@@ -311,6 +312,18 @@ class NativeGalleryView @JvmOverloads constructor(
      * LaunchedEffect 推入，菜单构建时现读）。
      */
     var aiConnected: Boolean = false
+
+    /**
+     * 宿主注入：**本地视频封面的取帧口**（视频 P3-A5.4 下半）。
+     *
+     * 为什么必须存在：静态位的封面来自 `thumbnailUrl` + Coil，而本地项这个字段恒空，
+     * mp4 的 content URI 进 Coil 必失败（A2 那轮就是为了躲它才把大图请求整个不发）。
+     * 系统缩略图那条路给的是 **Bitmap**，不是可解码的 URI，所以只能由宿主把位图送来。
+     *
+     * 签名不带 `suspend`：本包全是 Handler/post，没有协程 scope；宿主自己发异步，
+     * **约定回调在主线程调用**。取不到就回调 null（调用方保留占位、不再重试）。
+     */
+    var localVideoCover: ((contentUri: String, onDone: (android.graphics.Bitmap?) -> Unit) -> Unit)? = null
 
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun colorBg() = palette.main
@@ -961,6 +974,16 @@ class NativeGalleryView @JvmOverloads constructor(
             else coilSourceOf(item, "preview")
         if (previewSrc == null) {
             drawerPreviewImage.setImageDrawable(null)
+            // A5.4 下半：本地视频的预览格同样只能拿位图（上面那个 null 判据就是它）。
+            // 取不到就保持清空——这一格空着比塞一张错图好。
+            if (item.isVideo && !item.isLan) {
+                localVideoCover?.invoke(item.path) { bmp ->
+                    if (bmp == null) return@invoke
+                    // 抽屉是复用视图，迟到的上一格封面要作废：按当前项再判一次
+                    if (images.getOrNull(currentIndex)?.fileId != item.fileId) return@invoke
+                    drawerPreviewImage.setImageDrawable(BitmapDrawable(resources, bmp))
+                }
+            }
         } else {
             val req = coilSource(ImageRequest.Builder(context), previewSrc)
                 .target(drawerPreviewImage)

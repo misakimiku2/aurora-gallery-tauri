@@ -11,6 +11,7 @@ package com.aurora.gallery.kotlin.viewer
 // 继承作用域裸标识符限定：VISIBLE/GONE -> View.x；TAG -> NativeGalleryView.TAG
 // （companion 成员在扩展里必须限定名，§7 第 15 条 ②）。
 
+import android.graphics.drawable.BitmapDrawable
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -94,6 +95,20 @@ internal fun NativeGalleryView.loadIntoView(view: ZoomableImageView, index: Int,
         // 视频 P3-A2：大图请求**不发**。mp4 进 Coil 两头都是坑——解码必失败（表现成一句
         // Failed to load 的 Toast），且 HttpUri fetcher 会把整只文件拉进磁盘缓存（LAN 录屏
         // 上百 MB）。A1/A3/A4 那几轮就是靠这条注定失败的请求「看起来无害」混过去的。
+        //
+        // A5.4 下半：LAN 项的封面走上面那条 `thumbUrl`（服务端抽的帧），**本地项这个字段恒空**，
+        // 于是静态位一片纯黑（实测媒体区取色 distinct=1）。位图只能由宿主从系统缩略图取来，
+        // 这里挂它的注入口；守卫与 Coil 那两条同一套（代号过期就丢，免得快速翻页时上一只的
+        // 封面糊到这一页上）。取帧本身要 ~1s（首轮系统现生成），所以进度条不跟着它等——
+        // 早收工换「先黑一下再出封面」，不换「转圈转到天荒地老」。
+        if (thumbUrl.isNullOrEmpty() && !item.isLan) {
+            localVideoCover?.invoke(item.path) { bmp ->
+                if (bmp == null || view.boundLoadGeneration != generation) return@invoke
+                view.setImageDrawable(BitmapDrawable(context.resources, bmp))
+                view.isFullResShown = true
+                Log.i(NativeGalleryView.TAG, "local video cover shown: index=$index name=${item.name} ${bmp.width}x${bmp.height}")
+            }
+        }
         if (showProgress && thumbUrl.isNullOrEmpty()) progressBar.visibility = View.GONE
         // 换页动画进行中不做同步：那会让新一页的播放键在旧页还在滑出时就亮在屏幕正中
         if (index == currentIndex && !isAnimating.get()) syncVideoLayer()

@@ -8,8 +8,10 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.lifecycle.lifecycleScope
 import com.aurora.gallery.kotlin.canvas.AddResult
 import com.aurora.gallery.kotlin.viewer.NativeGalleryView
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -32,6 +34,18 @@ internal fun MainActivity.ensureViewer(): NativeGalleryView = viewer ?: NativeGa
     it.onImmersiveBarsChange = { hidden -> setViewerImmersiveBars(hidden) }
     // 影院态（当前项是视频）的窗口 chrome：同样只发信号，色值归宿主
     it.onStageChromeChange = { black -> applyViewerStageChrome(black) }
+    // 视频 P3-A5.4 下半：本地视频封面的取帧口。异步在**这里**发起（查看器那个包全是
+    // Handler/post，没有协程 scope），lifecycleScope 回主线程派发回调——那条契约写在
+    // NativeGalleryView.localVideoCover 的 KDoc 上。走的是 VM 那一份 ThumbnailLoader，
+    // 与网格同一个内存缓存，不再另开一个 loader 抢 128MB。
+    it.localVideoCover = { contentUri, onDone ->
+        val id = runCatching { android.content.ContentUris.parseId(Uri.parse(contentUri)) }.getOrNull()
+        if (id == null) {
+            onDone(null)
+        } else {
+            lifecycleScope.launch { onDone(viewModel.thumbnailLoader.loadFastLimited(id, video = true)) }
+        }
+    }
     viewer = it
 }
 
