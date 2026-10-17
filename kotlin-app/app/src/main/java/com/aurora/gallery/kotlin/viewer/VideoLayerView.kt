@@ -75,6 +75,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         private const val CHROME_IDLE_MS = 2000L
         private const val TICK_MS = 250L
         private const val MAX_SCALE = 4f
+        /** 捏合下限：0.3 而不是 1——「只能放大不能缩小」是验收人报的第一条（下限钉在 1
+         *  就等于把缩小整个动作吃掉了），四档里 1:1/裁切/拉伸 的基准本来就溢出，更要能缩。*/
+        private const val MIN_SCALE = 0.3f
         private const val HINT_HIDE_MS = 600L
         /** IDLE 态横滑翻页的判定，与图片那条同一档（ZoomableImageView 用 25% 屏宽） */
         private const val PAGE_DRAG_RATIO = 0.25f
@@ -538,14 +541,22 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 // 「跟图片一样，只是居中缩放」：只改倍率，锚点恒在中心，不做焦点跟随
-                userScale = (userScale * detector.scaleFactor).coerceIn(1f, MAX_SCALE)
+                userScale = (userScale * detector.scaleFactor).coerceIn(MIN_SCALE, MAX_SCALE)
                 applySurfaceGeometry()
+                return true
+            }
+
+            /** 第二指一落地就放弃单指判定：否则「先落一指、略微移动再补第二指」这个
+             *  最常见起手式会被当成竖滑，捏合过程中突然把亮度/音量改了（验收人第二条）。*/
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                cancelDrag()
                 return true
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
                 lastScaleUpAt = android.os.SystemClock.uptimeMillis()
-                if (userScale <= 1.01f) userScale = 1f
+                // 接近基准位就吸附上去，省得停在 1.03 这种既不是原样也看不出差别的位置
+                if (abs(userScale - 1f) < 0.06f) userScale = 1f
                 applySurfaceGeometry()
             }
         })
@@ -563,7 +574,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 dragStartLevel = if (ev.x < width / 2f) currentBrightness() else player.volume
             }
 
-            MotionEvent.ACTION_MOVE -> if (!scaleDetector.isInProgress) handleDrag(ev)
+            MotionEvent.ACTION_MOVE ->
+                if (ev.pointerCount > 1 || scaleDetector.isInProgress) cancelDrag() else handleDrag(ev)
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> finishDrag(ev)
         }
@@ -625,6 +637,12 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         dragAxis = DragAxis.NONE
         mainHandler.removeCallbacks(hideHint)
         mainHandler.postDelayed(hideHint, HINT_HIDE_MS)
+    }
+
+    /** 多指一出现就把单指判定撤掉：进度拖拽要交回 ticker，亮度/音量已经改的不再回滚。 */
+    private fun cancelDrag() {
+        if (dragAxis == DragAxis.HORIZONTAL) userDragging = false
+        dragAxis = DragAxis.NONE
     }
 
     /** 亮度是本窗口的属性，退出视频必须还原成「跟随系统」，否则整个 App 被留在暗档。 */

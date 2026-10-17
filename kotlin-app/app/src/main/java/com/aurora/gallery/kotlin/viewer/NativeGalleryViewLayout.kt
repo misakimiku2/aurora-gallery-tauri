@@ -121,7 +121,8 @@ internal fun NativeGalleryView.applyImageAreaPin() {
 private fun NativeGalleryView.pinnedChromeChildren(): List<View> = listOf(primaryView, secondaryView, topBar, thumbnailStrip, bottomInfo)
 
 /** 系统栏当前是否由本查看器隐藏（沉浸切换或幻灯片覆盖，二者都不改对方标志）。 */
-private fun NativeGalleryView.isChromeHidden(): Boolean = isImmersive || slideshowHidSystemUi
+private fun NativeGalleryView.isChromeHidden(): Boolean =
+    isImmersive || slideshowHidSystemUi || videoStageHidesBars
 
 /**
  * 主动测量并摆放抽屉子树（[updateDrawer] 的兜底）。

@@ -208,6 +208,13 @@ class NativeGalleryView @JvmOverloads constructor(
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal var isImmersive = false
     /**
+     * 影院态（当前项是视频）是否正接管着系统栏。与 [isImmersive] 分开的第三个来源：
+     * 视频**一绑上就自动全屏**（验收人 2026-10-17），不是用户按出来的，所以不能写进
+     * isImmersive——那条标志位还带着「单击切换、退出时还原」整套语义。
+     * 它同时是钉扎门（见 isChromeHidden）：藏栏期间不重锚、不冻结顶栏让位量。
+     */
+    internal var videoStageHidesBars = false
+    /**
      * 沉浸态系统栏接管回调（宿主注入，2026-10-07 B2 定稿）：true=隐藏系统栏并把窗口色
      * 置黑，false=还原。查看器容器恒**真全屏**（不吃 insets，见 MainActivity 组合根），
      * 所以翻转系统栏不引起容器 resize——「图片位置上下变动」由此从机制上消失，钉扎只
@@ -1429,6 +1436,7 @@ class NativeGalleryView @JvmOverloads constructor(
         thumbnailStrip.setBackgroundColor(colorBgAlpha(0xE6))
         applyVideoPalette()
         emitStageChrome(isVideoStage())
+        emitStageFullscreen(isVideoStage())
     }
 
     /** 只在真的翻转时发信号（沉浸态下宿主那条会自己让位，这里照发不误）。 */
@@ -1590,6 +1598,12 @@ class NativeGalleryView @JvmOverloads constructor(
         onImmersiveBarsChange?.invoke(false)
         // 影院态的窗口 chrome 同理：在视频上退出查看器，状态栏不能留在黑档
         emitStageChrome(false)
+        // 系统栏也交回去。此时 isImmersive 可能还没落 false，走不了 emitStageFullscreen
+        // 那条「沉浸态自己接管就不抢」的早退，所以直接清零标志并显式还原一次。
+        if (videoStageHidesBars) {
+            videoStageHidesBars = false
+            onImmersiveBarsChange?.invoke(false)
+        }
         // 旋转屏幕还原（2026-10-07）：钉横屏只在查看器前台成立，退出写回原方向——
         // 否则网格/画布会停在查看器钉下的横屏
         restoreScreenOrientation()

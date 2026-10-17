@@ -1155,7 +1155,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 沉浸态重申：切后台/被系统面板打断时系统可能自行把栏放回来，回前台按查看器
         // 的权威沉浸态重申一次（幂等——setViewerImmersiveBars 同值短路，非沉浸不做事）
-        viewer?.takeIf { it.isImmersiveNow() }?.let { setViewerImmersiveBars(true) }
+        // 视频影院态也算：切后台时系统会把状态栏放回来，回前台按权威态重申
+        viewer?.takeIf { it.isImmersiveNow() || it.videoStageHidesBars }
+            ?.let { setViewerImmersiveBars(true) }
         // 欢迎向导权限步：用户从系统设置授权页返回时 launcher 不会回调——这里按当前
         // 权限态推进（授权了就走 onPermissionGranted 并开扫，仍被拒则留在权限步）
         if (showWelcome && welcomeState.step == WelcomeStep.PERMISSION && hasMediaPermission()) {

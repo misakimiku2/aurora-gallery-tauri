@@ -69,6 +69,20 @@ internal fun NativeGalleryView.slideVideoLayerBack(duration: Long) {
 }
 
 /**
+ * 影院态 = 自动全屏：绑上视频就把系统栏交出去（藏状态栏），解绑再要回来。
+ * 走的是沉浸态那条现成接管链（宿主 setViewerImmersiveBars：藏栏 + 窗口色置黑 +
+ * 还原时先涂主题色再 show），窗口底色不用本类操心；`videoStageHidesBars` 同时是钉扎门
+ * （见 isChromeHidden），藏栏期间不重锚、不把顶栏的状态栏让位量冻结成 0。
+ * 沉浸态自己接管时不抢——那时进出都由 toggleImmersive 负责。
+ */
+internal fun NativeGalleryView.emitStageFullscreen(stage: Boolean) {
+    if (isImmersive) return
+    if (videoStageHidesBars == stage) return
+    videoStageHidesBars = stage
+    onImmersiveBarsChange?.invoke(stage)
+}
+
+/**
  * 顶栏跟着播控条一起收起/唤回（A2.5 拍板：起播静置 2 秒两条一起滑出，单击画面唤回）。
  *
  * 只借 [topBarHideTranslation] 那套既有滑出量，不碰 isImmersive——沉浸态是图片查看器的
