@@ -242,7 +242,28 @@ private fun GalleryViewModel.tabSequenceDiffers(folderId: String): Boolean {
     else tab.folderId != folderId || tab.activeTags.isNotEmpty() || tab.activeTopicId != null
 }
 
-internal fun GalleryViewModel.scanMediaStore(): List<MediaImage> {
+/**
+ * 全量快照 = **图片集合 + 视频集合两次查询**（P3-A5 · P5 拍板：双集合双查询，不改查
+ * `MediaStore.Files`）。集合 URI 是真卡点，列名两边通用（`MediaStore.Images.Media._ID`
+ * 这批常量全是 `MediaColumns` 继承来的同一套字符串，P3 清单 §8.1）。
+ * 唯一要对视频多取的是 `DURATION`；`contentUri` 必须按**各自集合**拼，否则同一个文件
+ * 在两条路上算出两个 md5 file_id、索引出重复行（`mediaImageOf` 同一条铁律）。
+ *
+ * 合并后按 `dateModified` 倒序——两次查询各自排过序，直接首尾相接会把全局顺序打乱
+ * （原来只有一路，调用侧拿到的就是「最新在前」）。
+ */
+internal fun GalleryViewModel.scanMediaStore(): List<MediaImage> =
+    (
+        scanMediaCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, withDuration = false) +
+            scanMediaCollection(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, withDuration = true)
+        )
+        .sortedByDescending { it.dateModified }
+
+/** 查一个 MediaStore 集合（图片 / 视频），投影与列口径见 [scanMediaStore]。 */
+private fun GalleryViewModel.scanMediaCollection(
+    collection: android.net.Uri,
+    withDuration: Boolean,
+): List<MediaImage> {
     val result = mutableListOf<MediaImage>()
     val projection = arrayOf(
         MediaStore.Images.Media._ID,
@@ -256,9 +277,9 @@ internal fun GalleryViewModel.scanMediaStore(): List<MediaImage> {
         MediaStore.Images.Media.MIME_TYPE,
         MediaStore.Images.Media.BUCKET_ID,
         MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
-    )
+    ) + if (withDuration) arrayOf(MediaStore.Video.Media.DURATION) else emptyArray()
     appContext.contentResolver.query(
-        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        collection,
         projection,
         null,
         null,
@@ -275,15 +296,16 @@ internal fun GalleryViewModel.scanMediaStore(): List<MediaImage> {
         val mimeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
         val bucketIdCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
         val bucketNameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+        // 实测会 NULL：同目录两只同源 mp4，那只 ffmpeg 转封装产物的宽高/时长三列全空
+        //（P3 清单 §8.3），所以这一列也按可空读，不许假设视频一定有值
+        val durationCol = if (withDuration) c.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION) else -1
 
         while (c.moveToNext()) {
             val id = c.getLong(idCol)
             result.add(
                 MediaImage(
                     id = id,
-                    contentUri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
-                    ).toString(),
+                    contentUri = ContentUris.withAppendedId(collection, id).toString(),
                     path = c.getString(dataCol) ?: "",
                     name = c.getString(nameCol) ?: "",
                     size = c.getLong(sizeCol),
@@ -297,6 +319,7 @@ internal fun GalleryViewModel.scanMediaStore(): List<MediaImage> {
                     //（对齐 React 版 __android_root_images__ 的「根目录图片」）
                     bucketName = c.getString(bucketNameCol)?.takeUnless { it.isBlank() }
                     ?: ROOT_FOLDER_DISPLAY_NAME,
+                    durationMs = if (durationCol >= 0 && !c.isNull(durationCol)) c.getLong(durationCol) else null,
                 )
             )
         }

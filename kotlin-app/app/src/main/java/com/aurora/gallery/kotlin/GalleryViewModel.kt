@@ -748,10 +748,21 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         }
     }
 
-    /** 注册 MediaStore 监听；notifyForDescendants=true 以捕获具体图片条目 URI 的通知。 */
+    /**
+     * 注册 MediaStore 监听；notifyForDescendants=true 以捕获具体图片条目 URI 的通知。
+     *
+     * A5：同一个 observer 再挂到**视频集合**上——两个 URI、一个对象，防抖天然共享
+     * （`onChange` 只排同一次 `scheduleHotRefresh()`），不需要第二个 observer 实例。
+     * 注销也只用摘一次：`unregisterContentObserver` 按 observer 对象摘，与它挂了几个 URI 无关。
+     */
     fun startMediaStoreObservation() {
         appContext.contentResolver.registerContentObserver(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            true,
+            mediaStoreObserver,
+        )
+        appContext.contentResolver.registerContentObserver(
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
             true,
             mediaStoreObserver,
         )

@@ -322,9 +322,17 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
  * 单行查询 → [MediaImage]（[registerRowAndMigrateAsync] 增量 upsert 用）。投影与
  * [scanMediaStore] 全量扫描逐列一致——file_id（content_uri 的 md5）与 bucket 派生
  * 口径必须和全量扫描相同，否则同文件会算出两个 id、索引出重复行。
+ *
+ * A5 起这条铁律多一层含义：**`contentUri` 不能自己拼成图片集合**。原来这里无论进来
+ * 的是哪个集合的 URI，都用 `Images.Media.EXTERNAL_CONTENT_URI + id` 重拼——视频行会
+ * 被算成一个图片 URI 的 md5，与全量扫描那条视频行的 id 对不上，索引里就多出一条
+ * 「同文件两个身份」。现在直接沿用传进来的 URI（三个调用点给的都已是带 id 的条目 URI），
+ * 拿不到 id 就返回 null，由调用方按失败处理。
  */
 // internal 而非 private：文件操作簇在 GalleryViewModelFileOps.kt（扩展函数）里要用
 internal fun GalleryViewModel.mediaImageOf(uri: android.net.Uri): MediaImage? {
+    // 传进来的必须是带 id 的条目 URI（三个调用点都满足）；拿不到 id 就没有可靠身份，返回 null
+    if (runCatching { ContentUris.parseId(uri) }.isFailure) return null
     val projection = arrayOf(
         MediaStore.Images.Media._ID,
         MediaStore.Images.Media.DISPLAY_NAME,
@@ -351,12 +359,12 @@ internal fun GalleryViewModel.mediaImageOf(uri: android.net.Uri): MediaImage? {
         val mimeCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
         val bucketIdCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
         val bucketNameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
+        // DURATION 只有视频集合有，图片集合上这一列不存在 → 按「列在不在」判，不能 throw
+        val durationCol = c.getColumnIndex(MediaStore.Video.Media.DURATION)
         val id = c.getLong(idCol)
         MediaImage(
             id = id,
-            contentUri = ContentUris.withAppendedId(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id,
-            ).toString(),
+            contentUri = uri.toString(),
             path = c.getString(dataCol) ?: "",
             name = c.getString(nameCol) ?: "",
             size = c.getLong(sizeCol),
@@ -369,6 +377,7 @@ internal fun GalleryViewModel.mediaImageOf(uri: android.net.Uri): MediaImage? {
             // 与 scanMediaStore 同口径：存储根目录散落文件 bucket_display_name 为 NULL
             bucketName = c.getString(bucketNameCol)?.takeUnless { it.isBlank() }
             ?: ROOT_FOLDER_DISPLAY_NAME,
+            durationMs = if (durationCol >= 0 && !c.isNull(durationCol)) c.getLong(durationCol) else null,
         )
     }
 }

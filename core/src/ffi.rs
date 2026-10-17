@@ -71,8 +71,12 @@ fn protected_media_ids(snapshot_ids: &HashSet<String>) -> Vec<String> {
     recent.keys().cloned().collect()
 }
 
-/// 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
-#[derive(uniffi::Record)]
+/// 一个 MediaStore 媒体项的原始信息（Kotlin 扫描后传入，图片与视频共用这一个记录）。
+///
+/// 类型**不另开字段**：真源是 `mime_type`，写侧按它派生 `file_index.file_type`
+/// （见 [`file_type_of_mime`]）——安卓那侧 MediaStore 的集合本身就分图片/视频两查，
+/// 再挂一个布尔字段等于给同一个事实开第二个来源。
+#[derive(uniffi::Record, Clone, Debug)]
 pub struct MediaImage {
     pub id: i64,
     pub content_uri: String,
@@ -86,6 +90,47 @@ pub struct MediaImage {
     pub mime_type: String,
     pub bucket_id: String,
     pub bucket_name: String,
+    /// 视频时长（毫秒）。图片恒 `None`；视频也可能**是 `None`**——实测同一目录下
+    /// 两只同源 mp4，那只 ffmpeg 转封装产物在 MediaStore 的 `duration` 列就是 NULL
+    /// （P3 清单 §8.3），所以这条按可空处理，不许当「有值」用。
+    pub duration_ms: Option<i64>,
+}
+
+/// `file_index.file_type` 的唯一派生口径：`video/*` 记 `Video`，其余记 `Image`。
+fn file_type_of_mime(mime_type: &str) -> &'static str {
+    if mime_type.starts_with("video/") {
+        "Video"
+    } else {
+        "Image"
+    }
+}
+
+/// MediaStore 一项 → 索引一行。**全 App 只有这一处做这个映射**：
+/// 快照批量与增量单行两条路都走它。10-16 那次给 `file_index` 加两列时漏改 4 处
+/// （P3 清单 §0 末）就是「同一个映射写了两遍」的产物，A5 又要在两处加字段，先并成一处。
+fn media_entry_of(img: &MediaImage) -> FileIndexEntry {
+    let file_type = file_type_of_mime(&img.mime_type);
+    FileIndexEntry {
+        file_id: db::generate_id(&img.content_uri),
+        parent_id: Some(db::generate_id(&img.bucket_id)),
+        path: img.content_uri.clone(),
+        name: img.name.clone(),
+        file_type: file_type.into(),
+        size: img.size.max(0) as u64,
+        created_at: img.date_added,
+        modified_at: img.date_modified,
+        width: img.width.map(|v| v as u32),
+        height: img.height.map(|v| v as u32),
+        format: img.mime_type.split('/').nth(1).map(|s| s.to_string()),
+        // 时长只对视频有意义；图片行即使被塞了值也不写进去（不留第二个来源）
+        duration_ms: if file_type == "Video" { img.duration_ms } else { None },
+        // P7 拍板：A5 只填 MediaStore 免费给的三列。桌面那四列由 src-tauri 的 revelo
+        // 探针填（不在 core，安卓拿不到），安卓本地视频留 NULL，抽屉里显示「未知」
+        frame_rate: None,
+        rotation: None,
+        video_codec: None,
+        bit_rate: None,
+    }
 }
 
 /// 文件夹（MediaStore bucket）。
@@ -449,27 +494,7 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
         })
         .collect();
 
-    let image_entries: Vec<FileIndexEntry> = images
-        .iter()
-        .map(|img| FileIndexEntry {
-            file_id: db::generate_id(&img.content_uri),
-            parent_id: Some(db::generate_id(&img.bucket_id)),
-            path: img.content_uri.clone(),
-            name: img.name.clone(),
-            file_type: "Image".into(),
-            size: img.size.max(0) as u64,
-            created_at: img.date_added,
-            modified_at: img.date_modified,
-            width: img.width.map(|v| v as u32),
-            height: img.height.map(|v| v as u32),
-            format: img.mime_type.split('/').nth(1).map(|s| s.to_string()),
-            duration_ms: None,
-            frame_rate: None,
-            rotation: None,
-            video_codec: None,
-            bit_rate: None,
-        })
-        .collect();
+    let image_entries: Vec<FileIndexEntry> = images.iter().map(media_entry_of).collect();
 
     // 本次快照的全部 file_id（folder + image）：台账收敛时用来注销「已进快照」的登记
     let snapshot_ids: HashSet<String> = folder_entries
@@ -487,7 +512,7 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
     .map_err(db_err)
 }
 
-/// 单张图片的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
+/// 单个媒体项的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
 /// 新路径登记成行时调用，把这一行进 `file_index`，让目标文件夹网格**立即**看到副本。
 /// 否则要等下一次全量对账（2.6 万行 MediaStore 快照，老机约 4s，且 MediaStore 变更
 /// 观察者的防抖扫描还会再排一次）才可见——用户体感「复制完好几秒不显示」。
@@ -497,28 +522,12 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
 /// 调它等于把整个索引清成一行。这里只做 `batch_upsert` 同款的
 /// `INSERT ... ON CONFLICT DO UPDATE` 单行写入，陈旧行仍由全量对账负责清。
 /// Folder 行不在这里建：目标文件夹多数已存在；新相册的 Folder 行由后续全量对账补，
-/// 图片行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
+/// 媒体行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
 #[uniffi::export]
 pub fn upsert_media_image(image: MediaImage) -> Result<(), AuroraError> {
-    let file_id = db::generate_id(&image.content_uri);
-    let entry = FileIndexEntry {
-        file_id: file_id.clone(),
-        parent_id: Some(db::generate_id(&image.bucket_id)),
-        path: image.content_uri.clone(),
-        name: image.name.clone(),
-        file_type: "Image".into(),
-        size: image.size.max(0) as u64,
-        created_at: image.date_added,
-        modified_at: image.date_modified,
-        width: image.width.map(|v| v as u32),
-        height: image.height.map(|v| v as u32),
-        format: image.mime_type.split('/').nth(1).map(|s| s.to_string()),
-        duration_ms: None,
-        frame_rate: None,
-        rotation: None,
-        video_codec: None,
-        bit_rate: None,
-    };
+    let data_path = image.path.clone();
+    let entry = media_entry_of(&image);
+    let file_id = entry.file_id.clone();
     let p = pool();
     let mut guard = p.get_connection();
     let conn: &mut rusqlite::Connection = &mut *guard;
@@ -528,7 +537,7 @@ pub fn upsert_media_image(image: MediaImage) -> Result<(), AuroraError> {
     recent_media_upserts()
         .lock()
         .expect("recent media upserts mutex poisoned")
-        .insert(file_id, image.path);
+        .insert(file_id, data_path);
     Ok(())
 }
 
@@ -549,6 +558,11 @@ pub fn delete_index_entries(file_ids: Vec<String>) -> Result<(), AuroraError> {
 }
 
 /// 列出所有文件夹（bucket）。
+///
+/// A5 起聚合口径放开到 `Image ∪ Video`（计数与两个时间），**但封面那一路仍只认 `'Image'`**：
+/// 相册封面是按位图取的（前端拿这个 path 去解码），视频项在没有封面帧之前喂进去只会得到
+/// 一张坏图——那要等 A5.4 的 `MediaStore.Video.Thumbnails`。所以这里是「计数含视频、封面不含」
+/// 的**故意不对称**，纯视频相册显示成「有张数、占位封面」。
 #[uniffi::export]
 pub fn list_folders() -> Vec<Folder> {
     let p = pool();
@@ -558,10 +572,10 @@ pub fn list_folders() -> Vec<Folder> {
     let mut stmt = conn
         .prepare(
             "SELECT f.file_id, f.name, f.path,
-                    (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
+                    (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video')),
                     (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image' ORDER BY i.modified_at DESC LIMIT 1),
-                    (SELECT MAX(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
-                    (SELECT MAX(i.modified_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image')
+                    (SELECT MAX(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video')),
+                    (SELECT MAX(i.modified_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video'))
              FROM file_index f WHERE f.file_type = 'Folder' ORDER BY f.name",
         )
         .expect("prepare list_folders");
@@ -986,6 +1000,69 @@ pub fn delete_tags(tags: Vec<String>) -> Result<(), AuroraError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A5：MediaStore 一项 → 索引一行的映射口径。批量与单行两条路共用同一个
+    /// `media_entry_of`，所以这一个测试就覆盖两个 FFI 入口（分开写等于回到「同一映射写两遍」）。
+    #[test]
+    fn media_entry_of_derives_type_from_mime_and_keeps_duration_only_for_video() {
+        let base = MediaImage {
+            id: 1,
+            content_uri: "content://media/external/images/media/1".into(),
+            path: "/storage/emulated/0/DCIM/a.jpg".into(),
+            name: "a.jpg".into(),
+            size: 100,
+            date_added: 10,
+            date_modified: 20,
+            width: Some(800),
+            height: Some(600),
+            mime_type: "image/jpeg".into(),
+            bucket_id: "b1".into(),
+            bucket_name: "DCIM".into(),
+            duration_ms: Some(1234),
+        };
+
+        // 图片：类型与时长都按图片处理，Kotlin 侧误传了时长也不写进索引
+        let img = media_entry_of(&base);
+        assert_eq!(img.file_type, "Image");
+        assert_eq!(img.duration_ms, None);
+        assert_eq!(img.format.as_deref(), Some("jpeg"));
+        assert_eq!(img.width, Some(800));
+
+        // 视频：类型跟着 mime 走，时长照收
+        let mut vid = base.clone();
+        vid.content_uri = "content://media/external/video/media/9".into();
+        vid.name = "SVID.mp4".into();
+        vid.mime_type = "video/mp4".into();
+        let v = media_entry_of(&vid);
+        assert_eq!(v.file_type, "Video");
+        assert_eq!(v.duration_ms, Some(1234));
+        assert_eq!(v.format.as_deref(), Some("mp4"));
+
+        // 实测过的 NULL 形态（P3 清单 §8.3：转封装产物三列全 NULL）：不许塌成 0
+        let mut hollow = vid.clone();
+        hollow.width = None;
+        hollow.height = None;
+        hollow.duration_ms = None;
+        let h = media_entry_of(&hollow);
+        assert_eq!(h.file_type, "Video");
+        assert_eq!(h.width, None);
+        assert_eq!(h.height, None);
+        assert_eq!(h.duration_ms, None);
+        // 四列扩展字段恒 NULL（P7：codec/bitrate/frame_rate/rotation 留给 A5.5 之后的决定）
+        assert_eq!(h.video_codec, None);
+        assert_eq!(h.bit_rate, None);
+        assert_eq!(h.frame_rate, None);
+        assert_eq!(h.rotation, None);
+    }
+
+    #[test]
+    fn file_type_of_mime_is_video_only_for_video_slash() {
+        assert_eq!(file_type_of_mime("video/mp4"), "Video");
+        assert_eq!(file_type_of_mime("video/x-matroska"), "Video");
+        assert_eq!(file_type_of_mime("image/jpeg"), "Image");
+        // 读不出 mime 时 MediaStore 会给空串，按图片处理（与 A5 之前的写侧行为一致）
+        assert_eq!(file_type_of_mime(""), "Image");
+    }
 
     fn row(tags: Option<serde_json::Value>) -> db::file_metadata::FileMetadata {
         db::file_metadata::FileMetadata {

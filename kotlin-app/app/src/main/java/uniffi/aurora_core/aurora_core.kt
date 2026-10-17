@@ -1351,7 +1351,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 23727) {
+    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 55985) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
@@ -1387,7 +1387,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_upsert_file_metadata() != 37365) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_upsert_media_image() != 63107) {
+    if (lib.uniffi_aurora_core_checksum_func_upsert_media_image() != 27869) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 3627) {
@@ -2830,7 +2830,11 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
 
 
 /**
- * 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
+ * 一个 MediaStore 媒体项的原始信息（Kotlin 扫描后传入，图片与视频共用这一个记录）。
+ *
+ * 类型**不另开字段**：真源是 `mime_type`，写侧按它派生 `file_index.file_type`
+ * （见 [`file_type_of_mime`]）——安卓那侧 MediaStore 的集合本身就分图片/视频两查，
+ * 再挂一个布尔字段等于给同一个事实开第二个来源。
  */
 data class MediaImage (
     var `id`: kotlin.Long
@@ -2856,6 +2860,13 @@ data class MediaImage (
     var `bucketId`: kotlin.String
     , 
     var `bucketName`: kotlin.String
+    , 
+    /**
+     * 视频时长（毫秒）。图片恒 `None`；视频也可能**是 `None`**——实测同一目录下
+     * 两只同源 mp4，那只 ffmpeg 转封装产物在 MediaStore 的 `duration` 列就是 NULL
+     * （P3 清单 §8.3），所以这条按可空处理，不许当「有值」用。
+     */
+    var `durationMs`: kotlin.Long?
     
 ){
     
@@ -2884,6 +2895,7 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -2899,7 +2911,8 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterOptionalInt.allocationSize(value.`height`) +
             FfiConverterString.allocationSize(value.`mimeType`) +
             FfiConverterString.allocationSize(value.`bucketId`) +
-            FfiConverterString.allocationSize(value.`bucketName`)
+            FfiConverterString.allocationSize(value.`bucketName`) +
+            FfiConverterOptionalLong.allocationSize(value.`durationMs`)
     )
 
     override fun write(value: MediaImage, buf: ByteBuffer) {
@@ -2915,6 +2928,7 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterString.write(value.`mimeType`, buf)
             FfiConverterString.write(value.`bucketId`, buf)
             FfiConverterString.write(value.`bucketName`, buf)
+            FfiConverterOptionalLong.write(value.`durationMs`, buf)
     }
 }
 
@@ -5096,6 +5110,11 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
         /**
          * 列出所有文件夹（bucket）。
+         *
+         * A5 起聚合口径放开到 `Image ∪ Video`（计数与两个时间），**但封面那一路仍只认 `'Image'`**：
+         * 相册封面是按位图取的（前端拿这个 path 去解码），视频项在没有封面帧之前喂进去只会得到
+         * 一张坏图——那要等 A5.4 的 `MediaStore.Video.Thumbnails`。所以这里是「计数含视频、封面不含」
+         * 的**故意不对称**，纯视频相册显示成「有张数、占位封面」。
          */ fun `listFolders`(): List<Folder> {
             return FfiConverterSequenceTypeFolder.lift(
     uniffiRustCall() { _status ->
@@ -5264,7 +5283,7 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
 
         /**
-         * 单张图片的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
+         * 单个媒体项的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
          * 新路径登记成行时调用，把这一行进 `file_index`，让目标文件夹网格**立即**看到副本。
          * 否则要等下一次全量对账（2.6 万行 MediaStore 快照，老机约 4s，且 MediaStore 变更
          * 观察者的防抖扫描还会再排一次）才可见——用户体感「复制完好几秒不显示」。
@@ -5274,7 +5293,7 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
          * 调它等于把整个索引清成一行。这里只做 `batch_upsert` 同款的
          * `INSERT ... ON CONFLICT DO UPDATE` 单行写入，陈旧行仍由全量对账负责清。
          * Folder 行不在这里建：目标文件夹多数已存在；新相册的 Folder 行由后续全量对账补，
-         * 图片行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
+         * 媒体行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
          */
     @Throws(AuroraException::class) fun `upsertMediaImage`(`image`: MediaImage)
         = 
