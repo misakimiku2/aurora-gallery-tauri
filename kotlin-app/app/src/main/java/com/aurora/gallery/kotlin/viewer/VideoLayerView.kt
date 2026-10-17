@@ -28,6 +28,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
@@ -82,6 +83,17 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         /** IDLE 态横滑翻页的判定，与图片那条同一档（ZoomableImageView 用 25% 屏宽） */
         private const val PAGE_DRAG_RATIO = 0.25f
         private const val PAGE_FLING_VELOCITY = 500f
+        /**
+         * 倍速档清单：与桌面端同一张表（UI 子文档 §3「0.5 / 1 / 1.25 / 1.5 / 2」）。
+         * 触屏没有悬停菜单，所以不像桌面那样弹列表，照本层既有形制「点一下切一档 + 浮层报档名」。
+         */
+        private val SPEEDS = listOf(
+            0.5f to "0.5x",
+            1f to "1x",
+            1.25f to "1.25x",
+            1.5f to "1.5x",
+            2f to "2x",
+        )
     }
 
     private val surfaceView: TextureView
@@ -96,6 +108,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private val nextBtn: ImageButton
     private val rotateBtn: ImageButton
     private val scaleChip: ImageButton
+    private val speedChip: TextView
     private val loopBtn: ImageButton
     private val gestureHint: TextView
 
@@ -127,6 +140,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private var videoH = 0
     private var surfaceMode = SurfaceMode.FIT
     private var userScale = 1f
+    /** 倍速档索引，默认 1x。**归本层字段管**，每次 [start] 重新下发给播放器，
+     *  不依赖 media3 在 `stop()`/`clearMediaItems()` 之后还留着多少状态。*/
+    private var speedIdx = SPEEDS.indexOfFirst { it.first == 1f }
 
     /** 首帧之前封面仍透在底下（本层不画底）；之后才用 [letterboxColor] 填信箱区。 */
     private var letterboxColor = Color.TRANSPARENT
@@ -295,6 +311,27 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 showChrome()
             }
         }
+        // 倍速档：钮面直接是数字（档位本身就是可读的值，比图标好认），底色与圆角同画面大小那颗
+        speedChip = TextView(context).apply {
+            val size = dp(44f).toInt()
+            // 与 scaleChip 一样在 rightGroup（LinearLayout）里，参数类型必须是 LinearLayout.LayoutParams
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            includeFontPadding = false
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12f)
+                setColor(Color.parseColor("#40000000"))
+            }
+            contentDescription = "倍速"
+            text = SPEEDS[speedIdx].second
+            setTextColor(inkColor)
+            setOnClickListener {
+                cycleSpeed()
+                showChrome()
+            }
+        }
         rotateBtn = controlButton(R.drawable.ic_lucide_rotate_cw, 0f, "旋转屏幕") {
             onRotateRequest?.invoke()
             showChrome()
@@ -309,13 +346,14 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             showHint(if (on) "循环播放：开" else "循环播放：关")
             showChrome()
         }
-        // 右侧一组：画面大小档 + 循环（验收人：循环挪到画面大小右边）
+        // 右侧一组：倍速 · 画面大小 · 循环
         val rightGroup = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.END or Gravity.CENTER_VERTICAL
             }
+            addView(speedChip)
             addView(scaleChip)
             addView(loopBtn)
         }
@@ -498,6 +536,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             seekBar.max = contentDurationMs.toInt().coerceAtLeast(1)
             syncDurationText()
         }
+        // 每次起播都重下倍速：本层只认 speedIdx 这一个真源，不赌 stop() 之后播放器还剩什么
+        applySpeed()
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
         player.playWhenReady = true
         scheduleChromeHide()
@@ -673,6 +713,30 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /** 循环钮：开着染主色、关着随 chrome 墨色（图标本身不带状态，只靠颜色区分）。 */
     private fun refreshLoopTint() {
         loopBtn.setColorFilter(if (player.repeatMode == Player.REPEAT_MODE_ONE) accentColor else inkColor)
+    }
+
+    /**
+     * 点一下换一档。与循环那颗同一口径：**档位跨页保留**（换到下一条视频仍是这个倍速），
+     * 不跟着 bind 归 1——两条都是「用户按过一次就该记住」的档，不是每条片子自己的属性。
+     */
+    private fun cycleSpeed() {
+        speedIdx = (speedIdx + 1) % SPEEDS.size
+        applySpeed()
+        showHint("倍速 ${SPEEDS[speedIdx].second}")
+    }
+
+    /** 单参 [PlaybackParameters] 的 pitch 固定 1.0（查 media3 1.4.1 字节码确认），2x 不会把声音变尖。 */
+    private fun applySpeed() {
+        val (speed, label) = SPEEDS[speedIdx]
+        speedChip.text = label
+        player.playbackParameters = PlaybackParameters(speed)
+        Log.d(TAG, "倍速 -> $label (started=$playbackStarted)")
+        refreshSpeedTint()
+    }
+
+    /** 1x 随 chrome 墨色，其余档染主色——钮面只有数字，不染色看不出当前不是原速。 */
+    private fun refreshSpeedTint() {
+        speedChip.setTextColor(if (SPEEDS[speedIdx].first == 1f) inkColor else accentColor)
     }
 
     private fun cycleSurfaceMode() {
@@ -867,6 +931,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         this.accentColor = accentColor
         for (v in listOf(prevBtn, playPauseBtn, nextBtn, playFab, rotateBtn)) v.setColorFilter(textColor)
         refreshLoopTint()
+        refreshSpeedTint()
         positionText.setTextColor(textColor)
         durationText.setTextColor(textColor)
         scaleChip.setColorFilter(textColor)
