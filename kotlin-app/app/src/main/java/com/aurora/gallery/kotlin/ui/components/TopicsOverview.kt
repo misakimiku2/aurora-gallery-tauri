@@ -431,7 +431,10 @@ private fun TopicCard(
         LaunchedEffect(cover?.id) {
             val img = cover ?: return@LaunchedEffect
             val imageId = thumbnailLoader.extractImageId(img.contentUri)
-            bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
+            // 专题封面允许是视频（UI 子文档 U6）：视频项走抽帧那三级，别喂图片那条解原图的路
+            val video = img.fileType.equals("Video", ignoreCase = true)
+            bmp = thumbnailLoader.peekMemory(imageId, video)
+                ?: thumbnailLoader.loadFastLimited(imageId, video)
         }
         val bitmap = bmp
         if (bitmap != null) {
@@ -1089,7 +1092,9 @@ private fun SubTopicCard(
             LaunchedEffect(topic.coverFileId) {
                 val img = cover ?: return@LaunchedEffect
                 val imageId = thumbnailLoader.extractImageId(img.contentUri)
-                bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
+                val video = img.fileType.equals("Video", ignoreCase = true)
+                bmp = thumbnailLoader.peekMemory(imageId, video)
+                    ?: thumbnailLoader.loadFastLimited(imageId, video)
             }
             val bitmap = bmp
             if (bitmap != null) {

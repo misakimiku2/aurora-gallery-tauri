@@ -559,10 +559,13 @@ pub fn delete_index_entries(file_ids: Vec<String>) -> Result<(), AuroraError> {
 
 /// 列出所有文件夹（bucket）。
 ///
-/// A5 起聚合口径放开到 `Image ∪ Video`（计数与两个时间），**但封面那一路仍只认 `'Image'`**：
-/// 相册封面是按位图取的（前端拿这个 path 去解码），视频项在没有封面帧之前喂进去只会得到
-/// 一张坏图——那要等 A5.4 的 `MediaStore.Video.Thumbnails`。所以这里是「计数含视频、封面不含」
-/// 的**故意不对称**，纯视频相册显示成「有张数、占位封面」。
+/// 聚合口径四路一致：计数、两个时间戳、**封面**全部按 `Image ∪ Video`。
+///
+/// 封面这一路在 A5 那轮曾刻意只认 `'Image'`（纯视频相册显示成「有张数、占位灰」），
+/// 前提是「视频没有可用的封面帧」。那个前提已经随 A5.5 过期——安卓侧现在自己抽帧
+/// （`ThumbnailLoader` 手挑 > 自抽 > 系统兜底三级），桌面端更是早就让视频与图片同权
+/// 争封面（`findImagesDeeply(..., includeVideos = !isAndroid)`，UI 子文档 U6 那条拍板）。
+/// 两端同口径，纯视频相册才不再是灰块。
 #[uniffi::export]
 pub fn list_folders() -> Vec<Folder> {
     let p = pool();
@@ -573,7 +576,7 @@ pub fn list_folders() -> Vec<Folder> {
         .prepare(
             "SELECT f.file_id, f.name, f.path,
                     (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video')),
-                    (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image' ORDER BY i.modified_at DESC LIMIT 1),
+                    (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video') ORDER BY i.modified_at DESC LIMIT 1),
                     (SELECT MAX(i.created_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video')),
                     (SELECT MAX(i.modified_at) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type IN ('Image', 'Video'))
              FROM file_index f WHERE f.file_type = 'Folder' ORDER BY f.name",

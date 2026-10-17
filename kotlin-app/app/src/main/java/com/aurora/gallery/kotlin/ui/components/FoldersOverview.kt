@@ -50,6 +50,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.aurora.gallery.kotlin.ThumbnailLoader
+import com.aurora.gallery.kotlin.isVideoContentUri
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -858,14 +859,17 @@ internal class FolderAdapter(
                 }
             } else {
                 val imageId = loader.extractImageId(uri)
-                val cached = loader.peekMemory(imageId)
+                // 封面可能是视频项（`list_folders` 四路聚合口径一致，含 Video）：视频要走
+                // 抽帧那三级取封面帧，喂图片那条「按 id 解原图」的路只会白跑一趟返回 null
+                val video = isVideoContentUri(uri)
+                val cached = loader.peekMemory(imageId, video)
                 if (cached != null) {
                     holder.cover.setImageBitmap(cached)
                 } else {
                     holder.cover.setImageBitmap(null)
                     holder.job?.cancel()
                     holder.job = scope.launch {
-                        val bmp = loader.loadFastLimited(imageId)
+                        val bmp = loader.loadFastLimited(imageId, video)
                         if (holder.bindingAdapterPosition == position) {
                             holder.cover.setImageBitmap(bmp)
                         }

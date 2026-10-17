@@ -153,7 +153,9 @@ fun TopicHero(
         LaunchedEffect(coverImage?.id) {
             val img = coverImage ?: return@LaunchedEffect
             val imageId = thumbnailLoader.extractImageId(img.contentUri)
-            bmp = thumbnailLoader.peekMemory(imageId) ?: thumbnailLoader.loadFastLimited(imageId)
+            val video = img.fileType.equals("Video", ignoreCase = true)
+            bmp = thumbnailLoader.peekMemory(imageId, video)
+                ?: thumbnailLoader.loadFastLimited(imageId, video)
         }
         val bitmap = bmp
         if (bitmap != null) {

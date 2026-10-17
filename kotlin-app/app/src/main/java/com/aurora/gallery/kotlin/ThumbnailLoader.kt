@@ -691,6 +691,16 @@ class ThumbnailLoader(context: Context) {
     }
 }
 
+/**
+ * 这条 content URI 是不是**视频集合**的（`content://media/external/video/media/<id>`）。
+ *
+ * 文件夹/专题的封面在数据层只是一个 URI 字符串（索引里存的就是 MediaStore 的 content URI，
+ * 集合名就在路径段里），而 [loadFast] 的视频分支与图片分支是两套完全不同的取图路
+ * （视频吃「手挑 > 自抽 > 系统兜底」三级，图片吃「按 id 降采样解原图」）——拿图片那套
+ * 去喂视频 URI 只会白跑一趟再返回 null，表现就是封面一块灰。
+ */
+internal fun isVideoContentUri(uri: String?): Boolean = uri != null && uri.contains("/video/")
+
 /** 头像成品边长：96dp 头像在 3.3 倍密度设备上是 317px，取 320 够到最密的一档。 */
 private const val AVATAR_PX = 320
 
