@@ -83,7 +83,8 @@ class ThumbnailLoader(context: Context) {
     }
 
     /** 同步读内存缓存（仅内存，不查磁盘/MediaStore），供组合阶段取初始值，避免 item 回收重进时占位符闪烁。 */
-    fun peekMemory(imageId: Long): Bitmap? = memoryCache.get(localKey(imageId))
+    fun peekMemory(imageId: Long, video: Boolean = false): Bitmap? =
+        memoryCache.get(if (video) videoKey(imageId) else localKey(imageId))
 
     // —— URL 分支（M6a 阶段 4：LAN HTTP 缩略图；复用本地分支的内存池/并发信号量）——
 
@@ -91,6 +92,10 @@ class ThumbnailLoader(context: Context) {
     private fun urlKey(url: String) = "u:$url"
 
     private fun localKey(imageId: Long) = "id:$imageId"
+
+    /** 视频封面另起键前缀。实测 API 36 上两个集合**共用一条 _id 序列**（视频 39/40、随后喂的
+     *  图片拿到 46），所以这不是在修一个现存的串图 bug，而是给 minSdk 24 那批分表老机型留的保险。 */
+    private fun videoKey(imageId: Long) = "v:$imageId"
 
     /** 同步读 URL 缩略图的内存缓存（FileGrid/FoldersOverview 的 LAN 分支同步上屏用）。 */
     fun peekMemoryUrl(url: String): Bitmap? = memoryCache.get(urlKey(url))
@@ -157,34 +162,44 @@ class ThumbnailLoader(context: Context) {
      * 快速取图，用于立即上屏（可能在 IO 线程阻塞，调用方自行切线程）。
      * 命中内存/高清磁盘缓存则直接返回；否则**降采样解码**原图；再退到系统缩略图。
      */
-    fun loadFast(imageId: Long): Bitmap? {
-        memoryCache.get(localKey(imageId))?.let {
+    fun loadFast(imageId: Long, video: Boolean = false): Bitmap? {
+        val key = if (video) videoKey(imageId) else localKey(imageId)
+        memoryCache.get(key)?.let {
             return it
         }
 
+        // 视频封面第一期**不落盘、也不走 HD 升级**：thumbDir 与 generateHd 那套都是
+        // 「按 id 解原图」的语义，喂 mp4 只会白跑一次解码。滚动时重复取帧的代价先记在账上。
         val diskFile = hdFile(imageId)
-        if (diskFile.exists()) {
+        if (!video && diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
-                memoryCache.put(localKey(imageId), it)
+                memoryCache.put(key, it)
                 return it
             }
         }
 
-        val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imageId)
+        val uri = ContentUris.withAppendedId(
+            if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            else MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            imageId,
+        )
 
         // 首选：自己降采样解码。MediaStore 的 thumbnails 表可能是空的（实测本机整库 0 行），
         // 此时 loadThumbnail 只能现解原图——60MP 的原图全尺寸解码是 230MB 像素缓冲，
         // 一夹这样的图会把设备 CPU/内存打满（进夹帧耗时 0.9~2.8s）。见 decodeSubsampled。
-        val t0 = SystemClock.elapsedRealtime()
-        val sub = decodeSubsampled(uri, THUMB_SIZE)
-        val subCost = SystemClock.elapsedRealtime() - t0
-        if (sub != null) {
-            if (subCost >= SLOW_LOG_MS) {
-                Log.w(TAG, "[Thumb] 降采样 id=$imageId ${sub.width}x${sub.height} cost=${subCost}ms")
+        // 视频项跳过这一步：mp4 不是位图，这条必然失败，白跑一次 openInputStream。
+        if (!video) {
+            val t0 = SystemClock.elapsedRealtime()
+            val sub = decodeSubsampled(uri, THUMB_SIZE)
+            val subCost = SystemClock.elapsedRealtime() - t0
+            if (sub != null) {
+                if (subCost >= SLOW_LOG_MS) {
+                    Log.w(TAG, "[Thumb] 降采样 id=$imageId ${sub.width}x${sub.height} cost=${subCost}ms")
+                }
+                memoryCache.put(key, sub)
+                persistToDisk(diskFile, sub)
+                return sub
             }
-            memoryCache.put(localKey(imageId), sub)
-            persistToDisk(diskFile, sub)
-            return sub
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -195,21 +210,32 @@ class ThumbnailLoader(context: Context) {
             val cost = SystemClock.elapsedRealtime() - t1
             if (bmp != null) {
                 if (cost >= SLOW_LOG_MS) {
-                    Log.w(TAG, "[Thumb] loadThumbnail id=$imageId ${bmp.width}x${bmp.height} cost=${cost}ms")
+                    Log.w(TAG, "[Thumb] loadThumbnail${if (video) " (视频)" else ""} id=$imageId ${bmp.width}x${bmp.height} cost=${cost}ms")
                 }
-                memoryCache.put(localKey(imageId), bmp)
+                memoryCache.put(key, bmp)
                 return bmp
             }
         }
 
         @Suppress("DEPRECATION")
-        val legacy = MediaStore.Images.Thumbnails.getThumbnail(
-            appContext.contentResolver,
-            imageId,
-            MediaStore.Images.Thumbnails.MINI_KIND,
-            null,
-        )
-        if (legacy != null) memoryCache.put(localKey(imageId), legacy)
+        val legacy = if (video) {
+            runCatching {
+                MediaStore.Video.Thumbnails.getThumbnail(
+                    appContext.contentResolver,
+                    imageId,
+                    MediaStore.Video.Thumbnails.MINI_KIND,
+                    null,
+                )
+            }.getOrNull()
+        } else {
+            MediaStore.Images.Thumbnails.getThumbnail(
+                appContext.contentResolver,
+                imageId,
+                MediaStore.Images.Thumbnails.MINI_KIND,
+                null,
+            )
+        }
+        if (legacy != null) memoryCache.put(key, legacy)
         return legacy
     }
 
@@ -258,8 +284,8 @@ class ThumbnailLoader(context: Context) {
     }
 
     /** 限并发的快速取图（挂起），滚动时避免 MediaStore 查询挤爆 IO 线程池。 */
-    suspend fun loadFastLimited(imageId: Long): Bitmap? =
-        fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFast(imageId) } }
+    suspend fun loadFastLimited(imageId: Long, video: Boolean = false): Bitmap? =
+        fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFast(imageId, video) } }
 
     /**
      * 头像裁剪页的取图源（#6）：按长边 [targetPx] 降采样解**原图**，比 512 的缩略图锐利

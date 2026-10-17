@@ -1109,7 +1109,10 @@ internal class FileGridAdapter(
             }
         }
         val imageId = loader.extractImageId(image.contentUri)
-        val cached = loader.peekMemory(imageId)
+        // 视频 P3-A5.4：本地视频项要按**视频集合**去取封面（P6 拍板第一期吃系统缩略图），
+        // 拿图片集合的 URI 取同一个 id 必然取不到。类型真源仍是 FFI 的 fileType，不查扩展名表。
+        val isVideo = image.fileType.equals("Video", ignoreCase = true)
+        val cached = loader.peekMemory(imageId, isVideo)
         if (cached != null) {
             Log.d(TAG, "[ImgLoad] pos=$pos id=$imageId memCache 同步上屏")
             cover.setImageBitmap(cached)
@@ -1130,11 +1133,12 @@ internal class FileGridAdapter(
         cover.setImageBitmap(null)
         cover.tag = imageId
         return scope.launch {
-            val bmp = loader.loadFastLimited(imageId)
+            val bmp = loader.loadFastLimited(imageId, isVideo)
             if (stillValid()) cover.setImageBitmap(bmp)
             // 按需高清升级：仅当系统缩略图偏小/缺失（<200px）才为这张图生成 HD（Rust 解码
             // 原图 ~145ms/张），512px 系统缩略图不触发——正常滚动零后台解码，不再整夹预热。
-            if (bmp != null && loader.needsUpgrade(bmp)) {
+            // 视频项不做 HD 升级：那条路是「按 id 解原图」，喂 mp4 只会白跑一次解码。
+            if (!isVideo && bmp != null && loader.needsUpgrade(bmp)) {
                 val hd = loader.generateHd(imageId, image.contentUri)
                 if (stillValid() && hd != null) cover.setImageBitmap(hd)
             }
