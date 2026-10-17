@@ -343,6 +343,8 @@ class NativeGalleryView @JvmOverloads constructor(
     lateinit internal var screenRotateBtn: ImageView
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     lateinit internal var infoBtn: ImageView
+    /** 视频 P3-A2.5：循环播放钮，仅视频项出现（显隐在 updateTitle 按当前项类型给）。 */
+    lateinit internal var loopBtn: ImageView
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     lateinit internal var deleteBtn: ImageView
     /** 顶栏是否已构建（第 22 刀：扩展函数摸不到 backing field，护栏收进成员） */
@@ -480,7 +482,9 @@ class NativeGalleryView @JvmOverloads constructor(
             onPlayError = { code ->
                 Toast.makeText(context, "播放失败（$code）", Toast.LENGTH_SHORT).show()
             }
-            onStartedChange = { this@NativeGalleryView.applyVideoZoomLock() }
+            // 顶栏与播控条同进同出（A2.5）；静态位的横滑翻页要回宿主走 navigate
+            onChromeHiddenChange = { hidden -> this@NativeGalleryView.setVideoChromeHidden(hidden) }
+            onPageRequest = { direction -> this@NativeGalleryView.navigate(direction) }
         }
         addView(videoLayer)
 
@@ -1654,6 +1658,11 @@ class NativeGalleryView @JvmOverloads constructor(
         // 命中即隐——不加竖屏条件的话，本行每次 open/navigate 都会把收敛掉的删除键
         // 重新点亮。横屏/平板只有门禁条件，行为与原来一致。
         deleteBtn.visibility = if (isCompactPortrait || (item.isLan && !lanAllowEdit)) GONE else VISIBLE
+        // 视频 P3-A2.5：循环钮只服务视频（图片项挂一个循环键是纯噪声）。它不参与竖屏
+        // 收敛——竖屏顶栏本来就只剩 返回|标题|分享|更多，视频项再没个循环入口就彻底找不到了。
+        if (this::loopBtn.isInitialized) {
+            loopBtn.visibility = if (item.isVideo) VISIBLE else GONE
+        }
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
         // 视频 P3-A2：底部信息补时长，与网格角标同一个格式函数、同一份 durationMs 真源

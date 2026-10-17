@@ -1,8 +1,8 @@
 package com.aurora.gallery.kotlin.viewer
 
-// 视频 P3-A2：查看器与视频层之间的胶水簇——绑定同步、翻页避让（滑动位移镜像 / 离场动画
-// 跟随 / 换页静音）、色表重涂。视图本体见 [VideoLayerView]，装配与生命周期在
-// NativeGalleryView，手势侧消费点在 NativeGalleryViewGestures。
+// 视频 P3-A2/A2.5：查看器与视频层之间的胶水簇——绑定同步、翻页避让（滑动位移镜像 /
+// 离场动画跟随 / 换页静音）、顶栏随播控条一起显隐、色表重涂。视图本体见 [VideoLayerView]，
+// 装配与生命周期在 NativeGalleryView，手势侧消费点在 NativeGalleryViewGestures。
 
 import android.view.View
 
@@ -12,10 +12,10 @@ internal fun NativeGalleryView.videoItem(): NativeGalleryView.ImageItem? =
 
 /**
  * 把视频层同步到「当前这一张」：图片项一律 detach（绝不把上一路的出声带进这一页），
- * 视频项只做 bind（记 URL、显中央播放键，**不预拉数据**）。
+ * 视频项只做 bind（记 URL、显封面与播控条，**不预拉数据**）。
  *
  * 调用时机 = 所有会让 `currentIndex` 落定的路径：[NativeGalleryView.loadCurrent]、
- * 两种翻页的动画收尾、[NativeGalleryView.open] 的重放分支。
+ * 两种翻页的动画收尾、删除/移出后的重放。
  */
 internal fun NativeGalleryView.syncVideoLayer() {
     val item = videoItem()
@@ -65,13 +65,29 @@ internal fun NativeGalleryView.slideVideoLayerBack(duration: Long) {
 }
 
 /**
- * 动态位（已起播）时锁掉图片视图的双击/双指缩放：缩的是视频底下那张封面，画面不动、
- * 几何先坏，松掉播放键才会露出错位。抽屉那条 allowZoom 判据同源（见 applyDrawerProgress）。
+ * 顶栏跟着播控条一起收起/唤回（A2.5 拍板：起播静置 2 秒两条一起滑出，单击画面唤回）。
+ *
+ * 只借 [topBarHideTranslation] 那套既有滑出量，不碰 isImmersive——沉浸态是图片查看器的
+ * 语义（真全屏 + 系统栏接管），视频这条只是把 chrome 藏起来，系统栏归宿主管。
+ * 抽屉开着时不接管顶栏：那条 translationY 归 [applyDrawerProgress] 权威。
  */
-internal fun NativeGalleryView.applyVideoZoomLock() {
-    val allow = !videoLayer.isStarted && drawerPanelProgress <= 0.01f
-    primaryView.allowZoom = allow
-    secondaryView.allowZoom = allow
+internal fun NativeGalleryView.setVideoChromeHidden(hidden: Boolean) {
+    if (topBar.height <= 0) return
+    if (drawerOpen || drawerPanelProgress > 0.01f) return
+    topBar.animate().cancel()
+    val target = if (hidden) topBarHideTranslation() else if (isImmersive) topBarHideTranslation() else 0f
+    if (topBar.translationY != target) topBar.translationY = target
+}
+
+/**
+ * 循环钮（顶栏，仅视频项出现）：状态回写给按钮着色。
+ * 循环位存在播放器上，`stop()` 不清它，所以换页/重开都保持用户上一次的选择。
+ */
+internal fun NativeGalleryView.toggleVideoLoop() {
+    val looping = videoLayer.toggleLoop()
+    if (isTopBarBuilt()) {
+        loopBtn.setColorFilter(if (looping) colorAccent() else colorTextPrimary())
+    }
 }
 
 /**
@@ -85,4 +101,8 @@ internal fun NativeGalleryView.applyVideoPalette() {
         panelColor = colorBgAlpha(0xE6),
         accentColor = colorAccent(),
     )
+    // 循环钮的着色跟着主题走（开着循环=主色，关着=主文字色）
+    if (isTopBarBuilt()) {
+        loopBtn.setColorFilter(if (videoLayer.isLooping) colorAccent() else colorTextPrimary())
+    }
 }

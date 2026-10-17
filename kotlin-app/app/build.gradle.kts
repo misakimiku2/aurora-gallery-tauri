@@ -115,11 +115,14 @@ dependencies {
     // M6a 0.7 spike（D33）：扫码。自带 zxing core（编码/解码都齐）；其 CaptureActivity
     // 需要 appcompat 主题（上面已依赖 appcompat 1.6.1）。minSdk 24 与本 app 对齐
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    // 视频 P3-A2：播放器选型 = media3 / ExoPlayer（P3 计划拍板 P2）。只取 exoplayer 与 ui
-    // 两块，ui 这边消费的是 DefaultTimeBar（自带缓冲段）与 AspectRatioFrameLayout（信箱适配）。
-    // minSdk 24 兼容；APK 增量记在 P3 实施计划。
+    // 视频 P3-A2：播放器选型 = media3 / ExoPlayer（P3 计划拍板 P2）。
+    // A2.5 起只引 exoplayer 一块：进度条用原生 SeekBar（secondaryProgress 正好当缓冲段），
+    // 画面四档比例（1:1/适应/拉伸/裁切）与捏合倍率由 VideoLayerView 自己算边界，
+    // media3-ui 的 DefaultTimeBar（1.4 已无 setPlayer）与 AspectRatioFrameLayout 都不再需要。
     implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
+    // common 显式声明：exoplayer 的 POM 里它是 implementation 依赖，不传递到编译类路径，
+    // 而本层直接引用 Player/C/MediaItem/UnstableApi 这些类型
+    implementation("androidx.media3:media3-common:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // M6a 阶段 7：对等服务端 HTTP 引擎（D30a Kotlin 原生 10 端点；单 jar 无传递依赖，APK 增量阶段 8 记录）
     implementation("org.nanohttpd:nanohttpd:2.3.1")

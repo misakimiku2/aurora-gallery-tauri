@@ -241,6 +241,10 @@ internal fun NativeGalleryView.buildTopBar(): LinearLayout {
         // 语义由描述/菜单文案承载——描述随钉屏态在 updateScreenRotateButtonIcon 同步
         //（updateSlideshowButtonIcon 先例）。
         screenRotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw, contentDescription = "横屏查看") { toggleScreenOrientation() }
+        // 视频 P3-A2.5：循环播放（单条循环）。构建时先藏，显隐由 updateTitle 按当前项类型给；
+        // 开着循环的着色由 toggleVideoLoop / applyVideoPalette 同步（deleteBtn 的 tintColor 先例）。
+        loopBtn = makeIconButton(R.drawable.ic_lucide_repeat, contentDescription = "循环播放") { toggleVideoLoop() }
+        loopBtn.visibility = View.GONE
         infoBtn = makeIconButton(R.drawable.ic_lucide_info, contentDescription = "图片信息") { toggleDrawer() }
         deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = colorDanger(), contentDescription = "删除") { showDeleteConfirmDialog() }
         val shareBtn = makeIconButton(R.drawable.ic_lucide_share, contentDescription = "分享") { shareCurrentImage() }
@@ -250,6 +254,7 @@ internal fun NativeGalleryView.buildTopBar(): LinearLayout {
         addView(titleView)
         addView(slideshowBtn)
         addView(screenRotateBtn)
+        addView(loopBtn)
         addView(infoBtn)
         addView(deleteBtn)
         addView(shareBtn)
@@ -361,9 +366,8 @@ internal fun NativeGalleryView.applyDrawerProgress(progress: Float) {
         // 图片宽度 + 填充进度（在 layoutParams 之前设置，确保 onSizeChanged→resetToCenter 读到最新值）
         primaryView.drawerFillProgress = progress
         secondaryView.drawerFillProgress = progress
-        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突；
-        // 视频动态位同样禁缩（缩的是视频底下那张封面，见 applyVideoZoomLock）
-        val allowZoom = progress <= 0.01f && !videoLayer.isStarted
+        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与 drawerFillProgress 填充逻辑冲突
+        val allowZoom = progress <= 0.01f
         primaryView.allowZoom = allowZoom
         secondaryView.allowZoom = allowZoom
         // 设置全屏宽度基准，供 resetToCenter 计算 fitS（固定），避免 vw 减小时 fitS 先降后升
@@ -383,9 +387,8 @@ internal fun NativeGalleryView.applyDrawerProgress(progress: Float) {
         metadataDrawer.translationX = 0f
         primaryView.drawerFillProgress = progress
         secondaryView.drawerFillProgress = progress
-        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与抽屉填充
-        // 逻辑冲突（横屏同款）；视频动态位一并锁（见 applyVideoZoomLock）
-        val allowZoom = progress <= 0.01f && !videoLayer.isStarted
+        // 抽屉展开时禁止图片缩放（双击/双指），避免缩放与抽屉填充逻辑冲突（横屏同款）
+        val allowZoom = progress <= 0.01f
         primaryView.allowZoom = allowZoom
         secondaryView.allowZoom = allowZoom
         primaryView.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, imageH)

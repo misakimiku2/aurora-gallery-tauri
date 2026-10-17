@@ -109,10 +109,8 @@ internal fun NativeGalleryView.setupZoomableListeners(view: ZoomableImageView) {
             Log.i("NativeViewer", "onSingleTapConfirmed: drawerOpen=${v.drawerOpen} isImmersive=${v.isImmersive} isOpen=${v.isOpen}")
             if (v.drawerOpen) return
             // 幻灯片播放时本视图被 SlideshowView 覆盖，不会收到此回调
-            // 视频 P3-A2：视频项的单击语义换成「起播 / 播停」（对齐 UI 设计 §3「点画面本身
-            // 也切换，与图片查看器的点击语义要区分开」）。视频层不吃画面区的触摸，事件
-            // 照旧落到这里，翻页/拉抽屉那些手势因此一个都没少。
-            if (v.videoLayer.isBound && v.videoLayer.handleTap()) return
+            // 视频 P3-A2.5：视频项的单击归视频层自己管（显隐工具栏），本层收不到事件——
+            // 绑定期间视频层吃掉画面区触摸，这里只剩图片语义。
             v.toggleImmersive()
         }
         override fun onVerticalSwipeDrag(dy: Float) {
