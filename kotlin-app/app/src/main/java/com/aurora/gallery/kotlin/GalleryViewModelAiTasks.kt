@@ -187,6 +187,10 @@ internal fun GalleryViewModel.startAiFolderAnalysis(folderIds: List<String>) {
     viewModelScope.launch {
         val ids = withContext(Dispatchers.IO) {
             folderIds.flatMap { fid -> runCatching { listImages(fid) }.getOrDefault(emptyList()) }
+                // 视频 P3-A6：`list_images` 的口径是 Image ∪ Video（A3/A5 放开过），这里必须自己
+                // 摘掉视频——「分析相册」把整夹成员展开成目标集，走的是与网格多选不同的那条入口，
+                // 网关在菜单上拦不住它（总文档边界 B3「AI 分析不跑视频」）。
+                .filter { !it.fileType.equals("Video", ignoreCase = true) }
                 .map { it.id }
                 .distinct()
         }

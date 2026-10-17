@@ -2132,11 +2132,15 @@ class NativeGalleryView @JvmOverloads constructor(
             } else {
                 buildList {
                     addAll(collapsedItems)
-                    if (isTablet) add(canvasItem)
+                    // 视频 P3-A6：三条「读这张图的位图」的命令对视频项一律不出现
+                    //（总文档边界 B3 + UI §7.3/§7.6）。**加入画布**按 §7.6 本该放封面位图，
+                    // 但画布管线拿的是 content URI 再自己解码（CanvasView 的 canvasSourceFor），
+                    // 喂 mp4 只会解不出图——要等 A5.5 把封面落成真位图才放开，这一轮先摘掉。
+                    if (isTablet && !item.isVideo) add(canvasItem)
                     // M6b 阶段 2：AI 分析（本地项；桌面查看器菜单同位。LAN 项不出现——
                     // 分析写本地库，对远端图无意义）。2026-10-11 菜单精简：未连接 AI
                     // 服务器不出现（与网格长按菜单同款门控，不再靠点击后 toast 拦截）
-                    if (aiConnected) {
+                    if (aiConnected && !item.isVideo) {
                         add(
                             MoreMenuItem("AI 分析", colorTextPrimary(), iconRes = R.drawable.ic_lucide_sparkles) {
                                 listener?.onAiAnalyze(item.fileId)
@@ -2145,11 +2149,13 @@ class NativeGalleryView @JvmOverloads constructor(
                     }
                     // M6b 阶段 5（D36）：以图搜图——本地图字节 → 桌面 CLIP embed → 相似图
                     //（结果进 LAN 搜索结果虚拟目录；未连接/桌面模型未就绪宿主 Toast 拦截）
-                    add(
-                        MoreMenuItem("在桌面找相似", colorTextPrimary(), iconRes = R.drawable.ic_lucide_scan_search) {
-                            listener?.onFindSimilar(item.fileId)
-                        }
-                    )
+                    if (!item.isVideo) {
+                        add(
+                            MoreMenuItem("在桌面找相似", colorTextPrimary(), iconRes = R.drawable.ic_lucide_scan_search) {
+                                listener?.onFindSimilar(item.fileId)
+                            }
+                        )
+                    }
                     add(MoreMenuItem("重命名", colorTextPrimary(), iconRes = R.drawable.ic_lucide_pencil) {
                         showRenameDialog()
                     })

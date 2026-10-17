@@ -1646,6 +1646,16 @@ fun App(
     //  - 总览选中的是文件夹卡片 → 复制到 / 移动到 / 删除（成员展开后落写原语）
     // LAN 总览不算本地文件夹总览（选择/目标选择器等本地批量操作对远端目录无意义）
     val inFoldersOverview = !(inBrowser || inTagsOverview || inPeopleOverview || inTopicsOverview || inLanOverview)
+    // 视频 P3-A6：两条 AI 命令读的都是**图片字节**（CLIP embed / WD14 人脸），喂 mp4 既没意义
+    // 也必失败（总文档边界 B3「AI 分析不跑视频」）。做法是**从命令的目标里摘掉视频项**而不是
+    // 整条命令消失：混合选中集里图片照常分析，纯视频才让这条命令失去意义（摘掉的对象只限
+    // 「在 displayImages 里被明确标成 Video 的那些 id」，看不见的一律不动，免得把图片项也筛掉）。
+    // 类型真源仍是 FFI 的 fileType，不查扩展名表（A1 定的口径）。
+    val selectedVideoIds = displayImages
+        .filter { it.id in tab.selectedFileIds && it.fileType.equals("Video", ignoreCase = true) }
+        .map { it.id }
+        .toSet()
+    val selectionImageIds = tab.selectedFileIds.toList() - selectedVideoIds
     val moreActions = when {
         // M6a 阶段 6：LAN 目录网格的「更多」已接互联态文件操作（lanAllowEdit 直通时出现，
         // 403 门禁态全隐）——重命名/删除/复制到/移动到走远端写路径（LanClient 回写桌面），
@@ -1708,15 +1718,15 @@ fun App(
             // 门控 + M4a「不适用的项不出现」先例），点了必弹拦截 toast 的常驻项不再挂；
             // AI 重命名从菜单撤下，收进重命名弹窗（RenameDialog AI 按钮，桌面同位是
             // 元数据面板文件名旁的 AI 按钮）。
-            if (ai.connected) {
-                add(SelectionMoreAction("AI 分析…", IconSparkles) { ai.onAnalyze(tab.selectedFileIds.toList()) })
+            if (ai.connected && selectionImageIds.isNotEmpty()) {
+                add(SelectionMoreAction("AI 分析…", IconSparkles) { ai.onAnalyze(selectionImageIds) })
             }
             // M6b 阶段 4（D37）：人物识别=图字节卸载桌面 WD14→general 标签进本地词表、
             // character 归组建本地人物——它的「AI 服务器」就是桌面端，按 LAN 会话门控
             // （VM 内仍拦会话失效的竞态）。
-            if (lanSnapshot.state == LanState.CONNECTED) {
+            if (lanSnapshot.state == LanState.CONNECTED && selectionImageIds.isNotEmpty()) {
                 add(SelectionMoreAction("AI 人物识别…", IconScanSearch) {
-                    ai.onWd14PersonPipeline(tab.selectedFileIds.toList())
+                    ai.onWd14PersonPipeline(selectionImageIds)
                 })
             }
             add(SelectionMoreAction("复制到…", IconCopy) {
