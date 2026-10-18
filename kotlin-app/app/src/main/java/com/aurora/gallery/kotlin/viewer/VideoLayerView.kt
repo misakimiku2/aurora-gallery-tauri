@@ -33,7 +33,9 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.upstream.DefaultAllocator
 import com.aurora.gallery.kotlin.R
 import com.aurora.gallery.kotlin.ui.components.formatVideoDuration
 import kotlin.math.abs
@@ -95,6 +97,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             1.5f to "1.5x",
             2f to "2x",
         )
+        /**
+         * 远端（LAN）缓冲档：**10 秒 / 16MB**。库默认是 50 秒（`MIN`/`MAX_BUFFER_MS`
+         * 都是 50000，混合轨分配器上限 `DEFAULT_MUXED_BUFFER_SIZE` ≈ 137MB），本地读文件
+         * 无所谓，走 WiFi 就是每次起播几十 MB 的突发——视频之间连续翻页会自动起播之后
+         * （第八轮），「停两秒就切走」每条都要付一次，压到 10 秒/16MB 就是几 MB。
+         * 代价：拖进度条超出缓冲要重新缓冲一次，两端 `/api/image` 都支持 Range，是精确续传。
+         */
+        private const val REMOTE_BUFFER_MS = 10_000
+        private const val REMOTE_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
     }
 
     private val surfaceView: TextureView
@@ -115,16 +126,63 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val player: ExoPlayer = ExoPlayer.Builder(context)
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                .build(),
-            /* handleAudioFocus = */ true,
-        )
-        .setHandleAudioBecomingNoisy(true)
-        .build()
+    /**
+     * 播放器按「本地 / 远端」两档缓冲建，切档时**重建一台**（见 [ensurePlayerProfile]）。
+     * 初建走本地档：属性初始化时 `context` 还是构造参数，不碰任何未落定的字段。
+     */
+    private var player: ExoPlayer = buildPlayer(remote = false)
+    private var playerRemote = false
+    /** 监听器只能挂一次、换档要重挂，所以存成字段给 [buildPlayer] 复用。 */
+    private var playerListener: Player.Listener? = null
+    /** 音量手势的值要跨档保留：换档重建播放器会把 `volume` 打回 1.0。 */
+    private var volumeLevel = 1f
+
+    private fun buildLoadControl(remote: Boolean): DefaultLoadControl {
+        // 本地档 = 库默认（50 秒 / 混合轨上限 ~137MB）：读的是自己的文件，
+        // 多囤只有好处，不占网络。
+        if (!remote) return DefaultLoadControl.Builder().build()
+        return DefaultLoadControl.Builder()
+            .setAllocator(DefaultAllocator(true, REMOTE_TARGET_BUFFER_BYTES))
+            .setBufferDurationsMs(
+                /* minBufferMs = */ REMOTE_BUFFER_MS,
+                /* maxBufferMs = */ REMOTE_BUFFER_MS,
+                /* bufferForPlaybackMs = */ 1500,
+                /* bufferForPlaybackAfterRebufferMs = */ 3000,
+            )
+            .build()
+    }
+
+    private fun buildPlayer(remote: Boolean): ExoPlayer =
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            .setHandleAudioBecomingNoisy(true)
+            .setLoadControl(buildLoadControl(remote))
+            .build()
+            .also { p ->
+                playerListener?.let { p.addListener(it) }
+                // 换档后同一块 surface 要重新交给新播放器，否则新档位永远不出画
+                surface?.let { p.setVideoSurface(it) }
+                p.volume = volumeLevel
+            }
+
+    /**
+     * 按「这一项是不是 LAN」对齐播放器档位。**只在真的换档时重建**（本地↔远端之间翻页
+     * 才会发生，同一段浏览里几乎不会来回切），且只在 `bind()` 里、起播之前调——
+     * 播放中途换档要重建解码器，代价与风险都不该付。
+     */
+    private fun ensurePlayerProfile(remote: Boolean) {
+        if (playerRemote == remote) return
+        Log.i(TAG, "播放器缓冲档位 -> remote=$remote（${if (remote) "${REMOTE_BUFFER_MS}ms / ${REMOTE_TARGET_BUFFER_BYTES / 1048576}MB" else "库默认"}）")
+        runCatching { player.release() }
+        player = buildPlayer(remote)
+        playerRemote = remote
+    }
 
     private var boundFileId: String? = null
     private var mediaUrl: String = ""
@@ -393,7 +451,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         }
         addView(chrome)
 
-        player.addListener(object : Player.Listener {
+        // 存成字段而不是匿名传入：换缓冲档位会重建播放器，新那台要重挂同一个监听器
+        playerListener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 bufferingBar.visibility =
                     if (playbackStarted && state == Player.STATE_BUFFERING) VISIBLE else GONE
@@ -444,7 +503,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 stopPlayback()
                 onPlayError?.invoke(error.errorCodeName)
             }
-        })
+        }.also { player.addListener(it) }
 
         refreshLayerState()
     }
@@ -491,13 +550,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
      * [width]/[height] 是服务端 browse 已经给过的容器宽高（A3 那轮补的）：先用它把几何摆正，
      * 等 `onVideoSizeChanged` 再按解码器口径精修。
      */
-    fun bind(fileId: String, url: String, durationMs: Long, width: Int, height: Int) {
+    fun bind(fileId: String, url: String, durationMs: Long, width: Int, height: Int, remote: Boolean) {
         if (boundFileId == fileId) {
             refreshLayerState()
             return
         }
         detach()
         if (url.isEmpty()) return
+        // 档位换在这（起播之前）：本地与 LAN 的缓冲预算不同，见 [ensurePlayerProfile]
+        ensurePlayerProfile(remote)
         boundFileId = fileId
         mediaUrl = url
         fallbackDurationMs = durationMs
@@ -656,7 +717,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 dragStartX = ev.x
                 dragStartY = ev.y
                 dragStartPositionMs = player.currentPosition.coerceAtLeast(0L)
-                dragStartLevel = if (ev.x < width / 2f) currentBrightness() else player.volume
+                dragStartLevel = if (ev.x < width / 2f) currentBrightness() else volumeLevel
             }
 
             MotionEvent.ACTION_MOVE ->
@@ -697,6 +758,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                     applyBrightness(level)
                     showHint("亮度 $percent%")
                 } else {
+                    // 存字段再下发：换档重建播放器时要把音量带过去（见 [buildPlayer]）
+                    volumeLevel = level
                     player.volume = level
                     showHint("音量 $percent%")
                 }

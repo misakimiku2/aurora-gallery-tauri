@@ -27,7 +27,11 @@ internal fun NativeGalleryView.syncVideoLayer() {
     if (item == null) {
         videoLayer.detach()
     } else {
-        videoLayer.bind(item.fileId, item.path, item.durationMs, item.width, item.height)
+        videoLayer.bind(
+            item.fileId, item.path, item.durationMs, item.width, item.height,
+            // LAN 项走小缓冲档：本地读文件不占网络，WiFi 上 50 秒囤积就是几十 MB 突发
+            remote = item.isLan,
+        )
         if (autoplay) {
             android.util.Log.i(NativeGalleryView.TAG, "视频翻页后自动起播: ${item.name}")
             videoLayer.start()
