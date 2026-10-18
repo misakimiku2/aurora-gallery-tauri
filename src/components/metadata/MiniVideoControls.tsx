@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, RefObject } from 'react';
 import { Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
+import { useScrubSeek } from '../../hooks/useScrubSeek';
 
 /**
  * 右侧面板「就地播放」小窗的迷你控制条（2026-10-16，指挥官实机反馈后重设计）。
@@ -12,8 +13,9 @@ import { isTextEditingTarget } from '../../utils/keyboardTarget';
  *
  * 沿用 viewer/VideoControls 的两个既有范式（避免重复踩坑）：
  *  - 进度条 = 视觉层（轨道 / 已播放 / 圆点）+ 透明 native range 交互层（键盘/拖动免费获得）；
- *  - **拖拽中只更新时间文字，松手（pointerup）才真正 seek**（UI 设计 §3：asset protocol
- *    单次 Range ≤1MiB，连续 seek 会把请求打爆）；松手可能落在控件外 → window 级兜底。
+ *  - **拖拽中画面跟着进度走**（节流 seek，见 hooks/useScrubSeek），松手（pointerup）落地最终
+ *    位置；松手可能落在控件外 → window 级兜底。两处（这里与查看器）**共用同一个 hook**，
+ *    因为它们共用同一个 `convertFileSrc` 源，行为不一致会比慢一点更难解释。
  *
  * `<video>` 由父组件（ImagePreview）渲染并经 videoRef 注入（与查看器同一模式）。
  * 视觉面向黑底视频：白色系小控件 + 底部渐变压暗。
@@ -43,10 +45,11 @@ export const MiniVideoControls = ({ videoRef, t, viewerVideoOpen }: MiniVideoCon
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [muted, setMuted] = useState(false);
-    // 拖拽中只更新时间文字，松手才 seek（与查看器同策略）
+    // 拖拽中画面跟着进度走（节流 seek），松手把最终位置落地 —— 与查看器同一条路
     const [isScrubbing, setIsScrubbing] = useState(false);
     const [scrubValue, setScrubValue] = useState(0);
     const scrubbingRef = useRef(false);
+    const { scheduleScrub, flushScrub } = useScrubSeek(videoRef);
     const scrubValueRef = useRef(0);
 
     // 绑定视频事件 + 同步初始瞬时状态（autoPlay 的 play 事件异步到达，这里先读当前真值）
@@ -119,7 +122,7 @@ export const MiniVideoControls = ({ videoRef, t, viewerVideoOpen }: MiniVideoCon
         setMuted(v.muted);
     };
 
-    // 进度条拖拽：按下进入暂存态，拖动只更新文字，松手才 seek（§3）
+    // 进度条拖拽：按下进入拖拽态，拖动期间节流 seek，松手把最终位置落地
     const beginScrub = () => {
         const v = videoRef.current;
         const tv = v ? v.currentTime : 0;
@@ -135,19 +138,17 @@ export const MiniVideoControls = ({ videoRef, t, viewerVideoOpen }: MiniVideoCon
         const val = Math.max(0, Math.min(raw, max));
         scrubValueRef.current = val;
         setScrubValue(val);
+        scheduleScrub(val);
     };
     const endScrub = useCallback(() => {
         if (!scrubbingRef.current) return;
         // 先解除 scrubbing 标记再 seek（与查看器一致：事件派发时序上更安全）
         scrubbingRef.current = false;
-        const v = videoRef.current;
         const val = scrubValueRef.current;
-        if (v) {
-            v.currentTime = val;
-            setCurrentTime(val);
-        }
+        flushScrub(val);
+        setCurrentTime(val);
         setIsScrubbing(false);
-    }, [videoRef]);
+    }, [flushScrub]);
 
     // 松手事件可能落在控件外，兜住指针释放
     useEffect(() => {

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FileNode } from '../../types';
+import { useScrubSeek } from '../../hooks/useScrubSeek';
+import { runAssetProbe } from '../../utils/scrubProbe';
 import {
   Play, Pause, StepBack, StepForward, Rewind, FastForward,
   Volume2, Volume1, VolumeX, Repeat, Maximize, Minimize,
@@ -13,7 +15,7 @@ import {
  *       进度（当前时间 · 进度条 · 总时长）· 进度条右侧（倍速 · 静音 · 循环 · 全屏）。
  *       音量是**悬停静音按钮才出现的竖排弹窗**，不常驻控制条 —— 常驻横条会把宽度
  *       从进度条上抢走（指挥官 2026-10-16）
- *  - §3 实现要点：拖拽中只更新时间文字，松手才真正 seek（避免连续请求打爆 asset protocol）；
+ *  - §3 实现要点：拖拽中**画面跟着进度走**（节流 seek，见 hooks/useScrubSeek）；
  *       无 fps 时逐帧按钮置灰（不按 1/30 猜，§1.3）
  *  - 进度条必须显示缓冲进度：总文档 §3.2 的 1MB 分片上限会让大文件 seek 有等待，
  *       没有缓冲反馈会被当成卡死
@@ -62,14 +64,20 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState(false);
-  // 拖拽中只更新时间文字，松手才真正 seek（§3）
+  // 拖拽中画面跟着走（节流 seek），松手把最终位置落地
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const scrubbingRef = useRef(false);
   const scrubValueRef = useRef(0);
+  const { scheduleScrub, flushScrub } = useScrubSeek(videoRef);
 
   const frameRate = file.meta?.frameRate;
   const canStepFrame = typeof frameRate === 'number' && frameRate > 0;
+
+  // dev 诊断：打开视频时跑一次 asset 协议探针（一次会话只跑一次，产物见应用日志目录）
+  useEffect(() => {
+    if (import.meta.env.DEV && file.path) void runAssetProbe(file.path, file.size ?? 0);
+  }, [file.path, file.size]);
 
   // 读取当前播放位置所在缓冲区间末尾（total buffered 到哪），用于进度条的缓冲底条
   const readBufferedEnd = useCallback((): number => {
@@ -216,7 +224,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     setLoop(v.loop);
   };
 
-  // 进度条拖拽：按下进入暂存态，拖动只更新文字，松手（pointerup）才 seek（§3）
+  // 进度条拖拽：按下进入拖拽态，拖动期间节流 seek（画面跟着进度走），松手把最终位置落地
   const beginScrub = () => {
     const v = videoRef.current;
     const t = v ? v.currentTime : 0;
@@ -224,10 +232,10 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     scrubValueRef.current = t;
     setScrubValue(t);
     setIsScrubbing(true);
-    // 拖拽期间通知容器隐藏中央缓冲遮罩（§3：此刻尚未 seek，遮罩会闪）
+    // 拖拽期间压掉中央缓冲遮罩：拖出缓冲会反复进 waiting，遮罩跟着闪（§14.7 ③ 那个老问题）
     onScrubbingChange?.(true);
   };
-  // 拖拽中只更新时间文字；对非有限值做防护，避免出现 NaN 导致文字/进度条抖动
+  // 非有限值必须挡住，否则 NaN 会把时间文字与进度条一起抖坏
   const onScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = Number(e.target.value);
     if (!isFinite(raw)) return;
@@ -235,21 +243,19 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     const val = Math.max(0, Math.min(raw, max));
     scrubValueRef.current = val;
     setScrubValue(val);
+    scheduleScrub(val);
   };
   const endScrub = useCallback(() => {
     if (!scrubbingRef.current) return;
     // 先解除 scrubbing 标记再 seek：seeking 事件（异步派发）到达时不应被拖拽态吞掉，
     // 从而让松手后的真实 seek 等待照常显示
     scrubbingRef.current = false;
-    const v = videoRef.current;
     const val = scrubValueRef.current;
-    if (v) {
-      v.currentTime = val;
-      setCurrentTime(val);
-    }
+    flushScrub(val);
+    setCurrentTime(val);
     setIsScrubbing(false);
     onScrubbingChange?.(false);
-  }, [videoRef, onScrubbingChange]);
+  }, [flushScrub, onScrubbingChange]);
 
   // 松手事件可能落在控件外，兜住指针释放
   useEffect(() => {
