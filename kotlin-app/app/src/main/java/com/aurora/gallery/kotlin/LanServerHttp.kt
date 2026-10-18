@@ -281,39 +281,105 @@ class LanServerHttp(private val appContext: Context, private val deps: Deps) :
 
     // —— 字节端点（token 双通道） ——
 
-    /** GET /api/thumbnail?path=&size=&token=：path 是 MediaStore 图片 id。 */
+    /** GET /api/thumbnail?path=&size=&token=：path 是 MediaStore 媒体 id（视频带 `v:` 前缀）。 */
     private fun handleThumbnail(s: IHTTPSession): Response {
         val token = tokenWithFallback(s)
             ?: return jsonError(Response.Status.UNAUTHORIZED, "Missing authorization")
         val auth = deps.validateToken(token)
             ?: return jsonError(Response.Status.UNAUTHORIZED, "Invalid or expired token")
         deps.touchDevice(auth.deviceId)
-        val id = (s.parms["path"] ?: "").toLongOrNull()
-            ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid image id")
+        val media = LanMediaSource.parseMediaPath(s.parms["path"])
+            ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid media id")
+        val (id, video) = media
         // size 缺省 256（Rust default_thumbnail_size）；clamp 在 LanMediaSource 内做
         val size = s.parms["size"]?.toIntOrNull() ?: 256
-        val bytes = LanMediaSource.thumbnailBytes(appContext, id, size)
+        val bytes = LanMediaSource.thumbnailBytes(appContext, id, video, size)
             ?: return jsonError(Response.Status.NOT_FOUND, "Thumbnail not available")
         return NanoHTTPD.newFixedLengthResponse(
             Response.Status.OK, "image/jpeg", ByteArrayInputStream(bytes), bytes.size.toLong(),
         ).also { it.addHeader("Cache-Control", "private, max-age=600") }
     }
 
-    /** GET /api/image?path=&token=：path 是 MediaStore 图片 id；mime 由数据面按行值/扩展名决定。 */
+    /**
+     * GET /api/image?path=&token=：path 是 MediaStore 媒体 id；mime 由数据面按行值/扩展名决定。
+     *
+     * **图片走老路（整字节 + 200），视频走流 + Range**。两件事必须一起改：只把视频列进
+     * browse 而不改这条，客户端一播就会把整只录屏 `readBytes()` 进内存——手机库里的录屏
+     * 动辄上百 MB，那是直接把这台设备打爆；而 ExoPlayer 拉流就是要 Range（没有它，
+     * `moov` 在尾部的 mp4 起播前会先拖完整个文件）。语义与桌面端 `serve_file_with_range`
+     * 对齐：总是带 `Accept-Ranges`，命中 Range 返回 206 + `Content-Range`。
+     * 越界区间按「无 Range」处理（全量 200）——播放端不会请求越界，为此引入 416 不值。
+     */
     private fun handleImage(s: IHTTPSession): Response {
         val token = tokenWithFallback(s)
             ?: return jsonError(Response.Status.UNAUTHORIZED, "Missing authorization")
         val auth = deps.validateToken(token)
             ?: return jsonError(Response.Status.UNAUTHORIZED, "Invalid or expired token")
         deps.touchDevice(auth.deviceId)
-        val id = (s.parms["path"] ?: "").toLongOrNull()
-            ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid image id")
-        val (bytes, mime) = LanMediaSource.imageBytes(appContext, id)
-            ?: return jsonError(Response.Status.NOT_FOUND, "Image not found")
-        Log.d(TAG, "[LanServer] 原图返回 - id: $id, 大小: ${bytes.size} bytes, 类型: $mime")
-        return NanoHTTPD.newFixedLengthResponse(
-            Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong(),
-        ).also { it.addHeader("Cache-Control", "private, max-age=300") }
+        val media = LanMediaSource.parseMediaPath(s.parms["path"])
+            ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid media id")
+        val (id, video) = media
+
+        if (!video) {
+            val (bytes, mime) = LanMediaSource.imageBytes(appContext, id, video = false)
+                ?: return jsonError(Response.Status.NOT_FOUND, "Image not found")
+            return NanoHTTPD.newFixedLengthResponse(
+                Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong(),
+            ).also { it.addHeader("Cache-Control", "private, max-age=300") }
+        }
+
+        val (total, mime) = LanMediaSource.mediaInfo(appContext, id, video = true)
+            ?: return jsonError(Response.Status.NOT_FOUND, "Media not found")
+        val (stream, _) = LanMediaSource.openMediaStream(appContext, id, video = true)
+            ?: return jsonError(Response.Status.NOT_FOUND, "Media not found")
+        val range = parseRangeHeader(s.headers["range"], total)
+        var status = Response.Status.OK
+        var length = total
+        var startAt = 0L
+        if (range != null) {
+            val (start, end) = range
+            if (start in 1 until total) {
+                if (!skipBytes(stream, start)) {
+                    runCatching { stream.close() }
+                    return jsonError(Response.Status.NOT_FOUND, "Media not readable")
+                }
+                length = end - start + 1
+                startAt = start
+                status = Response.Status.PARTIAL_CONTENT
+            }
+        }
+        val response = NanoHTTPD.newFixedLengthResponse(status, mime, stream, length)
+        response.addHeader("Accept-Ranges", "bytes")
+        if (status == Response.Status.PARTIAL_CONTENT) {
+            response.addHeader("Content-Range", "bytes $startAt-${startAt + length - 1}/$total")
+        }
+        response.addHeader("Cache-Control", "private, max-age=300")
+        Log.d(TAG, "[LanServer] 视频流返回 - id: $id, 全量: $total, 本次: $length, 类型: $mime")
+        return response
+    }
+
+    /** 解 `Range: bytes=start-end`（只支持单区间；后缀式 `bytes=-500` 与多区间一律当无 Range）。 */
+    private fun parseRangeHeader(header: String?, total: Long): Pair<Long, Long>? {
+        val h = header?.trim()?.takeIf { it.startsWith("bytes=") } ?: return null
+        val spec = h.substringAfter('=').trim()
+        if (spec.isEmpty() || spec.contains(',')) return null
+        val dash = spec.indexOf('-')
+        if (dash < 0) return null
+        val start = spec.substring(0, dash).trim().toLongOrNull() ?: return null
+        val end = spec.substring(dash + 1).trim().toLongOrNull() ?: (total - 1)
+        if (start < 0 || start >= total) return null
+        return start to minOf(end, total - 1)
+    }
+
+    /** `InputStream.skip` 允许一次跳不完，循环到够为止；跳不到就失败（宁可 404 不可给错字节）。 */
+    private fun skipBytes(stream: java.io.InputStream, count: Long): Boolean {
+        var left = count
+        while (left > 0) {
+            val n = runCatching { stream.skip(left) }.getOrDefault(0L)
+            if (n <= 0L) return false
+            left -= n
+        }
+        return true
     }
 
     // —— 设备 / 心跳 / 根 ——
