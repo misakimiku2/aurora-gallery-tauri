@@ -211,21 +211,27 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     Ok(entries)
 }
 
-/// 获取所有图片文件（file_type = "Image"）
+/// 获取所有图片条目（file_type = "Image"）
 /// 用于 CLIP 嵌入向量生成
 ///
 /// 视频 P1：**本条按「AI 分类相关 SQL 保持只认 'Image'」口径保留**（设计方案 §0.2 第 2 条
 /// 「AI 分析不跑视频」）。本函数是 CLIP 嵌入的输入源（`clip_commands::get_all_image_files`
-/// → 前端 `clip.ts`/`AIVisionPanel`），放开会把视频灌进 CLIP。副作用：颜色清理
-/// （`db_commands::cleanup_stale_color_records`）与 LAN `handle_all_image_folders` 也共用本
-/// 函数，因此这两处暂不含视频——待 P1.5 视频算主色时再单独评估。
-pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
-    let mut stmt = conn.prepare(
+/// → 前端 `clip.ts`/`AIVisionPanel`），放开会把视频灌进 CLIP。颜色清理
+/// （`db_commands::cleanup_stale_color_records`）同样只清图片色卡，共用本条是对的。
+/// ⚠️ 曾经第三个共用者是 LAN `handle_all_image_folders`，那是个 bug（根级视频与纯视频
+/// 文件夹整个看不见），已改走 [get_all_media_files]。
+/// 按 `file_type` 集合取全部行。**SQL 与行映射只这一份**：两个公开入口共用它，
+/// 免得哪天加列只改一处（本项目「加列漏改 4 处」那条教训的同一形态）。
+fn files_with_types(conn: &Connection, types: &[&str]) -> Result<Vec<FileIndexEntry>> {
+    let placeholders: Vec<String> = types.iter().map(|_| "?".to_string()).collect();
+    let sql = format!(
         "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format, duration_ms, frame_rate, rotation, video_codec, bit_rate \
-         FROM file_index 
-         WHERE file_type = 'Image'"
-    )?;
-    let rows = stmt.query_map([], |row| {
+         FROM file_index WHERE file_type IN ({})",
+        placeholders.join(",")
+    );
+    let params: Vec<&dyn rusqlite::ToSql> = types.iter().map(|t| t as &dyn rusqlite::ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params.as_slice(), |row| {
         Ok(FileIndexEntry {
             file_id: row.get(0)?,
             parent_id: row.get(1)?,
@@ -251,6 +257,20 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
         entries.push(row?);
     }
     Ok(entries)
+}
+
+pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
+    files_with_types(conn, &["Image"])
+}
+
+/// 获取所有媒体文件（`Image ∪ Video`）。
+///
+/// 给「按内容列目录」的读端用（LAN `all_image_folders` 那类）：**不要**拿
+/// [get_all_image_files] 顶替它，那条是 CLIP 嵌入的输入源、按拍板只认图片；反过来
+/// 也不要把本条塞进 CLIP 链路。LAN 历史上正是共用了 CLIP 那条，才既看不见根级散放的
+/// 视频、也看不见「只装视频的文件夹」。
+pub fn get_all_media_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
+    files_with_types(conn, &["Image", "Video"])
 }
 
 /// 按 id 集合取图片（M4a 3.2）。**保留入参顺序**、不在库中的 id 静默跳过——调用方
@@ -1406,5 +1426,33 @@ mod folder_info_batch_tests {
         batch_upsert(&mut conn, &rows).expect("seed rows");
         let info = get_folder_info_batch(&conn, &["P".to_string()], None).expect("query");
         assert_eq!(info.get("P").unwrap().2, 10, "嵌套子文件夹里的图不计入");
+    }
+
+    /// 视频 P3：两条「按类型列全表」的查询是**两套口径**，这条测试就是那堵墙。
+    ///
+    /// `get_all_image_files` 是 CLIP 嵌入的输入源，按拍板只认图片（AI 分析不跑视频）；
+    /// `get_all_media_files` 给 LAN 目录聚合用，必须看得见视频。历史上 LAN 直接借用了
+    /// 前者，代价是「根级散放的视频」与「只装视频的文件夹」在服务端响应里整个消失
+    /// （真机反馈：手机连电脑后根目录文件看不见）。谁再把两边混用，这条会红。
+    #[test]
+    fn media_query_sees_videos_while_clip_query_does_not() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+        let mut video = img("v", "F1", "clip.mp4", 50, 400, 4);
+        video.file_type = "Video".into();
+        batch_upsert(
+            &mut conn,
+            &[folder("F1", "F1"), img("a", "F1", "a.jpg", 30, 100, 1), video],
+        )
+        .expect("seed rows");
+
+        let images = get_all_image_files(&conn).expect("clip query");
+        let media = get_all_media_files(&conn).expect("media query");
+        assert_eq!(images.len(), 1, "CLIP 那条只能看见图片");
+        assert_eq!(media.len(), 2, "媒体那条要同时看见图片与视频");
+        assert!(
+            media.iter().any(|e| e.file_type == "Video"),
+            "视频行要带得出 file_type=Video"
+        );
     }
 }

@@ -1994,7 +1994,29 @@ fun App(
             // 远端目录行点击 = 直接进该远端目录网格（folderId 带 lan 前缀，序列源分流
             // 在 reloadImages——与本地目录行的「点行进夹」同位）
             lanConnected = lanSnapshot.state == LanState.CONNECTED,
-            lanFolders = lanSnapshot.folders,
+            // 侧栏「网络」分组也要有「根目录散图」那一行。虚拟根历来只被合成进**总览卡片**
+            // 序列（lanOverviewFolders），而侧栏吃的是服务端原始 folders —— 于是从侧栏
+            // 永远点不进根级散文件（2026-10-18 真机反馈）。这里复用卡片序列里那条已经带了
+            // 「有才放」门禁与计数的行，换成侧栏要的不透明 path；点击分流不用改，
+            // reloadLanImages 早就认 lanFolderId(__lan_root_images__)。
+            lanFolders = buildList {
+                lanOverviewFolders.firstOrNull()
+                    ?.takeIf {
+                        it.id == com.aurora.gallery.kotlin.state.lanFolderId(
+                            com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID,
+                        )
+                    }
+                    ?.let {
+                        add(
+                            LanRemoteFolder(
+                                name = it.name,
+                                path = com.aurora.gallery.kotlin.state.LAN_ROOT_IMAGES_ID,
+                                imageCount = it.imageCount,
+                            ),
+                        )
+                    }
+                addAll(lanSnapshot.folders)
+            },
             onLanFolderClick = { folder ->
                 state.openFolder(com.aurora.gallery.kotlin.state.lanFolderId(folder.path))
                 if (isPhone) closeDrawer()

@@ -2303,8 +2303,9 @@ pub async fn handle_all_image_folders(
         if let Some(pool) = db_pool {
             let conn = pool.get_connection();
 
-            // 查询所有图片条目
-            match crate::db::file_index::get_all_image_files(&conn) {
+            // 查询所有媒体条目（图片 ∪ 视频）。**不是** get_all_image_files——那条只认
+            // 图片（CLIP 的输入源），共用它会让根级散放的视频与「只装视频的文件夹」整个消失。
+            match crate::db::file_index::get_all_media_files(&conn) {
                 Ok(all_images) => {
                     use std::collections::HashMap;
                     // 按 parent_id 分组（同一 parent_id = 同一文件夹的直接图片子项）
@@ -2321,7 +2322,8 @@ pub async fn handle_all_image_folders(
                     let root_normalized = crate::db::normalize_path(&root_path_str);
                     let root_parent_id = crate::db::generate_id(&root_normalized);
 
-                    // 收集根目录散落图片
+                    // 收集根目录散落的图片与视频（视频 P3：与 browse 同权，type 要标对，
+                    // 否则客户端会拿视频行去走图片解码）
                     for img in &all_images {
                         if img.parent_id.as_deref() == Some(&root_parent_id) {
                             let relative_item_path = to_relative_path(&img.path, &root_path_str);
@@ -2329,13 +2331,13 @@ pub async fn handle_all_image_folders(
                             root_images.push(BrowseItem {
                                 name: img.name.clone(),
                                 path: relative_item_path,
-                                item_type: "image".to_string(),
+                                item_type: if img.file_type == "Video" { "video".to_string() } else { "image".to_string() },
                                 size: Some(img.size),
                                 thumbnail: Some(thumbnail_url),
                                 preview_images: None,
                                 width: img.width,
                                 height: img.height,
-                                duration_ms: None,
+                                duration_ms: img.duration_ms,
                                 modified_at: if img.modified_at > 0 { Some(img.modified_at) } else { None },
                                 created_at: if img.created_at > 0 { Some(img.created_at) } else { None },
                                 latest_created_at: None,
@@ -2345,7 +2347,7 @@ pub async fn handle_all_image_folders(
                     }
                     root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-                    // 为每个含图文件夹构建 BrowseItem
+                    // 为每个含媒体（图片或视频）的文件夹构建 BrowseItem
                     for (parent_id, imgs) in &folder_map {
                         if *parent_id == root_parent_id {
                             continue; // 根目录散落图片已单独处理
@@ -2411,18 +2413,10 @@ pub async fn handle_all_image_folders(
                             .max()
                             .unwrap_or(0);
 
-                        // 统计视频文件（不在数据库中，需检查文件系统）
-                        let mut total_count = imgs.len() as u64;
-                        let folder_full_path_buf = std::path::PathBuf::from(&folder_full_path);
-                        if let Ok(entries) = std::fs::read_dir(&folder_full_path_buf) {
-                            for entry in entries.flatten() {
-                                let fname = entry.file_name();
-                                let fname_str = fname.to_string_lossy();
-                                if is_video_file(&fname_str) {
-                                    total_count += 1;
-                                }
-                            }
-                        }
+                        // 计数就是索引里的直接子项数：条目源已是 `Image ∪ Video`。
+                        // 这里曾额外扫一遍文件系统补视频数（那时索引查询只认图片），
+                        // 现在留着会把视频**数两遍**。
+                        let total_count = imgs.len() as u64;
 
                         folders.push(BrowseItem {
                             name: folder_name,
@@ -2441,12 +2435,14 @@ pub async fn handle_all_image_folders(
                         });
                     }
 
-                    // 补充扫描仅含视频的文件夹（数据库中无图片的 Folder 条目）
-                    let image_folder_ids: std::collections::HashSet<&String> = folder_map.keys().collect();
+                    // 兜底：磁盘上有视频、但视频还没进索引的文件夹（条目源已含 Image ∪ Video，
+                    // 正常索引过的纯视频夹在上面那轮就已产出；这里只捞索引缺货的）。
+                    // ⚠️ 这条路产出的卡片没有 preview（灰封面）且只数视频，与主路径不同口径。
+                    let media_folder_ids: std::collections::HashSet<&String> = folder_map.keys().collect();
                     if let Ok(all_entries) = crate::db::file_index::get_all_entries(&conn) {
                         for entry in &all_entries {
                             if entry.file_type != "Folder" { continue; }
-                            if image_folder_ids.contains(&entry.file_id) { continue; }
+                            if media_folder_ids.contains(&entry.file_id) { continue; }
                             if entry.file_id == root_parent_id { continue; }
 
                             // 检查该文件夹是否有直接视频子项
@@ -2488,7 +2484,7 @@ pub async fn handle_all_image_folders(
 
                     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-                    log::info!("[LAN Share] all_image_folders (数据库) - {} 个含图文件夹, {} 张根目录图片", folders.len(), root_images.len());
+                    log::info!("[LAN Share] all_image_folders (数据库) - {} 个含媒体文件夹, {} 项根级散图/散视频", folders.len(), root_images.len());
                     return Some((folders, root_images));
                 }
                 Err(e) => {
@@ -2572,8 +2568,10 @@ fn all_image_folders_filesystem(
         is_root: bool,
         sort: Option<crate::db::file_index::FolderPreviewSort>,
     ) {
-        let mut image_entries: Vec<FsImage> = Vec::new();
-        let mut video_count = 0u64;
+        // 封面/预览候选与计数都按「图片 ∪ 视频」收（与 DB 主路径同口径）。变量名不叫
+        // image_entries 是有意的：它历史上只装图片，于是纯视频夹的卡片没有封面、
+        // 根级散放的视频整个不出现。
+        let mut media_entries: Vec<FsImage> = Vec::new();
         let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
 
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -2602,7 +2600,7 @@ fn all_image_folders_filesystem(
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs() as i64);
                     let (w, h) = crate::image_utils::get_image_dimensions(&path.to_string_lossy());
-                    image_entries.push(FsImage {
+                    media_entries.push(FsImage {
                         rel_path: relative_item_path.clone(),
                         name: name_str.clone(),
                         width: if w > 0 { Some(w) } else { None },
@@ -2631,40 +2629,83 @@ fn all_image_folders_filesystem(
                         });
                     }
                 } else if is_video_file(&name_str) {
-                    video_count += 1;
+                    let meta = entry.metadata().ok();
+                    let size = meta.as_ref().map(|m| m.len());
+                    let vid_modified = meta.as_ref()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64);
+                    let vid_created = meta.as_ref()
+                        .and_then(|m| m.created().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64);
+                    // 与 browse 的 FS 补扫同一份探针（视频 P3-A3）：读容器头拿宽高与时长
+                    let vid = crate::video_metadata::read_video_metadata(&path);
+                    let vw = vid.as_ref().and_then(|m| (m.width > 0).then_some(m.width));
+                    let vh = vid.as_ref().and_then(|m| (m.height > 0).then_some(m.height));
+                    let vdur = vid.as_ref().and_then(|m| m.duration_ms);
+                    media_entries.push(FsImage {
+                        rel_path: relative_item_path.clone(),
+                        name: name_str.clone(),
+                        width: vw,
+                        height: vh,
+                        modified: vid_modified,
+                        size,
+                        created: vid_created,
+                    });
+
+                    if is_root {
+                        // 先算 URL：下面两个字段会把 relative_item_path / name_str 移走
+                        let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                        root_images.push(BrowseItem {
+                            name: name_str,
+                            path: relative_item_path,
+                            item_type: "video".to_string(),
+                            size,
+                            thumbnail: Some(thumbnail_url),
+                            preview_images: None,
+                            width: vw,
+                            height: vh,
+                            duration_ms: vdur,
+                            modified_at: vid_modified,
+                            created_at: vid_created,
+                            latest_created_at: None,
+                            palette: None,
+                        });
+                    }
                 }
             }
         }
 
-        // 如果当前文件夹直接包含图片或视频，加入 folders
-        if !image_entries.is_empty() || video_count > 0 {
+        // 直接含图片或视频的文件夹才产出卡片（候选与计数同一口径，见上面 media_entries）
+        if !media_entries.is_empty() {
             // 预览排序：缺省 = 既有行为（名称不区分大小写升序）；带 sort 参数 = 协议口径
             match sort {
                 Some(s) => match (s.sort_by, s.sort_dir) {
-                    ("name", "asc") => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                    ("name", "desc") => image_entries.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
-                    ("date", "asc") => image_entries.sort_by_key(|i| i.created.unwrap_or(0)),
-                    ("date", "desc") => image_entries.sort_by_key(|i| std::cmp::Reverse(i.created.unwrap_or(0))),
-                    ("size", "asc") => image_entries.sort_by_key(|i| i.size.unwrap_or(0)),
-                    ("size", "desc") => image_entries.sort_by_key(|i| std::cmp::Reverse(i.size.unwrap_or(0))),
-                    _ => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    ("name", "asc") => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    ("name", "desc") => media_entries.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                    ("date", "asc") => media_entries.sort_by_key(|i| i.created.unwrap_or(0)),
+                    ("date", "desc") => media_entries.sort_by_key(|i| std::cmp::Reverse(i.created.unwrap_or(0))),
+                    ("size", "asc") => media_entries.sort_by_key(|i| i.size.unwrap_or(0)),
+                    ("size", "desc") => media_entries.sort_by_key(|i| std::cmp::Reverse(i.size.unwrap_or(0))),
+                    _ => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
                 },
-                None => image_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                None => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
             }
 
-            let preview_paths: Vec<String> = image_entries.iter().take(3).map(|i| i.rel_path.clone()).collect();
-            let cover = image_entries.first();
+            let preview_paths: Vec<String> = media_entries.iter().take(3).map(|i| i.rel_path.clone()).collect();
+            let cover = media_entries.first();
             let cover_width = cover.and_then(|i| i.width);
             let cover_height = cover.and_then(|i| i.height);
-            let latest_modified = image_entries.iter()
+            let latest_modified = media_entries.iter()
                 .filter_map(|i| i.modified)
                 .max();
-            // 直接子图最新创建时间（fs created() 尽力而为）
-            let latest_created = image_entries.iter()
+            // 直接子项最新创建时间（fs created() 尽力而为）
+            let latest_created = media_entries.iter()
                 .filter_map(|i| i.created)
                 .max();
 
-            let total_count = (image_entries.len() as u64) + video_count;
+            let total_count = media_entries.len() as u64;
 
             let folder_name = dir.file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -2703,7 +2744,7 @@ fn all_image_folders_filesystem(
     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    log::info!("[LAN Share] all_image_folders (文件系统) - {} 个含图文件夹, {} 张根目录图片", folders.len(), root_images.len());
+    log::info!("[LAN Share] all_image_folders (文件系统) - {} 个含媒体文件夹, {} 项根级散图/散视频", folders.len(), root_images.len());
     (folders, root_images)
 }
 
@@ -2885,6 +2926,40 @@ mod tests {
         // 图片与未知保持原样
         assert_eq!(get_content_type(std::path::Path::new("a.jpg")), "image/jpeg");
         assert_eq!(get_content_type(std::path::Path::new("a.bin")), "application/octet-stream");
+    }
+
+    /// 视频 P3（真机反馈：手机连电脑后「根目录文件」那一栏整个看不见）：FS 回退路径的
+    /// `all_image_folders` 要把**根级散放的视频**与**只装视频的文件夹**一起带出来，
+    /// 且视频的 `item_type` 必须是 video —— 客户端按它分流解码，标成 image 会让视频行
+    /// 去走图片解码器。
+    #[test]
+    fn fs_all_image_folders_includes_root_videos_and_video_only_folders() {
+        let root = std::env::temp_dir().join(format!("aurora_lan_folders_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("OnlyVideos")).expect("mkdir OnlyVideos");
+        std::fs::create_dir_all(root.join("Mixed")).expect("mkdir Mixed");
+        // 内容全是假的：图片尺寸探针与视频容器探针读不出值只退化成 None，不影响分组口径
+        for rel in ["loose.jpg", "loose.mp4", "OnlyVideos/clip.mp4", "Mixed/a.jpg"] {
+            std::fs::write(root.join(rel), b"not-real-media").expect("write fixture");
+        }
+
+        let (folders, roots) = all_image_folders_filesystem(&root, None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        let type_of = |name: &str| -> String {
+            roots
+                .iter()
+                .find(|i| i.name == name)
+                .map(|i| i.item_type.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(type_of("loose.jpg"), "image", "根级图片照旧");
+        assert_eq!(type_of("loose.mp4"), "video", "根级视频要出现且 type 标对");
+
+        let only = folders.iter().find(|f| f.name == "OnlyVideos");
+        assert!(only.is_some(), "只装视频的文件夹也要进列表");
+        assert_eq!(only.unwrap().size, Some(1), "计数 = 直接子项数（视频算一项）");
+        assert!(folders.iter().any(|f| f.name == "Mixed"), "混合夹照旧");
     }
 
     /// 视频 P1（设计方案 §5.5）：serve_file_with_range 对 Range 请求返回 206 + Content-Range，
