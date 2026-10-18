@@ -107,6 +107,21 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
          */
         private const val SCRUB_THROTTLE_MS = 200L
         /**
+         * 两段式横滑改时间（照 MX Player 的 slow seek）。**满屏宽不再等于整条时间轴**：
+         * 一小时的片子划四分之一屏就跳 15 分钟，冲到手忙（真机第十轮报的）。
+         * 本轮第一发 = 全长的 10%（粗调），5 秒内接着划的每一发 = 全长的 1% 再夹进 10~60 秒（细调）。
+         *
+         * ⚠️ [DRAG_TWO_STAGE_MIN_MS] 以内**完全不启用**，保持原来的 1:1 —— 这个库里的主力形态
+         * 是几秒到几十秒的手机录屏，给它们套上比例尺等于把短片灵敏度废掉。
+         */
+        private const val DRAG_TWO_STAGE_MIN_MS = 120_000L
+        private const val DRAG_COARSE_FRACTION = 0.10
+        private const val DRAG_FINE_FRACTION = 0.01
+        private const val DRAG_FINE_MIN_MS = 10_000L
+        private const val DRAG_FINE_MAX_MS = 60_000L
+        /** 隔这么久没再横滑，就退回「本轮第一发」的粗调档 */
+        private const val DRAG_SESSION_RESET_MS = 5_000L
+        /**
          * 远端（LAN）缓冲档：**上限 10 秒 / 48MB，两者取先到者**。库默认是 50 秒
          * （`MIN`/`MAX_BUFFER_MS` 都是 50000，混合轨分配器上限 `DEFAULT_MUXED_BUFFER_SIZE`
          * ≈ 137MB），本地读文件无所谓，走 WiFi 就是每次起播几十 MB 的突发——视频之间连续翻页
@@ -274,6 +289,10 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private var lastScrubApplyAt = 0L
     /** 拖之前的播放意图，松手照它续播。`stopPlayback` 必须一起归零，见那里。 */
     private var scrubWasPlaying = false
+    /** 本轮横滑是否已进入细调档（两段式慢搜的第二段），见 [scrubScaleMs] */
+    private var fineScrub = false
+    /** 上一次横滑落下的时刻（uptimeMillis），用来判本轮还是不是"接着划" */
+    private var lastScrubGestureAt = 0L
 
     /**
      * 节流的落地动作。**每次现读 [player]**：换缓冲档位会重建播放器（[ensurePlayerProfile]），
@@ -305,6 +324,27 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         scrubWasPlaying = playbackStarted && player.playWhenReady
         if (scrubWasPlaying) player.playWhenReady = false
         showChrome()
+    }
+
+    /**
+     * 横滑改时间的**比例尺**：满屏宽代表多少毫秒。原来等于整条时间轴，长片上划一下
+     * 跳十几分钟（真机第十轮报的），所以分粗调/细调两档，理由见 [DRAG_TWO_STAGE_MIN_MS]。
+     */
+    private fun scrubScaleMs(durationMs: Long): Long = when {
+        durationMs <= DRAG_TWO_STAGE_MIN_MS -> durationMs
+        fineScrub -> (durationMs * DRAG_FINE_FRACTION).toLong()
+            .coerceIn(DRAG_FINE_MIN_MS, DRAG_FINE_MAX_MS)
+        else -> (durationMs * DRAG_COARSE_FRACTION).toLong()
+    }
+
+    /**
+     * 每次横滑起手调一次，决定这一发是粗调还是细调。**只服务画面横滑那条**：
+     * 底部进度条是绝对定位（手指直接落到目标点），给它套比例尺反而够不到片尾。
+     */
+    private fun markScrubGesture() {
+        val now = android.os.SystemClock.uptimeMillis()
+        fineScrub = now - lastScrubGestureAt <= DRAG_SESSION_RESET_MS
+        lastScrubGestureAt = now
     }
 
     /**
@@ -351,6 +391,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         mainHandler.removeCallbacks(scrubApply)
         pendingScrubMs = -1L
         scrubWasPlaying = false
+        // 换条之后"本轮"就重新开始，不该带着上一条的细调档
+        fineScrub = false
+        lastScrubGestureAt = 0L
     }
 
     init {
@@ -848,19 +891,25 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             if (max(abs(dx), abs(dy)) < touchSlop) return
             dragAxis = if (abs(dx) > abs(dy)) DragAxis.HORIZONTAL
             else if (dragStartX < width / 2f) DragAxis.BRIGHTNESS else DragAxis.VOLUME
-            if (dragAxis == DragAxis.HORIZONTAL) beginScrub()
+            if (dragAxis == DragAxis.HORIZONTAL) { beginScrub(); markScrubGesture() }
         }
         when (dragAxis) {
             DragAxis.HORIZONTAL -> if (playbackStarted) {
                 val duration = contentDurationMs
+                // 满屏宽 = 一个比例尺，不再等于整条时间轴；分档理由见 scrubScaleMs
+                val scale = scrubScaleMs(duration)
                 // 全程按 Float 算再收口：dx(Float) / 屏宽 * 时长(Long) 混着 coerceIn(0L,..) 编不过
-                val target = (dragStartPositionMs + dx / max(width, 1).toFloat() * duration)
+                val target = (dragStartPositionMs + dx / max(width, 1).toFloat() * scale)
                     .coerceIn(0f, duration.toFloat())
                     .toLong()
                 seekBar.max = duration.toInt().coerceAtLeast(1)
                 seekBar.progress = target.toInt()
                 positionText.text = formatVideoDuration(target)
-                showHint("${formatVideoDuration(target)} / ${formatVideoDuration(duration)}")
+                // 档位要看得见，否则"同样划一下怎么跳得不一样多"完全成谜
+                val mode = if (duration > DRAG_TWO_STAGE_MIN_MS) {
+                    if (fineScrub) " · 细调" else " · 粗调"
+                } else ""
+                showHint("${formatVideoDuration(target)} / ${formatVideoDuration(duration)}$mode")
                 // 与播控条那条同一个节流器：画面跟着进度走
                 scheduleScrub(target)
             }
