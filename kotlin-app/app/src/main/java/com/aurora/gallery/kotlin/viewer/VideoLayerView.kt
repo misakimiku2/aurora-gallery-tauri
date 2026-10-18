@@ -98,14 +98,32 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             2f to "2x",
         )
         /**
-         * 远端（LAN）缓冲档：**10 秒 / 16MB**。库默认是 50 秒（`MIN`/`MAX_BUFFER_MS`
-         * 都是 50000，混合轨分配器上限 `DEFAULT_MUXED_BUFFER_SIZE` ≈ 137MB），本地读文件
-         * 无所谓，走 WiFi 就是每次起播几十 MB 的突发——视频之间连续翻页会自动起播之后
-         * （第八轮），「停两秒就切走」每条都要付一次，压到 10 秒/16MB 就是几 MB。
-         * 代价：拖进度条超出缓冲要重新缓冲一次，两端 `/api/image` 都支持 Range，是精确续传。
+         * 拖拽节流的落地间隔。**必须是节流不能是去抖**，见 [scheduleScrub]。
+         *
+         * 200ms 是实施方案给的值，**不是模拟器量出来最好的**：200 与 300 两档平均都落后目标
+         * ~1.6 段（分不出好坏），而绝对滞后量不准——`screenrecord` 与模拟器软解抢 CPU，
+         * 同一条拖拽换一种测量法能给出 1.6~2.5 秒的区间。**跟手度只能真机判**：
+         * 嫌拖拽发涩就往小调，画面跟不上目标就往 300~500ms 调大。
+         */
+        private const val SCRUB_THROTTLE_MS = 200L
+        /**
+         * 远端（LAN）缓冲档：**上限 10 秒 / 48MB，两者取先到者**。库默认是 50 秒
+         * （`MIN`/`MAX_BUFFER_MS` 都是 50000，混合轨分配器上限 `DEFAULT_MUXED_BUFFER_SIZE`
+         * ≈ 137MB），本地读文件无所谓，走 WiFi 就是每次起播几十 MB 的突发——视频之间连续翻页
+         * 会自动起播（第八轮），「停两秒就切走」每条都要付一次，所以必须压。
+         *
+         * **实际囤到的是几秒由码率说了算，不是那 10 秒**：这批库里的录屏实测 64~92 Mbps
+         * ≈ 8~11.5 MB/s（ffprobe，见《视频拖拽实时预览-实施方案》§2），48MB 只够 **4~6 秒**，
+         * `REMOTE_BUFFER_MS` 那档在这批素材上根本到不了。上一版是 16MB，注释里写的「10 秒」
+         * 是假的——算术上只有 1.4~2.1 秒，往后拖基本一定拖出缓冲。抬到 48MB 换的就是
+         * 「往前拖多数落在缓冲内 = 瞬发」这条手感；代价是 LAN 播放峰值内存 ~16MB → ~48MB
+         * （一台播放器跨页复用，不累积）。
+         *
+         * ⚠️ 「48MB ≈ 4~6 秒」仍是 `字节 ÷ 实测码率` 的算术，**没量过**；弱网与更高码率下
+         * 够不够只能真机读 `logcat -s AuroraVideo` 里 READY 那行的实际囤积秒数。
          */
         private const val REMOTE_BUFFER_MS = 10_000
-        private const val REMOTE_TARGET_BUFFER_BYTES = 16 * 1024 * 1024
+        private const val REMOTE_TARGET_BUFFER_BYTES = 48 * 1024 * 1024
     }
 
     private val surfaceView: TextureView
@@ -246,6 +264,95 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private var lastScaleUpAt = 0L
     private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
+    // —— 拖拽实时预览（画面跟着进度走）——
+    //
+    // 两条入口（播控条的 SeekBar 与画面上的横滑）**共用下面这一个节流器**，不复制第二份。
+
+    /** 待执行的拖拽目标（毫秒），`-1` = 没有待执行的 */
+    private var pendingScrubMs = -1L
+    /** 上一次真正落地的时刻（uptimeMillis），节流窗口的起点 */
+    private var lastScrubApplyAt = 0L
+    /** 拖之前的播放意图，松手照它续播。`stopPlayback` 必须一起归零，见那里。 */
+    private var scrubWasPlaying = false
+
+    /**
+     * 节流的落地动作。**每次现读 [player]**：换缓冲档位会重建播放器（[ensurePlayerProfile]），
+     * 把实例存进 Runnable 就会在换档后 seek 到已 release 的那台上。
+     */
+    private val scrubApply = Runnable {
+        val target = pendingScrubMs
+        if (target >= 0L) {
+            pendingScrubMs = -1L
+            lastScrubApplyAt = android.os.SystemClock.uptimeMillis()
+            if (playbackStarted) {
+                Log.d(TAG, "scrub -> ${target}ms (started=$playbackStarted playing=${player.isPlaying})")
+                player.seekTo(target)
+            }
+        }
+    }
+
+    /**
+     * 开始拖拽：记下播放意图并把播放器停住。
+     *
+     * 敢停是因为**暂停态 `seekTo()` 会渲染目标帧**（2026-10-18 模拟器实测：停在 SEG2，
+     * 一拖画面立刻变 SEG6、再拖变 SEG1，松手后隔两秒再截图不动 = 全程真暂停）。
+     * 这条在 MagicOS/EMUI 的硬解上还没验，只能真机判（实施方案 §4.0 / §6）。
+     */
+    private fun beginScrub() {
+        userDragging = true
+        lastScrubApplyAt = 0L   // 拖拽第一发不该先空等一个节流窗口
+        refreshBufferingBar()   // 手指一落地就把转圈收掉，别在拖的过程中反复闪
+        scrubWasPlaying = playbackStarted && player.playWhenReady
+        if (scrubWasPlaying) player.playWhenReady = false
+        showChrome()
+    }
+
+    /**
+     * 拖出新目标：**节流**（每 [SCRUB_THROTTLE_MS] 最多落地一次），不是去抖。
+     *
+     * 实施方案原本写的「每来一发就 removeCallbacks + postDelayed」是去抖：手指连续移动时
+     * 每一发都把计时器往后推，seek 永远不落地（2026-10-18 模拟器实测：6 秒慢拖，中途两张
+     * 截图画面纹丝不动，只有松手才跳）。这里改成窗口满了就地 seek、没满才排到窗口余下的
+     * 时间，既保证「只追最新目标」，又保证拖拽过程中每 200ms 一定出一帧。
+     */
+    private fun scheduleScrub(targetMs: Long) {
+        pendingScrubMs = targetMs
+        val wait = SCRUB_THROTTLE_MS - (android.os.SystemClock.uptimeMillis() - lastScrubApplyAt)
+        mainHandler.removeCallbacks(scrubApply)
+        if (wait <= 0L) scrubApply.run() else mainHandler.postDelayed(scrubApply, wait)
+    }
+
+    /**
+     * 结束拖拽（松手 / 撤销）。[targetMs] 为 `null` = 撤销：位置不回滚（与亮度、音量
+     * 那条同一口径），只撤掉待执行的节流；否则把节流立刻落地到这个最终位置。
+     * 两种收尾都照 [scrubWasPlaying] 续播——撤销的是「这次拖拽」，不是「他要播」。
+     */
+    private fun endScrub(targetMs: Long?) {
+        val resume = scrubWasPlaying
+        scrubWasPlaying = false
+        userDragging = false
+        lastScrubApplyAt = 0L
+        mainHandler.removeCallbacks(scrubApply)
+        pendingScrubMs = -1L
+        if (playbackStarted) {
+            if (targetMs != null) player.seekTo(targetMs)
+            if (resume) player.playWhenReady = true
+            // ticker 只在 isPlaying 时自续，拖拽期间是暂停的所以它不会自己跑，必须补一发
+            mainHandler.post(ticker)
+        }
+        scheduleChromeHide()
+        // 松手后重新判一次：真落在未缓冲处就该把转圈还回来（拖拽期间被它压掉了）
+        refreshBufferingBar()
+    }
+
+    /** 换条/换档/退出：把拖拽状态整个归零。**漏了会串台**——翻页后那条待执行的 seek
+     *  会把上一条的时间拖到新的一条上（实施方案 §4.3）。 */
+    private fun resetScrub() {
+        mainHandler.removeCallbacks(scrubApply)
+        pendingScrubMs = -1L
+        scrubWasPlaying = false
+    }
+
     init {
         background = letterboxBg
 
@@ -326,20 +433,15 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
-                    if (fromUser) positionText.text = formatVideoDuration(value.toLong())
+                    if (!fromUser) return
+                    positionText.text = formatVideoDuration(value.toLong())
+                    // 拖拽中画面跟着走：只把目标交给节流器，绝不在回调里直接 seek
+                    if (playbackStarted) scheduleScrub(value.toLong())
                 }
 
-                override fun onStartTrackingTouch(bar: SeekBar) {
-                    userDragging = true
-                    showChrome()
-                }
+                override fun onStartTrackingTouch(bar: SeekBar) = beginScrub()
 
-                override fun onStopTrackingTouch(bar: SeekBar) {
-                    userDragging = false
-                    player.seekTo(bar.progress.toLong())
-                    mainHandler.post(ticker)
-                    scheduleChromeHide()
-                }
+                override fun onStopTrackingTouch(bar: SeekBar) = endScrub(bar.progress.toLong())
             })
         }
         val progressRow = LinearLayout(context).apply {
@@ -454,9 +556,20 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         // 存成字段而不是匿名传入：换缓冲档位会重建播放器，新那台要重挂同一个监听器
         playerListener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                bufferingBar.visibility =
-                    if (playbackStarted && state == Player.STATE_BUFFERING) VISIBLE else GONE
-                if (state == Player.STATE_READY) syncDurationText()
+                refreshBufferingBar()
+                if (state == Player.STATE_READY) {
+                    syncDurationText()
+                    // 缓冲档真正生效的上限是字节不是秒，实际囤几秒只能这样读出来（§3 的诚实登记）
+                    Log.i(
+                        TAG,
+                        "READY remote=$playerRemote position=${player.currentPosition}ms " +
+                            "囤了 ${(player.bufferedPosition - player.currentPosition) / 1000.0}s",
+                    )
+                }
+                // LAN 往后拖的手感 = 这一行出现的次数（实施方案 §4.4，模拟器那条量不出来）
+                if (state == Player.STATE_BUFFERING && playbackStarted) {
+                    Log.i(TAG, "BUFFERING remote=$playerRemote position=${player.currentPosition}ms")
+                }
                 // 播完把工具栏叫回来：停在末帧上没有下一步动作可看，藏着键反而按不到档位
                 if (state == Player.STATE_ENDED) showChrome()
             }
@@ -735,7 +848,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
             if (max(abs(dx), abs(dy)) < touchSlop) return
             dragAxis = if (abs(dx) > abs(dy)) DragAxis.HORIZONTAL
             else if (dragStartX < width / 2f) DragAxis.BRIGHTNESS else DragAxis.VOLUME
-            if (dragAxis == DragAxis.HORIZONTAL) userDragging = true
+            if (dragAxis == DragAxis.HORIZONTAL) beginScrub()
         }
         when (dragAxis) {
             DragAxis.HORIZONTAL -> if (playbackStarted) {
@@ -748,6 +861,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
                 seekBar.progress = target.toInt()
                 positionText.text = formatVideoDuration(target)
                 showHint("${formatVideoDuration(target)} / ${formatVideoDuration(duration)}")
+                // 与播控条那条同一个节流器：画面跟着进度走
+                scheduleScrub(target)
             }
 
             DragAxis.BRIGHTNESS, DragAxis.VOLUME -> {
@@ -771,25 +886,25 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private fun finishDrag(ev: MotionEvent) {
         if (dragAxis == DragAxis.HORIZONTAL) {
-            userDragging = false
-            if (playbackStarted) {
-                player.seekTo(seekBar.progress.toLong())
-                mainHandler.post(ticker)
-            } else {
+            endScrub(seekBar.progress.toLong())
+            if (!playbackStarted) {
                 // 静态位横滑 = 翻页（与图片那条 25% 屏宽同口径；快滑另有 onFling 兜住）
                 val dx = ev.x - dragStartX
                 if (abs(dx) > width * PAGE_DRAG_RATIO) onPageRequest?.invoke(if (dx < 0) 1 else -1)
             }
-            scheduleChromeHide()
         }
         dragAxis = DragAxis.NONE
+        // onFling 在抬手前就把 dragAxis 抹成 NONE，上面那条收尾走不到；不兜住 userDragging
+        // 会留在 true，而 ticker 在它为非真时整段跳过——下一条起播后进度条再也不动
+        if (userDragging) endScrub(null)
         mainHandler.removeCallbacks(hideHint)
         mainHandler.postDelayed(hideHint, HINT_HIDE_MS)
     }
 
-    /** 多指一出现就把单指判定撤掉：进度拖拽要交回 ticker，亮度/音量已经改的不再回滚。 */
+    /** 多指一出现就把单指判定撤掉：待执行的 seek 撤掉，已 seek 过去的位置不回滚
+     *  （与亮度/音量那条同一口径），但「拖之前在播」要还回去。 */
     private fun cancelDrag() {
-        if (dragAxis == DragAxis.HORIZONTAL) userDragging = false
+        if (dragAxis == DragAxis.HORIZONTAL) endScrub(null)
         dragAxis = DragAxis.NONE
     }
 
@@ -919,6 +1034,9 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private fun stopPlayback() {
         mainHandler.removeCallbacks(ticker)
+        // 拖拽状态必须一起归零：`detach()`（换页/关闭/进幻灯片）走的就是这里，不归零就会
+        // 把上一条那条待执行的 seek 拖到新的一条上（实施方案 §4.3）
+        resetScrub()
         if (playbackStarted) {
             player.playWhenReady = false
             player.stop()
@@ -997,9 +1115,12 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
      * 模拟器软解 3440×1440@60 常年停在缓冲态，按 isPlaying 收就永远收不起来（实测踩过）。
      * 播完停在 ENDED 也不算「要看」——那时收掉工具栏，用户点哪儿都只剩唤回/收起，
      * 画面大小与循环这些档位键反而按不到（实测踩过）。
+     * 拖拽中也不算：`onIsPlayingChanged(false)` 会因为暂停把工具栏叫回来，那时不能让
+     * 收起计时在用户还按着进度条的时候生效（实施方案 §4.1 坑 3）。
      */
     private val wantsToWatch: Boolean
-        get() = playbackStarted && player.playWhenReady && player.playbackState != Player.STATE_ENDED
+        get() = playbackStarted && player.playWhenReady && !userDragging &&
+            player.playbackState != Player.STATE_ENDED
 
     private fun scheduleChromeHide() {
         mainHandler.removeCallbacks(hideChrome)
@@ -1028,11 +1149,27 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         if (isBound) onChromeHiddenChange?.invoke(chromeHidden)
     }
 
+    /**
+     * 缓冲转圈的显隐。**拖拽期间不显示**：每一发 seek 落到未缓冲处都会进一次 `STATE_BUFFERING`，
+     * 转圈就在手指底下一遍遍出现又消失，看着像"越拖越卡"。桌面那条早就改成
+     * 「拖拽中不显示、用时间文字代替」（设计方案 §14.7 ③），安卓一直漏了，所以两端不一致。
+     *
+     * 松手时 [endScrub] 会再调一次，真需要等的缓冲照样转得出来——这里只是不在用户正拖的时候吵他。
+     */
+    private fun refreshBufferingBar() {
+        bufferingBar.visibility =
+            if (playbackStarted && !userDragging && player.playbackState == Player.STATE_BUFFERING) {
+                VISIBLE
+            } else {
+                GONE
+            }
+    }
+
     /** 单一出口：所有状态变化之后都走这里把显隐与底色落定。 */
     private fun refreshLayerState() {
         val bound = boundFileId != null
         visibility = if (bound && !drawerOccluded) VISIBLE else GONE
-        bufferingBar.visibility = if (playbackStarted && player.playbackState == Player.STATE_BUFFERING) VISIBLE else GONE
+        refreshBufferingBar()
         letterboxBg.setColor(if (firstFrameRendered) letterboxColor else Color.TRANSPARENT)
         applyChromeVisibility()
         if (bound) syncDurationText()
