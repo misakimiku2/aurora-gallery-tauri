@@ -511,9 +511,30 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /** 换页/关闭/进幻灯片/退出过渡：彻底停掉这一路视频（不后台出声）。 */
     fun detach() {
         stopPlayback()
+        resetSurface()
         boundFileId = null
         mediaUrl = ""
         fallbackDurationMs = 0L
+    }
+
+    /**
+     * 把 TextureView 摘掉重挂，逼它换一块全新的 SurfaceTexture。
+     *
+     * **为什么必须这么干**：TextureView 的内容不由视图树说了算——`player.stop()` 之后，
+     * 上一只视频**最后一次解码的帧还留在 surface 里**，而这一层在静态位是透明的（要让
+     * 底下图片视图里的封面透出来），于是那块旧帧就盖在封面上面，表现成「切了页，封面还是
+     * 上一条视频」。
+     *
+     * 用 `GONE`/`alpha=0` 也能藏住它，但那两条会让 TextureView 不参与绘制，
+     * SurfaceTexture 就不创建（`updateLayer()` 只在 draw 里跑）——起播要多等一次
+     * `onSurfaceTextureAvailable`，把「按播放到出画」这条热路径拖慢。摘掉重挂既清掉旧帧、
+     * 视图又始终可见，surface 在下一帧就重建好；旧的按 `onSurfaceTextureDestroyed`
+     * 返回 true 的既有约定交还系统。
+     */
+    private fun resetSurface() {
+        val lp = surfaceView.layoutParams ?: return
+        removeView(surfaceView)
+        addView(surfaceView, 0, lp)
     }
 
     /** Activity 销毁路径。 */

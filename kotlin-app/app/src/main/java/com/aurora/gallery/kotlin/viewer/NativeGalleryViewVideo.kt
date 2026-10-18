@@ -20,10 +20,22 @@ internal fun NativeGalleryView.videoItem(): NativeGalleryView.ImageItem? =
  */
 internal fun NativeGalleryView.syncVideoLayer() {
     val item = videoItem()
+    // 自动起播要同时满足两条：上一项也是视频（= 用户在视频之间连续翻页，验收人 2026-10-18），
+    // 且这一项**确实换了**。同一次打开里本函数会被调好几遍，少了后一条就会「刚点开就自己播」。
+    val switched = item?.fileId != lastSyncedVideoFileId
+    val autoplay = item != null && switched && previousItemWasVideo
     if (item == null) {
         videoLayer.detach()
     } else {
         videoLayer.bind(item.fileId, item.path, item.durationMs, item.width, item.height)
+        if (autoplay) {
+            android.util.Log.i(NativeGalleryView.TAG, "视频翻页后自动起播: ${item.name}")
+            videoLayer.start()
+        }
+    }
+    if (switched) {
+        previousItemWasVideo = item != null
+        lastSyncedVideoFileId = item?.fileId
     }
     // 影院态跟着当前项类型走（视频↔图片来回翻时黑底/白字/居中标题要一起换）。
     // 不判"变没变"是因为 currentIndex 已经改过了，这里读到的就是新状态，直接重涂最省事。

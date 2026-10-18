@@ -216,6 +216,19 @@ class NativeGalleryView @JvmOverloads constructor(
      */
     internal var videoStageHidesBars = false
     /**
+     * 上一**项**是不是视频——连续翻页时自动起播的判据（验收人 2026-10-18：视频里点上/下一条
+     * 应该直接播，只有从图片切进视频才需要按一下播放）。由 [syncVideoLayer] 维护，
+     * `open()` 归 false（从网格点开一只视频不算「切过来」）。
+     */
+    internal var previousItemWasVideo = false
+    /**
+     * 上一次同步时落定的那一项 id。与上面那个布尔**成对**才够用：同一次打开里
+     * `syncVideoLayer` 会被调好几遍（`loadCurrent`、`loadIntoView` 的收尾、进出过渡的
+     * end action），只记布尔的话第二遍就把「刚点开」误判成「从上一条视频翻过来」，
+     * 结果刚进查看器自己播了起来（实测踩过）。id 没变 = 不是翻页，一律不起播。
+     */
+    internal var lastSyncedVideoFileId: String? = null
+    /**
      * 沉浸态系统栏接管回调（宿主注入，2026-10-07 B2 定稿）：true=隐藏系统栏并把窗口色
      * 置黑，false=还原。查看器容器恒**真全屏**（不吃 insets，见 MainActivity 组合根），
      * 所以翻转系统栏不引起容器 resize——「图片位置上下变动」由此从机制上消失，钉扎只
@@ -1352,6 +1365,9 @@ class NativeGalleryView @JvmOverloads constructor(
         this.images.addAll(images)
         this.currentIndex = startIndex.coerceIn(0, images.size - 1)
         this.rotationDegrees = 0
+        // 实例跨会话复用：上次留在视频页上的 true 会让本次「刚点开就自己播起来」
+        this.previousItemWasVideo = false
+        this.lastSyncedVideoFileId = null
         this.isOpen = true
         var autoStartSlideshow = false
         options?.optJSONObject("slideshow")?.let { sl ->
