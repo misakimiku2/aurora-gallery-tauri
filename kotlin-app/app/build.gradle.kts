@@ -123,6 +123,9 @@ dependencies {
     // common 显式声明：exoplayer 的 POM 里它是 implementation 依赖，不传递到编译类路径，
     // 而本层直接引用 Player/C/MediaItem/UnstableApi 这些类型
     implementation("androidx.media3:media3-common:1.4.1")
+    // datasource 同上一条理由：P5 的「容器字节代换」要直接继承 DefaultDataSource 并引用
+    // DataSource/DataSpec/TransferListener，exoplayer 的 POM 里它同样不传递到编译类路径。
+    implementation("androidx.media3:media3-datasource:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // M6a 阶段 7：对等服务端 HTTP 引擎（D30a Kotlin 原生 10 端点；单 jar 无传递依赖，APK 增量阶段 8 记录）
     implementation("org.nanohttpd:nanohttpd:2.3.1")

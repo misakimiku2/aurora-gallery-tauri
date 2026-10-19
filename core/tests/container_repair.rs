@@ -439,6 +439,87 @@ fn mdat_merge_on_real_sample() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// **「计划」与「真写」必须一字不差** —— 播放器的虚拟补丁通道（安卓无写权限时在读取时
+/// 即时代换那几处）完全建立在"两条路同源"上；哪天判据改了而计划没跟着改，就会出现
+/// 「扫描说修好了、播放却仍按旧样子代换」这种最难查的分叉。
+#[test]
+fn plan_patches_agrees_byte_for_byte_with_what_repair_writes() {
+    let dir = std::env::temp_dir().join(format!("aurora-plan-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("both.mp4");
+
+    let mut bytes = lying_bytes(); // 撒谎 elst 的 ftyp+moov
+    for _ in 0..200 {
+        bytes.extend_from_slice(&bx(b"mdat", &[0u8; 512]));
+    }
+    std::fs::write(&p, &bytes).unwrap();
+    let conn = Connection::open_in_memory().unwrap();
+    create_table(&conn).unwrap();
+
+    let plan = aurora_core::container_repair::plan_patches(&p);
+    assert_eq!(plan.len(), 2, "应当正好两类各一笔：{:?}", plan);
+    assert!(plan.iter().any(|x| x.kind == "elstMask"), "缺 elst 那笔");
+    assert!(plan.iter().any(|x| x.kind == "mdatSpan"), "缺 mdat 那笔");
+    assert!(
+        plan.iter().all(|x| x.expect.len() == 4 && x.write.len() == 4),
+        "补丁必须是 4 字节宽"
+    );
+
+    aurora_core::container_repair::repair_file(&conn, &p, "desktop");
+    let after = std::fs::read(&p).unwrap();
+    for x in &plan {
+        let o = x.offset as usize;
+        assert_eq!(&after[o..o + 4], &x.write[..], "真写的字节必须等于计划给出的字节");
+    }
+    // 除这几处之外，一个字节都不许差。**不能**断言"差异数 == 补丁数 × 4"：
+    // 旧值与新值可能有字节本来就相同（例如 mdat 长度字段的高位都是 0x00），那种位置写下去
+    // 不构成改动。要按「逐字节 expect vs write」算出应有的差异数。
+    let expected_diff: usize = plan
+        .iter()
+        .map(|x| (0..4).filter(|k| x.expect[*k] != x.write[*k]).count())
+        .sum();
+    let diff: Vec<usize> = (0..bytes.len()).filter(|i| after[*i] != bytes[*i]).collect();
+    let inside_a_patch = |i: usize| {
+        plan.iter()
+            .any(|x| (x.offset as usize..x.offset as usize + 4).contains(&i))
+    };
+    assert!(
+        diff.iter().all(|&i| inside_a_patch(i)),
+        "出现了补丁窗口之外的改动：{diff:?}"
+    );
+    assert_eq!(
+        diff.len(),
+        expected_diff,
+        "改动数应等于逐字节 expect≠write 的位数（补丁窗口：{:?}）",
+        plan.iter().map(|x| (x.offset, x.kind)).collect::<Vec<_>>()
+    );
+
+    // 修好之后再问一次计划：必须是空表（虚拟代换该自动退役，不能一直替）
+    assert!(
+        aurora_core::container_repair::plan_patches(&p).is_empty(),
+        "已原位修好的文件不该再给出代换表"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 只读：`plan_patches` 绝不能碰磁盘。
+#[test]
+fn plan_patches_never_writes() {
+    let dir = std::env::temp_dir().join(format!("aurora-plan-ro-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("frag.mp4");
+    let mut bytes = lying_bytes();
+    for _ in 0..200 {
+        bytes.extend_from_slice(&bx(b"mdat", &[0u8; 256]));
+    }
+    std::fs::write(&p, &bytes).unwrap();
+    let before = std::fs::read(&p).unwrap();
+    let _ = aurora_core::container_repair::plan_patches(&p);
+    assert_eq!(std::fs::read(&p).unwrap(), before, "取计划这一下不许动任何字节");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// 钉死一个**真机刚踩到**的坑：两类补丁分属不同轮次时，台账必须累加而不是覆盖。
 ///
 /// 现场是这样发生的：上一版程序扫过一遍、把 `elst` 遮蔽成 `free` 并记了账；这一版

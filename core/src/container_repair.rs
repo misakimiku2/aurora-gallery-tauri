@@ -120,6 +120,18 @@ fn planned_patches(path: &Path, verdict: &ContainerVerdict) -> Vec<BytePatch> {
     out
 }
 
+/// 只读地给出「这个文件现在需要哪些 4 字节代换」，**绝不动字节、不碰台账**。
+///
+/// 这是给播放器的**虚拟补丁**通道准备的：原位写拿不到权限时（安卓的作用域存储、只读盘、
+/// 被占用），与其让用户去开权限、让文件继续坏着，不如在读取时把这几处字节即时代成修好后的
+/// 样子 —— 见 `kotlin-app/.../viewer/ContainerPatchOverlay.kt`。判据与 [`repair_file`] 完全
+/// 同一套，所以「计划」与「真写」永远不会分叉成两套规则。
+///
+/// 已经是修好态的文件返回空表（幂等）；非 MP4 族 / moov 读不动也返回空表。
+pub fn plan_patches(path: &Path) -> Vec<BytePatch> {
+    planned_patches(path, &mp4_editlist::inspect(path))
+}
+
 /// 检测并（必要时）原位修复一个文件，成功则写台账。
 ///
 /// 幂等：已修过的文件返回 `alreadyRepaired`，不会再写一次字节。

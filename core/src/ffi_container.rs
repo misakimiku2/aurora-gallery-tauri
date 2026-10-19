@@ -59,6 +59,36 @@ pub struct FfiContainerRepairEntry {
     pub origin: String,
 }
 
+/// 一处**读取时代换**的 4 字节：偏移 + 应当呈现的字节。
+///
+/// 给「原位写不进去」时的虚拟补丁通道用（安卓作用域存储没给写权限、只读盘、文件被占用）。
+/// 表内容与真写进去的字节**一字不差** —— 判据同源于
+/// [`crate::container_repair::plan_patches`]，不许在 Kotlin 侧再实现一遍。
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct FfiContainerPatch {
+    pub offset: i64,
+    /// 4 个字节（`elst`→`free` 的类型标识，或 `mdat` 的新长度字段）。
+    pub bytes: Vec<u8>,
+    /// `elstMask` / `mdatSpan`，只进日志，不参与判定。
+    pub kind: String,
+}
+
+/// 只读地拿这个文件的补丁计划；已修好 / 非 MP4 / 判不动 → 空表。
+///
+/// **不动一个字节、不写台账、不开数据库连接**，所以每次起播前问一遍都安全（Kotlin 侧另有
+/// 按路径的 LruCache，同一会话内不重复解析）。
+#[uniffi::export]
+pub fn plan_video_container_patches(path: String) -> Vec<FfiContainerPatch> {
+    container_repair::plan_patches(Path::new(&path))
+        .into_iter()
+        .map(|p| FfiContainerPatch {
+            offset: p.offset as i64,
+            bytes: p.write.to_vec(),
+            kind: p.kind.to_string(),
+        })
+        .collect()
+}
+
 /// 只检测、不写盘。给「先让用户看看有多少要修」这类场景用。
 #[uniffi::export]
 pub fn inspect_video_container(path: String) -> FfiContainerRepair {

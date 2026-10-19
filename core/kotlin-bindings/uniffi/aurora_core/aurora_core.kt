@@ -926,6 +926,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_container_repairs(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_plan_video_container_patches(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_repair_video_container(
     ): Int
     external fun uniffi_aurora_core_checksum_func_repair_video_containers(
@@ -1107,6 +1109,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_inspect_video_container(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_list_container_repairs(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_plan_video_container_patches(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_repair_video_container(`path`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1423,6 +1427,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_container_repairs() != 47007) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_plan_video_container_patches() != 28611) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_repair_video_container() != 35354) {
@@ -2188,6 +2195,62 @@ public object FfiConverterTypeColorPixels: FfiConverterRustBuffer<ColorPixels> {
             FfiConverterUInt.write(value.`width`, buf)
             FfiConverterUInt.write(value.`height`, buf)
             FfiConverterByteArray.write(value.`rgba`, buf)
+    }
+}
+
+
+
+/**
+ * 一处**读取时代换**的 4 字节：偏移 + 应当呈现的字节。
+ *
+ * 给「原位写不进去」时的虚拟补丁通道用（安卓作用域存储没给写权限、只读盘、文件被占用）。
+ * 表内容与真写进去的字节**一字不差** —— 判据同源于
+ * [`crate::container_repair::plan_patches`]，不许在 Kotlin 侧再实现一遍。
+ */
+data class FfiContainerPatch (
+    var `offset`: kotlin.Long
+    , 
+    /**
+     * 4 个字节（`elst`→`free` 的类型标识，或 `mdat` 的新长度字段）。
+     */
+    var `bytes`: kotlin.ByteArray
+    , 
+    /**
+     * `elstMask` / `mdatSpan`，只进日志，不参与判定。
+     */
+    var `kind`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiContainerPatch: FfiConverterRustBuffer<FfiContainerPatch> {
+    override fun read(buf: ByteBuffer): FfiContainerPatch {
+        return FfiContainerPatch(
+            FfiConverterLong.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiContainerPatch) = (
+            FfiConverterLong.allocationSize(value.`offset`) +
+            FfiConverterByteArray.allocationSize(value.`bytes`) +
+            FfiConverterString.allocationSize(value.`kind`)
+    )
+
+    override fun write(value: FfiContainerPatch, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`offset`, buf)
+            FfiConverterByteArray.write(value.`bytes`, buf)
+            FfiConverterString.write(value.`kind`, buf)
     }
 }
 
@@ -4271,6 +4334,34 @@ public object FfiConverterSequenceTypeColorErrorFile: FfiConverterRustBuffer<Lis
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiContainerPatch: FfiConverterRustBuffer<List<FfiContainerPatch>> {
+    override fun read(buf: ByteBuffer): List<FfiContainerPatch> {
+        val len = buf.getInt()
+        return List<FfiContainerPatch>(len) {
+            FfiConverterTypeFfiContainerPatch.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiContainerPatch>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiContainerPatch.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiContainerPatch>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiContainerPatch.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiContainerRepair: FfiConverterRustBuffer<List<FfiContainerRepair>> {
     override fun read(buf: ByteBuffer): List<FfiContainerRepair> {
         val len = buf.getInt()
@@ -5643,6 +5734,23 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     UniffiLib.uniffi_aurora_core_fn_func_list_container_repairs(
     
         _status)
+}
+    )
+    }
+    
+
+        /**
+         * 只读地拿这个文件的补丁计划；已修好 / 非 MP4 / 判不动 → 空表。
+         *
+         * **不动一个字节、不写台账、不开数据库连接**，所以每次起播前问一遍都安全（Kotlin 侧另有
+         * 按路径的 LruCache，同一会话内不重复解析）。
+         */ fun `planVideoContainerPatches`(`path`: kotlin.String): List<FfiContainerPatch> {
+            return FfiConverterSequenceTypeFfiContainerPatch.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_plan_video_container_patches(
+    
+        
+        FfiConverterString.lower(`path`),_status)
 }
     )
     }

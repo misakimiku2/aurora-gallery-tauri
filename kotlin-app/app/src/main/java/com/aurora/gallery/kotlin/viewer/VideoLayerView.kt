@@ -35,6 +35,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import com.aurora.gallery.kotlin.R
 import com.aurora.gallery.kotlin.ui.components.formatVideoDuration
@@ -187,6 +188,18 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private fun buildPlayer(remote: Boolean): ExoPlayer =
         ExoPlayer.Builder(context)
+            // 本地档套一层「容器字节代换」数据源：原位写拿不到权限时（安卓作用域存储 / 只读盘），
+            // 在读取时把 `elst`、`mdat` 那几处字节即时代成修好后的样子，磁盘文件一个字节不动，
+            // 也不向用户要任何新权限。详见同目录 ContainerPatchOverlay.kt。
+            // LAN 档不套：那条走 http，容器字节轮不到我们改，改了也不该改远端产物。
+            // ⚠️ 入口只能是 `setMediaSourceFactory` + `DefaultMediaSourceFactory(DataSource.Factory)`：
+            // media3 1.4.1 的 ExoPlayer.Builder **没有** `setDataSourceFactory`，而
+            // `DefaultMediaSourceFactory` 也没有 `(Context, DataSource.Factory)` 这个构造。
+            .apply {
+                if (!remote) {
+                    setMediaSourceFactory(DefaultMediaSourceFactory(ContainerOverlayDataSourceFactory(context)))
+                }
+            }
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
