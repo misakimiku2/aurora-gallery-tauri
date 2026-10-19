@@ -33,6 +33,11 @@ pub mod video_remux;
 // 只能重编 —— 点开现转要等几分钟，所以给一条后台预转队列，桌面专属。
 #[cfg(not(target_os = "android"))]
 pub mod transcode_batch;
+// 视频 P4：桌面端原生播放内核（libmpv，运行时动态加载）。
+// 起因：WebView2 容器清单不含 AVI/ASF，且 Windows 无内置 MPEG-4 Part 2 MFT
+// ⇒ 即便 remux 也解不出画面；而指挥官要求点击必须在软件内播放、不得外挂。
+// ⚠️ 模块**无条件编译**（桌面端命令注册分支跨越 macOS/Linux），平台差异在文件内部用 cfg 切。
+pub mod mpv_player;
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -2007,6 +2012,11 @@ pub fn run() {
         transcode_batch::transcode_batch_start,
         transcode_batch::transcode_batch_stop,
         transcode_batch::transcode_clear_outputs,
+        // 视频 P4 PoC-A：桌面端原生播放内核（libmpv，运行时动态加载）
+        mpv_player::poc_mpv_open,
+        mpv_player::poc_mpv_command,
+        mpv_player::poc_mpv_stop,
+        mpv_player::poc_mpv_status,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,
