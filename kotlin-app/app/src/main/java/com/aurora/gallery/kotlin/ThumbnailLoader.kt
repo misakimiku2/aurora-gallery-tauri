@@ -272,8 +272,6 @@ class ThumbnailLoader(context: Context) {
             val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
                 ?.toIntOrNull()
                 ?: 0
-            // 临时诊断（本轮用完删）：raw 到底是编码朝向还是显示朝向，决定我们要不要再转一次
-            Log.i(TAG, "[Thumb] 抽帧原始 ${raw.width}x${raw.height} rotation=$rotation uri=$uri")
             val upright = if (rotation % 360 == 0) {
                 raw
             } else {
@@ -281,8 +279,12 @@ class ThumbnailLoader(context: Context) {
                 Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, m, true)
             }
             if (upright !== raw) raw.recycle()
-            // 临时诊断（A5.5 定完就删）：三方对不上时用这一行分锅——raw 是 getFrameAtTime 给的
-            Log.i(TAG, "[Thumb] 原始帧 ${raw.width}x${raw.height} rotation=$rotation")
+            // ⚠️ 这里原先跟着一行「临时诊断」日志：`raw.recycle()` 之后又读 `raw.width/height`，
+            // 对**任何 rotation≠0 的视频**必抛 IllegalStateException（Cannot access a recycled bitmap），
+            // 被下面的 catch 吞成 null → 封面取不到、退回系统缩略图。也就是说 ea81d00dd 那次
+            // 「纯视频相册不再是灰块」在旋转过的片子（手机录屏常见）上其实没生效，
+            // 也正好是挂了很久那条「封面灰着不出图、只见过一次复现不出」的合理成因。
+            // 两条诊断按它们自己的注释（"本轮用完删"）一并撤掉。
             val longSide = maxOf(upright.width, upright.height)
             val scaled = if (longSide <= THUMB_SIZE) {
                 upright
