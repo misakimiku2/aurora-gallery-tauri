@@ -193,6 +193,19 @@ class NativeGalleryView @JvmOverloads constructor(
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * 视频详情探针专用执行器：单线程 + daemon。
+     *
+     * 为什么单独一条线程而不是复用协程池：这个活儿是「用户点开详情才现读容器头」，
+     * 一次几十毫秒、结果进 [VideoDetailsProbe] 的 LruCache。串行一条线程就够，
+     * 还能避免快速翻页时同时开一堆 MediaExtractor。
+     */
+    private val videoProbeExecutor by lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "aurora-video-probe").apply { isDaemon = true }
+        }
+    }
+
     // internal：进出过渡与加载簇已拆到 NativeGalleryViewTransitions.kt（第 25 刀）
     internal val imageLoader: ImageLoader by lazy {
         // M5 1.2 起与画布共享进程级实例（D25：同内存缓存 + 同磁盘缓存 journal；
@@ -421,6 +434,15 @@ class NativeGalleryView @JvmOverloads constructor(
     /** Section 4 标题（M6b 阶段 3：LAN 项随内容一起整节隐藏）。 */
     private lateinit var drawerPaletteTitleView: View
     private val drawerDetailsGrid: GridLayout
+    /** 视频 P4：「更多详情」折叠按钮，只对**能给出那四项的对象**（视频）显示，图片项整按钮隐藏。 */
+    private lateinit var drawerDetailsToggle: TextView
+    /**
+     * 折叠状态跨文件保持 —— 与桌面 `MetadataPanel.showMoreVideoInfo` 同语义
+     * （桌面也不随切文件重置）。
+     */
+    private var videoDetailsExpanded = false
+    /** 抽屉当前对应的项：探针异步回来时用它复查「用户是不是还停在这一张」，并驱动重刷。 */
+    private var drawerItem: ImageItem? = null
     private val drawerTagsLayout: LinearLayout
     private val drawerDescView: TextView
     /** Section 8 的容器：来源网址可以有多条（P1(b)），每条一行，空时显示一行斜体 hint。 */
@@ -705,8 +727,31 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         drawerContainer.addView(drawerPaletteLayout)
 
-        // Section 5: 文件信息
-        drawerContainer.addView(buildSectionTitle("文件信息", iconRes = R.drawable.ic_lucide_info))
+        // Section 5: 文件信息（视频 P4：标题行右侧挂「更多详情」，与桌面 MetadataPanel
+        // 的同一处交互对齐 —— 常驻四项，折叠里再放帧率/码率/编码/旋转四项）
+        val detailsHeader = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        }
+        detailsHeader.addView(buildSectionTitle("文件信息", weight = 1f, iconRes = R.drawable.ic_lucide_info))
+        drawerDetailsToggle = TextView(context).apply {
+            setTextColor(colorAccent())
+            textSize = 12f
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((resources.displayMetrics.density * 8).toInt(), (resources.displayMetrics.density * 16).toInt(), 0, (resources.displayMetrics.density * 8).toInt())
+            // 命中区补到 48dp（与抽屉里其它按钮同一条约定）
+            minHeight = (resources.displayMetrics.density * 48).toInt()
+            isClickable = true
+            // 折叠态没数据可展开，默认藏起来，由 updateDrawer 按当前项类型开合
+            visibility = GONE
+            setOnClickListener {
+                videoDetailsExpanded = !videoDetailsExpanded
+                drawerItem?.let { updateDrawer(it) }
+            }
+        }
+        applyDrawerToggleLabel(drawerDetailsToggle)
+        detailsHeader.addView(drawerDetailsToggle)
+        drawerContainer.addView(detailsHeader)
         drawerDetailsGrid = GridLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
@@ -933,6 +978,54 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     /**
+     * 「更多详情」按钮的文案与箭头。图标库里只有 `chevron_right`/`chevron_down` 两个方向，
+     * 所以折叠态用右箭头（还能点开）、展开态用下箭头（可以收回去）。
+     */
+    private fun applyDrawerToggleLabel(btn: TextView) {
+        btn.text = if (videoDetailsExpanded) "收起详情" else "更多详情"
+        val iconRes = if (videoDetailsExpanded) R.drawable.ic_lucide_chevron_down else R.drawable.ic_lucide_chevron_right
+        val d = context.getDrawable(iconRes)
+        d?.setTint(colorAccent())
+        val s = (resources.displayMetrics.density * 12).toInt()
+        d?.setBounds(0, 0, s, s)
+        btn.setCompoundDrawablesRelative(null, null, d, null)
+        btn.compoundDrawablePadding = (resources.displayMetrics.density * 4).toInt()
+    }
+
+    /** 详情四项的三态：已读到 / 探针在路上（显「…」）/ 读不到（显「—」）。 */
+    private enum class ProbeState { Ready, Pending, Unavailable }
+
+    /** 本会话已经试过探针的 fileId —— 防止「失败→重刷→再试」打转，也防止线程风暴。 */
+    private val videoProbeAttempted = HashSet<String>()
+
+    /**
+     * 当前视频项的详情四项；没缓存时**发一次后台探针**并在落地后重刷抽屉。
+     *
+     * 为什么不在扫描/入库时就读好：那四项（帧率/码率/编码/旋转）安卓入库恒为 NULL，
+     * 补进扫描路径等于给每次刷新都加一遍开容器的成本，而它只在用户点开详情时才用得到
+     * ——与「进夹秒开」那条硬约束相反。所以：**点开才读、读一次、进程内缓存**。
+     */
+    private fun videoDetailsFor(item: ImageItem): Pair<VideoDetails?, ProbeState> {
+        VideoDetailsProbe.cached(item.fileId)?.let { return it to ProbeState.Ready }
+        if (videoProbeAttempted.contains(item.fileId)) return null to ProbeState.Unavailable
+        // 只挡同一会话内的重复尝试，不该让这条集合无界长大
+        if (videoProbeAttempted.size > 4096) videoProbeAttempted.clear()
+        videoProbeAttempted.add(item.fileId)
+        val key = item.fileId
+        videoProbeExecutor.execute {
+            val d = VideoDetailsProbe.read(
+                context.applicationContext, key, item.contentUri, item.path, item.size,
+            )
+            mainHandler.post {
+                // 用户可能已经翻页了：只在还停在这一张时重刷
+                val current = drawerItem
+                if (current != null && current.fileId == key) updateDrawer(current)
+            }
+        }
+        return null to ProbeState.Pending
+    }
+
+    /**
      * 文件信息的一格。
      *
      * **列宽写死，不用 GridLayout 权重**：权重只在 GridLayout 自己重新测量时才分给子
@@ -958,11 +1051,13 @@ class NativeGalleryView @JvmOverloads constructor(
             addView(TextView(context).apply {
                 text = label
                 setTextColor(colorTextSecondary())
-                textSize = 10f
+                // 10f→12f（2026-10-19 验收人反馈「详情信息文字有点小」）：标签与值一起抬 2sp，
+                // 保持原来的主次比例，只放大不改变视觉层级。图标也跟着从 10dp 抬到 12dp。
+                textSize = 12f
                 if (iconRes != null) {
                     val drawable = context.getDrawable(iconRes)
                     drawable?.setTint(colorTextSecondary())
-                    val iconSize = (density * 10).toInt()
+                    val iconSize = (density * 12).toInt()
                     drawable?.setBounds(0, 0, iconSize, iconSize)
                     setCompoundDrawablesRelative(drawable, null, null, null)
                     compoundDrawablePadding = (density * 4).toInt()
@@ -971,7 +1066,7 @@ class NativeGalleryView @JvmOverloads constructor(
             addView(TextView(context).apply {
                 text = value
                 setTextColor(colorTextPrimary())
-                textSize = 12f
+                textSize = 14f
                 maxLines = 2
                 setPadding(0, 2, 0, 0)
             })
@@ -1122,10 +1217,53 @@ class NativeGalleryView @JvmOverloads constructor(
         } // if (paletteVisible)：LAN 项 Section 4 为空，Section 5 起正常渲染
 
         // Section 5: 文件信息
+        // 视频 P4：字段集合与「更多详情」折叠逐条对齐桌面 `MetadataPanel`——
+        //   常驻：时长 / 分辨率 / 容器格式 / 大小；折叠里：帧率 / 码率 / 视频编码 / 旋转。
+        // 图片项维持原来的 格式 / 大小 / 尺寸 三项，不动交互。
+        // 「旋转为 0 就整格不显示」也是照桌面抄的（那边 rot==null/0 时不渲染这一格）。
+        drawerItem = item
+        applyDrawerToggleLabel(drawerDetailsToggle)
+        drawerDetailsToggle.visibility = if (item.isVideo) VISIBLE else GONE
         drawerDetailsGrid.removeAllViews()
-        drawerDetailsGrid.addView(buildDetailCell("格式", item.format.uppercase().ifEmpty { "—" }, R.drawable.ic_lucide_file_text))
-        drawerDetailsGrid.addView(buildDetailCell("大小", formatFileSize(item.size), R.drawable.ic_lucide_hard_drive))
-        drawerDetailsGrid.addView(buildDetailCell("尺寸", if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—", R.drawable.ic_lucide_image))
+        if (item.isVideo) {
+            val (vd, state) = videoDetailsFor(item)
+            /** 三态取值：读到且非空 → 值；还在路上 → 「…」；读不到 / 该项容器里没有 → 「—」。 */
+            fun field(get: (VideoDetails) -> String): String = when {
+                vd != null && get(vd).isNotEmpty() -> get(vd)
+                state == ProbeState.Pending -> "…"
+                else -> "—"
+            }
+            drawerDetailsGrid.addView(
+                buildDetailCell("时长", formatVideoDuration(item.durationMs).ifEmpty { "—" }, R.drawable.ic_lucide_clock)
+            )
+            // 分辨率优先用探针的**编码尺寸**（与桌面同源）；MediaStore 的宽高对旋转过的
+            // 视频是显示尺寸，可能上下颠倒，只当兜底。
+            val dims = when {
+                vd != null && vd.width > 0 && vd.height > 0 -> "${vd.width}×${vd.height}"
+                item.width > 0 && item.height > 0 -> "${item.width}×${item.height}"
+                else -> "—"
+            }
+            drawerDetailsGrid.addView(buildDetailCell("分辨率", dims, R.drawable.ic_lucide_image))
+            drawerDetailsGrid.addView(
+                buildDetailCell("容器格式", item.format.uppercase().ifEmpty { "—" }, R.drawable.ic_lucide_file_text)
+            )
+            drawerDetailsGrid.addView(buildDetailCell("大小", formatFileSize(item.size), R.drawable.ic_lucide_hard_drive))
+            if (videoDetailsExpanded) {
+                drawerDetailsGrid.addView(buildDetailCell("帧率", field { it.frameRate }, R.drawable.ic_lucide_frame))
+                drawerDetailsGrid.addView(buildDetailCell("码率", field { it.bitRate }, R.drawable.ic_lucide_gauge))
+                drawerDetailsGrid.addView(buildDetailCell("视频编码", field { it.codec }, R.drawable.ic_lucide_settings_2))
+                val rot = vd?.rotation ?: 0
+                if (rot != 0) {
+                    drawerDetailsGrid.addView(buildDetailCell("旋转", "$rot°", R.drawable.ic_lucide_rotate_cw))
+                } else if (state == ProbeState.Pending) {
+                    drawerDetailsGrid.addView(buildDetailCell("旋转", "…", R.drawable.ic_lucide_rotate_cw))
+                }
+            }
+        } else {
+            drawerDetailsGrid.addView(buildDetailCell("格式", item.format.uppercase().ifEmpty { "—" }, R.drawable.ic_lucide_file_text))
+            drawerDetailsGrid.addView(buildDetailCell("大小", formatFileSize(item.size), R.drawable.ic_lucide_hard_drive))
+            drawerDetailsGrid.addView(buildDetailCell("尺寸", if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—", R.drawable.ic_lucide_image))
+        }
         drawerDetailsGrid.addView(buildDetailCell("创建", formatDate(item.createdAt), R.drawable.ic_lucide_calendar))
         drawerDetailsGrid.addView(buildDetailCell("修改", formatDate(item.updatedAt), R.drawable.ic_lucide_clock))
 
