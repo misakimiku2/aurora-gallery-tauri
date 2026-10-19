@@ -240,6 +240,13 @@ pub async fn switch_root_database(
         log::info!("CLIP embedding database switched to: {:?}", new_root_path);
     }
 
+    // 视频产物目录跟着新根（媒体盘）走。漏掉这一句，GB 级产物会继续写进老根的
+    // .Aurora_Cache —— 或前端还没报过时写进 C: 的 %LOCALAPPDATA% 回落目录。
+    #[cfg(not(target_os = "android"))]
+    crate::video_remux::set_products_dir(
+        &crate::video_remux::products_dir_for_root(&new_root_path),
+    );
+
     // LAN 互联服务器若在运行，热更新其共享根路径（服务器不重启、已配对会话保持）：
     // root 必须与上面已切换的 metadata.db/colors.db 同步指向新根，否则手机端"网络"栏
     // 会呈现"文件夹已切换、图片全部消失"的失配状态（索引条目按新根匹配、越权检查按旧根）。

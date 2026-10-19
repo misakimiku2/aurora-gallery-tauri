@@ -360,6 +360,18 @@ class NativeGalleryView @JvmOverloads constructor(
         ((contentUri: String, bitmap: android.graphics.Bitmap, onDone: (Boolean) -> Unit) -> Unit)? = null
     var resetLocalVideoCover: ((contentUri: String, onDone: (Boolean) -> Unit) -> Unit)? = null
 
+    /**
+     * 宿主注入：**LAN 视频备播**（视频 P3 补丁，2026-10-19）。参数 = 大图 URL、进度回调、
+     * 完成回调（`可否开播` + `失败原因`）。回调线程不限，[VideoLayerView] 自己 post 回主线程。
+     *
+     * 为什么必须由宿主做：本机实测（Mate 40 Pro）的 MediaExtractor 清单里没有 AVI/ASF 两种
+     * 提取器，裸容器发过去解不开；产物化在桌面要 1 秒~几分钟，得让手机**先问后备播**，
+     * 而不是把数据源请求压在转换上。网络与协程归宿主（同 [localVideoCover] 那条约定）。
+     */
+    var onPrepareLanVideo: (
+        (url: String, onProgress: (Float) -> Unit, onDone: (Boolean, String?) -> Unit) -> Unit
+    )? = null
+
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun colorBg() = palette.main
     // DialogTheme 的 15 个 colorXxx()/isDarkTheme() 取值实现已抽到 PaletteContract.kt
@@ -556,6 +568,11 @@ class NativeGalleryView @JvmOverloads constructor(
             onPageRequest = { direction -> this@NativeGalleryView.navigate(direction) }
             // 旋转屏幕钮从顶栏挪进底部播控条（A2.5 第二轮），动作仍是本类的翻转
             onRotateRequest = { this@NativeGalleryView.toggleScreenOrientation() }
+            // 备播通道只是转发：网络与轮询在宿主（那里才有 lifecycleScope 与 LAN 会话）
+            onPrepareLan = { url, onProgress, onDone ->
+                val gate = this@NativeGalleryView.onPrepareLanVideo
+                if (gate == null) onDone(true, null) else gate.invoke(url, onProgress, onDone)
+            }
         }
         addView(videoLayer)
 

@@ -115,13 +115,28 @@ fn find_existing_video_cover(file_path: &str, cache_root: &Path) -> Option<Strin
 /// 防止 ffmpeg 进程并发过高在机械盘上 seek 抖动。
 ///
 /// 返回 (封面 JPEG 路径, 主色)。ffmpeg 缺失 / 抽帧失败返回 None（调用方降级）。
+///
+/// 源容器抽不到时退一步**从产物抽**（2026-10-19）：实测 ASF/WMV 走「逐候选 `-ss` seek」
+/// 是 6/6 全失败（日志 `[ffmpeg_cover] 逐 seek 结束: 失败候选 6/6`），所以 wmv 一直没封面；
+/// 而 remux/转码产物是普通 MP4，抽得开。封面键仍按**源文件**算
+/// （见 [`ffmpeg_cover::extract_for`]），否则源卡片找不到它。没有产物就照旧返回 None。
 #[cfg(not(target_os = "android"))]
 fn generate_video_cover_with_colors(
     file_path: &str,
     cache_root: &Path,
 ) -> Option<(String, Vec<color_extractor::ColorResult>)> {
     let _permit = crate::image_utils::acquire_video_cover();
-    crate::ffmpeg_cover::extract(file_path, cache_root).map(|r| (r.cover_path, r.colors))
+    if let Some(r) = crate::ffmpeg_cover::extract(file_path, cache_root) {
+        return Some((r.cover_path, r.colors));
+    }
+    let product = crate::video_remux::desktop_product_for(file_path)?;
+    let r = crate::ffmpeg_cover::extract_for(&product.to_string_lossy(), file_path, cache_root)?;
+    log::info!(
+        "[video_cover] 源容器抽不到，改用产物抽到封面 - {} <- {}",
+        file_path,
+        product.display()
+    );
+    Some((r.cover_path, r.colors))
 }
 
 /// 把抽帧主色落库（P1.5-B S3）。

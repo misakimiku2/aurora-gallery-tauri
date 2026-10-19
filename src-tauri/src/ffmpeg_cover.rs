@@ -447,6 +447,16 @@ pub fn is_suspicious_duration(duration_ms: i64, file_size: u64) -> bool {
     (duration_ms as f64) < SUSPICIOUS_DURATION_SECS * 1000.0 && file_size > SUSPICIOUS_SIZE_BYTES
 }
 
+/// 直接问 ffmpeg 要时长（毫秒）。
+///
+/// 用途：revelo **整只容器都读不出**的那些 —— 实测 ASF/WMV 走 `revelo` 拿不到任何字段
+/// （`video_metadata` 回 `codec=None dur=None`），转码档的进度条需要总时长才准，
+/// 只能退回 `ffmpeg -i` 这条路。无 ffmpeg 时返回 None（调用方自行降级，不劣化）。
+pub fn probe_duration_ms(file_path: &str) -> Option<i64> {
+    let (ffmpeg, _) = locate()?;
+    probe_duration_via_ffmpeg(&ffmpeg, file_path).map(|s| (s * 1000.0) as i64)
+}
+
 /// 扫描入库用的时长健全性修正（2026-10-15）：
 /// revelo 对 AVI+AVC 等非标准封装误报（实测 duration≈71ms，真实 10.8s）——
 /// **入库前**复核，否则 UI 时长显示 00:00 且永不纠正（扫描路径此前无兜底，
@@ -524,14 +534,33 @@ pub struct CoverExtractResult {
 /// ffmpeg 缺失返回 None（调用方降级：S3 起前端走 canvas 兜底）。
 pub fn extract(file_path: &str, cache_root: &Path) -> Option<CoverExtractResult> {
     let (ffmpeg, _) = locate()?;
-    extract_with_ffmpeg(&ffmpeg, file_path, cache_root)
+    extract_with_ffmpeg(&ffmpeg, file_path, file_path, cache_root)
+}
+
+/// 从 `read_path` 抽帧，但**封面键按 `key_path` 算**。
+///
+/// 用途（2026-10-19）：源容器连 ffmpeg 都解不开的那些 —— 实测 ASF/WMV 走「逐候选 `-ss`
+/// seek」是 6/6 全失败（日志 `[ffmpeg_cover] 逐 seek 结束: 失败候选 6/6`），
+/// 于是改从**产物**抽帧；但封面必须仍挂在**源文件**的缓存键上，
+/// 否则源卡片找不到它（缓存键 = `size+mtime+首 4096 字节`，换文件就换键）。
+pub fn extract_for(
+    read_path: &str,
+    key_path: &str,
+    cache_root: &Path,
+) -> Option<CoverExtractResult> {
+    let (ffmpeg, _) = locate()?;
+    extract_with_ffmpeg(&ffmpeg, read_path, key_path, cache_root)
 }
 
 /// 用指定 ffmpeg 抽帧：候选点逐个 `-ss` seek 抽单帧 → 打分择优（亮度达标早退）→
 /// 最优帧写缓存（`cache_filename_for`，带 `-vc{N}` 版本位）→ 主色提取。
+///
+/// `file_path` 是**读帧**的那个文件，`key_path` 是**算封面键**用的那个
+/// —— 两者通常相同，只有 [`extract_for`] 那种「从产物抽、挂到源上」的情况才分开。
 pub fn extract_with_ffmpeg(
     ffmpeg: &Path,
     file_path: &str,
+    key_path: &str,
     cache_root: &Path,
 ) -> Option<CoverExtractResult> {
     // 1) 容器元数据：revelo（与 scanner 同源，零额外进程；ffprobe 不在此引入）。
@@ -562,8 +591,15 @@ pub fn extract_with_ffmpeg(
     let (w, h) = target_size_256(dw, dh);
 
     // 3) 缓存名：与读路径/前端共用同一函数（视频带 -vc{N} 版本位）。
+    //    ⚠️ 键按 **key_path** 算（从产物抽帧时也要挂回源文件），
+    //    而下面那个超时预算按**实际要读的文件**体积算 —— 两者不能混。
     let file_meta = std::fs::metadata(file_path).ok()?;
-    let cache_filename = crate::thumbnail::cache_filename_for(file_path, &file_meta);
+    let key_meta = if key_path == file_path {
+        file_meta.clone()
+    } else {
+        std::fs::metadata(key_path).ok()?
+    };
+    let cache_filename = crate::thumbnail::cache_filename_for(key_path, &key_meta);
     let jpg_path = cache_root.join(format!("{}.jpg", cache_filename));
 
     // 4) 所有候选共享同一体积感知超时预算（与前端一致）。
@@ -1188,7 +1224,7 @@ mod tests {
             ran = true;
             let tmp = std::env::temp_dir().join("aurora_ffmpeg_cover_test");
             std::fs::create_dir_all(&tmp).unwrap();
-            match extract_with_ffmpeg(&ffmpeg, s, &tmp) {
+            match extract_with_ffmpeg(&ffmpeg, s, s, &tmp) {
                 Some(r) => {
                     assert!(Path::new(&r.cover_path).exists(), "封面文件应已写盘");
                     assert!(!r.colors.is_empty(), "主色不应为空");
@@ -1224,8 +1260,8 @@ mod tests {
         }
         let tmp = std::env::temp_dir().join("aurora_ffmpeg_cover_test");
         std::fs::create_dir_all(&tmp).unwrap();
-        let a = extract_with_ffmpeg(&ffmpeg, mp4, &tmp).expect("mp4 抽取失败");
-        let b = extract_with_ffmpeg(&ffmpeg, mkv, &tmp).expect("mkv 抽取失败");
+        let a = extract_with_ffmpeg(&ffmpeg, mp4, mp4, &tmp).expect("mp4 抽取失败");
+        let b = extract_with_ffmpeg(&ffmpeg, mkv, mkv, &tmp).expect("mkv 抽取失败");
         println!(
             "mp4 seek={:.3}s colors={} | mkv seek={:.3}s colors={}",
             a.seek_time,

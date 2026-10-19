@@ -1711,7 +1711,13 @@ pub async fn handle_image(
     
     state.devices.update_activity(&session.device_id).await;
 
-    let full_path = state.root().join(&query.path);
+    let root = state.root();
+    // 产物目录跟着库走（`<根>/.Aurora_Cache/video-products`）：本机 C: 只剩 20GB，
+    // 而一只 1.57GB 的 avi remux 出来就是 1.57GB。公式只有一处，见 products_dir_for_root。
+    crate::video_remux::set_products_dir(
+        &crate::video_remux::products_dir_for_root(&root.to_string_lossy()),
+    );
+    let full_path = root.join(&query.path);
     
     log::info!("[LAN Share] 图片请求 - 设备: {}, 路径: {}", session.device_name, query.path);
 
@@ -1722,7 +1728,115 @@ pub async fn handle_image(
 
     // 视频 P1（设计方案 §5.5，从 P3 提前）：文件响应支持 Range（见 serve_file_with_range）。
     // 鉴权已在上面完成，本段只负责把字节流交回。
-    serve_file_with_range(&full_path, &headers).await
+    //
+    // 视频 P3 补丁（2026-10-19 真机实测）：手机那侧的 MediaExtractor 清单里**没有 AVI
+    // 也没有 ASF**，源字节原样发过去必然解不开；若备播端点已经把产物备出来，这里就
+    // **同一个 URL 改发产物字节** —— 客户端不必、也不该知道服务端的绝对路径。
+    // 判据全在 `video_remux::android_product_for`（含「绝不在这儿启动转换」那条边界）。
+    let target = crate::video_remux::android_product_for(&full_path).unwrap_or(full_path);
+    serve_file_with_range(&target, &headers).await
+}
+
+/// 安卓端「先备好再播」（2026-10-19 实测新增）。
+///
+/// **为什么需要**：手机播放器是 ExoPlayer + 系统 MediaExtractor，实测这台机
+/// （Mate 40 Pro / EMUI 14.2）装载的提取器里既没有 AVI 也没有 ASF —— 失败点在解封装，
+/// 客户端重试多少次都没用。桌面早有 `video_remux.rs` 这条产物链路（当时按「安卓原生解码
+/// 通吃」的判断没接到 LAN 上，那条判断已被实测推翻），本端点就是把它接过来。
+///
+/// **协议**（只回状态，不回服务端绝对路径）：
+/// - `direct`  → 容器手机能直接解，照原 URL 播；
+/// - `pending` → 产物生成中，`progress` 0..1，客户端继续轮询；
+/// - `ready`   → 产物就绪，客户端**仍播同一个 `/api/image?path=`**（那边会改发产物字节）；
+/// - `failed`  → 带 `message`，客户端显示原因。
+pub async fn handle_video_prepare(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<ImageQuery>,
+) -> Result<Response, Response> {
+    let token = extract_token_with_fallback(&headers, query.token.as_ref())?;
+    let session = state.sessions.validate_token(&token).await.ok_or_else(|| {
+        log::warn!("[LAN Share] 视频备播失败 - 无效或过期的 Token");
+        error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token")
+    })?;
+
+    state.devices.update_activity(&session.device_id).await;
+
+    let root = state.root();
+    // 与 handle_image 同一套产物目录公式（两边算出不同目录会出现「备好了却找不到」）
+    crate::video_remux::set_products_dir(
+        &crate::video_remux::products_dir_for_root(&root.to_string_lossy()),
+    );
+    let full_path = root.join(&query.path);
+    // 与 handle_image 同一道防线：越出共享根目录一律 404。
+    if !full_path.exists() || !full_path.starts_with(root.as_path()) {
+        log::warn!("[LAN Share] 视频备播失败 - 文件不存在: {}", full_path.display());
+        return Err(error_response(StatusCode::NOT_FOUND, "File not found"));
+    }
+
+    let abs = full_path.to_string_lossy().to_string();
+    if crate::video_remux::is_android_playable(&abs) {
+        return Ok(Json(serde_json::json!({ "mode": "direct" })).into_response());
+    }
+
+    // 档位由编码决定（容器不可播时才知道要产物；编码未知按「解不动」处理，见 pick_profile）。
+    let meta = crate::video_metadata::read_video_metadata(&full_path);
+    let codec = meta.as_ref().and_then(|m| m.video_codec.clone());
+    let size = std::fs::metadata(&full_path).map(|m| m.len()).unwrap_or(0);
+    // 总时长只拿来算进度，但两处都得绕过去（2026-10-19 实测）：
+    // ① revelo 对 AVI+AVC 误报 71ms —— 不修就会一开局就顶到 99%；
+    // ② ASF/WMV 整只容器 revelo 读不出，duration 是 None —— 只能问 ffmpeg。
+    // ⚠️ 问 ffmpeg 一支是一次进程启动，而客户端是**每 500ms 轮询一次**这一条：
+    // 所以只在「任务还没起来」时探一次；任务已在途时进度本来就由那次探到的分母算，
+    // 再探一次等于每轮询一次多开一个 ffmpeg（自审抓到，单测挡不住）。
+    let mut total_ms = crate::ffmpeg_cover::sane_video_duration_ms(
+        &abs,
+        size,
+        meta.as_ref().and_then(|m| m.duration_ms),
+    );
+    let need_probe = total_ms.map(|ms| ms <= 0).unwrap_or(true);
+    if need_probe && crate::video_remux::job_snapshot(&abs).is_none() {
+        total_ms = crate::ffmpeg_cover::probe_duration_ms(&abs);
+    }
+    let total_us = total_ms.filter(|ms| *ms > 0).map(|ms| ms as u64 * 1000);
+    // 转码档的目标码率按分辨率封顶（不封顶时 720p 实测能跑到比源还高的码率）
+    let hints = match meta.as_ref() {
+        Some(m) => crate::video_remux::EncodeHints {
+            width: m.width,
+            height: m.height,
+            fps: m.frame_rate.unwrap_or(0.0),
+        },
+        None => crate::video_remux::EncodeHints::default(),
+    };
+    // codec 要移进阻塞任务，日志留一份
+    let codec_log = codec.clone();
+
+    let dto = tauri::async_runtime::spawn_blocking(move || {
+        crate::video_remux::ensure_async_for_client(abs, codec, total_us, hints)
+    })
+    .await
+    .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    let mode = match dto.status {
+        crate::video_remux::RemuxStatus::Direct => "direct",
+        crate::video_remux::RemuxStatus::Pending => "pending",
+        crate::video_remux::RemuxStatus::Ready => "ready",
+        crate::video_remux::RemuxStatus::Failed => "failed",
+    };
+    log::info!(
+        "[LAN Share] 视频备播 - 设备: {}, 路径: {}, 编码: {:?}, 状态: {}, 进度: {:.0}%",
+        session.device_name,
+        query.path,
+        codec_log,
+        mode,
+        dto.progress * 100.0
+    );
+    Ok(Json(serde_json::json!({
+        "mode": mode,
+        "progress": dto.progress,
+        "message": dto.message,
+    }))
+    .into_response())
 }
 
 /// 读取文件并作为 HTTP 响应返回，支持 Range（视频 P1，设计方案 §5.5）。

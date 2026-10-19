@@ -225,6 +225,35 @@ fn parse_duration_ms(value: &str) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// 编码字符串口径取证（2026-10-19）：安卓产物档位表（`video_remux::pick_profile`）
+    /// 就是按这些字符串判的，口径一变这里先红，免得门控静默失灵把 Xvid 送去白转码、
+    /// 或把 JPEG 当可解送去换包装。
+    ///
+    /// ⚠️ 样本在 `log/` 下，而 `log/` 被 gitignore —— 所以**本机才跑得到**，新克隆与 CI
+    /// 会整条跳过（与 `remux_real_samples_*` 等同款样本测试一致，靠 skip 而不是靠报错）。
+    /// 门控本身的逻辑由 `video_remux::tests::codec_gate_is_a_whitelist_not_a_blacklist`
+    /// 在无样本时也能验。
+    ///
+    /// 另外：这里是 **MediaInfo 口径**，与 ffmpeg 不同 —— ffmpeg 报 `mpeg4`/`mjpeg`，
+    /// revelo 报 `MPEG-4 Visual`/`JPEG`。
+    #[test]
+    fn revelo_reports_the_codec_strings_the_android_gate_relies_on() {
+        let cases = [
+            ("../log/FormatProbeMpeg4.avi", "MPEG-4 Visual"),
+            ("../log/FormatProbeJpeg.avi", "JPEG"),
+            ("../log/SVID_20261006_213438_1.avi", "AVC"),
+        ];
+        for (p, want) in cases {
+            let path = std::path::Path::new(p);
+            if !path.exists() {
+                eprintln!("[skip] 样本缺失: {}", p);
+                continue;
+            }
+            let got = read_video_metadata(path).and_then(|m| m.video_codec);
+            assert_eq!(got.as_deref(), Some(want), "{} 的编码口径变了", p);
+        }
+    }
+
     /// 2026-10-16：码率解析——纯数字 bps 是 revelo 实测主路径；单位形态作防御。
     #[test]
     fn parse_bit_rate_handles_units() {

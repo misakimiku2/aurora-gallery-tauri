@@ -61,6 +61,11 @@ internal fun MainActivity.ensureViewer(): NativeGalleryView = viewer ?: NativeGa
             onDone(ok)
         }
     }
+    // 视频 P3 补丁（2026-10-19 实测）：LAN 项起播前先请桌面端把手机解不了的容器产物化。
+    // 轮询在 VM 的 scope 里跑（查看器那个包没有协程，见上条同约定），回调由视频层自己 post 回主线程。
+    it.onPrepareLanVideo = { url, onProgress, onDone ->
+        viewModel.prepareLanVideo(url, onProgress, onDone)
+    }
     viewer = it
 }
 

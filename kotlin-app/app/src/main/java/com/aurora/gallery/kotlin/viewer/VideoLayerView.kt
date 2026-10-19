@@ -232,6 +232,14 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private var boundFileId: String? = null
     private var mediaUrl: String = ""
+    /** 当前这一路是不是远端（LAN）——决定要不要走备播那一关。 */
+    private var remoteSource = false
+    /** 桌面端已确认「这份能播了」（direct 或产物 ready）。换 bind 归零。 */
+    private var prepared = false
+    /** 备播在途，防连点起多个请求。 */
+    private var preparing = false
+    /** 备播请求序号：换页/重进要能认出手上这个回调属于已经不作废旧的那一路。 */
+    private var prepareToken = 0
     private var fallbackDurationMs: Long = 0L
     private var playbackStarted = false
     private var firstFrameRendered = false
@@ -263,6 +271,19 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     var onPageRequest: ((Int) -> Unit)? = null
     /** 左下角的旋转屏幕钮：翻转的是宿主钉的屏幕方向，本层只发信号。 */
     var onRotateRequest: (() -> Unit)? = null
+
+    /**
+     * 宿主注入的**备播**通道（视频 P3 补丁，2026-10-19）：LAN 项起播前先请桌面端把
+     * 手机解不了的容器（实测 AVI / ASF 连提取器都没有）产物化。
+     *
+     * 契约：`onProgress(0..1)` 与 `onDone(可否开播, 失败原因)` 都**可以**从任意线程回调
+     * （本层自己 post 回主线程）；宿主没接（null）时行为与今天一致——直接播原 URL。
+     * 为什么放在宿主而不是本层：这个包全是 Handler/post，网络与协程归宿主（同
+     * [NativeGalleryView.localVideoCover] 那条约定）。
+     */
+    var onPrepareLan: (
+        (url: String, onProgress: (Float) -> Unit, onDone: (Boolean, String?) -> Unit) -> Unit
+    )? = null
 
     /**
      * 竖屏窄宽形制：把倍速与画面大小两颗从播控条摘掉，动作改走宿主「更多」菜单
@@ -730,6 +751,11 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         ensurePlayerProfile(remote)
         boundFileId = fileId
         mediaUrl = url
+        // 备播状态跟着这一路走：换项必须重新问过（上一项的「能播了」不算数）
+        remoteSource = remote
+        prepared = false
+        preparing = false
+        prepareToken++
         fallbackDurationMs = durationMs
         videoW = max(width, 0)
         videoH = max(height, 0)
@@ -800,10 +826,26 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         return player.repeatMode == Player.REPEAT_MODE_ONE
     }
 
-    /** 起播（中央播放键与播控条的播放钮都走这里）。 */
+    /**
+     * 起播（中央播放键与播控条的播放钮都走这里）。
+     *
+     * LAN 项先过备播那一关：实测这台机的 `dumpsys media.extractor` 清单里**没有 AVI
+     * 也没有 ASF**，裸容器原样发过去必然解不开；而产物化在桌面要花 1 秒到几分钟，
+     * 把 `/api/image` 压在转换上会踩 ExoPlayer 的读超时。所以先问、等 `ready`、
+     * 再开同一个 URL（那时服务端会改发产物字节）。
+     */
     fun start() {
         val url = mediaUrl
         if (boundFileId == null || url.isEmpty()) return
+        if (remoteSource && !prepared) {
+            if (!preparing) beginPrepare(url)
+            return
+        }
+        doStart(url)
+    }
+
+    /** 真的起播。`start()` 是门禁，这里是门禁放行后的那一步。 */
+    private fun doStart(url: String) {
         if (!playbackStarted) {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(url)))
             player.prepare()
@@ -817,6 +859,44 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         player.playWhenReady = true
         scheduleChromeHide()
         refreshLayerState()
+    }
+
+    /**
+     * 请桌面端备这份产物，成功后自动起播。进度借 [gestureHint] 报——它是本层现成的
+     * 顶部浮层，而 `bufferingBar` 的显隐语义已经绑死在播放器的 BUFFERING 态上（v2.27
+     * 那条事故就是把它当通用转圈用），不能挪用。
+     */
+    private fun beginPrepare(url: String) {
+        val gate = onPrepareLan
+        if (gate == null) {
+            // 宿主没接这条：维持补丁前的行为，直接播原 URL（失败照旧走 onPlayError）
+            doStart(url)
+            return
+        }
+        preparing = true
+        val token = ++prepareToken
+        gestureHint.text = "桌面端准备中…"
+        gestureHint.visibility = VISIBLE
+        gate.invoke(url, { p ->
+            mainHandler.post {
+                if (token != prepareToken) return@post
+                gestureHint.text =
+                    if (p > 0f) "桌面端转换中 ${((p * 100).toInt().coerceAtMost(99))}%"
+                    else "桌面端准备中…"
+            }
+        }, { ok, message ->
+            mainHandler.post {
+                if (token != prepareToken) return@post
+                preparing = false
+                gestureHint.visibility = GONE
+                if (ok) {
+                    prepared = true
+                    if (mediaUrl.isNotEmpty()) doStart(mediaUrl)
+                } else {
+                    onPlayError?.invoke(message ?: "桌面端转换失败")
+                }
+            }
+        })
     }
 
     fun togglePlay() {
@@ -1096,6 +1176,11 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private fun stopPlayback() {
         mainHandler.removeCallbacks(ticker)
+        // 备播在途时停掉：作废序号让那个回调落地时什么都不做，浮层也要收掉，
+        // 否则「桌面端转换中…」会挂在已经换页/关掉的这一路上。
+        prepareToken++
+        preparing = false
+        gestureHint.visibility = GONE
         // 拖拽状态必须一起归零：`detach()`（换页/关闭/进幻灯片）走的就是这里，不归零就会
         // 把上一条那条待执行的 seek 拖到新的一条上（实施方案 §4.3）
         resetScrub()

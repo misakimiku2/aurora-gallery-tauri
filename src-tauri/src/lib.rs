@@ -29,6 +29,10 @@ pub mod ffmpeg_download;
 // 视频 P2：桌面端播放格式兜底 —— A 类容器（mkv/avi/flv/ts/3gp）remux 成 MP4 后播放，桌面专属。
 #[cfg(not(target_os = "android"))]
 pub mod video_remux;
+// 视频 P3（2026-10-19 真机实测）：B 类（WMV/VC-1、MJPEG）手机连解码器都拉不起来，
+// 只能重编 —— 点开现转要等几分钟，所以给一条后台预转队列，桌面专属。
+#[cfg(not(target_os = "android"))]
+pub mod transcode_batch;
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -1996,6 +2000,13 @@ pub fn run() {
         video_remux::video_remux_probe,
         video_remux::video_remux_stats,
         video_remux::video_remux_clear,
+        // 产物目录跟着资源根走（媒体盘）：启动时与切根后各报一次
+        video_remux::video_products_configure,
+        // 视频 P3 批量预转（2026-10-19）：B 类后台转码队列 + 产物独立清理
+        transcode_batch::transcode_batch_status,
+        transcode_batch::transcode_batch_start,
+        transcode_batch::transcode_batch_stop,
+        transcode_batch::transcode_clear_outputs,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,

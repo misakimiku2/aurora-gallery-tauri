@@ -135,6 +135,9 @@ impl LanShareServer {
             .route("/api/search", get(handle_search))
             .route("/api/thumbnail", get(handle_thumbnail))
             .route("/api/image", get(handle_image))
+            // 视频 P3 补丁（2026-10-19 真机实测）：安卓的解封装清单里没有 AVI/ASF，
+            // 起播前先让服务端把产物备出来，手机拿到 ready 再开同一个 URL。
+            .route("/api/video/prepare", get(handle_video_prepare))
             .route("/api/file", delete(handle_delete))
             .route("/api/rename", post(handle_rename))
             .route("/api/upload", post(handle_upload).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))

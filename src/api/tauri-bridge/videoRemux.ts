@@ -7,8 +7,14 @@
  * 于是直接复用**已有的 asset 协议 + Range**播放，本部桥只负责：
  *   ① 判定要不要转（原生可解容器一律不打扰）② 取产物路径 ③ 订阅转封装进度
  *
- * **安卓端不注册 `video_remux_*` 命令**（原生解码器通吃，设计方案 §12.5）——
- * 所有 invoke 失败一律降级为「不支持」，调用方保持原有行为，**不得**因此报错。
+ * **安卓端不注册 `video_remux_*` / `transcode_batch_*` 命令**（手机侧没有 ffmpeg，
+ * 格式兜底全部在桌面做）—— 所有 invoke 失败一律降级为「不支持」，
+ * 调用方保持原有行为，**不得**因此报错。
+ *
+ * ⚠️ 2026-10-19 更正：这里旧写法「原生解码器通吃，设计方案 §12.5」是**错的**，
+ * 真机取证推翻了它（这台机的提取器清单里没有 AVI 也没有 ASF，海思 VC-1 解码器
+ * 声明了却拉不起来）。桌面这套产物链路现在同时服务 WebView 与 LAN 手机，
+ * 取证与判决见 P3 清单 §16。
  */
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -97,12 +103,119 @@ export const clearVideoRemuxCache = async (): Promise<RemuxStats | null> => {
   }
 };
 
+/**
+ * 告诉后端当前资源根，把视频产物目录对齐到媒体盘上的
+ * `<根>/.Aurora_Cache/video-products`。
+ *
+ * **必须在启动时与切根后各调一次**：产物是 GB 级的，不报根就回落到
+ * `%LOCALAPPDATA%`（本机 C: 只剩 20GB，两三支 avi 就把系统盘推到底）。
+ * 失败静默 —— 安卓端没这条命令，返回值只用来打日志。
+ */
+export const configureVideoProducts = async (resourceRoot: string): Promise<string | null> => {
+  if (!resourceRoot) return null;
+  try {
+    return await invoke<string | null>('video_products_configure', { resourceRoot });
+  } catch {
+    return null;
+  }
+};
+
 /** 订阅转封装进度/完成事件；不支持时返回 null */
 export const onRemuxProgress = async (
   cb: (state: RemuxStateDto) => void
 ): Promise<UnlistenFn | null> => {
   try {
     return await listen<RemuxStateDto>(REMUX_PROGRESS_EVENT, (event) => cb(event.payload));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 视频 P3 · B 类批量预转队列（2026-10-19，桌面专属）
+ *
+ * 为什么单独一条队列：B 类（WMV/VC-1、MJPEG）手机连解码器都拉不起来，只能重编；
+ * 实测 `h264_mf` 质量档 ~39x 实时，一只两小时的片子仍要三五分钟。真等点开才转，
+ * 手机那头就是「按下播放然后等」，与「下载视频点开就能看」这条原则冲突。
+ * A 类不在队列里 —— remux 秒级无损，点开时现转就够，批量做只会多占一份和原片等大的空间。
+ */
+
+/** Rust `transcode_batch::BatchStatusDto`（字段名逐一对齐，改一侧必须改另一侧） */
+export interface TranscodeBatchStatus {
+  running: boolean;
+  total: number;
+  done: number;
+  succeeded: number;
+  failed: number;
+  current: string | null;
+  current_progress: number;
+  last_error: string | null;
+  /** 空闲时现扫的候选数；跑起来后等于 total */
+  candidates: number;
+  bytes_planned: number;
+  /** 按实测倍速的一半保守估的分钟数 */
+  est_minutes: number;
+  ffmpeg_present: boolean;
+  output_dir: string | null;
+  output_bytes: number;
+  output_limit_bytes: number;
+}
+
+export const TRANSCODE_BATCH_EVENT = 'video-transcode-batch-progress';
+
+/** 队列状态（顺带把产物目录按资源根对齐）；失败回 null，调用方按「不支持」处理 */
+export const getTranscodeBatchStatus = async (
+  resourceRoot: string
+): Promise<TranscodeBatchStatus | null> => {
+  try {
+    return await invoke<TranscodeBatchStatus>('transcode_batch_status', {
+      resourceRoot,
+    });
+  } catch {
+    return null;
+  }
+};
+
+/** 起队列（已在跑就原样返回当前状态，不排第二个线程） */
+export const startTranscodeBatch = async (
+  resourceRoot: string
+): Promise<TranscodeBatchStatus | null> => {
+  try {
+    return await invoke<TranscodeBatchStatus>('transcode_batch_start', {
+      resourceRoot,
+    });
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 请求停止。**当前那只会跑完**（中途打断已转九成的片子更亏），
+ * 所以点完按钮进度还会往前走一段，UI 别把它当卡死。
+ */
+export const stopTranscodeBatch = async (): Promise<TranscodeBatchStatus | null> => {
+  try {
+    return await invoke<TranscodeBatchStatus>('transcode_batch_stop');
+  } catch {
+    return null;
+  }
+};
+
+/** 清空转码产物（与 remux 缓存分开的两个按钮：转好的重编要几十分钟，不能跟着「清缓存」一起被抹掉） */
+export const clearTranscodeOutputs = async (): Promise<RemuxStats | null> => {
+  try {
+    return await invoke<RemuxStats>('transcode_clear_outputs');
+  } catch {
+    return null;
+  }
+};
+
+/** 订阅队列进度；不支持时返回 null */
+export const onTranscodeBatchProgress = async (
+  cb: (s: TranscodeBatchStatus) => void
+): Promise<UnlistenFn | null> => {
+  try {
+    return await listen<TranscodeBatchStatus>(TRANSCODE_BATCH_EVENT, (e) => cb(e.payload));
   } catch {
     return null;
   }

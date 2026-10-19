@@ -21,6 +21,18 @@ import {
   clearVideoRemuxCache,
   RemuxStats,
 } from '../../api/tauri-bridge/videoRemux';
+// 视频 P3（2026-10-19 真机取证）：B 类格式后台预转队列
+import {
+  TranscodeBatchStatus,
+  getTranscodeBatchStatus,
+  startTranscodeBatch,
+  stopTranscodeBatch,
+  clearTranscodeOutputs,
+  onTranscodeBatchProgress,
+} from '../../api/tauri-bridge/videoRemux';
+
+/** 绝对路径取末段（当前任务只报文件名，整条路径太长会把这一行挤散） */
+const baseName = (p: string): string => p.split(/[\\/]/).pop() ?? p;
 
 /**
  * 视频设置面板（2026-10-16）。
@@ -114,6 +126,56 @@ const VideoPanel: React.FC<VideoPanelProps> = ({ t, settings, isAndroid, onUpdat
       setRemuxStats(s);
     } finally {
       setClearingCache(false);
+    }
+  };
+
+  // 视频 P3（2026-10-19）：B 类后台预转队列。进度是后端事件推的，面板只做展示与开关。
+  const [batch, setBatch] = React.useState<TranscodeBatchStatus | null>(null);
+  const [batchBusy, setBatchBusy] = React.useState(false);
+  const [clearingOutputs, setClearingOutputs] = React.useState(false);
+  const refreshBatch = React.useCallback(() => {
+    getTranscodeBatchStatus(settings.paths.resourceRoot).then((s) => setBatch(s));
+  }, [settings.paths.resourceRoot]);
+  React.useEffect(() => {
+    if (isAndroid) return;
+    refreshBatch();
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    onTranscodeBatchProgress((s) => setBatch(s)).then((fn) => {
+      if (cancelled) fn?.();
+      else unlisten = fn ?? undefined;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [isAndroid, refreshBatch]);
+
+  const runBatch = async () => {
+    setBatchBusy(true);
+    try {
+      const s = await startTranscodeBatch(settings.paths.resourceRoot);
+      if (s) setBatch(s);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+  const stopBatch = async () => {
+    setBatchBusy(true);
+    try {
+      const s = await stopTranscodeBatch();
+      if (s) setBatch(s);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+  const clearOutputs = async () => {
+    setClearingOutputs(true);
+    try {
+      await clearTranscodeOutputs();
+      refreshBatch();
+    } finally {
+      setClearingOutputs(false);
     }
   };
 
@@ -326,6 +388,78 @@ const VideoPanel: React.FC<VideoPanelProps> = ({ t, settings, isAndroid, onUpdat
                   {clearingCache ? <Loader2 size={12} className="animate-spin mr-1" /> : <Trash2 size={12} className="mr-1" />}
                   {t('settings.videoCacheClear')}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* 视频 P3（2026-10-19 真机取证）：B 类（WMV/VC-1、MJPEG）手机连解码器都拉不起来，
+              只能重编；点开现转要等几分钟，所以这里给一条后台预转队列。产物与上面那条缓存
+              **分目录分上限**，清理按钮也分开 —— 重编一只要几分钟，不能跟着「清缓存」一起被抹掉。 */}
+          {!isAndroid && (
+            <div className="pt-3 border-subtle">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 pr-4">
+                  <div className="font-bold text-gray-800 dark:text-gray-200">
+                    {t('settings.videoPretranscode')}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {t('settings.videoPretranscodeDesc')}
+                  </div>
+                  <div className="text-xs text-gray-600 dark:text-gray-300 mt-1.5">
+                    {batch === null
+                      ? t('settings.videoCacheUnknown')
+                      : batch.running
+                        ? `${t('settings.videoPretranscodeRunning')} ${batch.done}/${batch.total} · ${Math.round(batch.current_progress * 100)}%${batch.current ? ` · ${baseName(batch.current)}` : ''}`
+                        : batch.candidates > 0
+                          ? `${t('settings.videoPretranscodePending')} ${batch.candidates} · ${t('settings.videoPretranscodeEst')} ~${batch.est_minutes} ${t('settings.videoPretranscodeMinutes')}${batch.failed > 0 ? ` · ${batch.failed} ${t('settings.videoPretranscodeFailed')}` : ''}`
+                          : t('settings.videoPretranscodeNone')}
+                  </div>
+                  {!!batch && batch.output_bytes > 0 && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      {`${t('settings.videoPretranscodeOutputs')} ${formatBytes(batch.output_bytes)} / ${formatBytes(batch.output_limit_bytes)}`}
+                    </div>
+                  )}
+                  {!!batch && !batch.ffmpeg_present && (
+                    <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      {t('settings.videoPretranscodeNoFfmpeg')}
+                    </div>
+                  )}
+                  {!!batch?.last_error && (
+                    <div className="text-xs text-red-500 mt-1 truncate" title={batch.last_error}>
+                      {batch.last_error}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {batch?.running ? (
+                    <button
+                      onClick={stopBatch}
+                      disabled={batchBusy}
+                      className="px-2 py-1 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center disabled:opacity-50"
+                    >
+                      {batchBusy ? <Loader2 size={11} className="animate-spin mr-1" /> : <X size={11} className="mr-1" />}
+                      {batchBusy ? t('settings.videoPretranscodeStopping') : t('settings.videoPretranscodeStop')}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={runBatch}
+                      disabled={batchBusy || !batch || batch.candidates === 0 || !batch.ffmpeg_present}
+                      className="px-2 py-1 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center disabled:opacity-50"
+                    >
+                      {batchBusy ? <Loader2 size={11} className="animate-spin mr-1" /> : <Play size={11} className="mr-1" />}
+                      {t('settings.videoPretranscodeStart')}
+                    </button>
+                  )}
+                  <button
+                    onClick={clearOutputs}
+                    disabled={clearingOutputs || !batch || batch.output_bytes === 0}
+                    className="px-2.5 py-1.5 rounded border border-subtle text-xs text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center disabled:opacity-50"
+                    title={t('settings.videoPretranscodeClearTip')}
+                  >
+                    {clearingOutputs ? <Loader2 size={12} className="animate-spin mr-1" /> : <Trash2 size={12} className="mr-1" />}
+                    {t('settings.videoPretranscodeClear')}
+                  </button>
+                </div>
               </div>
             </div>
           )}

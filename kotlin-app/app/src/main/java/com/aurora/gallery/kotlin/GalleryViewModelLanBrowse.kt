@@ -27,6 +27,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -730,3 +731,69 @@ private fun GalleryViewModel.insertImageToFolder(remotePath: String, bytes: Byte
     }
     return queryDisplayName(uri) ?: fileName
 }
+
+/**
+ * LAN 视频备播（2026-10-19 真机实测新增）：起播前问一次桌面端 `/api/video/prepare`，
+ * 需要产物化的（这台机的 MediaExtractor 清单里**没有 AVI 也没有 ASF**，裸容器发过去
+ * 必然解不开）就轮询到 `ready` 再放行播放。
+ *
+ * 只接一个 `url`：查看器手里就是 [LanClient.imageUrl] 拼出来那条，`path` 从它的 query
+ * 里取（不重新拼一遍，免得两处编码口径漂移），base/token 取当前会话。
+ *
+ * 三条退路一律**放行播放**而不是拦死：没会话、URL 里取不到 path、服务端答不上来
+ * （旧桌面没这个端点会回 404）→ `onDone(true)`。备播是用来加速成功的，不该变成新的失败点。
+ */
+internal fun GalleryViewModel.prepareLanVideo(
+    url: String,
+    onProgress: (Float) -> Unit,
+    onDone: (Boolean, String?) -> Unit,
+) {
+    val session = lan.currentSession()
+    val remotePath = runCatching { Uri.parse(url).getQueryParameter("path") }.getOrNull()
+    if (session == null || remotePath.isNullOrBlank()) {
+        onDone(true, null)
+        return
+    }
+    viewModelScope.launch {
+        var waitedMs = 0L
+        while (true) {
+            val state = runCatching {
+                session.client.videoPrepare(session.base, session.token, remotePath)
+            }.getOrNull()
+            if (state == null) {
+                // 问不通（旧桌面 / 网络断）：按原样播，行为回到本补丁之前
+                Log.w("AuroraLan", "备播问不到桌面端，按原样播: $remotePath")
+                onDone(true, null)
+                return@launch
+            }
+            when (state.mode) {
+                "direct", "ready" -> {
+                    Log.i("AuroraLan", "备播放行（${state.mode}）: $remotePath，等待 ${waitedMs}ms")
+                    onDone(true, null)
+                    return@launch
+                }
+                "failed" -> {
+                    Log.w("AuroraLan", "备播失败: $remotePath ${state.message}")
+                    onDone(false, "桌面端转换失败")
+                    return@launch
+                }
+                else -> {
+                    onProgress(state.progress)
+                    if (waitedMs >= PREPARE_CAP_MS) {
+                        Log.w("AuroraLan", "备播轮询超时: $remotePath")
+                        onDone(false, "桌面端转换超时")
+                        return@launch
+                    }
+                    delay(PREPARE_POLL_MS)
+                    waitedMs += PREPARE_POLL_MS
+                }
+            }
+        }
+    }
+}
+
+/** 备播轮询间隔：remux 实测 118MB ≈ 1.2 秒，500ms 一档够细又不刷屏。 */
+private const val PREPARE_POLL_MS = 500L
+
+/** 轮询上限。转码实测 ~39x 实时（两小时片约三五分钟），给足到 30 分钟兜冷 IO 与高分辨率。 */
+private const val PREPARE_CAP_MS = 30L * 60L * 1000L
