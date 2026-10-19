@@ -2012,11 +2012,12 @@ pub fn run() {
         transcode_batch::transcode_batch_start,
         transcode_batch::transcode_batch_stop,
         transcode_batch::transcode_clear_outputs,
-        // 视频 P4 PoC-A：桌面端原生播放内核（libmpv，运行时动态加载）
-        mpv_player::poc_mpv_open,
-        mpv_player::poc_mpv_command,
-        mpv_player::poc_mpv_stop,
-        mpv_player::poc_mpv_status,
+        // 视频 P4/S1：桌面端原生播放内核（libmpv，运行时动态加载，popup 顶层窗口承载画面）
+        mpv_player::mpv_player_open,
+        mpv_player::mpv_player_set_rect,
+        mpv_player::mpv_player_state,
+        mpv_player::mpv_player_command,
+        mpv_player::mpv_player_stop,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,

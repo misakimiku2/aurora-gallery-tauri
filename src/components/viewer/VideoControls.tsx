@@ -3,6 +3,10 @@ import { FileNode } from '../../types';
 import { useScrubSeek } from '../../hooks/useScrubSeek';
 import { runAssetProbe } from '../../utils/scrubProbe';
 import {
+  mpvPollState, mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
+  mpvSetVolume, mpvSetMuted, mpvSetLoop,
+} from '../../utils/mpvPlayer';
+import {
   Play, Pause, StepBack, StepForward, Rewind, FastForward,
   Volume2, Volume1, VolumeX, Repeat, Maximize, Minimize,
 } from 'lucide-react';
@@ -46,6 +50,9 @@ interface VideoControlsProps {
   t: (key: string) => string;
   /** 拖拽进度条状态回传：拖拽中尚未 seek（§3），容器据此隐藏中央缓冲遮罩 */
   onScrubbingChange?: (scrubbing: boolean) => void;
+  /** P4/S1：mpv 模式（本地 + WebView2 解不动的编码/容器）。
+   *  true 时状态来自 mpv 轮询、操作直接下 mpv 命令；<video> 元素是空壳不读。 */
+  mpvMode?: boolean;
 }
 
 export const VideoControls: React.FC<VideoControlsProps> = ({
@@ -55,6 +62,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   onToggleFullscreen,
   t,
   onScrubbingChange,
+  mpvMode = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -69,15 +77,39 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   const [scrubValue, setScrubValue] = useState(0);
   const scrubbingRef = useRef(false);
   const scrubValueRef = useRef(0);
+  /** mpv 拖拽节流 seek 的上次触发时刻（<video> 路径走 useScrubSeek，不共用） */
+  const mpvScrubLastRef = useRef(0);
   const { scheduleScrub, flushScrub } = useScrubSeek(videoRef);
 
   const frameRate = file.meta?.frameRate;
-  const canStepFrame = typeof frameRate === 'number' && frameRate > 0;
+  // mpv 有原生 frame-step，不依赖 fps 元数据
+  const canStepFrame = mpvMode || (typeof frameRate === 'number' && frameRate > 0);
+
+  // ── P4/S1：mpv 轮询（250ms）驱动全部状态显示 ──
+  // S2 会换成 mpv observe 事件推送；S1 轮询足够（本地进程内调用，开销可忽略）。
+  useEffect(() => {
+    if (!mpvMode) return;
+    let alive = true;
+    const tick = async () => {
+      const st = await mpvPollState();
+      if (!alive || !st) return;
+      setIsPlaying(!st.paused && !st.idle);
+      setCurrentTime(st.timePos ?? 0);
+      setDuration(st.duration ?? 0);
+      setVolume(Math.max(0, Math.min(1, st.volume / 100)));
+      setMuted(st.muted);
+    };
+    void tick();
+    const timer = setInterval(() => { void tick(); }, 250);
+    return () => { alive = false; clearInterval(timer); };
+  }, [mpvMode]);
 
   // dev 诊断：打开视频时跑一次 asset 协议探针（一次会话只跑一次，产物见应用日志目录）
+  // mpv 模式不读 asset 协议，无需探测
   useEffect(() => {
+    if (mpvMode) return;
     if (import.meta.env.DEV && file.path) void runAssetProbe(file.path, file.size ?? 0);
-  }, [file.path, file.size]);
+  }, [file.path, file.size, mpvMode]);
 
   // 读取当前播放位置所在缓冲区间末尾（total buffered 到哪），用于进度条的缓冲底条
   const readBufferedEnd = useCallback((): number => {
@@ -143,6 +175,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   }, [videoRef, readBufferedEnd, file.id]);
 
   const togglePlay = async () => {
+    if (mpvMode) { await mpvTogglePlay(); return; }
     const v = videoRef.current;
     if (!v) return;
     try {
@@ -154,7 +187,9 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   };
 
   // 逐帧：pause 后 currentTime ± 1/fps；无 fps 时调用方已置灰（§1.3）
+  // mpv：原生 frame-step / frame-back-step（暂停态下逐帧，不依赖 fps 元数据）
   const stepFrame = (dir: 1 | -1) => {
+    if (mpvMode) { void mpvFrameStep(dir); return; }
     const v = videoRef.current;
     if (!v || !canStepFrame) return;
     v.pause();
@@ -165,6 +200,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   };
 
   const nudge = (delta: number) => {
+    if (mpvMode) { void mpvSeekRelative(delta); return; }
     const v = videoRef.current;
     if (!v) return;
     const max = isFinite(v.duration) ? v.duration : v.currentTime + Math.abs(delta);
@@ -174,6 +210,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   };
 
   const changeVolume = (val: number) => {
+    if (mpvMode) { void mpvSetVolume(val); return; }
     const v = videoRef.current;
     if (!v) return;
     const clamped = Math.max(0, Math.min(1, val));
@@ -205,12 +242,15 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   const endVolumeDrag = () => { volumeDraggingRef.current = false; };
 
   const toggleMute = () => {
+    if (mpvMode) { void mpvSetMuted(!muted); return; }
     const v = videoRef.current;
     if (!v) return;
     v.muted = !v.muted;
   };
 
   const cycleRate = () => {
+    // mpv 倍速 S2 接（mpv speed 属性）
+    if (mpvMode) return;
     const v = videoRef.current;
     if (!v) return;
     const idx = RATES.indexOf(v.playbackRate);
@@ -218,6 +258,12 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   };
 
   const toggleLoop = () => {
+    if (mpvMode) {
+      const next = !loop;
+      setLoop(next);
+      void mpvSetLoop(next);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     v.loop = !v.loop;
@@ -243,6 +289,15 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     const val = Math.max(0, Math.min(raw, max));
     scrubValueRef.current = val;
     setScrubValue(val);
+    if (mpvMode) {
+      // mpv：拖拽中节流 seek（画面跟着走，§3）；mpv seek 足够快，200ms 间隔不闪跳
+      const now = performance.now();
+      if (now - mpvScrubLastRef.current >= 200) {
+        mpvScrubLastRef.current = now;
+        void mpvSeekAbsolute(val);
+      }
+      return;
+    }
     scheduleScrub(val);
   };
   const endScrub = useCallback(() => {
@@ -251,11 +306,12 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     // 从而让松手后的真实 seek 等待照常显示
     scrubbingRef.current = false;
     const val = scrubValueRef.current;
-    flushScrub(val);
+    if (mpvMode) void mpvSeekAbsolute(val);
+    else flushScrub(val);
     setCurrentTime(val);
     setIsScrubbing(false);
     onScrubbingChange?.(false);
-  }, [flushScrub, onScrubbingChange]);
+  }, [flushScrub, onScrubbingChange, mpvMode]);
 
   // 松手事件可能落在控件外，兜住指针释放
   useEffect(() => {
@@ -351,8 +407,9 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       <span className="text-xs tabular-nums w-14 select-none">{formatTime(dur)}</span>
 
       {/* 倍速：紧跟进度条右侧。定宽 w-12 是按最宽的「1.25x」算的（换档时不推挤后面的按钮），
-          文字左对齐 —— 否则居中会让它的字形比左侧图标按钮多内缩约 9px，进度条两侧间距就不等了 */}
-      <button onClick={cycleRate} className="px-2 py-1 text-xs text-left rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12 shrink-0" title={t('video.rate')}>
+          文字左对齐 —— 否则居中会让它的字形比左侧图标按钮多内缩约 9px，进度条两侧间距就不等了。
+          mpv 模式置灰（S2 接 mpv speed 属性）。 */}
+      <button onClick={cycleRate} disabled={mpvMode} className="px-2 py-1 text-xs text-left rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12 shrink-0 disabled:opacity-30 disabled:cursor-not-allowed" title={t('video.rate')}>
         {rate}x
       </button>
 

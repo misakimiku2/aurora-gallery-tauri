@@ -1,16 +1,40 @@
-//! PoC-A：把 libmpv 嵌进 Tauri 原生窗口，绕开 WebView2 的容器 / 解码器限制。
+//! 桌面端原生播放内核（libmpv）—— P4/S1 正式接入。
 //!
 //! ## 为什么需要这个模块
 //!
 //! WebView2 = Chromium，官方容器清单只有 `MP4 / Ogg / WebM / WAV / Matroska / HLS`
 //! —— **AVI 与 ASF(WMV) 都不在里面**。更糟的是编码层：Windows **没有内置的
 //! MPEG-4 Part 2 MFT**，本机只装了 PotPlayer（自带解码器，但不注册到系统），
-//! 所以即使把 AVI 无损 remux 成 MP4，Chromium 仍然解不出画面。
+//! 所以即使把 AVI 无损 remux 成 MP4，Chromium 仍然解不出画面
+//! ⇒ remux 对桌面端是无效功（等 100 秒、占 2 GB，换来的还是黑屏）。
 //!
 //! 而指挥官明确要求：**点击视频必须在软件内播放**，只有右键
 //! 「用系统播放器播放」才允许外挂 ⇒ 外挂降级方案作废。
 //!
-//! ⇒ 桌面端唯一可行解 = 嵌入原生播放内核 libmpv（自带全量 demuxer/decoder）。
+//! ⇒ 桌面端唯一可行解 = 嵌入原生播放内核 libmpv（自带全量 demuxer/decoder），
+//!    **直接播原文件，零转码零缓存**（2026-10-20 PoC-A 实测定案）。
+//!
+//! ## 窗口架构（PoC-A 实测结论，别走回头路）
+//!
+//! - `WS_CHILD` 挂成 Tauri 子窗口：**有音频无画面** —— 被 WebView2 渲染表面盖住，
+//!   与 z-order 无关（airspace 是合成层特性，`SetWindowPos(HWND_TOP)` 救不了）。
+//! - **唯一可行：`WS_POPUP` + owner=主窗口** 的 top-level 窗口。
+//!   代价：popup 不随 owner 自动移动/缩放 ⇒ 必须 Hook 主窗口
+//!   `WM_WINDOWPOSCHANGED` 手动同步位置（本模块 `sync_surface_position`）。
+//! - 位置来源：前端量出「媒体显示区」相对视口的 rect（CSS px），**在前端按
+//!   `devicePixelRatio` 换算成物理像素**后传给 Rust（devicePixelRatio 直接反映
+//!   WebView 渲染标度，比窗口 DPI 更准 —— 含用户 zoom 场景）；Rust 只做
+//!   `ClientToScreen` 客户区→屏幕换算。⚠️ 不用 `GetDpiForWindow`：它是 Win10+ API，
+//!   无 manifest 的 test harness exe 静态导入会 `STATUS_ENTRYPOINT_NOT_FOUND`。
+//! - popup 在 WebView 之上 ⇒ 它覆盖的区域内 HTML 全部不可见：
+//!   rect 必须精确等于媒体区（控制条在媒体区外，不受影响）。
+//! - `WS_EX_NOACTIVATE`：点击 popup 不抢焦点，键盘事件留在 WebView。
+//! - **跟随机制（不用消息 Hook）**：曾计划 `SetWindowSubclass` 主窗口
+//!   `WM_WINDOWPOSCHANGED` —— 但 comctl32 v6 需要 manifest 声明，test harness
+//!   exe 没有 → `STATUS_ENTRYPOINT_NOT_FOUND`；`SetWindowLongPtrW` 手动链又有
+//!   跨线程窗口操作风险。改用 Tauri 2 原生事件：**移动 = JS `onMoved` → 推送
+//!   rect；缩放 = JS `ResizeObserver` → 推送 rect**。零 hook、零线程风险，
+//!   跟随经 IPC（毫秒级），拖动场景肉眼无感。
 //!
 //! ## 为什么运行时 LoadLibrary 而不是链接导入库
 //!
@@ -28,46 +52,75 @@
 
 // ── 命令层：签名全平台一致，便于 `generate_handler!` 无条件注册 ──────────
 
+/// 打开（或切换）mpv 播放的文件。
+///
+/// `x/y/w/h` = 媒体显示区**相对视口**的 rect，**物理像素**（前端已按
+/// `devicePixelRatio` 从 CSS px 换算，见 `mpvPlayer.ts`）。
+/// 成功返回即已 `FILE_LOADED`（起播），失败返回错误文本（前端据此显示错误卡）。
 #[tauri::command]
-pub fn poc_mpv_status() -> Result<String, String> {
-    imp::status()
-}
-
-/// `mode`: `"popup"` = top-level 弹出窗口（owner=主窗口）；其余 = `WS_CHILD` 子窗口。
-#[tauri::command]
-pub fn poc_mpv_open(
+pub fn mpv_player_open(
     window: tauri::WebviewWindow,
     path: String,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    mode: Option<String>,
-) -> Result<String, String> {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
     #[cfg(windows)]
     {
         let hwnd = window
             .hwnd()
             .map(|h| h.0 as isize)
             .map_err(|e| format!("取窗口句柄失败: {}", e))?;
-        imp::open(hwnd, &path, x, y, w, h, mode.as_deref())
+        imp::open(hwnd, &path, imp::ViewportRect { x, y, w, h })
     }
     #[cfg(not(windows))]
     {
-        let _ = (&window, &path, x, y, w, h, mode);
+        let _ = (&window, &path, x, y, w, h);
         Err("原生播放内核仅支持 Windows 桌面端".to_string())
     }
 }
 
+/// 媒体区 rect 变化（窗口移动 / 缩放 / 布局变化）时由前端推送；Rust 立即同步 popup 位置。
 #[tauri::command]
-pub fn poc_mpv_command(args: Vec<String>) -> Result<(), String> {
+pub fn mpv_player_set_rect(
+    window: tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let hwnd = window
+            .hwnd()
+            .map(|h| h.0 as isize)
+            .map_err(|e| format!("取窗口句柄失败: {}", e))?;
+        imp::set_rect(hwnd, imp::ViewportRect { x, y, w, h })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&window, x, y, w, h);
+        Err("原生播放内核仅支持 Windows 桌面端".to_string())
+    }
+}
+
+/// 播放状态快照（前端 ~250ms 轮询一次，驱动控制条进度/时长/音量）。
+#[tauri::command]
+pub fn mpv_player_state() -> Result<imp::MpvStateDto, String> {
+    imp::state()
+}
+
+/// 透传 mpv 命令（`set pause yes|no` / `seek <t> absolute` / `set volume <v>` …）。
+#[tauri::command]
+pub fn mpv_player_command(args: Vec<String>) -> Result<(), String> {
     imp::command(&args)
 }
 
+/// 停止播放并销毁渲染窗口（切文件 / 关查看器时调用）。
 #[tauri::command]
-pub fn poc_mpv_stop() -> Result<String, String> {
-    imp::stop()?;
-    Ok("已停止".to_string())
+pub fn mpv_player_stop() -> Result<(), String> {
+    imp::stop()
 }
 
 // ── 实现层：Windows ───────────────────────────────────────────────────────
@@ -85,11 +138,32 @@ mod imp {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect, RegisterClassW,
-        SetWindowPos, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WNDCLASSW, HWND_TOP, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_SHOWWINDOW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_POPUP,
-        WS_VISIBLE,
+        SetWindowPos, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WNDCLASSW, HWND_TOP, SWP_SHOWWINDOW,
+        WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
+
+    /// 媒体显示区 rect（相对视口，**物理像素** —— DPI 换算在前端 `devicePixelRatio` 做）。
+    #[derive(Debug, Clone, Copy)]
+    pub struct ViewportRect {
+        pub x: f64,
+        pub y: f64,
+        pub w: f64,
+        pub h: f64,
+    }
+
+    /// 播放状态快照（camelCase 直接给前端）。
+    #[derive(Debug, Clone, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct MpvStateDto {
+        pub time_pos: Option<f64>,
+        pub duration: Option<f64>,
+        pub paused: bool,
+        pub volume: f64,
+        pub muted: bool,
+        /// `core-idle`：无活跃播放（EOF / 出错 / 尚未加载）。
+        pub idle: bool,
+    }
 
     #[repr(C)]
     struct MpvEvent {
@@ -104,9 +178,8 @@ mod imp {
 
     // client.h: mpv_format
     const MPV_FORMAT_STRING: u32 = 1;
-    const _MPV_FORMAT_FLAG: u32 = 3;
-    const _MPV_FORMAT_INT64: u32 = 4;
-    const _MPV_FORMAT_DOUBLE: u32 = 5;
+    const MPV_FORMAT_FLAG: u32 = 3;
+    const MPV_FORMAT_DOUBLE: u32 = 5;
 
     type MpvCreate = unsafe extern "C" fn() -> *mut c_void;
     type MpvSetOptionString =
@@ -136,18 +209,34 @@ mod imp {
 
     static MPV_LIB: OnceLock<Result<MpvLib, String>> = OnceLock::new();
 
+    /// 活跃的 mpv 渲染面（同一时刻至多一个 —— 查看器单文件播放）。
     struct Surface {
         child: isize,
         ctx: *mut c_void,
+        parent: isize,
     }
 
     unsafe impl Send for Surface {}
     unsafe impl Sync for Surface {}
 
     static SURFACE: Mutex<Option<Surface>> = Mutex::new(None);
+    /// 最近一次前端推送的媒体区 rect（CSS px）。open / set_rect 写入，同步时读取。
+    static VIEWPORT_RECT: Mutex<ViewportRect> = Mutex::new(ViewportRect {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    });
 
     fn lock_surface() -> MutexGuard<'static, Option<Surface>> {
         match SURFACE.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        }
+    }
+
+    fn lock_rect() -> MutexGuard<'static, ViewportRect> {
+        match VIEWPORT_RECT.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         }
@@ -213,6 +302,34 @@ mod imp {
             .map_err(|e| e.clone())
     }
 
+    // ── 属性读取小工具 ──────────────────────────────────────────────
+
+    fn get_f64(lib: &MpvLib, ctx: *mut c_void, name: &str) -> Option<f64> {
+        let k = CString::new(name).ok()?;
+        let mut out: c_double = 0.0;
+        let rc = unsafe {
+            (lib.get_property)(ctx, k.as_ptr(), MPV_FORMAT_DOUBLE, &mut out as *mut c_double as *mut c_void)
+        };
+        if rc < 0 {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    fn get_flag(lib: &MpvLib, ctx: *mut c_void, name: &str) -> Option<bool> {
+        let k = CString::new(name).ok()?;
+        let mut out: c_int = 0;
+        let rc = unsafe {
+            (lib.get_property)(ctx, k.as_ptr(), MPV_FORMAT_FLAG, &mut out as *mut c_int as *mut c_void)
+        };
+        if rc < 0 {
+            None
+        } else {
+            Some(out != 0)
+        }
+    }
+
     // ── 原生渲染窗口 ────────────────────────────────────────────────
 
     const SURFACE_CLASS: &str = "AuroraMpvSurface\0";
@@ -248,49 +365,30 @@ mod imp {
         .map_err(|e| e.clone())
     }
 
-    /// 建一个 mpv 渲染窗口，返回句柄（isize）。
-    ///
-    /// `as_popup` 是本次 PoC 的核心变量：
-    /// - `false` → `WS_CHILD`，挂成 Tauri 窗口子窗口（**首次实测：有声音无画面**）
-    /// - `true`  → `WS_POPUP` + owner，top-level，绕开 WebView2 airspace 覆盖（待验证）
+    /// 建一个 mpv 渲染 popup 窗口（屏幕坐标由主窗口客户区 + 视口 rect 换算）。
     fn create_surface_window(
         parent: isize,
-        x: i32,
-        y: i32,
+        screen_x: i32,
+        screen_y: i32,
         w: i32,
         h: i32,
-        as_popup: bool,
     ) -> Result<isize, String> {
         ensure_surface_class()?;
         let name: Vec<u16> = SURFACE_CLASS.encode_utf16().collect();
 
-        // popup 用**屏幕坐标**；child 用**父窗口客户区坐标**
-        let (px, py) = if as_popup {
-            let mut pt = POINT { x, y };
-            // ⚠️ ClientToScreen 返回 BOOL，不是 Result
-            let ok = unsafe { ClientToScreen(HWND(parent as *mut c_void), &mut pt) };
-            if !ok.as_bool() {
-                return Err("ClientToScreen 失败".to_string());
-            }
-            (pt.x, pt.y)
-        } else {
-            (x, y)
-        };
-
-        let style = if as_popup {
-            WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS
-        } else {
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
-        };
+        // WS_POPUP + owner = top-level（绕开 WebView2 airspace，PoC-A 实测定案）；
+        // WS_EX_NOACTIVATE：点击画面不抢焦点，键盘事件留在 WebView。
+        let style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS;
+        let ex_style = WINDOW_EX_STYLE(WS_EX_NOACTIVATE.0);
 
         let child = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                ex_style,
                 PCWSTR(name.as_ptr()),
                 PCWSTR(name.as_ptr()),
                 style,
-                px,
-                py,
+                screen_x,
+                screen_y,
                 w,
                 h,
                 Some(HWND(parent as *mut c_void)),
@@ -301,70 +399,57 @@ mod imp {
         }
         .map_err(|e| format!("创建渲染窗口失败: {}", e))?;
 
-        // ⚠️ 提到兄弟窗口顶部 —— WebView2 的渲染表面会覆盖同级子窗口（airspace 问题）
-        unsafe {
-            let _ = SetWindowPos(
-                HWND(child.0),
-                Some(HWND_TOP),
-                0,
-                0,
-                0,
-                0,
-                SET_WINDOW_POS_FLAGS(SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_SHOWWINDOW.0),
-            );
-        }
-
         Ok(child.0 as isize)
     }
 
-    // ── 对外行为 ──────────────────────────────────────────────────
+    // ── 位置同步（窗口跟随的核心） ─────────────────────────────────
 
-    pub fn status() -> Result<String, String> {
-        let lib = mpv()?;
-        let ctx = unsafe { (lib.create)() };
-        if ctx.is_null() {
-            return Err("mpv_create 返回空指针".to_string());
+    /// 视口 rect（物理 px）→ 客户区坐标 → 屏幕坐标 → SetWindowPos。
+    fn sync_child_to_rect(parent: isize, child: isize, rect: &ViewportRect) -> Result<(), String> {
+        if rect.w <= 0.0 || rect.h <= 0.0 {
+            return Ok(()); // 尺寸非法（如最小化瞬间）不动
         }
-        // ⚠️ 必须先 initialize 才能取属性 —— 否则报 "core not initialized"
-        let rc = unsafe { (lib.initialize)(ctx) };
-        if rc < 0 {
-            unsafe { (lib.terminate_destroy)(ctx) };
-            return Err(format!("mpv_initialize 失败: {}", err_text(lib, rc)));
-        }
-        let k = CString::new("mpv-version").unwrap();
-        let mut out: *mut c_char = std::ptr::null_mut();
-        let rc = unsafe {
-            (lib.get_property)(
-                ctx,
-                k.as_ptr(),
-                MPV_FORMAT_STRING,
-                &mut out as *mut *mut c_char as *mut c_void,
-            )
+        let hwnd = HWND(parent as *mut c_void);
+        let mut pt = POINT {
+            x: rect.x.round() as i32,
+            y: rect.y.round() as i32,
         };
-        if rc < 0 {
-            unsafe { (lib.terminate_destroy)(ctx) };
-            return Err(format!("取 mpv 版本失败: {}", err_text(lib, rc)));
+        // ⚠️ ClientToScreen 返回 BOOL，不是 Result
+        if !unsafe { ClientToScreen(hwnd, &mut pt) }.as_bool() {
+            return Err("ClientToScreen 失败".to_string());
         }
-        let version = unsafe { std::ffi::CStr::from_ptr(out) }
-            .to_string_lossy()
-            .into_owned();
-        unsafe { (lib.terminate_destroy)(ctx) };
-        Ok(format!("ok {}", version))
+
+        let w = rect.w.round() as i32;
+        let h = rect.h.round() as i32;
+        unsafe {
+            let _ = SetWindowPos(
+                HWND(child as *mut c_void),
+                Some(HWND_TOP),
+                pt.x,
+                pt.y,
+                w,
+                h,
+                SET_WINDOW_POS_FLAGS(SWP_SHOWWINDOW.0),
+            );
+        }
+        Ok(())
     }
 
-    pub fn open(
-        hwnd: isize,
-        path: &str,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        mode: Option<&str>,
-    ) -> Result<String, String> {
-        let as_popup = matches!(mode, Some("popup"));
-        let lib = mpv()?;
-        let child = create_surface_window(hwnd, x, y, w, h, as_popup)?;
+    /// 把当前 popup 同步到缓存的媒体区 rect。无活跃 surface 时静默跳过。
+    ///
+    /// 触发源全部在前端（Tauri `onMoved` / `ResizeObserver` → `mpv_player_set_rect`），
+    /// 本函数只做「读缓存 rect → 换算 → SetWindowPos」，无消息 Hook。
+    fn sync_surface_position() {
+        let guard = lock_surface();
+        let Some(s) = guard.as_ref() else { return };
+        let rect = *lock_rect();
+        let _ = sync_child_to_rect(s.parent, s.child, &rect);
+    }
 
+    // ── mpv 会话 ────────────────────────────────────────────────────
+
+    /// 新建并初始化一个 mpv 核心（wid 渲染到 child）。
+    fn create_core(lib: &MpvLib, child: isize) -> Result<*mut c_void, String> {
         let ctx = unsafe { (lib.create)() };
         if ctx.is_null() {
             return Err("mpv_create 返回空指针".to_string());
@@ -383,26 +468,33 @@ mod imp {
 
         let _ = unsafe { (lib.set_option_string)(ctx, c"terminal".as_ptr(), c"no".as_ptr()) };
         let _ = unsafe { (lib.set_option_string)(ctx, c"osc".as_ptr(), c"no".as_ptr()) };
-        let _ = unsafe { (lib.set_option_string)(ctx, c"input-default-bindings".as_ptr(), c"no".as_ptr()) };
+        let _ = unsafe {
+            (lib.set_option_string)(ctx, c"input-default-bindings".as_ptr(), c"no".as_ptr())
+        };
+        let _ = unsafe { (lib.set_option_string)(ctx, c"input-vo-keyboard".as_ptr(), c"no".as_ptr()) };
 
         let rc = unsafe { (lib.initialize)(ctx) };
         if rc < 0 {
             unsafe { (lib.terminate_destroy)(ctx) };
             return Err(format!("mpv_initialize 失败: {}", err_text(lib, rc)));
         }
+        Ok(ctx)
+    }
 
+    /// loadfile 并泵事件，直到 FILE_LOADED（成功）或 END_FILE（失败）。
+    fn load_and_wait(lib: &MpvLib, ctx: *mut c_void, path: &str, timeout: Duration) -> Result<(), String> {
         let cmd = CString::new("loadfile").unwrap();
         let arg = CString::new(path).map_err(|e| format!("路径含 NUL: {}", e))?;
-        let args: [*const c_char; 3] = [cmd.as_ptr(), arg.as_ptr(), std::ptr::null()];
+        // `replace` = 换片时干净替换当前播放（复用 ctx 场景必需）
+        let mode = CString::new("replace").unwrap();
+        let args: [*const c_char; 4] =
+            [cmd.as_ptr(), arg.as_ptr(), mode.as_ptr(), std::ptr::null()];
         let rc = unsafe { (lib.command)(ctx, args.as_ptr()) };
         if rc < 0 {
-            unsafe { (lib.terminate_destroy)(ctx) };
             return Err(format!("loadfile 失败: {}", err_text(lib, rc)));
         }
 
-        let deadline = Instant::now() + Duration::from_millis(5000);
-        let mut loaded = false;
-        let mut end_err: Option<String> = None;
+        let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let ev = unsafe { (lib.wait_event)(ctx, 0.1) };
             if ev.is_null() {
@@ -410,54 +502,115 @@ mod imp {
             }
             let id = unsafe { (*ev).event_id };
             if id == MPV_EVENT_FILE_LOADED {
-                loaded = true;
-                break;
+                return Ok(());
             }
             if id == MPV_EVENT_END_FILE {
-                end_err = Some(format!("END_FILE error={}", unsafe { (*ev).error }));
-                break;
+                let code = unsafe { (*ev).error };
+                let reason = if code == 0 {
+                    "文件立即结束（空文件或全坏帧？）".to_string()
+                } else {
+                    err_text(lib, code)
+                };
+                return Err(format!("加载失败：{}", reason));
             }
         }
-
-        if !loaded {
-            unsafe { (lib.terminate_destroy)(ctx) };
-            let _ = unsafe { DestroyWindow(HWND(child as *mut c_void)) };
-            return Err(match end_err {
-                Some(r) => format!("加载失败：{}", r),
-                None => "等待 file-loaded 超时（5s）".to_string(),
-            });
-        }
-
-        let mut guard = lock_surface();
-        if let Some(old) = guard.take() {
-            unsafe { (lib.terminate_destroy)(old.ctx) };
-            let _ = unsafe { DestroyWindow(HWND(old.child as *mut c_void)) };
-        }
-        *guard = Some(Surface { child, ctx });
-        drop(guard);
-
-        let rect = window_rect(child);
-        Ok(format!(
-            "已挂接并起播：mode={} parent=0x{:X} child=0x{:X} rect={}",
-            if as_popup { "popup" } else { "child" },
-            hwnd,
-            child,
-            rect
-        ))
+        Err(format!("等待 file-loaded 超时（{}ms）", timeout.as_millis()))
     }
 
-    fn window_rect(hwnd: isize) -> String {
-        let mut r = windows::Win32::Foundation::RECT::default();
-        match unsafe { GetWindowRect(HWND(hwnd as *mut c_void), &mut r) } {
-            Ok(()) => format!(
-                "({},{}) {}x{}",
-                r.left,
-                r.top,
-                r.right - r.left,
-                r.bottom - r.top
-            ),
-            Err(_) => "(取 rect 失败)".to_string(),
+    // ── 对外行为 ──────────────────────────────────────────────────
+
+    pub fn open(parent: isize, path: &str, rect: ViewportRect) -> Result<(), String> {
+        let lib = mpv()?;
+
+        // rect 先落缓存：subclass 同步、窗口创建都读它
+        {
+            let mut g = lock_rect();
+            *g = rect;
         }
+
+        // ⚠️ 并发语义（为什么总是「新建窗口」而不是复用 ctx 换片）：
+        // 快速切文件时 open(A) 的 load_and_wait（最长 5s，泵事件）可能与 cleanup 的
+        // stop() 并发 —— 复用路径若不持锁用 ctx 就是 use-after-free；持锁泵事件又会让
+        // 主线程消息 Hook（WM_WINDOWPOSCHANGED → lock_surface）阻塞、窗口卡死。
+        // 本地新建的 ctx/child 在注册进 SURFACE 之前 stop() 摸不到它 ⇒ 天然安全。
+        // 代价仅是切文件时 popup 重建的黑闪（~百毫秒），S2 再评估复用优化。
+
+        // 新建路径：屏幕坐标 = 主窗口客户区原点 + 视口 rect（已含前端 DPI 换算）
+        let hwnd = HWND(parent as *mut c_void);
+        let mut pt = POINT {
+            x: rect.x.round() as i32,
+            y: rect.y.round() as i32,
+        };
+        if !unsafe { ClientToScreen(hwnd, &mut pt) }.as_bool() {
+            return Err("ClientToScreen 失败".to_string());
+        }
+        let child = create_surface_window(
+            parent,
+            pt.x,
+            pt.y,
+            rect.w.round() as i32,
+            rect.h.round() as i32,
+        )?;
+
+        let ctx = match create_core(lib, child) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = unsafe { DestroyWindow(HWND(child as *mut c_void)) };
+                return Err(e);
+            }
+        };
+
+        if let Err(e) = load_and_wait(lib, ctx, path, Duration::from_millis(5000)) {
+            unsafe { (lib.terminate_destroy)(ctx) };
+            let _ = unsafe { DestroyWindow(HWND(child as *mut c_void)) };
+            return Err(e);
+        }
+
+        // 成功：替换 surface（并发 open 串行注册，被替换者在此销毁，最终只留一个）
+        let mut guard = lock_surface();
+        if let Some(old) = guard.take() {
+            if old.ctx != ctx {
+                unsafe { (lib.terminate_destroy)(old.ctx) };
+                let _ = unsafe { DestroyWindow(HWND(old.child as *mut c_void)) };
+            }
+        }
+        *guard = Some(Surface { child, ctx, parent });
+        drop(guard);
+
+        sync_surface_position();
+        Ok(())
+    }
+
+    pub fn set_rect(_parent: isize, rect: ViewportRect) -> Result<(), String> {
+        {
+            let mut g = lock_rect();
+            *g = rect;
+        }
+        sync_surface_position();
+        Ok(())
+    }
+
+    pub fn state() -> Result<MpvStateDto, String> {
+        let lib = mpv()?;
+        let guard = lock_surface();
+        let s = guard.as_ref().ok_or("尚未挂接 mpv")?;
+        let ctx = s.ctx;
+
+        let time_pos = get_f64(lib, ctx, "time-pos");
+        let duration = get_f64(lib, ctx, "duration");
+        let volume = get_f64(lib, ctx, "volume").unwrap_or(100.0);
+        let paused = get_flag(lib, ctx, "pause").unwrap_or(false);
+        let muted = get_flag(lib, ctx, "mute").unwrap_or(false);
+        let idle = get_flag(lib, ctx, "core-idle").unwrap_or(false);
+
+        Ok(MpvStateDto {
+            time_pos,
+            duration,
+            paused,
+            volume,
+            muted,
+            idle,
+        })
     }
 
     pub fn command(args: &[String]) -> Result<(), String> {
@@ -490,29 +643,61 @@ mod imp {
         }
         Ok(())
     }
+
+    /// PoC 诊断保留：开发期核对渲染窗口 rect 用（正式 UI 不依赖）。
+    #[allow(dead_code)]
+    fn window_rect(hwnd: isize) -> String {
+        let mut r = windows::Win32::Foundation::RECT::default();
+        match unsafe { GetWindowRect(HWND(hwnd as *mut c_void), &mut r) } {
+            Ok(()) => format!(
+                "({},{}) {}x{}",
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top
+            ),
+            Err(_) => "(取 rect 失败)".to_string(),
+        }
+    }
 }
 
 // ── 实现层：非 Windows（macOS / Linux / 安卓）—— 只给明确错误 ────────────
 
 #[cfg(not(windows))]
 mod imp {
-    fn unsupported() -> String {
-        "原生播放内核（libmpv）当前仅支持 Windows 桌面端".to_string()
+    use serde::Serialize;
+
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct MpvStateDto {
+        pub time_pos: Option<f64>,
+        pub duration: Option<f64>,
+        pub paused: bool,
+        pub volume: f64,
+        pub muted: bool,
+        pub idle: bool,
     }
 
-    pub fn status() -> Result<String, String> {
-        Err(unsupported())
+    fn unsupported() -> String {
+        "原生播放内核（libmpv）当前仅支持 Windows 桌面端".to_string()
     }
 
     pub fn open(
         _window: tauri::WebviewWindow,
         _path: &str,
-        _x: i32,
-        _y: i32,
-        _w: i32,
-        _h: i32,
-        _mode: Option<&str>,
-    ) -> Result<String, String> {
+        _x: f64,
+        _y: f64,
+        _w: f64,
+        _h: f64,
+    ) -> Result<(), String> {
+        Err(unsupported())
+    }
+
+    pub fn set_rect(_window: tauri::WebviewWindow, _x: f64, _y: f64, _w: f64, _h: f64) -> Result<(), String> {
+        Err(unsupported())
+    }
+
+    pub fn state() -> Result<MpvStateDto, String> {
         Err(unsupported())
     }
 

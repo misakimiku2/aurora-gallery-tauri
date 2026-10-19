@@ -4,7 +4,6 @@ import App from './App';
 import '../index.css';
 import { isTauriEnvironment } from './utils/environment';
 import { setupGlobalLogger } from './utils/logger';
-import { installMpvPocBridge } from './utils/mpvPocBridge';
 
 // Tauri Log Plugin Configuration
 import * as log from '@tauri-apps/plugin-log';
@@ -31,7 +30,6 @@ const configureTauriLogs = async () => {
 
 // Configure logs first
 typeof window !== 'undefined' && configureTauriLogs();
-installMpvPocBridge();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

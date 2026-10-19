@@ -57,6 +57,36 @@ export const isVideoFile = (filePath?: string | null, format?: string): boolean 
  */
 export const WEB_DECODABLE_VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', 'webm', 'mkv'];
 
+/**
+ * Chromium / WebView2 原生可解的**视频编码**白名单 —— 视频 P4/S1（2026-10-20）。
+ *
+ * 为什么桌面端判据要从「容器」升格到「编码」：
+ * **容器可解 ≠ 播得了**（mkv 装 VC-1/FLAC 照样黑屏），而 remux 落盘路线已废弃
+ * （对桌面端是无效功 —— 系统无 MPEG-4 Part 2 MFT，换了壳也解不出画面）。
+ * 现在的兜底是 **libmpv 直连原文件**（`mpv_player.rs`），判定错了顶多早走一步 mpv，
+ * 零成本 —— 所以白名单哲学与手机端一致：**宁可 mpv，不可黑屏**。
+ *
+ * ⚠️ 表内字符串是 **revelo / MediaInfo 口径**，不是 ffmpeg 口径
+ * （2026-10-19/20 实测：Xvid AVI 报 `MPEG-4 Visual`、MJPEG AVI 报 `JPEG`、
+ *  H.264 AVI 报 `AVC`、WMV 整只读不出报 `None`）。比较前一律 lowercase。
+ * 改这张表前先拿真样本打印一遍，别照 ffmpeg 的写法猜。
+ *
+ * - `AVC`(H.264) / `VP8` / `VP9` / `AV1`：Chromium 全平台支持。
+ * - `HEVC`：WebView2 在有硬件解码器 + 系统扩展时可解（GTX 1060 NVDEC 支持）；
+ *   解不动时由 ImageViewer 的 onError 兜底切 mpv，赌错无代价。
+ */
+export const WEB_DECODABLE_VIDEO_CODECS = ['avc', 'hevc', 'vp8', 'vp9', 'av1'];
+
+/**
+ * 该编码 WebView2 能不能直接解。
+ * `null/undefined`（扫描器未回填 / ASF 整只读不出）返回 false —— 但调用方
+ * （ImageViewer）对「容器可解 + codec 未知」仍会先试 `<video>`，不直接进 mpv。
+ */
+export const webCanDecodeCodec = (codec?: string | null): boolean => {
+  if (!codec) return false;
+  return WEB_DECODABLE_VIDEO_CODECS.includes(codec.trim().toLowerCase());
+};
+
 /** 其余容器：Chromium 解不了 → 走后端 ffmpeg 抽帧（P1.5-B）/ 转封装（P2） */
 export const FFMPEG_ONLY_VIDEO_EXTENSIONS = SUPPORTED_VIDEO_EXTENSIONS.filter(
   (ext) => !WEB_DECODABLE_VIDEO_EXTENSIONS.includes(ext)

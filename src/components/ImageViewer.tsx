@@ -8,13 +8,14 @@ import { isTextEditingTarget } from '../utils/keyboardTarget';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { VideoControls } from './viewer/VideoControls';
 import { useToasts } from '../hooks/useToasts';
-import { isWebDecodableVideo } from '../utils/mediaExtensions';
+import { isWebDecodableVideo, webCanDecodeCodec } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
-import { openWithDefaultApp } from '../api/tauri-bridge/files';
 import {
-  ensureVideoPlayable, onRemuxProgress, remuxFailureKind,
-  type RemuxStateDto,
-} from '../api/tauri-bridge/videoRemux';
+  mpvOpen, mpvSetRect, mpvStop, getViewportRect, getMpvStateCache,
+  mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
+  mpvVolumeNudge, mpvSetMuted,
+} from '../utils/mpvPlayer';
+import { openWithDefaultApp } from '../api/tauri-bridge/files';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -540,88 +541,102 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     (window as any).__isImmersive = isImmersiveMode;
   }, [isImmersiveMode]);
 
-  // ── 视频 P2：A 类容器转封装状态（2026-10-15）──
-  // 只有「本地 + 非 Web 可解容器 + 桌面端」会用到，其余情形保持全 null（= 走原路径）。
-  const [remuxOutput, setRemuxOutput] = useState<string | null>(null);
-  const [remuxPending, setRemuxPending] = useState(false);
-  const [remuxProgress, setRemuxProgress] = useState(0);
-  const [remuxFailure, setRemuxFailure] = useState<string | null>(null);
-  /** 「直播失败 → 强制转封装」兜底只做一次（防：产物也失败 → 又回到直播 → 无限循环） */
-  const forceRemuxTriedRef = useRef(false);
-  /** 失败归类（"no_ffmpeg" = 缺组件，可引导去设置面板安装；其余是真失败） */
-  const failureKind: 'no_ffmpeg' | 'remux_failed' | null = remuxFailure
-    ? remuxFailureKind(remuxFailure)
-    : null;
+  // ── 视频 P4/S1：桌面端 mpv 分派（2026-10-20）──
+  // 判据 = 编码优先 + 容器兜底（P4 全局约定 §6.1：判定看编码不看容器）：
+  // ① 容器不在 Chromium 清单（avi/wmv/flv/ts/mpg/3gp）→ 连解复用都进不去 → mpv；
+  // ② 容器可解但编码已知不可解（MPEG-4 Visual / VC-1 / JPEG…）→ mpv；
+  // ③ 容器可解 + 编码未知（未回填 / WMV 整只读不出）→ 仍试 <video>，onError 兜底 mpv；
+  // ④ <video> 直播失败（mkv 装了怪音轨等）→ onError 兜底 mpv（只兜一次防循环）。
+  // mpv = libmpv 直连原文件（popup 顶层窗口承载画面），零转码零等待；
+  // LAN 与安卓端不参与（isRemotePath / isAndroidSync 挡住）。
+  const isLocalDesktopVideo = isVideo && !!file.path && !isRemotePath(file.path) && !isAndroidSync();
+  const [mpvFallback, setMpvFallback] = useState(false);
+  const [mpvActive, setMpvActive] = useState(false);
+  const [mpvError, setMpvError] = useState<string | null>(null);
+  const shouldUseMpv =
+    isLocalDesktopVideo &&
+    (mpvFallback ||
+      !isWebDecodableVideo(file.path) ||
+      (file.meta?.videoCodec ? !webCanDecodeCodec(file.meta.videoCodec) : false));
+  // 键位/滚轮 handler 闭包不随 file 重挂 → 走 ref 取最新值
+  const shouldUseMpvRef = useRef(shouldUseMpv);
+  useEffect(() => { shouldUseMpvRef.current = shouldUseMpv; }, [shouldUseMpv]);
 
   // ── 视频：播放源分派（与图片一致的分派规则）──
-  // ① 本地原生可解容器（mp4/m4v/mov/webm）→ 直接 convertFileSrc(源文件)（Range 由 asset 协议兜）；
-  // ② 本地其余容器（mkv/avi/…）→ P2：先经后端 `-c copy` 转封装，播**产物**（MP4）；
-  // ③ 远程：沿用图片的远程 URL 解析（LAN 视频串流需服务端 Range，属 P3）。
-  // ⚠️ `remuxPending` 期间**不给 src**——否则 <video> 会先对着源容器报 SRC_NOT_SUPPORTED(4)，
-  //    错误卡与进度卡叠在一起（2026-10-15）。
+  // ① 本地原生可解（容器 + 编码双过关）→ convertFileSrc(源文件)（Range 由 asset 协议兜）；
+  // ② 本地其余 → shouldUseMpv=true，**不渲染 <video>**，画面由 mpv popup 承载；
+  // ③ 远程：沿用图片的远程 URL 解析。
   const videoSrc = useMemo(() => {
     if (!isVideo || !file.path) return '';
-    if (remuxPending) return '';
+    if (shouldUseMpv) return '';
     if (isRemotePath(file.path)) return getRemoteImageUrl(file.path);
-    return convertFileSrc(remuxOutput || file.path);
-  }, [isVideo, file.path, remuxOutput, remuxPending]);
+    return convertFileSrc(file.path);
+  }, [isVideo, file.path, shouldUseMpv]);
 
+  // mpv 生命周期：切文件 / 关查看器 → stop + 销毁 popup（Rust 侧 terminate_destroy）
   useEffect(() => {
-    forceRemuxTriedRef.current = false;
-    if (!isVideo || !file.path) {
-      setRemuxPending(false);
-      setRemuxOutput(null);
-      setRemuxFailure(null);
-      return;
-    }
-    // 远程（LAN）与安卓端不参与；原生可解容器**默认**不打扰（mkv 属此类） ——
-    // 真播不出来时由 <video> 的 onError 走「强制转封装」兜底一次。
-    if (isRemotePath(file.path) || isAndroidSync() || isWebDecodableVideo(file.path)) {
-      setRemuxPending(false);
-      setRemuxOutput(null);
-      setRemuxFailure(null);
+    if (!shouldUseMpv || !file.path) {
+      setMpvActive(false);
+      setMpvError(null);
       return;
     }
     let cancelled = false;
-    setRemuxFailure(null);
-    setRemuxProgress(0);
+    setMpvError(null);
+    setMpvActive(false);
     (async () => {
-      const st = await ensureVideoPlayable(file.path);
-      if (cancelled) return;
-      if (st.status === 'ready') {
-        setRemuxOutput(st.output_path);
-        setRemuxPending(false);
-      } else if (st.status === 'pending') {
-        setRemuxPending(true);
-      } else if (st.status === 'failed') {
-        setRemuxPending(false);
-        setRemuxFailure(st.message);
-      } else {
-        setRemuxPending(false);
+      try {
+        const el = containerRef.current;
+        const rect = el
+          ? getViewportRect(el)
+          : { x: 0, y: 0, w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) };
+        await mpvOpen(file.path!, rect);
+        if (cancelled) { void mpvStop(); return; }
+        setMpvActive(true);
+      } catch (e) {
+        // 打不开（坏文件 / dll 缺失 / 非 Windows）→ 显示错误卡（popup 未建立，HTML 可见）
+        if (!cancelled) setMpvError(e instanceof Error ? e.message : String(e));
       }
     })();
-    return () => { cancelled = true; };
-  }, [isVideo, file.path]);
+    return () => {
+      cancelled = true;
+      void mpvStop();
+    };
+  }, [shouldUseMpv, file.path]);
 
-  // 转封装进度/完成：后端任务跑完会推一次终态事件（同一路径才处理）
+  // 媒体区 rect 跟随：窗口**缩放**（ResizeObserver：媒体区 CSS rect 变化）与
+  // 窗口**移动**（Tauri onMoved：CSS rect 不变但屏幕原点变了）→ 推送 rect 给 Rust
+  // 重算 popup 屏幕位置。rAF 节流合并两类触发；不走 Rust 消息 Hook（comctl32 v6
+  // 需 manifest，test exe 会 STATUS_ENTRYPOINT_NOT_FOUND，且手动链 wndproc 有跨线程风险）。
   useEffect(() => {
-    if (!remuxPending) return;
-    let mounted = true;
-    let unlisten: (() => void) | null = null;
-    onRemuxProgress((st: RemuxStateDto) => {
-      if (!mounted || st.path !== file.path) return;
-      if (st.status === 'pending') {
-        setRemuxProgress(st.progress);
-      } else if (st.status === 'ready') {
-        setRemuxOutput(st.output_path);
-        setRemuxPending(false);
-      } else if (st.status === 'failed') {
-        setRemuxPending(false);
-        setRemuxFailure(st.message);
-      }
-    }).then((u) => { if (mounted && u) unlisten = u; else if (u) u(); });
-    return () => { mounted = false; unlisten?.(); };
-  }, [remuxPending, file.path]);
+    if (!mpvActive) return;
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const push = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { void mpvSetRect(getViewportRect(el)); });
+    };
+    push(); // mpvActive 置位的瞬间与 popup 建立之间可能有布局微变，幂等补一发
+    const ro = new ResizeObserver(push);
+    ro.observe(el);
+    window.addEventListener('resize', push);
+    let unlistenMoved: (() => void) | null = null;
+    let disposed = false;
+    import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) => {
+      if (disposed) return;
+      getCurrentWebviewWindow().onMoved(push).then((u) => {
+        if (disposed) u();
+        else unlistenMoved = u;
+      }).catch(() => {});
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      window.removeEventListener('resize', push);
+      unlistenMoved?.();
+    };
+  }, [mpvActive]);
 
   // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
   // 稳定化：总文档 §3.2 的 asset protocol 按 ≤1MB 分片返回，单次 seek/播放会多次触发
@@ -631,7 +646,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // 播放失败态（2026-10-15）：MKV/AVI 等 Web 不解容器点开此前是「黑屏无提示」——
   // onError 时显示降级提示卡（SRC_NOT_SUPPORTED(4) →「格式不支持」；其余 →「加载失败」）。
   const [videoErrorCode, setVideoErrorCode] = useState<number | null>(null);
-  useEffect(() => { setVideoErrorCode(null); }, [file.id]);
+  useEffect(() => { setVideoErrorCode(null); setMpvFallback(false); }, [file.id]);
   // 拖拽进度条中（尚未 seek，§3）：由 VideoControls 回调同步，期间不显示中央遮罩
   const [isVideoScrubbing, setIsVideoScrubbing] = useState(false);
   const isVideoScrubbingRef = useRef(false);
@@ -1259,6 +1274,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       // 视频：滚轮 = 音量（播放器直觉），Shift+滚轮才沿用图片的缩放。
       // 音量变化由 <video> 的 volumechange 事件回流到 VideoControls，无需额外 HUD。
       if (isVideo && !e.shiftKey) {
+        if (shouldUseMpvRef.current) { void mpvVolumeNudge(direction < 0 ? 0.05 : -0.05); return; }
         const v = videoRef.current;
         if (!v) return;
         v.muted = false;
@@ -1576,10 +1592,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (isVideo && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const v = videoRef.current;
         const duration = v && isFinite(v.duration) ? v.duration : 0;
+        // P4/S1：mpv 路径的时长/播放态从模块级状态缓存取（<video> 元素是空的）
+        const mpvMode = shouldUseMpvRef.current;
+        const mpvState = mpvMode ? getMpvStateCache() : null;
+        const mpvDuration = mpvState?.duration ?? null;
 
         // 0-9：跳到全片 0%…90%
         if (/^[0-9]$/.test(e.key)) {
           e.preventDefault();
+          if (mpvMode) {
+            if (mpvDuration && mpvDuration > 0) void mpvSeekAbsolute((mpvDuration * Number(e.key)) / 10);
+            return;
+          }
           if (v && duration > 0) v.currentTime = (duration * Number(e.key)) / 10;
           return;
         }
@@ -1590,6 +1614,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           case 'k':
           case 'K':
             e.preventDefault();
+            if (mpvMode) { void mpvTogglePlay(); return; }
             if (v) { if (v.paused) v.play().catch(() => {}); else v.pause(); }
             return;
           case ',':
@@ -1630,31 +1655,40 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             return;
           case 'Home':
             e.preventDefault();
+            if (mpvMode) { void mpvSeekAbsolute(0); return; }
             if (v) v.currentTime = 0;
             return;
           case 'End':
             e.preventDefault();
+            if (mpvMode) {
+              if (mpvDuration && mpvDuration > 0) void mpvSeekAbsolute(mpvDuration);
+              return;
+            }
             if (v && duration > 0) v.currentTime = duration;
             return;
           case '<':
             e.preventDefault();
-            if (v) v.playbackRate = Math.max(0.25, Math.round((v.playbackRate - 0.25) * 100) / 100);
+            // mpv 倍速在 S2 接（observe speed）；此处仅吞键防止输入字符
+            if (!mpvMode && v) v.playbackRate = Math.max(0.25, Math.round((v.playbackRate - 0.25) * 100) / 100);
             return;
           case '>':
             e.preventDefault();
-            if (v) v.playbackRate = Math.min(4, Math.round((v.playbackRate + 0.25) * 100) / 100);
+            if (!mpvMode && v) v.playbackRate = Math.min(4, Math.round((v.playbackRate + 0.25) * 100) / 100);
             return;
           case 'ArrowUp':
             e.preventDefault();
+            if (mpvMode) { void mpvVolumeNudge(0.1); return; }
             if (v) { v.muted = false; v.volume = Math.min(1, v.volume + 0.1); }
             return;
           case 'ArrowDown':
             e.preventDefault();
+            if (mpvMode) { void mpvVolumeNudge(-0.1); return; }
             if (v) { v.volume = Math.max(0, v.volume - 0.1); }
             return;
           case 'm':
           case 'M':
             e.preventDefault();
+            if (mpvMode) { void mpvSetMuted(!(mpvState?.muted ?? false)); return; }
             if (v) v.muted = !v.muted;
             return;
           case 'f':
@@ -1943,14 +1977,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     else v.pause();
   };
 
-  // 视频键位专用的 ±5s / 逐帧（与 VideoControls 共用同一 video 元素）
+  // 视频键位专用的 ±5s / 逐帧（与 VideoControls 共用同一 video 元素；
+  // P4/S1：mpv 路径走 mpv 原生命令，读 ref 而非闭包 state —— 本函数会被
+  // 键盘 effect 闭包捕获，闭包不随 file 重挂，state 会过期）
   const videoNudge = (delta: number) => {
+    if (shouldUseMpvRef.current) { void mpvSeekRelative(delta); return; }
     const v = videoRef.current;
     if (!v) return;
     const max = isFinite(v.duration) ? v.duration : v.currentTime + Math.abs(delta);
     v.currentTime = Math.max(0, Math.min(v.currentTime + delta, max));
   };
   const videoStepFrame = (dir: 1 | -1) => {
+    if (shouldUseMpvRef.current) { void mpvFrameStep(dir); return; }
     const v = videoRef.current;
     const fps = file.meta?.frameRate;
     if (!v || typeof fps !== 'number' || fps <= 0) return;
@@ -2211,7 +2249,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
         <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
           {/* 视频渲染层：统一容器内按类型分派（§1.1） */}
-          {isVideo && (
+          {isVideo && !shouldUseMpv && (
             <video
               ref={videoRef}
               key={file.id}
@@ -2253,35 +2291,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               preload="metadata"
               draggable={false}
               onError={(e) => {
-                // 2026-10-15：容器 WebView 解不了 → 显示降级提示而非黑屏。
-                // 2026-10-16：**先尝试一次转封装兜底** —— 容器「可解」不等于「播得了」
-                //（mkv 里装 FLAC/PCM 音轨、或编码不受支持时直播照样失败，
-                //  换成 MP4 + AAC 往往就活了）。只在「还没用过产物」且「没试过兜底」时触发一次。
+                // P4/S1（2026-10-20）：直播失败 → **兜底 mpv 直连原文件**（替换旧的 remux 阶梯
+                // —— remux 对桌面端是无效功，系统无 MPEG-4 Part 2 MFT，换了壳也解不出画面）。
+                // 只兜一次防循环；兜底命中后 shouldUseMpv 翻转，<video> 卸载、mpv 接管。
                 const code = e.currentTarget.error?.code ?? 0;
-                if (
-                  !remuxOutput &&
-                  !remuxPending &&
-                  !remuxFailure &&
-                  !forceRemuxTriedRef.current &&
-                  file.path &&
-                  !isRemotePath(file.path) &&
-                  !isAndroidSync()
-                ) {
-                  forceRemuxTriedRef.current = true;
-                  setRemuxPending(true);
-                  ensureVideoPlayable(file.path, true).then((st) => {
-                    if (st.status === 'ready') {
-                      setRemuxOutput(st.output_path);
-                      setRemuxPending(false);
-                      setVideoErrorCode(null);
-                    } else if (st.status === 'pending') {
-                      // 等事件推送终态（下方 effect 已订阅 remuxPending）
-                    } else {
-                      setRemuxPending(false);
-                      setRemuxFailure(st.message);
-                      setVideoErrorCode(code);
-                    }
-                  });
+                if (isLocalDesktopVideo && !mpvFallback && file.path) {
+                  setMpvFallback(true);
                   return;
                 }
                 setVideoErrorCode(code);
@@ -2377,8 +2392,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         </div>
 
         {/* 视频缓冲/seek 等待遮罩：1MB 分片上限使大文件 seek 有等待，必须给反馈（§3）；
-            拖拽进度条中（未 seek）不显示，避免拖拽期闪烁；加载失败时不显示（改出错误卡） */}
-        {isVideo && isVideoBuffering && !isVideoScrubbing && videoErrorCode === null && (
+            拖拽进度条中（未 seek）不显示，避免拖拽期闪烁；加载失败时不显示（改出错误卡）。
+            mpv 路径不适用（无 <video> 事件；popup 一旦建立会盖住本层）。 */}
+        {isVideo && !shouldUseMpv && isVideoBuffering && !isVideoScrubbing && videoErrorCode === null && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
             <div className="p-3 rounded-full bg-black/40">
               <Loader2 className="animate-spin text-white/90" size={36} />
@@ -2386,48 +2402,39 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
         )}
 
-        {/* 视频 P2：转封装进度卡（2026-10-15）—— mkv/avi 等 A 类容器首次点开时的等待反馈。
-            此时 <video> 没有 src（避免它抢先报「不支持」），所以这张卡是唯一可见反馈。 */}
-        {isVideo && remuxPending && (
+        {/* P4/S1：mpv 加载失败卡（popup 未建立时 HTML 可见）——坏文件 / dll 缺失 / 非 Windows。
+            「用系统播放器打开」兜底保留（D5 语义不变）。 */}
+        {isVideo && shouldUseMpv && mpvError !== null && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
-            <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4">
-              <Loader2 className="animate-spin text-white/90 mb-2" size={28} />
-              <div className="text-sm font-medium">{t('video.remuxing')}</div>
-              <div className="text-xs text-white/70 mt-1">{t('video.remuxingHint')}</div>
-              <div className="w-48 h-1 mt-3 rounded-full bg-white/20 overflow-hidden">
-                <div
-                  className="h-full bg-white/80 transition-[width] duration-200"
-                  style={{ width: `${Math.round(Math.max(remuxProgress, 0.04) * 100)}%` }}
-                />
-              </div>
+            <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4 pointer-events-auto">
+              <AlertTriangle size={28} className="mb-2 text-amber-400" />
+              <div className="text-sm font-medium">{t('video.mpvFailed')}</div>
+              <div className="text-xs text-white/70 mt-1">{`${t('video.mpvFailedHint')}（${mpvError}）`}</div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (file.path) openWithDefaultApp(file.path).catch(() => {});
+                }}
+                className="mt-3 px-3 py-1.5 text-xs rounded-lg bg-white/15 hover:bg-white/25 transition-colors flex items-center gap-1.5"
+              >
+                <ExternalLink size={14} />
+                {t('video.openExternalPlayer')}
+              </button>
             </div>
           </div>
         )}
 
-        {/* 播放失败提示（2026-10-15）：Web 解不了的容器点开此前是「黑屏无提示」。
-            P2 之后：① 转封装失败 → 说明真实原因；② 其余 → SRC_NOT_SUPPORTED(4) 与其
-            它错误分开文案。两种情况都给「用系统播放器打开」兜底（D5）。 */}
-        {isVideo && !remuxPending && (failureKind !== null || videoErrorCode !== null) && (
+        {/* 播放失败提示：仅 <video> 路径（SRC_NOT_SUPPORTED(4) 与其他错误分开文案），
+            给「用系统播放器打开」兜底（D5）。remux 阶梯已随 P4/S1 移除。 */}
+        {isVideo && !shouldUseMpv && videoErrorCode !== null && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[3]">
             <div className="px-5 py-4 rounded-xl bg-black/70 text-white flex flex-col items-center text-center max-w-md mx-4 pointer-events-auto">
               <AlertTriangle size={28} className="mb-2 text-amber-400" />
               <div className="text-sm font-medium">
-                {failureKind === 'no_ffmpeg'
-                  ? t('video.remuxNoFfmpeg')
-                  : failureKind !== null
-                    ? t('video.remuxFailed')
-                    : videoErrorCode === 4
-                      ? t('video.cannotPlay')
-                      : t('video.cannotPlayFailed')}
+                {videoErrorCode === 4 ? t('video.cannotPlay') : t('video.cannotPlayFailed')}
               </div>
               <div className="text-xs text-white/70 mt-1">
-                {failureKind === 'no_ffmpeg'
-                  ? t('video.remuxNoFfmpegHint')
-                  : failureKind !== null
-                    ? `${t('video.remuxFailedHint')}（${remuxFailure}）`
-                    : videoErrorCode === 4
-                      ? t('video.cannotPlayHint')
-                      : t('video.cannotPlayFailedHint')}
+                {videoErrorCode === 4 ? t('video.cannotPlayHint') : t('video.cannotPlayFailedHint')}
               </div>
               {/* D5 兜底：无论哪种原因，用户总有一条能真正看到视频的路 */}
               <button
@@ -2487,6 +2494,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             onToggleFullscreen={toggleFullscreen}
             t={t}
             onScrubbingChange={handleVideoScrubbingChange}
+            // P4/S1：mpv 路径由控制条内部轮询 mpv 状态并直接下命令（<video> 为空壳）
+            mpvMode={shouldUseMpv}
           />
         </div>
       )}
@@ -2560,10 +2569,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          {/* 复制图片 / 复制当前帧：视频改为抓取当前播放位置的画面（§7.2） */}
-          <div className={menuItemClass} onClick={() => { isVideo ? handleCopyVideoFrame() : handleCopyImage(); closeMenu(); }}>
-            <Clipboard size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.copyFrame') : t('context.copyImage')}
-          </div>
+          {/* 复制图片 / 复制当前帧：视频改为抓取当前播放位置的画面（§7.2）。
+              mpv 路径的画面在原生窗口里，<canvas> 抓不到 → 隐藏该入口（S2 用 mpv screenshot 接）。 */}
+          {!shouldUseMpv && (
+            <div className={menuItemClass} onClick={() => { isVideo ? handleCopyVideoFrame() : handleCopyImage(); closeMenu(); }}>
+              <Clipboard size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.copyFrame') : t('context.copyImage')}
+            </div>
+          )}
 
           <div className={menuItemClass} onClick={() => { onCopyToFolder(file.id); closeMenu(); }}>
             <Copy size={iconSize} className="mr-2 opacity-70" /> {t('context.copyTo')}

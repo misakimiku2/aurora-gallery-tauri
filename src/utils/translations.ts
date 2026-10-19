@@ -446,6 +446,9 @@ export const translations = {
       remuxNoFfmpegHint: '可在「设置 → 常规 → 视频封面引擎」安装该组件',
       remuxFailed: '转封装失败，无法在此播放',
       remuxFailedHint: '原因',
+      // 视频 P4/S1（2026-10-20）：mpv（原生播放内核）加载失败
+      mpvFailed: '原生播放内核加载失败',
+      mpvFailedHint: '文件可能已损坏，或缺少 libmpv 组件',
       openExternalPlayer: '用系统播放器打开',
     },
     viewer: {
@@ -1727,6 +1730,9 @@ export const translations = {
       remuxNoFfmpegHint: 'Install it under Settings → General → Video cover engine',
       remuxFailed: 'Rewrapping failed, playback is unavailable here',
       remuxFailedHint: 'Reason',
+      // Video P4/S1 (2026-10-20): mpv (native playback core) load failure
+      mpvFailed: 'Failed to load the native playback core',
+      mpvFailedHint: 'The file may be corrupted, or the libmpv component is missing',
       openExternalPlayer: 'Open with system player',
     },
     viewer: {
