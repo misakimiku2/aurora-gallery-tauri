@@ -89,6 +89,84 @@ fn detect_hdd_internal(path: &str) -> bool {
     }
 }
 
+/// MP4 容器的原位修复（2026-10-19，两种形态共用一次调用）。
+///
+/// **一：撒谎的 edit list。** 插件从 X.com 下载的一批 mp4，`elst.segment_duration` 是
+/// **u32**、长片全片时长折算后溢出（实测坏值 4,256,094,207 紧贴上限 4,294,967,295），
+/// 于是播放器只认全片的一小段 —— 69:34 的片子只肯放 9:52。修法是把 `elst` 的 4 字节
+/// **类型标识**原位改成 `free`。
+///
+/// **二：碎片化的 `mdat` 链。** 同一批文件把媒体数据切成几千个顶层 `mdat`（实测
+/// 2783 个），Chromium 的渐进式 mp4 解析器沿顶层链一个个读 box 头，等于把整只文件
+/// 拉完才肯起播 —— 这就是「点开要转好几秒、界面还跟着卡」。修法是把第一个 `mdat`
+/// 的 4 字节**长度字段**扩成「从这里到文件尾」，链上就只剩 1 个 box。台架实测
+/// 5406 ms → 154 ms，改动恰好 4 个字节。
+///
+/// 两种都不改体积、不动画面数据、按台账可逐字节还原。判定与写入全在 `aurora_core`，
+/// 与安卓共用同一份实现（安卓没有 ffmpeg，也绝不能两端各写一套解析）。
+///
+/// 两条硬约束：
+/// 1. **绝不因为修不动而中断扫描** —— 只读盘/网络盘/被占用/无写权限一律只记日志；
+/// 2. **不在读文件时握着数据库锁** —— 先做只读判定（`inspect` + `plan`），确认要动手
+///    才取连接，否则每个视频都会把 `get_connection()` 的 Mutex 按住到 moov 读完。
+///
+/// 刻意**不改入库时长**（真机实测教训）：时长与「播放器能访问到哪」是两回事。把时长
+/// 夹小等于用一个新的假值覆盖正确值 —— 安卓上 MediaStore 本来就报全片时长（实测
+/// 4174578ms），夹完反而变成「列表写 9:51、播放器给 69:34」的自相矛盾，比原 bug 更难懂。
+/// 修不动只报日志，时长保持容器口径。
+fn repair_container_if_needed(pool: &AppDbPool, path: &Path) {
+    // 只做 MP4 族容器的字节级改写；avi/mkv/wmv 等走既有转封装路径，不在这里动。
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("mp4") | Some("m4v") | Some("mov") => {}
+        _ => return,
+    }
+
+    // 只读判定：健康文件（绝大多数）到此为止，不碰数据库。
+    // ⚠️ 两种形态要分开问 —— 已经修过 edit list 的文件（Masked）也可能正好是碎片件，
+    // 只看 Lying 会让它们永远进不到合并分支（用户库里 2026-10-19 14:09 那批就是这个状态）。
+    let verdict = aurora_core::mp4_editlist::inspect(path);
+    let needs_elst = matches!(verdict, aurora_core::mp4_editlist::ContainerVerdict::Lying { .. });
+    let mdat_patch = aurora_core::mp4_mdat::plan(path);
+    if !needs_elst && mdat_patch.is_none() {
+        return;
+    }
+
+    let conn = pool.get_connection();
+    let r = aurora_core::container_repair::repair_file(&conn, path, "desktop");
+    match r.status.as_str() {
+        "repaired" => {
+            let what = match (needs_elst, r.merged) {
+                (true, true) => "edit list + mdat 链",
+                (true, false) => "edit list",
+                (false, true) => "mdat 链（点开要等整只文件读完的那一种）",
+                (false, false) => "容器",
+            };
+            log::warn!(
+                "[Scanner] 已原位修复 {}：藏了 {:.1} 分钟（采样表 {}ms / elst {}ms）- {:?}",
+                what,
+                r.hidden_ms as f64 / 60_000.0,
+                r.table_ms,
+                r.elst_ms,
+                path
+            )
+        }
+        // 判坏却没改成（只读、被占用、无权限、台账写失败）：只报出来，时长一律不动
+        _ => log::warn!(
+            "[Scanner] 容器修复未成功 status={} err={:?} hidden={}ms merged={} - {:?}",
+            r.status,
+            r.error,
+            r.hidden_ms,
+            r.merged,
+            path
+        ),
+    }
+}
+
 fn sort_children(all_files: &mut HashMap<String, FileNode>) {
     let folder_ids: Vec<String> = all_files.keys().cloned().collect();
     for folder_id in folder_ids {
@@ -401,6 +479,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         jwalk::Parallelism::RayonNewPool(16)
     };
 
+    // 撒谎 edit list 的原位修复需要在走文件时能落台账，把池子一起带进生产者线程。
+    let pool_for_repairs = pool_inner.clone();
+
     std::thread::spawn(move || {
         let normalized_root = normalize_path(&producer_path);
         let root_p_local = Path::new(&producer_path);
@@ -484,6 +565,12 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                     let mut video_codec: Option<String> = None;
                     let mut bit_rate: Option<i64> = None;
                     if is_video {
+                        // 撒谎 edit list 原位修复（2026-10-19）：必须在读元数据**之前**做。
+                        // 不修的话 revelo 按采样表给 4174 s 入库，而播放器按 elst 只认 591 s
+                        // —— UI 拿前者画进度条、播放器拿后者放片，拖进两者的差值区间就定格；
+                        // 封面 6 个候选点也会有 5 个落在不可达区间（日志实证
+                        // `逐 seek 模式 660ms 取帧序号 None` + `抽帧失败`）。
+                        repair_container_if_needed(&pool_for_repairs, &entry_path);
                         // 缓存自愈（2026-10-15）：缓存里的 duration 可疑（<1s 且 >1MB —— revelo
                         // 对 AVI+AVC 的误报形态，实测 71ms/112MB）时，即使缓存命中也要重读复核，
                         // 否则误报值永远赖在库里（UI 时长显示 00:00）。

@@ -649,6 +649,132 @@ internal open class UniffiForeignFutureResultVoid(
 internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
     fun callback(`callbackData`: Long,`result`: UniffiForeignFutureResultVoid.UniffiByValue,)
 }
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`newName`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiRenameCallbackMethod4 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceAiTaskCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod0 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod1 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod2 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+internal interface UniffiCallbackInterfaceColorBatchCallbackMethod3 : com.sun.jna.Callback {
+    fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,)
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readBytes", "onProgress", "onFileDone", "onName", "onFinished")
+internal open class UniffiVTableCallbackInterfaceAiRenameCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2? = null,
+    @JvmField internal var `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2? = null,
+        `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3? = null,
+        `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4? = null,
+    ): UniffiVTableCallbackInterfaceAiRenameCallback(`uniffiFree`,`uniffiClone`,`readBytes`,`onProgress`,`onFileDone`,`onName`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceAiRenameCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readBytes` = other.`readBytes`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onName` = other.`onName`
+        `onFinished` = other.`onFinished`
+    }
+
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readBytes", "onProgress", "onFileDone", "onFinished")
+internal open class UniffiVTableCallbackInterfaceAiTaskCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2? = null,
+        `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3? = null,
+    ): UniffiVTableCallbackInterfaceAiTaskCallback(`uniffiFree`,`uniffiClone`,`readBytes`,`onProgress`,`onFileDone`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceAiTaskCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readBytes` = other.`readBytes`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onFinished` = other.`onFinished`
+    }
+
+}
+@Structure.FieldOrder("uniffiFree", "uniffiClone", "readPixels", "onProgress", "onFileDone", "onFinished")
+internal open class UniffiVTableCallbackInterfaceColorBatchCallback(
+    @JvmField internal var `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+    @JvmField internal var `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+    @JvmField internal var `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0? = null,
+    @JvmField internal var `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1? = null,
+    @JvmField internal var `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2? = null,
+    @JvmField internal var `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3? = null,
+) : Structure() {
+    class UniffiByValue(
+        `uniffiFree`: UniffiCallbackInterfaceFree? = null,
+        `uniffiClone`: UniffiCallbackInterfaceClone? = null,
+        `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0? = null,
+        `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1? = null,
+        `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2? = null,
+        `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3? = null,
+    ): UniffiVTableCallbackInterfaceColorBatchCallback(`uniffiFree`,`uniffiClone`,`readPixels`,`onProgress`,`onFileDone`,`onFinished`,), Structure.ByValue
+
+   internal fun uniffiSetValue(other: UniffiVTableCallbackInterfaceColorBatchCallback) {
+        `uniffiFree` = other.`uniffiFree`
+        `uniffiClone` = other.`uniffiClone`
+        `readPixels` = other.`readPixels`
+        `onProgress` = other.`onProgress`
+        `onFileDone` = other.`onFileDone`
+        `onFinished` = other.`onFinished`
+    }
+
+}
 
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
@@ -672,6 +798,48 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_aurora_core_checksum_func_ai_analyze_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_apply_search_filter(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_cancel_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_check_connection(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_fetch_models(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_generate_file_names(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_ai_rewrite_search_query(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_batch_extract_colors(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_cancel_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_cleanup_color_nonexistent(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_color_db_stats(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_extract_and_save_colors(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_get_colors_by_file_paths(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_init_color_db(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_pause_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_resume_color_task(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_retry_color_error_files(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_search_by_color(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_search_by_palette(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_add_files_to_topic(
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_people_to_topic(
@@ -680,6 +848,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_add_tags_to_files(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_delete_index_entries(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_delete_person(
     ): Int
     external fun uniffi_aurora_core_checksum_func_delete_tags(
@@ -687,6 +857,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_aurora_core_checksum_func_delete_topic(
     ): Int
     external fun uniffi_aurora_core_checksum_func_find_topics_containing_file(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_generate_id(
     ): Int
     external fun uniffi_aurora_core_checksum_func_generate_thumbnail(
     ): Int
@@ -714,6 +886,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_get_topic_people(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_group_remote_tag_counts(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_init_db(
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_folders(
@@ -740,11 +914,49 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_file_metadata(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_upsert_media_image(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_media_images(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_person(
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_topic(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_inspect_video_container(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_list_container_repairs(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_repair_video_container(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_repair_video_containers(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_revert_video_container(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_read_bytes(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_name(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_airenamecallback_on_finished(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_read_bytes(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_aitaskcallback_on_finished(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_read_pixels(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_progress(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_file_done(
+    ): Int
+    external fun uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished(
     ): Int
     external fun ffi_aurora_core_uniffi_contract_version(
     ): Int
@@ -757,8 +969,59 @@ internal object UniffiLib {
 
     init {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
+        uniffiCallbackInterfaceAiRenameCallback.register(this)
+        uniffiCallbackInterfaceAiTaskCallback.register(this)
+        uniffiCallbackInterfaceColorBatchCallback.register(this)
         
     }
+    external fun uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(`vtable`: UniffiVTableCallbackInterfaceAiRenameCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(`vtable`: UniffiVTableCallbackInterfaceAiTaskCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_init_callback_vtable_colorbatchcallback(`vtable`: UniffiVTableCallbackInterfaceColorBatchCallback,
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_analyze_files(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_apply_search_filter(`filter`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_ai_cancel_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_ai_check_connection(`cfg`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_fetch_models(`cfg`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_ai_generate_file_names(`cfg`: RustBuffer.ByValue,`items`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_ai_rewrite_search_query(`cfg`: RustBuffer.ByValue,`query`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_batch_extract_colors(`fileIds`: RustBuffer.ByValue,`taskId`: RustBuffer.ByValue,`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_cancel_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_cleanup_color_nonexistent(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_color_db_stats(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_delete_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_extract_and_save_colors(`fileId`: RustBuffer.ByValue,`width`: Int,`height`: Int,`rgba`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_get_colors_by_file_paths(`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_init_color_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_aurora_core_fn_func_pause_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_resume_color_task(`taskId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_aurora_core_fn_func_retry_color_error_files(uniffi_out_err: UniffiRustCallStatus, 
+    ): Int
+    external fun uniffi_aurora_core_fn_func_search_by_color(`hex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_search_by_palette(`palettes`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_add_files_to_topic(`topicId`: RustBuffer.ByValue,`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_add_people_to_topic(`topicId`: RustBuffer.ByValue,`peopleIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -767,6 +1030,8 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_aurora_core_fn_func_add_tags_to_files(`fileIds`: RustBuffer.ByValue,`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_delete_index_entries(`fileIds`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_aurora_core_fn_func_delete_person(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_delete_tags(`tags`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -774,6 +1039,8 @@ internal object UniffiLib {
     external fun uniffi_aurora_core_fn_func_delete_topic(`id`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_find_topics_containing_file(`fileId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_generate_id(`contentUri`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_generate_thumbnail(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -801,6 +1068,8 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_get_topic_people(`topicId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_group_remote_tag_counts(`counts`: RustBuffer.ByValue,`locale`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_init_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
@@ -827,12 +1096,24 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_file_metadata(`metadata`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_upsert_media_image(`image`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_media_images(`images`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_person(`person`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_topic(`topic`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_inspect_video_container(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_list_container_repairs(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_repair_video_container(`path`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_repair_video_containers(`paths`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_revert_video_container(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun ffi_aurora_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun ffi_aurora_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -952,6 +1233,69 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_aurora_core_checksum_func_ai_analyze_files() != 14489) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_apply_search_filter() != 8854) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_cancel_task() != 52897) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_check_connection() != 29146) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_fetch_models() != 63685) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_generate_file_names() != 51559) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_ai_rewrite_search_query() != 60479) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_batch_extract_colors() != 13287) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_cancel_color_task() != 52439) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_cleanup_color_nonexistent() != 29087) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_color_db_stats() != 32764) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_delete_color_error_files() != 36173) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_extract_and_save_colors() != 37781) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_color_error_files() != 5417) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_get_colors_by_file_paths() != 12735) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_init_color_db() != 11329) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_pause_color_task() != 47539) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_resume_color_task() != 3436) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_retry_color_error_files() != 11997) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_search_by_color() != 40480) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_search_by_palette() != 42692) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_add_files_to_topic() != 55474) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -964,6 +1308,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_add_tags_to_files() != 52504) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_delete_index_entries() != 34590) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_delete_person() != 23922) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -974,6 +1321,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_find_topics_containing_file() != 54482) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_generate_id() != 60562) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_generate_thumbnail() != 12901) {
@@ -1015,10 +1365,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_get_topic_people() != 29311) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_group_remote_tag_counts() != 12703) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 23727) {
+    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 61375) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
@@ -1054,6 +1407,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_upsert_file_metadata() != 37365) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_media_image() != 27869) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 3627) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1061,6 +1417,60 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_topic() != 1190) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_inspect_video_container() != 39576) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_list_container_repairs() != 47007) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_repair_video_container() != 35354) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_repair_video_containers() != 56490) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_revert_video_container() != 32329) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_read_bytes() != 7956) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_progress() != 2298) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_file_done() != 41356) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_name() != 17906) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_airenamecallback_on_finished() != 28808) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_read_bytes() != 31232) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_progress() != 40945) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_file_done() != 57411) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_aitaskcallback_on_finished() != 51435) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_read_pixels() != 56977) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_progress() != 59866) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_file_done() != 61294) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_method_colorbatchcallback_on_finished() != 65338) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1154,7 +1564,38 @@ object UniffiWithHandle
  *
  * @suppress
  * */
-object NoHandle
+object NoHandle// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+internal const val IDX_CALLBACK_FREE = 0
+// Callback return codes
+internal const val UNIFFI_CALLBACK_SUCCESS = 0
+internal const val UNIFFI_CALLBACK_ERROR = 1
+internal const val UNIFFI_CALLBACK_UNEXPECTED_ERROR = 2
+
+/**
+ * @suppress
+ */
+public abstract class FfiConverterCallbackInterface<CallbackInterface: Any>: FfiConverter<CallbackInterface, Long> {
+    internal val handleMap = UniffiHandleMap<CallbackInterface>()
+
+    internal fun drop(handle: Long) {
+        handleMap.remove(handle)
+    }
+
+    override fun lift(value: Long): CallbackInterface {
+        return handleMap.get(value)
+    }
+
+    override fun read(buf: ByteBuffer) = lift(buf.getLong())
+
+    override fun lower(value: CallbackInterface) = handleMap.insert(value)
+
+    override fun allocationSize(value: CallbackInterface) = 8UL
+
+    override fun write(value: CallbackInterface, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
 
 /**
  * @suppress
@@ -1350,6 +1791,561 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 
 
 /**
+ * AI 配置（对齐 `src/types.ts:245-272` 的 `AIConfig`，端点/模型拍平成单字段）。
+ *
+ * `language` = 全局界面语言（"zh" / 其他），同时决定：
+ * - 分析 prompt 的中英文变体（桌面 `settings.language === 'zh'` 的 isChinese 分支）；
+ * - 翻译目标语言（D38：不用 ai.targetLanguage，桌面 transTarget 同样取全局 language）。
+ */
+data class AiConfig (
+    var `provider`: AiProvider
+    , 
+    var `openaiEndpoint`: kotlin.String
+    , 
+    var `openaiApiKey`: kotlin.String
+    , 
+    var `openaiModel`: kotlin.String
+    , 
+    var `ollamaEndpoint`: kotlin.String
+    , 
+    var `ollamaModel`: kotlin.String
+    , 
+    var `lmstudioEndpoint`: kotlin.String
+    , 
+    var `lmstudioModel`: kotlin.String
+    , 
+    /**
+     * 桌面 `systemPrompt`：openai/lmstudio 走 system role 消息；ollama /api/generate 走 body.system
+     * 字段、/api/chat 走 system role 消息（详见 [`AiClient::chat`]）。
+     */
+    var `systemPrompt`: kotlin.String?
+    , 
+    var `autoTag`: kotlin.Boolean
+    , 
+    var `autoDescription`: kotlin.Boolean
+    , 
+    var `enhancePersonDescription`: kotlin.Boolean
+    , 
+    var `enableOcr`: kotlin.Boolean
+    , 
+    var `enableTranslation`: kotlin.Boolean
+    , 
+    /**
+     * 翻译目标语言 = 全局 language（D38）。
+     */
+    var `language`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiConfig: FfiConverterRustBuffer<AiConfig> {
+    override fun read(buf: ByteBuffer): AiConfig {
+        return AiConfig(
+            FfiConverterTypeAiProvider.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiConfig) = (
+            FfiConverterTypeAiProvider.allocationSize(value.`provider`) +
+            FfiConverterString.allocationSize(value.`openaiEndpoint`) +
+            FfiConverterString.allocationSize(value.`openaiApiKey`) +
+            FfiConverterString.allocationSize(value.`openaiModel`) +
+            FfiConverterString.allocationSize(value.`ollamaEndpoint`) +
+            FfiConverterString.allocationSize(value.`ollamaModel`) +
+            FfiConverterString.allocationSize(value.`lmstudioEndpoint`) +
+            FfiConverterString.allocationSize(value.`lmstudioModel`) +
+            FfiConverterOptionalString.allocationSize(value.`systemPrompt`) +
+            FfiConverterBoolean.allocationSize(value.`autoTag`) +
+            FfiConverterBoolean.allocationSize(value.`autoDescription`) +
+            FfiConverterBoolean.allocationSize(value.`enhancePersonDescription`) +
+            FfiConverterBoolean.allocationSize(value.`enableOcr`) +
+            FfiConverterBoolean.allocationSize(value.`enableTranslation`) +
+            FfiConverterString.allocationSize(value.`language`)
+    )
+
+    override fun write(value: AiConfig, buf: ByteBuffer) {
+            FfiConverterTypeAiProvider.write(value.`provider`, buf)
+            FfiConverterString.write(value.`openaiEndpoint`, buf)
+            FfiConverterString.write(value.`openaiApiKey`, buf)
+            FfiConverterString.write(value.`openaiModel`, buf)
+            FfiConverterString.write(value.`ollamaEndpoint`, buf)
+            FfiConverterString.write(value.`ollamaModel`, buf)
+            FfiConverterString.write(value.`lmstudioEndpoint`, buf)
+            FfiConverterString.write(value.`lmstudioModel`, buf)
+            FfiConverterOptionalString.write(value.`systemPrompt`, buf)
+            FfiConverterBoolean.write(value.`autoTag`, buf)
+            FfiConverterBoolean.write(value.`autoDescription`, buf)
+            FfiConverterBoolean.write(value.`enhancePersonDescription`, buf)
+            FfiConverterBoolean.write(value.`enableOcr`, buf)
+            FfiConverterBoolean.write(value.`enableTranslation`, buf)
+            FfiConverterString.write(value.`language`, buf)
+    }
+}
+
+
+
+/**
+ * 一张待分析图（path 供无旧行时落元数据用；字节由 Kotlin 经回调供给）。
+ */
+data class AiInputItem (
+    var `fileId`: kotlin.String
+    , 
+    var `path`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiInputItem: FfiConverterRustBuffer<AiInputItem> {
+    override fun read(buf: ByteBuffer): AiInputItem {
+        return AiInputItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiInputItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: AiInputItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+/**
+ * 改名条目（AI 只产名字；真正改名由 Kotlin 走 M4b 重命名管线+系统授权）。
+ */
+data class AiRenameItem (
+    var `fileId`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiRenameItem: FfiConverterRustBuffer<AiRenameItem> {
+    override fun read(buf: ByteBuffer): AiRenameItem {
+        return AiRenameItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiRenameItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: AiRenameItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+/**
+ * AI 搜索改写结果（对齐 `src/types.ts` 的 `AiSearchFilter`，不含 filePaths——
+ * CLIP/取色搜索的路径直通分支由主线程自行处理）。
+ */
+data class AiSearchFilter (
+    var `keywords`: List<kotlin.String>
+    , 
+    var `colors`: List<kotlin.String>
+    , 
+    var `people`: List<kotlin.String>
+    , 
+    var `description`: kotlin.String?
+    , 
+    var `originalQuery`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiSearchFilter: FfiConverterRustBuffer<AiSearchFilter> {
+    override fun read(buf: ByteBuffer): AiSearchFilter {
+        return AiSearchFilter(
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: AiSearchFilter) = (
+            FfiConverterSequenceString.allocationSize(value.`keywords`) +
+            FfiConverterSequenceString.allocationSize(value.`colors`) +
+            FfiConverterSequenceString.allocationSize(value.`people`) +
+            FfiConverterOptionalString.allocationSize(value.`description`) +
+            FfiConverterString.allocationSize(value.`originalQuery`)
+    )
+
+    override fun write(value: AiSearchFilter, buf: ByteBuffer) {
+            FfiConverterSequenceString.write(value.`keywords`, buf)
+            FfiConverterSequenceString.write(value.`colors`, buf)
+            FfiConverterSequenceString.write(value.`people`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
+            FfiConverterString.write(value.`originalQuery`, buf)
+    }
+}
+
+
+
+/**
+ * 颜色库行数统计（StoragePanel 主色调节用）。
+ */
+data class ColorDbStats (
+    /**
+     * 全部行数（含 processing）。
+     */
+    var `total`: kotlin.UInt
+    , 
+    var `pending`: kotlin.UInt
+    , 
+    var `extracted`: kotlin.UInt
+    , 
+    var `error`: kotlin.UInt
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorDbStats: FfiConverterRustBuffer<ColorDbStats> {
+    override fun read(buf: ByteBuffer): ColorDbStats {
+        return ColorDbStats(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorDbStats) = (
+            FfiConverterUInt.allocationSize(value.`total`) +
+            FfiConverterUInt.allocationSize(value.`pending`) +
+            FfiConverterUInt.allocationSize(value.`extracted`) +
+            FfiConverterUInt.allocationSize(value.`error`)
+    )
+
+    override fun write(value: ColorDbStats, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`total`, buf)
+            FfiConverterUInt.write(value.`pending`, buf)
+            FfiConverterUInt.write(value.`extracted`, buf)
+            FfiConverterUInt.write(value.`error`, buf)
+    }
+}
+
+
+
+/**
+ * 错误文件条目。对应 color_db::get_error_files 的返回形状
+ * （file 键 + updated_at 秒级时间戳；status 恒为 error 故不重复携带）。
+ */
+data class ColorErrorFile (
+    var `fileId`: kotlin.String
+    , 
+    var `updatedAt`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorErrorFile: FfiConverterRustBuffer<ColorErrorFile> {
+    override fun read(buf: ByteBuffer): ColorErrorFile {
+        return ColorErrorFile(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorErrorFile) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterLong.allocationSize(value.`updatedAt`)
+    )
+
+    override fun write(value: ColorErrorFile, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterLong.write(value.`updatedAt`, buf)
+    }
+}
+
+
+
+/**
+ * 一次像素供给（Kotlin 下采样位图的 RGBA 字节，行优先、每像素 4 字节）。
+ */
+data class ColorPixels (
+    var `width`: kotlin.UInt
+    , 
+    var `height`: kotlin.UInt
+    , 
+    var `rgba`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeColorPixels: FfiConverterRustBuffer<ColorPixels> {
+    override fun read(buf: ByteBuffer): ColorPixels {
+        return ColorPixels(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ColorPixels) = (
+            FfiConverterUInt.allocationSize(value.`width`) +
+            FfiConverterUInt.allocationSize(value.`height`) +
+            FfiConverterByteArray.allocationSize(value.`rgba`)
+    )
+
+    override fun write(value: ColorPixels, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`width`, buf)
+            FfiConverterUInt.write(value.`height`, buf)
+            FfiConverterByteArray.write(value.`rgba`, buf)
+    }
+}
+
+
+
+/**
+ * 一次检测/修复的结果。`status` 的字面量含义见
+ * [`crate::container_repair::RepairOutcome::status`]。
+ */
+data class FfiContainerRepair (
+    var `path`: kotlin.String
+    , 
+    /**
+     * `repaired` / `needsRepair` / `alreadyRepaired` / `maskedNoLedger` / `healthy` /
+     * `notApplicable` / `failed`
+     */
+    var `status`: kotlin.String
+    , 
+    /**
+     * 被藏起来的毫秒数。
+     */
+    var `hiddenMs`: kotlin.Long
+    , 
+    /**
+     * 采样表口径时长（毫秒）——修完之后播放器就该认到这个值。
+     */
+    var `tableMs`: kotlin.Long
+    , 
+    /**
+     * `elst` 口径时长（毫秒）——修复前播放器实际认到的值。
+     */
+    var `elstMs`: kotlin.Long
+    , 
+    /**
+     * 被改动的字节偏移（还原时按台账取，不取这里的返回值）。
+     */
+    var `offsets`: List<kotlin.Long>
+    , 
+    var `error`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiContainerRepair: FfiConverterRustBuffer<FfiContainerRepair> {
+    override fun read(buf: ByteBuffer): FfiContainerRepair {
+        return FfiContainerRepair(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterSequenceLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiContainerRepair) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`status`) +
+            FfiConverterLong.allocationSize(value.`hiddenMs`) +
+            FfiConverterLong.allocationSize(value.`tableMs`) +
+            FfiConverterLong.allocationSize(value.`elstMs`) +
+            FfiConverterSequenceLong.allocationSize(value.`offsets`) +
+            FfiConverterOptionalString.allocationSize(value.`error`)
+    )
+
+    override fun write(value: FfiContainerRepair, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`status`, buf)
+            FfiConverterLong.write(value.`hiddenMs`, buf)
+            FfiConverterLong.write(value.`tableMs`, buf)
+            FfiConverterLong.write(value.`elstMs`, buf)
+            FfiConverterSequenceLong.write(value.`offsets`, buf)
+            FfiConverterOptionalString.write(value.`error`, buf)
+    }
+}
+
+
+
+/**
+ * 台账里的一条记录（设置面板/还原入口用）。
+ */
+data class FfiContainerRepairEntry (
+    var `path`: kotlin.String
+    , 
+    var `offsets`: List<kotlin.Long>
+    , 
+    var `hiddenMs`: kotlin.Long
+    , 
+    var `tableMs`: kotlin.Long
+    , 
+    var `elstMs`: kotlin.Long
+    , 
+    var `repairedAt`: kotlin.Long
+    , 
+    /**
+     * `desktop` / `android`
+     */
+    var `origin`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiContainerRepairEntry: FfiConverterRustBuffer<FfiContainerRepairEntry> {
+    override fun read(buf: ByteBuffer): FfiContainerRepairEntry {
+        return FfiContainerRepairEntry(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiContainerRepairEntry) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterSequenceLong.allocationSize(value.`offsets`) +
+            FfiConverterLong.allocationSize(value.`hiddenMs`) +
+            FfiConverterLong.allocationSize(value.`tableMs`) +
+            FfiConverterLong.allocationSize(value.`elstMs`) +
+            FfiConverterLong.allocationSize(value.`repairedAt`) +
+            FfiConverterString.allocationSize(value.`origin`)
+    )
+
+    override fun write(value: FfiContainerRepairEntry, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterSequenceLong.write(value.`offsets`, buf)
+            FfiConverterLong.write(value.`hiddenMs`, buf)
+            FfiConverterLong.write(value.`tableMs`, buf)
+            FfiConverterLong.write(value.`elstMs`, buf)
+            FfiConverterLong.write(value.`repairedAt`, buf)
+            FfiConverterString.write(value.`origin`, buf)
+    }
+}
+
+
+
+/**
  * `db::topics::CoverCropData` 的 FFI 镜像。
  */
 data class FfiCoverCrop (
@@ -1464,7 +2460,19 @@ data class FfiFileMetadata (
     , 
     var `description`: kotlin.String?
     , 
+    /**
+     * 第一条来源网址。留给老读者（与 `source_urls` 的首项恒等，不会分叉）。
+     */
     var `sourceUrl`: kotlin.String?
+    , 
+    /**
+     * 全部来源网址（P1(b) 多值），顺序即 UI 显示顺序。
+     *
+     * **读向必须带全量**：安卓侧是「整行读 → 整行写」（`GalleryViewModel` 的
+     * `saveFileUpdates`、AI 人物那条写回也是），只给首条的话写回去时第 2..N 条
+     * 就被压没了 —— 这是 2026-10-05 查出来的实际丢数据路径，不是假想风险。
+     */
+    var `sourceUrls`: List<kotlin.String>
     , 
     var `aiData`: kotlin.String?
     , 
@@ -1491,6 +2499,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalLong.read(buf),
@@ -1502,6 +2511,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.allocationSize(value.`path`) +
             FfiConverterOptionalString.allocationSize(value.`description`) +
             FfiConverterOptionalString.allocationSize(value.`sourceUrl`) +
+            FfiConverterSequenceString.allocationSize(value.`sourceUrls`) +
             FfiConverterOptionalString.allocationSize(value.`aiData`) +
             FfiConverterOptionalString.allocationSize(value.`category`) +
             FfiConverterOptionalLong.allocationSize(value.`updatedAt`)
@@ -1512,6 +2522,7 @@ public object FfiConverterTypeFfiFileMetadata: FfiConverterRustBuffer<FfiFileMet
             FfiConverterString.write(value.`path`, buf)
             FfiConverterOptionalString.write(value.`description`, buf)
             FfiConverterOptionalString.write(value.`sourceUrl`, buf)
+            FfiConverterSequenceString.write(value.`sourceUrls`, buf)
             FfiConverterOptionalString.write(value.`aiData`, buf)
             FfiConverterOptionalString.write(value.`category`, buf)
             FfiConverterOptionalLong.write(value.`updatedAt`, buf)
@@ -1814,6 +2825,13 @@ data class Folder (
     var `name`: kotlin.String
     , 
     /**
+     * 绝对目录路径（索引 Folder 行的 path 列，如 `/storage/emulated/0/Pictures/X`；
+     * 根目录散图 = 外部存储根）。M8b：复制/移动的目标解析（folder_id → RELATIVE_PATH）
+     * 直接读它，不再全量遍历 MediaStore（2.6 万行，老机繁忙时实测 4.9s）。
+     */
+    var `path`: kotlin.String
+    , 
+    /**
      * 该文件夹下图片数量（用于卡片角标）。
      */
     var `imageCount`: kotlin.Long
@@ -1824,8 +2842,9 @@ data class Folder (
     var `coverUri`: kotlin.String?
     , 
     /**
-     * 最早一张子图的创建时间（epoch 秒；无图 = 0）。总览的日期排序与「创建时间」
-     * 日期筛选用（对齐 React 总览按 folder.createdAt 排序的语义）。
+     * 直接子图最新创建时间（epoch 秒；无图 = 0）。2026-10 排序改造：从 MIN(created_at)
+     * （最早子图）改为 **MAX(created_at)**（内容最新时间），「按时间排序 = 内容最新」；
+     * 总览的日期排序与「创建时间」日期筛选用（对齐 React 总览按 folder.createdAt 排序）。
      */
     var `createdAt`: kotlin.Long
     , 
@@ -1852,6 +2871,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
         return Folder(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterLong.read(buf),
@@ -1862,6 +2882,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
     override fun allocationSize(value: Folder) = (
             FfiConverterString.allocationSize(value.`id`) +
             FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`path`) +
             FfiConverterLong.allocationSize(value.`imageCount`) +
             FfiConverterOptionalString.allocationSize(value.`coverUri`) +
             FfiConverterLong.allocationSize(value.`createdAt`) +
@@ -1871,6 +2892,7 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
     override fun write(value: Folder, buf: ByteBuffer) {
             FfiConverterString.write(value.`id`, buf)
             FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`path`, buf)
             FfiConverterLong.write(value.`imageCount`, buf)
             FfiConverterOptionalString.write(value.`coverUri`, buf)
             FfiConverterLong.write(value.`createdAt`, buf)
@@ -1917,6 +2939,22 @@ data class Image (
      * MIME 子类型（jpeg / png / webp…），type 分组用。
      */
     var `format`: kotlin.String?
+    , 
+    /**
+     * `file_index.file_type` 直通值（`Image` / `Video` / `Folder`）。
+     *
+     * 视频 P3 前安卓端**没有任何类型字段可用**，判类型只能靠扩展名表 —— 而全仓已因
+     * 「六套互不一致的扩展名表」翻过车（设计方案 §2.7），这里把 DB 真值直出去当唯一真源。
+     */
+    var `fileType`: kotlin.String
+    , 
+    /**
+     * 视频时长（毫秒），图片项恒 None。视频 P3-A4：网格卡片的**时长角标**依赖它——
+     * 没有它，视频卡片与图片卡片在视觉上完全无法区分（实机验收人指出）。
+     * 本地库取 `file_index.duration_ms`；LAN 项由 Kotlin 侧把服务端 browse 的
+     * `duration_ms` 原样填进来，两端共用这一条通道。
+     */
+    var `durationMs`: kotlin.Long?
     
 ){
     
@@ -1942,6 +2980,8 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -1954,7 +2994,9 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.allocationSize(value.`size`) +
             FfiConverterLong.allocationSize(value.`createdAt`) +
             FfiConverterLong.allocationSize(value.`modifiedAt`) +
-            FfiConverterOptionalString.allocationSize(value.`format`)
+            FfiConverterOptionalString.allocationSize(value.`format`) +
+            FfiConverterString.allocationSize(value.`fileType`) +
+            FfiConverterOptionalLong.allocationSize(value.`durationMs`)
     )
 
     override fun write(value: Image, buf: ByteBuffer) {
@@ -1967,13 +3009,19 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterLong.write(value.`createdAt`, buf)
             FfiConverterLong.write(value.`modifiedAt`, buf)
             FfiConverterOptionalString.write(value.`format`, buf)
+            FfiConverterString.write(value.`fileType`, buf)
+            FfiConverterOptionalLong.write(value.`durationMs`, buf)
     }
 }
 
 
 
 /**
- * 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
+ * 一个 MediaStore 媒体项的原始信息（Kotlin 扫描后传入，图片与视频共用这一个记录）。
+ *
+ * 类型**不另开字段**：真源是 `mime_type`，写侧按它派生 `file_index.file_type`
+ * （见 [`file_type_of_mime`]）——安卓那侧 MediaStore 的集合本身就分图片/视频两查，
+ * 再挂一个布尔字段等于给同一个事实开第二个来源。
  */
 data class MediaImage (
     var `id`: kotlin.Long
@@ -1999,6 +3047,13 @@ data class MediaImage (
     var `bucketId`: kotlin.String
     , 
     var `bucketName`: kotlin.String
+    , 
+    /**
+     * 视频时长（毫秒）。图片恒 `None`；视频也可能**是 `None`**——实测同一目录下
+     * 两只同源 mp4，那只 ffmpeg 转封装产物在 MediaStore 的 `duration` 列就是 NULL
+     * （P3 清单 §8.3），所以这条按可空处理，不许当「有值」用。
+     */
+    var `durationMs`: kotlin.Long?
     
 ){
     
@@ -2027,6 +3082,7 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterOptionalLong.read(buf),
         )
     }
 
@@ -2042,7 +3098,8 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterOptionalInt.allocationSize(value.`height`) +
             FfiConverterString.allocationSize(value.`mimeType`) +
             FfiConverterString.allocationSize(value.`bucketId`) +
-            FfiConverterString.allocationSize(value.`bucketName`)
+            FfiConverterString.allocationSize(value.`bucketName`) +
+            FfiConverterOptionalLong.allocationSize(value.`durationMs`)
     )
 
     override fun write(value: MediaImage, buf: ByteBuffer) {
@@ -2058,6 +3115,103 @@ public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
             FfiConverterString.write(value.`mimeType`, buf)
             FfiConverterString.write(value.`bucketId`, buf)
             FfiConverterString.write(value.`bucketName`, buf)
+            FfiConverterOptionalLong.write(value.`durationMs`, buf)
+    }
+}
+
+
+
+/**
+ * [group_remote_tag_counts] 的入参行：远端标签 + 远端库内贴着它的图片数。
+ */
+data class RemoteTagCount (
+    var `tag`: kotlin.String
+    , 
+    var `count`: kotlin.Long
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRemoteTagCount: FfiConverterRustBuffer<RemoteTagCount> {
+    override fun read(buf: ByteBuffer): RemoteTagCount {
+        return RemoteTagCount(
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RemoteTagCount) = (
+            FfiConverterString.allocationSize(value.`tag`) +
+            FfiConverterLong.allocationSize(value.`count`)
+    )
+
+    override fun write(value: RemoteTagCount, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tag`, buf)
+            FfiConverterLong.write(value.`count`, buf)
+    }
+}
+
+
+
+/**
+ * 搜索匹配用的最小文件画像（FFI 面裁剪版）。
+ *
+ * 注意：桌面 `useFileSearch.ts` 的 aiFilter 匹配还用到 `meta.palette` /
+ * `aiData.dominantColors`（colors 条件）与 `aiData.faces[].name`（people 条件），
+ * 本 DTO 未携带这两类数据（见 `apply_search_filter` 注释与报告）。
+ */
+data class SearchItem (
+    var `fileId`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    , 
+    var `tags`: List<kotlin.String>
+    , 
+    var `description`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeSearchItem: FfiConverterRustBuffer<SearchItem> {
+    override fun read(buf: ByteBuffer): SearchItem {
+        return SearchItem(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: SearchItem) = (
+            FfiConverterString.allocationSize(value.`fileId`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterSequenceString.allocationSize(value.`tags`) +
+            FfiConverterOptionalString.allocationSize(value.`description`)
+    )
+
+    override fun write(value: SearchItem, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileId`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterSequenceString.write(value.`tags`, buf)
+            FfiConverterOptionalString.write(value.`description`, buf)
     }
 }
 
@@ -2148,6 +3302,44 @@ public object FfiConverterTypeTagGroup: FfiConverterRustBuffer<TagGroup> {
 
 
 
+/**
+ * AI 服务商（对齐 `src/types.ts` 的 `AIProvider`）。
+ */
+
+enum class AiProvider {
+    
+    OPEN_AI,
+    OLLAMA,
+    LM_STUDIO;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAiProvider: FfiConverterRustBuffer<AiProvider> {
+    override fun read(buf: ByteBuffer) = try {
+        AiProvider.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: AiProvider) = 4UL
+
+    override fun write(value: AiProvider, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 
 /**
@@ -2164,6 +3356,14 @@ sealed class AuroraException: kotlin.Exception() {
     }
     
     class Thumbnail(
+        
+        val v1: kotlin.String
+        ) : AuroraException() {
+        override val message
+            get() = "v1=${ v1 }"
+    }
+    
+    class Ai(
         
         val v1: kotlin.String
         ) : AuroraException() {
@@ -2196,6 +3396,9 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
             2 -> AuroraException.Thumbnail(
                 FfiConverterString.read(buf),
                 )
+            3 -> AuroraException.Ai(
+                FfiConverterString.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -2208,6 +3411,11 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
                 + FfiConverterString.allocationSize(value.v1)
             )
             is AuroraException.Thumbnail -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
+            is AuroraException.Ai -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
                 + FfiConverterString.allocationSize(value.v1)
@@ -2227,10 +3435,375 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
+            is AuroraException.Ai -> {
+                buf.putInt(3)
+                FfiConverterString.write(value.v1, buf)
+                Unit
+            }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 
 }
+
+
+
+
+
+public interface AiRenameCallback {
+    
+    fun `readBytes`(`fileId`: kotlin.String): kotlin.ByteArray?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    fun `onName`(`fileId`: kotlin.String, `newName`: kotlin.String)
+    
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceAiRenameCallback {
+    internal object `readBytes`: UniffiCallbackInterfaceAiRenameCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readBytes`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray? -> uniffiOutReturn.setValue(FfiConverterOptionalByteArray.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceAiRenameCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceAiRenameCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onName`: UniffiCallbackInterfaceAiRenameCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`newName`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onName`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterString.lift(`newName`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceAiRenameCallbackMethod4 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiRenameCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeAiRenameCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeAiRenameCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceAiRenameCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readBytes`,
+        `onProgress`,
+        `onFileDone`,
+        `onName`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_airenamecallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeAiRenameCallback: FfiConverterCallbackInterface<AiRenameCallback>()
+
+
+
+
+
+/**
+ * 分析任务回调：read_bytes 在调用线程（泵）被调，其余为 worker 事件转发。
+ */
+public interface AiTaskCallback {
+    
+    fun `readBytes`(`fileId`: kotlin.String): kotlin.ByteArray?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceAiTaskCallback {
+    internal object `readBytes`: UniffiCallbackInterfaceAiTaskCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readBytes`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: kotlin.ByteArray? -> uniffiOutReturn.setValue(FfiConverterOptionalByteArray.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceAiTaskCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceAiTaskCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceAiTaskCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeAiTaskCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeAiTaskCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeAiTaskCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceAiTaskCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readBytes`,
+        `onProgress`,
+        `onFileDone`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_aitaskcallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeAiTaskCallback: FfiConverterCallbackInterface<AiTaskCallback>()
+
+
+
+
+
+/**
+ * 批量提取任务回调（uniffi callback interface；实现对象留在调用线程，
+ * `read_pixels` 由泵代调——见模块注释的锁步双通道）。
+ */
+public interface ColorBatchCallback {
+    
+    /**
+     * 泵在调用线程代读像素；None = 该图当前不可读（记为单文件失败，不炸任务）。
+     */
+    fun `readPixels`(`fileId`: kotlin.String): ColorPixels?
+    
+    fun `onProgress`(`current`: kotlin.UInt, `total`: kotlin.UInt)
+    
+    /**
+     * note：成功为空串，失败为中文原因。
+     */
+    fun `onFileDone`(`fileId`: kotlin.String, `ok`: kotlin.Boolean, `note`: kotlin.String)
+    
+    /**
+     * state ∈ running|paused|completed|cancelled|error（running/paused 由
+     * Kotlin 侧本地状态机表达，Rust 只会发 completed|cancelled|error）。
+     */
+    fun `onFinished`(`state`: kotlin.String, `message`: kotlin.String)
+    
+    companion object
+}
+
+
+
+// Put the implementation in an object so we don't pollute the top-level namespace
+internal object uniffiCallbackInterfaceColorBatchCallback {
+    internal object `readPixels`: UniffiCallbackInterfaceColorBatchCallbackMethod0 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`uniffiOutReturn`: RustBuffer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`readPixels`(
+                    FfiConverterString.lift(`fileId`),
+                )
+            }
+            val writeReturn = { value: ColorPixels? -> uniffiOutReturn.setValue(FfiConverterOptionalTypeColorPixels.lower(value)) }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onProgress`: UniffiCallbackInterfaceColorBatchCallbackMethod1 {
+        override fun callback(`uniffiHandle`: Long,`current`: Int,`total`: Int,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onProgress`(
+                    FfiConverterUInt.lift(`current`),
+                    FfiConverterUInt.lift(`total`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFileDone`: UniffiCallbackInterfaceColorBatchCallbackMethod2 {
+        override fun callback(`uniffiHandle`: Long,`fileId`: RustBuffer.ByValue,`ok`: Byte,`note`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFileDone`(
+                    FfiConverterString.lift(`fileId`),
+                    FfiConverterBoolean.lift(`ok`),
+                    FfiConverterString.lift(`note`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+    internal object `onFinished`: UniffiCallbackInterfaceColorBatchCallbackMethod3 {
+        override fun callback(`uniffiHandle`: Long,`state`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`uniffiOutReturn`: Pointer,uniffiCallStatus: UniffiRustCallStatus,) {
+            val uniffiObj = FfiConverterTypeColorBatchCallback.handleMap.get(uniffiHandle)
+            val makeCall = { ->
+                uniffiObj.`onFinished`(
+                    FfiConverterString.lift(`state`),
+                    FfiConverterString.lift(`message`),
+                )
+            }
+            val writeReturn = { _: Unit -> Unit }
+            uniffiTraitInterfaceCall(uniffiCallStatus, makeCall, writeReturn)
+        }
+    }
+
+    internal object uniffiFree: UniffiCallbackInterfaceFree {
+        override fun callback(handle: Long) {
+            FfiConverterTypeColorBatchCallback.handleMap.remove(handle)
+        }
+    }
+
+    internal object uniffiClone: UniffiCallbackInterfaceClone {
+        override fun callback(handle: Long): Long {
+            return FfiConverterTypeColorBatchCallback.handleMap.clone(handle)
+        }
+    }
+
+    internal var vtable = UniffiVTableCallbackInterfaceColorBatchCallback.UniffiByValue(
+        uniffiFree,
+        uniffiClone,
+        `readPixels`,
+        `onProgress`,
+        `onFileDone`,
+        `onFinished`,
+    )
+
+    // Registers the foreign callback with the Rust side.
+    // This method is generated for each callback interface.
+    internal fun register(lib: UniffiLib) {
+        lib.uniffi_aurora_core_fn_init_callback_vtable_colorbatchcallback(vtable)
+    }
+}
+
+/**
+ * The ffiConverter which transforms the Callbacks in to handles to pass to Rust.
+ *
+ * @suppress
+ */
+public object FfiConverterTypeColorBatchCallback: FfiConverterCallbackInterface<ColorBatchCallback>()
 
 
 
@@ -2366,6 +3939,70 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
 /**
  * @suppress
  */
+public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteArray?> {
+    override fun read(buf: ByteBuffer): kotlin.ByteArray? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterByteArray.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.ByteArray?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterByteArray.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.ByteArray?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterByteArray.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeColorPixels: FfiConverterRustBuffer<ColorPixels?> {
+    override fun read(buf: ByteBuffer): ColorPixels? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeColorPixels.read(buf)
+    }
+
+    override fun allocationSize(value: ColorPixels?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeColorPixels.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ColorPixels?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeColorPixels.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiCoverCrop: FfiConverterRustBuffer<FfiCoverCrop?> {
     override fun read(buf: ByteBuffer): FfiCoverCrop? {
         if (buf.get().toInt() == 0) {
@@ -2462,6 +4099,66 @@ public object FfiConverterOptionalTypeFfiFileMetadata: FfiConverterRustBuffer<Ff
 /**
  * @suppress
  */
+public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<kotlin.String>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.String>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceString.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.String>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.String>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceLong: FfiConverterRustBuffer<List<kotlin.Long>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Long> {
+        val len = buf.getInt()
+        return List<kotlin.Long>(len) {
+            FfiConverterLong.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Long>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterLong.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Long>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterLong.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -2480,6 +4177,146 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAiInputItem: FfiConverterRustBuffer<List<AiInputItem>> {
+    override fun read(buf: ByteBuffer): List<AiInputItem> {
+        val len = buf.getInt()
+        return List<AiInputItem>(len) {
+            FfiConverterTypeAiInputItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AiInputItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAiInputItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AiInputItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAiInputItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeAiRenameItem: FfiConverterRustBuffer<List<AiRenameItem>> {
+    override fun read(buf: ByteBuffer): List<AiRenameItem> {
+        val len = buf.getInt()
+        return List<AiRenameItem>(len) {
+            FfiConverterTypeAiRenameItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<AiRenameItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeAiRenameItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<AiRenameItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeAiRenameItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeColorErrorFile: FfiConverterRustBuffer<List<ColorErrorFile>> {
+    override fun read(buf: ByteBuffer): List<ColorErrorFile> {
+        val len = buf.getInt()
+        return List<ColorErrorFile>(len) {
+            FfiConverterTypeColorErrorFile.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ColorErrorFile>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeColorErrorFile.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ColorErrorFile>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeColorErrorFile.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiContainerRepair: FfiConverterRustBuffer<List<FfiContainerRepair>> {
+    override fun read(buf: ByteBuffer): List<FfiContainerRepair> {
+        val len = buf.getInt()
+        return List<FfiContainerRepair>(len) {
+            FfiConverterTypeFfiContainerRepair.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiContainerRepair>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiContainerRepair.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiContainerRepair>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiContainerRepair.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiContainerRepairEntry: FfiConverterRustBuffer<List<FfiContainerRepairEntry>> {
+    override fun read(buf: ByteBuffer): List<FfiContainerRepairEntry> {
+        val len = buf.getInt()
+        return List<FfiContainerRepairEntry>(len) {
+            FfiConverterTypeFfiContainerRepairEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiContainerRepairEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiContainerRepairEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiContainerRepairEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiContainerRepairEntry.write(it, buf)
         }
     }
 }
@@ -2686,6 +4523,62 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeRemoteTagCount: FfiConverterRustBuffer<List<RemoteTagCount>> {
+    override fun read(buf: ByteBuffer): List<RemoteTagCount> {
+        val len = buf.getInt()
+        return List<RemoteTagCount>(len) {
+            FfiConverterTypeRemoteTagCount.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RemoteTagCount>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRemoteTagCount.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<RemoteTagCount>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRemoteTagCount.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeSearchItem: FfiConverterRustBuffer<List<SearchItem>> {
+    override fun read(buf: ByteBuffer): List<SearchItem> {
+        val len = buf.getInt()
+        return List<SearchItem>(len) {
+            FfiConverterTypeSearchItem.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<SearchItem>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeSearchItem.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<SearchItem>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeSearchItem.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeTagEntry: FfiConverterRustBuffer<List<TagEntry>> {
     override fun read(buf: ByteBuffer): List<TagEntry> {
         val len = buf.getInt()
@@ -2742,6 +4635,34 @@ public object FfiConverterSequenceTypeTagGroup: FfiConverterRustBuffer<List<TagG
 /**
  * @suppress
  */
+public object FfiConverterSequenceOptionalSequenceString: FfiConverterRustBuffer<List<List<kotlin.String>?>> {
+    override fun read(buf: ByteBuffer): List<List<kotlin.String>?> {
+        val len = buf.getInt()
+        return List<List<kotlin.String>?>(len) {
+            FfiConverterOptionalSequenceString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<List<kotlin.String>?>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterOptionalSequenceString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<List<kotlin.String>?>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterOptionalSequenceString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<kotlin.String, List<kotlin.String>>> {
     override fun read(buf: ByteBuffer): Map<kotlin.String, List<kotlin.String>> {
         val len = buf.getInt()
@@ -2774,6 +4695,342 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         }
     }
 }
+        /**
+         * 批量 AI 分析：逐张 读字节→base64→HTTP→解析→写库，事件实时回调。
+         * 阻塞至任务结束（Kotlin 从 IO 协程调用）；state ∈ completed|cancelled|error。
+         */ fun `aiAnalyzeFiles`(`cfg`: AiConfig, `items`: List<AiInputItem>, `taskId`: kotlin.String, `callback`: AiTaskCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_analyze_files(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterSequenceTypeAiInputItem.lower(`items`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeAiTaskCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * 过滤条件应用到候选集（纯函数；keywords/description 即期，colors/people 的
+         * 数据源挂钩阶段 3/4——桌面语义见 ai.rs 内注释）。
+         */ fun `aiApplySearchFilter`(`filter`: AiSearchFilter, `items`: List<SearchItem>): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_apply_search_filter(
+    
+        
+        FfiConverterTypeAiSearchFilter.lower(`filter`),
+        FfiConverterSequenceTypeSearchItem.lower(`items`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 取消在册任务：下一张迭代首查生效（在途 HTTP 请求本身不打断——与桌面
+         * 「严格顺序无取消」相比已是增强；请求级超时见 ai.rs）。任务不在册返回 false。
+         */ fun `aiCancelTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_cancel_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * provider 连接测试（对齐 TS checkConnection 的三探测路径）。
+         */
+    @Throws(AuroraException::class) fun `aiCheckConnection`(`cfg`: AiConfig)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_check_connection(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),_status)
+}
+    
+    
+
+        /**
+         * 拉取模型列表（AI 面板「刷新模型」用）。
+         */
+    @Throws(AuroraException::class) fun `aiFetchModels`(`cfg`: AiConfig): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_fetch_models(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量 AI 改名：逐张产干净文件名，经 on_name 回调；不碰库、不改文件。
+         */ fun `aiGenerateFileNames`(`cfg`: AiConfig, `items`: List<AiRenameItem>, `taskId`: kotlin.String, `callback`: AiRenameCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_generate_file_names(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterSequenceTypeAiRenameItem.lower(`items`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeAiRenameCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * AI 搜索改写：query → 结构化过滤条件（同步一次 HTTP，Kotlin 在 IO 协程调用）。
+         * originalQuery 由本层从入参回填（对齐 TS :196-202，模型响应不带它）。
+         */
+    @Throws(AuroraException::class) fun `aiRewriteSearchQuery`(`cfg`: AiConfig, `query`: kotlin.String): AiSearchFilter {
+            return FfiConverterTypeAiSearchFilter.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_ai_rewrite_search_query(
+    
+        
+        FfiConverterTypeAiConfig.lower(`cfg`),
+        FfiConverterString.lower(`query`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量主色调提取：逐张 请求像素→提取 8 色→落库，事件实时回调。
+         * **阻塞至任务结束**（Kotlin 从 IO 协程调用）；state ∈ completed|cancelled|error。
+         * 单文件失败只经 `on_file_done(ok=false)` 上报并把行标为 error，不炸任务。
+         */ fun `batchExtractColors`(`fileIds`: List<kotlin.String>, `taskId`: kotlin.String, `callback`: ColorBatchCallback)
+        = 
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_batch_extract_colors(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),
+        FfiConverterString.lower(`taskId`),
+        FfiConverterTypeColorBatchCallback.lower(`callback`),_status)
+}
+    
+    
+
+        /**
+         * 取消在册任务：下一张迭代首查生效（在途一张跑完）；若任务正处于暂停自旋，
+         * 会同时清除暂停标志让 worker 立即退出。任务不在册返回 false。
+         */ fun `cancelColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_cancel_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 清理「不存在」的错误记录，返回清理条数。
+         *
+         * **Android 语义决定**：键是 file_id 哈希而非文件系统路径，Rust 侧无法验证
+         * MediaStore 存在性——若照搬桌面的 `Path::exists()` 判定，哈希键必然判假、
+         * 会把全部 error 记录误删。因此本函数只清理「形似路径（含 / 或 \\）且磁盘上
+         * 不存在」的记录；纯 file_id 哈希键一律保留，其存活性校验（MediaStore 查询）
+         * 由 Kotlin 侧完成，确认不存在后走 delete_color_error_files 精确删除。
+         */
+    @Throws(AuroraException::class) fun `cleanupColorNonexistent`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_cleanup_color_nonexistent(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 颜色库行数统计。未 init → Err。
+         */
+    @Throws(AuroraException::class) fun `colorDbStats`(): ColorDbStats {
+            return FfiConverterTypeColorDbStats.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_color_db_stats(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 删除全部错误文件记录（含颜色索引行），返回删除条数。
+         */
+    @Throws(AuroraException::class) fun `deleteColorErrorFiles`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 单张提取主色调并落库（查看器手动/自动提取用）。
+         *
+         * `pixels` 为下采样位图的 RGBA 字节（建议最长边 ~256px，提取算法不再缩放）。
+         * 成功返回 hex 列表（≤8 个，`#rrggbb` 小写）；失败（宽高与字节数不符 / 提取为空 /
+         * 写库失败）返回 Err 并把该 file_id 的行状态标记为 error（对齐桌面 process_single_file）。
+         */
+    @Throws(AuroraException::class) fun `extractAndSaveColors`(`fileId`: kotlin.String, `width`: kotlin.UInt, `height`: kotlin.UInt, `rgba`: kotlin.ByteArray): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_extract_and_save_colors(
+    
+        
+        FfiConverterString.lower(`fileId`),
+        FfiConverterUInt.lower(`width`),
+        FfiConverterUInt.lower(`height`),
+        FfiConverterByteArray.lower(`rgba`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 错误文件列表（file_id + updated_at，按 updated_at 降序）。
+         */
+    @Throws(AuroraException::class) fun `getColorErrorFiles`(): List<ColorErrorFile> {
+            return FfiConverterSequenceTypeColorErrorFile.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 批读主色调 hex 列表（网格/查看器缓存用）。
+         *
+         * 返回与 `file_ids` 等长且按入参对齐：库里无记录 / 未提取完成（status != extracted）
+         * / colors JSON 解析失败 → 对应位为 `None`。键语义为 file_id（见模块注释）。
+         */
+    @Throws(AuroraException::class) fun `getColorsByFilePaths`(`fileIds`: List<kotlin.String>): List<List<kotlin.String>?> {
+            return FfiConverterSequenceOptionalSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_get_colors_by_file_paths(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 颜色库初始化（colors.db 落 Kotlin 传的 app 数据目录路径）。
+         *
+         * 幂等：首次调用建库（建表 + 把遗留 processing 行重置为 pending），再次调用
+         * 即 `ColorDbPool::switch` 换库（同样建表 + 重置 processing）。每次成功后
+         * 触发后台缓存预热（搜索暖路径依赖它，冷路径不受影响）。
+         */
+    @Throws(AuroraException::class) fun `initColorDb`(`path`: kotlin.String)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_init_color_db(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    
+    
+
+        /**
+         * 暂停在册任务（下一张迭代边界生效）。任务不在册（已结束/不存在）返回 false。
+         */ fun `pauseColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_pause_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 恢复暂停的任务。任务不在册返回 false。
+         */ fun `resumeColorTask`(`taskId`: kotlin.String): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_resume_color_task(
+    
+        
+        FfiConverterString.lower(`taskId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 全部错误文件重置为 pending（重新入队），返回重置条数。
+         */
+    @Throws(AuroraException::class) fun `retryColorErrorFiles`(): kotlin.UInt {
+            return FfiConverterUInt.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_retry_color_error_files(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 单色搜索（模式=Single：阈值 75、位置权重、灰度排除）。
+         * 依赖颜色库已 init 且有数据；「先查 stats 判数据量」的 UI 逻辑留给 Kotlin。
+         */
+    @Throws(AuroraException::class) fun `searchByColor`(`hex`: kotlin.String): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_search_by_color(
+    
+        
+        FfiConverterString.lower(`hex`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 多色搜索（内部按数量分模式：1 色 Single / 2-4 色 Mid / ≥5 色 Atmosphere）。
+         * 无有效 hex 入参 → Ok(空)；未 init → Err(Database)。
+         */
+    @Throws(AuroraException::class) fun `searchByPalette`(`palettes`: List<kotlin.String>): List<kotlin.String> {
+            return FfiConverterSequenceString.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_search_by_palette(
+    
+        
+        FfiConverterSequenceString.lower(`palettes`),_status)
+}
+    )
+    }
+    
+
     @Throws(AuroraException::class) fun `addFilesToTopic`(`topicId`: kotlin.String, `fileIds`: List<kotlin.String>)
         = 
     uniffiRustCallWithError(AuroraException) { _status ->
@@ -2827,6 +5084,27 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
     
 
+        /**
+         * 按 file_id 从索引删除行（M8b 删除/移动/重命名的即时收尾）。
+         *
+         * 为什么需要：全量对账是快照语义，陈旧行（被删/被挪走的文件）要等下一次对账才清，
+         * 而这期间总览卡片还按旧索引聚合（封面/计数/时间戳都是几秒前的）——删除后「卡片
+         * 迟迟不更新」即由此来。删除/移动/重命名成功后立即摘掉旧行，紧接着
+         * `list_folders` 重算卡片（聚合子查询索引覆盖，全量约百毫秒），UI 当帧反映。
+         * 与对账的清理幂等（行已不在，DELETE 空转）；台账登记行文件已不在，对账时同样
+         * 会注销，不会互相打架。
+         */
+    @Throws(AuroraException::class) fun `deleteIndexEntries`(`fileIds`: List<kotlin.String>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_delete_index_entries(
+    
+        
+        FfiConverterSequenceString.lower(`fileIds`),_status)
+}
+    
+    
+
     @Throws(AuroraException::class) fun `deletePerson`(`id`: kotlin.String)
         = 
     uniffiRustCallWithError(AuroraException) { _status ->
@@ -2870,6 +5148,23 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
         
         FfiConverterString.lower(`fileId`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * `db::generate_id` 的导出（M4b 1.2 方案 A）：Kotlin 复制文件后对新 content_uri
+         * 算出 `file_id`，把源文件的元数据/标签搬到新 id 上。**纯函数**，不碰数据库——
+         * 与扫描对账（`upsert_media_images` 内部同一函数）对同一 uri 必然算出同一 id，
+         * 这是副本元数据搬运确定性的根据。
+         */ fun `generateId`(`contentUri`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_generate_id(
+    
+        
+        FfiConverterString.lower(`contentUri`),_status)
 }
     )
     }
@@ -3052,6 +5347,25 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
 
         /**
+         * 远端词表分组（M6a 阶段 5）：LAN 批量元数据聚合出的 (tag, count) 列表 → 侧栏分组。
+         *
+         * 纯函数不碰本地库——与 [get_grouped_tags] 共用 `collate::group_tags` 这一套分组与
+         * 排序规则（「排序规则只许有一套」纪律）；入参里的词**不得**写进本地词表（D31 数据层
+         * 铁律：LAN 词表只进桌面端），本函数对此零风险。
+         */ fun `groupRemoteTagCounts`(`counts`: List<RemoteTagCount>, `locale`: kotlin.String): List<TagGroup> {
+            return FfiConverterSequenceTypeTagGroup.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_group_remote_tag_counts(
+    
+        
+        FfiConverterSequenceTypeRemoteTagCount.lower(`counts`),
+        FfiConverterString.lower(`locale`),_status)
+}
+    )
+    }
+    
+
+        /**
          * 初始化数据库（Kotlin 端启动时调用，指向 filesDir 下的 db 文件）。
          */
     @Throws(AuroraException::class) fun `initDb`(`path`: kotlin.String)
@@ -3067,6 +5381,14 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
 
         /**
          * 列出所有文件夹（bucket）。
+         *
+         * 聚合口径四路一致：计数、两个时间戳、**封面**全部按 `Image ∪ Video`。
+         *
+         * 封面这一路在 A5 那轮曾刻意只认 `'Image'`（纯视频相册显示成「有张数、占位灰」），
+         * 前提是「视频没有可用的封面帧」。那个前提已经随 A5.5 过期——安卓侧现在自己抽帧
+         * （`ThumbnailLoader` 手挑 > 自抽 > 系统兜底三级），桌面端更是早就让视频与图片同权
+         * 争封面（`findImagesDeeply(..., includeVideos = !isAndroid)`，UI 子文档 U6 那条拍板）。
+         * 两端同口径，纯视频相册才不再是灰块。
          */ fun `listFolders`(): List<Folder> {
             return FfiConverterSequenceTypeFolder.lift(
     uniffiRustCall() { _status ->
@@ -3235,6 +5557,30 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
     
 
         /**
+         * 单个媒体项的**增量** upsert（M8b 复制即时可见）：文件操作落库后、MediaScanner 刚把
+         * 新路径登记成行时调用，把这一行进 `file_index`，让目标文件夹网格**立即**看到副本。
+         * 否则要等下一次全量对账（2.6 万行 MediaStore 快照，老机约 4s，且 MediaStore 变更
+         * 观察者的防抖扫描还会再排一次）才可见——用户体感「复制完好几秒不显示」。
+         *
+         * 与 [`upsert_media_images`] 的本质区别：**不做快照对账清理**。后者传入的是设备全量
+         * 快照，`reconcile_mediastore_snapshot` 会把快照外的 Folder/Image 行全部删掉——拿单行
+         * 调它等于把整个索引清成一行。这里只做 `batch_upsert` 同款的
+         * `INSERT ... ON CONFLICT DO UPDATE` 单行写入，陈旧行仍由全量对账负责清。
+         * Folder 行不在这里建：目标文件夹多数已存在；新相册的 Folder 行由后续全量对账补，
+         * 媒体行的 parent_id 只是字符串外键，不影响 `list_images` 按 folder_id 取数。
+         */
+    @Throws(AuroraException::class) fun `upsertMediaImage`(`image`: MediaImage)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_media_image(
+    
+        
+        FfiConverterTypeMediaImage.lower(`image`),_status)
+}
+    
+    
+
+        /**
          * 把 Kotlin 扫描的 MediaStore 图片写入索引（按 bucket 聚合出文件夹）。
          *
          * 传入的是设备当前的全量快照，写入走 `reconcile_mediastore_snapshot`：
@@ -3272,6 +5618,83 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         FfiConverterTypeFfiTopic.lower(`topic`),_status)
 }
     
+    
+
+        /**
+         * 只检测、不写盘。给「先让用户看看有多少要修」这类场景用。
+         */ fun `inspectVideoContainer`(`path`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_inspect_video_container(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 列出本机所有被修过的文件（还原入口的数据源）。
+         */
+    @Throws(AuroraException::class) fun `listContainerRepairs`(): List<FfiContainerRepairEntry> {
+            return FfiConverterSequenceTypeFfiContainerRepairEntry.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_list_container_repairs(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 检测并在必要时原位修复单个文件；成功会写台账（可还原）。
+         *
+         * `origin` 由调用方声明是谁修的（安卓传 `"android"`），只进台账做排查用。
+         */ fun `repairVideoContainer`(`path`: kotlin.String, `origin`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_repair_video_container(
+    
+        
+        FfiConverterString.lower(`path`),
+        FfiConverterString.lower(`origin`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量修复（扫描用）。返回与入参**等长且同序**，调用方按 `status` 过滤。
+         *
+         * 单文件写失败不会中断整批 —— `repair_file` 内部把错误收进 `status`/`error`，
+         * 不会因为一个只读盘/被占用的文件就让整轮扫描报错。
+         */ fun `repairVideoContainers`(`paths`: List<kotlin.String>, `origin`: kotlin.String): List<FfiContainerRepair> {
+            return FfiConverterSequenceTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_repair_video_containers(
+    
+        
+        FfiConverterSequenceString.lower(`paths`),
+        FfiConverterString.lower(`origin`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 按台账把某文件逐字节还原。**没有台账的文件一律拒绝**（不猜偏移写用户文件）。
+         */ fun `revertVideoContainer`(`path`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_revert_video_container(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    )
+    }
     
 
 

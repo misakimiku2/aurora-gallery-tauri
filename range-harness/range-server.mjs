@@ -15,7 +15,7 @@ for (const spec of FILES) {
   const i = spec.indexOf('=');
   videos[spec.slice(0, i)] = { path: spec.slice(i + 1), size: fs.statSync(spec.slice(i + 1)).size };
 }
-const stats = { requests: 0, bytes: 0 };
+const stats = { requests: 0, bytes: 0, log: [], t0: Date.now() };
 let inflight = 0;
 const queue = [];
 
@@ -39,6 +39,27 @@ async function seekTo(t) {
   const after = await stat();
   return { t: +t.toFixed(2), inBuf, ms: +ms.toFixed(0), req: after.requests - before.requests, bytes: after.bytes - before.bytes };
 }
+window.boot = async (preload) => {
+  // 量「点开一只片子到能播」到底花多少时间、发多少请求。
+  // 用**游离元素**（不进 DOM）：画面不会渲染到用户屏幕上，事件照发。
+  const s0 = await stat();
+  const vv = document.createElement('video');
+  vv.muted = true; vv.preload = preload || 'metadata';
+  const t0 = performance.now(); const marks = {};
+  for (const e of ['loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough'])
+    vv.addEventListener(e, () => { if (!marks[e]) marks[e] = +(performance.now() - t0).toFixed(0); }, { once: true });
+  const done = new Promise((res, rej) => {
+    vv.addEventListener('loadeddata', res, { once: true });
+    setTimeout(() => rej(new Error('boot timeout')), 60000);
+  });
+  vv.src = '/media/' + location.pathname.split('/')[2];
+  const req0 = s0.requests, by0 = s0.bytes;
+  await done;
+  const s1 = await stat();
+  return { dur: +vv.duration.toFixed(1), w: vv.videoWidth, h: vv.videoHeight,
+           marks, ms: +(performance.now() - t0).toFixed(0),
+           req: s1.requests - req0, bytes: +((s1.bytes - by0) / 1048576).toFixed(2) };
+};
 window.run = async (fracs) => {
   if (v.readyState < 1) await wait('loadedmetadata');
   const d = v.duration, res = [];
@@ -53,9 +74,45 @@ window.run = async (fracs) => {
 };
 </script>`;
 
+const CLEAN = (name, preload) => `<!doctype html><meta charset=utf-8><title>boot</title>
+<body style="background:#111;color:#eee;font:13px monospace"><pre id=out>idle</pre>
+<script>
+// 干净页：**没有**任何自动加载的 <video>，只有 boot() 现造的游离元素（不进 DOM → 画面不上屏）。
+const wait=(e)=>new Promise(r=>e.addEventListener('loadeddata',r,{once:true}));
+window.boot = async () => {
+  const r0 = await (await fetch('/stats/reset')).json();
+  const v = document.createElement('video');
+  v.muted = true; v.preload = '${preload}';
+  const t0 = performance.now(); const marks = {};
+  for (const ev of ['loadedmetadata','loadeddata','canplay','canplaythrough'])
+    v.addEventListener(ev, () => { if (!marks[ev]) marks[ev] = +(performance.now() - t0).toFixed(0); }, { once: true });
+  const timer = new Promise((_, rej) => setTimeout(() => rej(new Error('boot timeout')), 90000));
+  v.src = '/media/${name}';
+  const done = new Promise((res) => v.addEventListener('loadeddata', res, { once: true }));
+  await Promise.race([done, timer]);
+  await new Promise((r) => setTimeout(r, 250));   // 让在途请求落地再取增量
+  const st = await (await fetch('/stats?n=4000')).json();
+  const L = st.log || [];
+  const hist = {};
+  for (const e of L) { const b = e.len < 64 ? '<64B' : e.len < 4096 ? '<4K' : e.len < 65536 ? '<64K'
+    : e.len < 1048576 ? '<1M' : '1M+'; hist[b] = (hist[b] || 0) + 1; }
+  const gaps = []; for (let i = 1; i < L.length; i++) gaps.push(L[i].at - L[i - 1].at);
+  return { preload: v.preload, dur: +v.duration.toFixed(1), size: v.videoWidth + 'x' + v.videoHeight,
+    readyState: v.readyState, marks, ms: +(performance.now() - t0).toFixed(0),
+    req: L.length, servedMiB: +((st.bytes || 0) / 1048576).toFixed(2),
+    firstBytes: L.slice(0, 6).map((e) => e.s + '-' + e.e),
+    lastBytes: L.slice(-3).map((e) => e.s + '-' + e.e),
+    sizeHist: hist, maxInflight: Math.max(0, ...L.map((e) => e.in)),
+    gapMed: gaps.sort((a, b) => a - b)[Math.floor(gaps.length / 2)] };
+};
+</script></body>`;
+
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
-  if (u.pathname === '/stats') { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify(stats)); }
+  if (u.pathname === '/stats') { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify({ requests: stats.requests, bytes: stats.bytes, log: stats.log.slice(-Number(u.searchParams.get('n') || 0) || undefined) })); }
+  if (u.pathname === '/stats/reset') { stats.requests = 0; stats.bytes = 0; stats.log = []; stats.t0 = Date.now(); res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify({ ok: 1 })); }
+  const cl = u.pathname.match(/^\/clean\/([^/]+)\/(metadata|auto)$/);
+  if (cl && videos[cl[1]]) { res.setHeader('content-type', 'text/html; charset=utf-8'); return res.end(CLEAN(cl[1], cl[2])); }
   const pg = u.pathname.match(/^\/page\/(.+)$/);
   if (pg && videos[pg[1]]) { res.setHeader('content-type', 'text/html; charset=utf-8'); return res.end(PAGE(pg[1])); }
   const m = u.pathname.match(/^\/media\/(.+)$/);
@@ -71,7 +128,8 @@ http.createServer(async (req, res) => {
     if (cap > 0 && end - start + 1 > cap) end = start + cap - 1;   // 照 asset.rs:134 静默截断
   }
   const len = end - start + 1;
-  stats.requests += 1; stats.bytes += len;
+  stats.requests += 1;
+  stats.log.push({ s: start, e: end, len, at: Date.now() - stats.t0, in: inflight });
   const head = {
     'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': len,
     'content-range': range ? `bytes ${start}-${end}/${size}` : undefined,
@@ -84,10 +142,15 @@ http.createServer(async (req, res) => {
   try {
     if (perReqDelay > 0) await new Promise(r => setTimeout(r, perReqDelay));
     res.writeHead(range ? 206 : 200, head);
-    fs.createReadStream(path, { start, end }).pipe(res);
+    const stream = fs.createReadStream(path, { start, end });
+    // 客户端（Chromium 经常）中途 abort：必须真的停手，否则「在途」数会假涨、
+    // 而且会把整只文件_pipe_给一个早就不要了的连接，把吞吐量成天文数字。
+    stream.on('data', (c) => { stats.bytes += c.length; });
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
     // 用 finish 而不是 close 释放通道：keep-alive 下 close 要等整条连接拆掉，
     // 那会把「串行」错做成「一条连接独占」，把并发模型量成饿死。
-    await new Promise(r => res.on('finish', r));
+    await new Promise(r => { res.on('finish', r); res.on('close', r); });
   } finally {
     inflight -= 1;
     const next = queue.shift();

@@ -922,6 +922,16 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_aurora_core_checksum_func_upsert_topic(
     ): Int
+    external fun uniffi_aurora_core_checksum_func_inspect_video_container(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_list_container_repairs(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_repair_video_container(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_repair_video_containers(
+    ): Int
+    external fun uniffi_aurora_core_checksum_func_revert_video_container(
+    ): Int
     external fun uniffi_aurora_core_checksum_method_airenamecallback_read_bytes(
     ): Int
     external fun uniffi_aurora_core_checksum_method_airenamecallback_on_progress(
@@ -1094,6 +1104,16 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_aurora_core_fn_func_upsert_topic(`topic`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_aurora_core_fn_func_inspect_video_container(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_list_container_repairs(uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_repair_video_container(`path`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_repair_video_containers(`paths`: RustBuffer.ByValue,`origin`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_aurora_core_fn_func_revert_video_container(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun ffi_aurora_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun ffi_aurora_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1351,7 +1371,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 55985) {
+    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 61375) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
@@ -1397,6 +1417,21 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_func_upsert_topic() != 1190) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_inspect_video_container() != 39576) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_list_container_repairs() != 47007) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_repair_video_container() != 35354) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_repair_video_containers() != 56490) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_revert_video_container() != 32329) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_aurora_core_checksum_method_airenamecallback_read_bytes() != 7956) {
@@ -2153,6 +2188,158 @@ public object FfiConverterTypeColorPixels: FfiConverterRustBuffer<ColorPixels> {
             FfiConverterUInt.write(value.`width`, buf)
             FfiConverterUInt.write(value.`height`, buf)
             FfiConverterByteArray.write(value.`rgba`, buf)
+    }
+}
+
+
+
+/**
+ * 一次检测/修复的结果。`status` 的字面量含义见
+ * [`crate::container_repair::RepairOutcome::status`]。
+ */
+data class FfiContainerRepair (
+    var `path`: kotlin.String
+    , 
+    /**
+     * `repaired` / `needsRepair` / `alreadyRepaired` / `maskedNoLedger` / `healthy` /
+     * `notApplicable` / `failed`
+     */
+    var `status`: kotlin.String
+    , 
+    /**
+     * 被藏起来的毫秒数。
+     */
+    var `hiddenMs`: kotlin.Long
+    , 
+    /**
+     * 采样表口径时长（毫秒）——修完之后播放器就该认到这个值。
+     */
+    var `tableMs`: kotlin.Long
+    , 
+    /**
+     * `elst` 口径时长（毫秒）——修复前播放器实际认到的值。
+     */
+    var `elstMs`: kotlin.Long
+    , 
+    /**
+     * 被改动的字节偏移（还原时按台账取，不取这里的返回值）。
+     */
+    var `offsets`: List<kotlin.Long>
+    , 
+    var `error`: kotlin.String?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiContainerRepair: FfiConverterRustBuffer<FfiContainerRepair> {
+    override fun read(buf: ByteBuffer): FfiContainerRepair {
+        return FfiContainerRepair(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterSequenceLong.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiContainerRepair) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`status`) +
+            FfiConverterLong.allocationSize(value.`hiddenMs`) +
+            FfiConverterLong.allocationSize(value.`tableMs`) +
+            FfiConverterLong.allocationSize(value.`elstMs`) +
+            FfiConverterSequenceLong.allocationSize(value.`offsets`) +
+            FfiConverterOptionalString.allocationSize(value.`error`)
+    )
+
+    override fun write(value: FfiContainerRepair, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`status`, buf)
+            FfiConverterLong.write(value.`hiddenMs`, buf)
+            FfiConverterLong.write(value.`tableMs`, buf)
+            FfiConverterLong.write(value.`elstMs`, buf)
+            FfiConverterSequenceLong.write(value.`offsets`, buf)
+            FfiConverterOptionalString.write(value.`error`, buf)
+    }
+}
+
+
+
+/**
+ * 台账里的一条记录（设置面板/还原入口用）。
+ */
+data class FfiContainerRepairEntry (
+    var `path`: kotlin.String
+    , 
+    var `offsets`: List<kotlin.Long>
+    , 
+    var `hiddenMs`: kotlin.Long
+    , 
+    var `tableMs`: kotlin.Long
+    , 
+    var `elstMs`: kotlin.Long
+    , 
+    var `repairedAt`: kotlin.Long
+    , 
+    /**
+     * `desktop` / `android`
+     */
+    var `origin`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiContainerRepairEntry: FfiConverterRustBuffer<FfiContainerRepairEntry> {
+    override fun read(buf: ByteBuffer): FfiContainerRepairEntry {
+        return FfiContainerRepairEntry(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiContainerRepairEntry) = (
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterSequenceLong.allocationSize(value.`offsets`) +
+            FfiConverterLong.allocationSize(value.`hiddenMs`) +
+            FfiConverterLong.allocationSize(value.`tableMs`) +
+            FfiConverterLong.allocationSize(value.`elstMs`) +
+            FfiConverterLong.allocationSize(value.`repairedAt`) +
+            FfiConverterString.allocationSize(value.`origin`)
+    )
+
+    override fun write(value: FfiContainerRepairEntry, buf: ByteBuffer) {
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterSequenceLong.write(value.`offsets`, buf)
+            FfiConverterLong.write(value.`hiddenMs`, buf)
+            FfiConverterLong.write(value.`tableMs`, buf)
+            FfiConverterLong.write(value.`elstMs`, buf)
+            FfiConverterLong.write(value.`repairedAt`, buf)
+            FfiConverterString.write(value.`origin`, buf)
     }
 }
 
@@ -3944,6 +4131,34 @@ public object FfiConverterOptionalSequenceString: FfiConverterRustBuffer<List<ko
 /**
  * @suppress
  */
+public object FfiConverterSequenceLong: FfiConverterRustBuffer<List<kotlin.Long>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Long> {
+        val len = buf.getInt()
+        return List<kotlin.Long>(len) {
+            FfiConverterLong.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Long>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterLong.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.Long>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterLong.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
     override fun read(buf: ByteBuffer): List<kotlin.String> {
         val len = buf.getInt()
@@ -4046,6 +4261,62 @@ public object FfiConverterSequenceTypeColorErrorFile: FfiConverterRustBuffer<Lis
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeColorErrorFile.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiContainerRepair: FfiConverterRustBuffer<List<FfiContainerRepair>> {
+    override fun read(buf: ByteBuffer): List<FfiContainerRepair> {
+        val len = buf.getInt()
+        return List<FfiContainerRepair>(len) {
+            FfiConverterTypeFfiContainerRepair.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiContainerRepair>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiContainerRepair.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiContainerRepair>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiContainerRepair.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiContainerRepairEntry: FfiConverterRustBuffer<List<FfiContainerRepairEntry>> {
+    override fun read(buf: ByteBuffer): List<FfiContainerRepairEntry> {
+        val len = buf.getInt()
+        return List<FfiContainerRepairEntry>(len) {
+            FfiConverterTypeFfiContainerRepairEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiContainerRepairEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiContainerRepairEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiContainerRepairEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiContainerRepairEntry.write(it, buf)
         }
     }
 }
@@ -5111,10 +5382,13 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         /**
          * 列出所有文件夹（bucket）。
          *
-         * A5 起聚合口径放开到 `Image ∪ Video`（计数与两个时间），**但封面那一路仍只认 `'Image'`**：
-         * 相册封面是按位图取的（前端拿这个 path 去解码），视频项在没有封面帧之前喂进去只会得到
-         * 一张坏图——那要等 A5.4 的 `MediaStore.Video.Thumbnails`。所以这里是「计数含视频、封面不含」
-         * 的**故意不对称**，纯视频相册显示成「有张数、占位封面」。
+         * 聚合口径四路一致：计数、两个时间戳、**封面**全部按 `Image ∪ Video`。
+         *
+         * 封面这一路在 A5 那轮曾刻意只认 `'Image'`（纯视频相册显示成「有张数、占位灰」），
+         * 前提是「视频没有可用的封面帧」。那个前提已经随 A5.5 过期——安卓侧现在自己抽帧
+         * （`ThumbnailLoader` 手挑 > 自抽 > 系统兜底三级），桌面端更是早就让视频与图片同权
+         * 争封面（`findImagesDeeply(..., includeVideos = !isAndroid)`，UI 子文档 U6 那条拍板）。
+         * 两端同口径，纯视频相册才不再是灰块。
          */ fun `listFolders`(): List<Folder> {
             return FfiConverterSequenceTypeFolder.lift(
     uniffiRustCall() { _status ->
@@ -5344,6 +5618,83 @@ public object FfiConverterMapStringSequenceString: FfiConverterRustBuffer<Map<ko
         FfiConverterTypeFfiTopic.lower(`topic`),_status)
 }
     
+    
+
+        /**
+         * 只检测、不写盘。给「先让用户看看有多少要修」这类场景用。
+         */ fun `inspectVideoContainer`(`path`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_inspect_video_container(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 列出本机所有被修过的文件（还原入口的数据源）。
+         */
+    @Throws(AuroraException::class) fun `listContainerRepairs`(): List<FfiContainerRepairEntry> {
+            return FfiConverterSequenceTypeFfiContainerRepairEntry.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_list_container_repairs(
+    
+        _status)
+}
+    )
+    }
+    
+
+        /**
+         * 检测并在必要时原位修复单个文件；成功会写台账（可还原）。
+         *
+         * `origin` 由调用方声明是谁修的（安卓传 `"android"`），只进台账做排查用。
+         */ fun `repairVideoContainer`(`path`: kotlin.String, `origin`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_repair_video_container(
+    
+        
+        FfiConverterString.lower(`path`),
+        FfiConverterString.lower(`origin`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 批量修复（扫描用）。返回与入参**等长且同序**，调用方按 `status` 过滤。
+         *
+         * 单文件写失败不会中断整批 —— `repair_file` 内部把错误收进 `status`/`error`，
+         * 不会因为一个只读盘/被占用的文件就让整轮扫描报错。
+         */ fun `repairVideoContainers`(`paths`: List<kotlin.String>, `origin`: kotlin.String): List<FfiContainerRepair> {
+            return FfiConverterSequenceTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_repair_video_containers(
+    
+        
+        FfiConverterSequenceString.lower(`paths`),
+        FfiConverterString.lower(`origin`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * 按台账把某文件逐字节还原。**没有台账的文件一律拒绝**（不猜偏移写用户文件）。
+         */ fun `revertVideoContainer`(`path`: kotlin.String): FfiContainerRepair {
+            return FfiConverterTypeFfiContainerRepair.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_revert_video_container(
+    
+        
+        FfiConverterString.lower(`path`),_status)
+}
+    )
+    }
     
 
 

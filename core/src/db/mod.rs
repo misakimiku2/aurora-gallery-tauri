@@ -9,6 +9,7 @@ pub mod file_index;
 pub mod topics;
 pub mod tags;
 pub mod import_records;
+pub mod container_repairs;
 
 #[derive(Clone)]
 pub struct AppDbPool {
@@ -113,7 +114,12 @@ pub fn generate_id(path: &str) -> String {
 /// - `0`：未标记（视频支持之前的旧库）
 /// - `2`：支持视频（P1，2026-10-12）
 /// - `3`：视频信息块补列（video_codec / bit_rate，2026-10-16，需全量回填）
-pub const SCANNER_CAPABILITY: i64 = 3;
+/// - `4`：撒谎 edit list 原位修复（2026-10-19）。不强制全扫的话，已入库的坏视频走
+///   「数量短路」拿缓存、根本进不到修复分支 —— 而它们的入库时长（采样表口径）本身没变，
+///   短路判定看不出来。必须靠版本号触发一次全扫。
+/// - `5`：`mdat` 碎片链原位合并（2026-10-19）。同理：这一种修的是「点开要等多久」，
+///   容器口径的时长一点没变，短路判定永远看不出来 —— 不 bump 就得让用户手动重扫才生效。
+pub const SCANNER_CAPABILITY: i64 = 5;
 
 /// 读取库的扫描能力版本（旧库缺省 `0`）。
 pub fn get_scanner_capability(conn: &Connection) -> i64 {
@@ -193,6 +199,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Create import_records（§6.5 多来源标注迁移的「上次导入」记录，跟着库走）
     import_records::create_table(conn)?;
+
+    // Create container_repairs（MP4 撒谎 edit list 原位修复的台账 —— 还原的唯一依据）
+    container_repairs::create_table(conn)?;
 
     // Create topic_files / topic_people association tables (Phase 0: replace file_ids/people_ids TEXT)
     conn.execute(

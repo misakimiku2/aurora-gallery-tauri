@@ -999,9 +999,14 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
         if (notifyScan) scanNotifier.progress()
         Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
-        withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
+        // MP4 容器原位修复（2026-10-19，撒谎 edit list + 碎片 mdat 链，详见 VideoContainerRepair.kt）。
+        // 只在**初始扫描/手动刷新**这一路做，不挂在每次 reconcile 上：任何应用触碰
+        // MediaStore 都会触发对账（见下方 M8b-23 注释），而检测要读每个视频的顶层 box 链
+        // 和 moov，放进热路径等于把「进夹秒开」拖慢。新下载的片子最迟在一次手动刷新时被修掉。
+        val rows = if (notifyScan) withContext(Dispatchers.IO) { repairMp4Containers(imgs) } else imgs
+        withContext(Dispatchers.IO) { upsertMediaImages(rows) }
         debugLog(
-            "[Scan] rows=${imgs.size} upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms",
+            "[Scan] rows=${rows.size} upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms",
         )
         // 首发缓存**不**随对账清空（M8b-23 真机反馈二轮：任何应用触碰 MediaStore 都会
         // 触发对账，整表清空等于把「进夹秒开」打回每次都闪空白）。缓存在这里只承担
@@ -1015,7 +1020,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // fileCount 一并刷新。
         reloadTagState()
         reloadTopics()
-        if (notifyScan) scanNotifier.done(folders = folders.value.size, images = imgs.size)
+        if (notifyScan) scanNotifier.done(folders = folders.value.size, images = rows.size)
     }
 
     /**

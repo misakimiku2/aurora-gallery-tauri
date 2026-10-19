@@ -8,12 +8,16 @@ pub mod ai;
 pub mod ai_task;
 pub mod color_extractor;
 pub mod collate;
+pub mod container_repair;
 pub mod color_db;
 pub mod color_ffi;
 pub mod color_search;
 pub mod db;
 pub mod file_types;
 pub mod ffi;
+pub mod ffi_container;
 pub mod import;
+pub mod mp4_editlist;
+pub mod mp4_mdat;
 
 uniffi::setup_scaffolding!();

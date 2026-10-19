@@ -19,7 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 static DB_POOL: OnceLock<AppDbPool> = OnceLock::new();
 
-fn pool() -> &'static AppDbPool {
+pub(crate) fn pool() -> &'static AppDbPool {
     DB_POOL.get().expect("数据库未初始化，请先调用 initDb")
 }
 

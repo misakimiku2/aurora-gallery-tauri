@@ -816,12 +816,26 @@ fn pick_by_sequential_seek(
 ) -> Option<FramePick> {
     let started = Instant::now();
     let mut best: Option<FramePick> = None;
+    let mut failed = 0usize;
     for (idx, &target) in candidates.iter().enumerate() {
         if started.elapsed() > timeout {
             break;
         }
-        let jpeg = run_single_frame(ffmpeg, input, target, w, h, timeout.saturating_sub(started.elapsed()))?;
-        let (luma, score) = score_jpeg(&jpeg)?;
+        // 单个候选点取不到帧 → **跳过它继续跑剩下的**，而不是中断整轮。
+        // 这里原来是 `?`：只要有一个点失败（典型场景是容器的 `elst` 把播放器可播区间
+        // 截短、而候选点按采样表时长铺开，于是后半截全部落空），整个函数当场返回
+        // `None`，把前面已经取到的合格帧一并丢掉 —— 日志表现为
+        // 「逐 seek 模式 660ms 取帧序号 None」+「抽帧失败」，而实际上第 1 个点是成功的。
+        let Some(jpeg) =
+            run_single_frame(ffmpeg, input, target, w, h, timeout.saturating_sub(started.elapsed()))
+        else {
+            failed += 1;
+            continue;
+        };
+        let Some((luma, score)) = score_jpeg(&jpeg) else {
+            failed += 1;
+            continue;
+        };
         if best.as_ref().map_or(true, |b| score > b.score) {
             best = Some(FramePick { jpeg, score, luma, frame_no: idx });
         }
@@ -830,8 +844,10 @@ fn pick_by_sequential_seek(
         }
     }
     log::info!(
-        "[ffmpeg_cover] 逐 seek 结束: 总耗时 {:.2?} - {}",
+        "[ffmpeg_cover] 逐 seek 结束: 总耗时 {:.2?} 失败候选 {}/{} - {}",
         started.elapsed(),
+        failed,
+        candidates.len(),
         input
     );
     best
