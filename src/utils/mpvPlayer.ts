@@ -151,6 +151,20 @@ export const onMpvMenuAction = async (
 export const mpvSetMenuLabels = (labels: string[]): Promise<void> =>
   call<void>('mpv_player_set_menu_labels', { labels }).catch(() => {});
 
+/**
+ * 显示/切换关闭原生**竖排音量弹窗**（mpv 模式）。
+ * anchor = 静音按钮顶部中心的**屏幕物理像素**（CSS px × devicePixelRatio）；
+ * 原生窗口 z-order 在 mpv 画面 popup 之上，可完全覆盖画面区、不被遮挡。
+ * 拖动滑条由 Rust 直接下发 mpv volume，控制条 UI 由轮询回读刷新。
+ */
+export const mpvShowVolumePopup = (
+  anchorX: number,
+  anchorY: number,
+  volume: number,
+  dark: boolean
+): Promise<void> =>
+  call<void>('mpv_player_show_volume_popup', { anchorX, anchorY, volume, dark }).catch(() => {});
+
 /** 轮询播放状态；同时写入模块级缓存。 */
 export const mpvPollState = async (): Promise<MpvState | null> => {
   try {

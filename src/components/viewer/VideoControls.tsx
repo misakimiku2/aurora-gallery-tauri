@@ -4,7 +4,7 @@ import { useScrubSeek } from '../../hooks/useScrubSeek';
 import { runAssetProbe } from '../../utils/scrubProbe';
 import {
   mpvPollState, mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
-  mpvSetVolume, mpvSetMuted, mpvSetLoop, mpvSetSpeed,
+  mpvSetVolume, mpvSetMuted, mpvSetLoop, mpvSetSpeed, mpvShowVolumePopup,
 } from '../../utils/mpvPlayer';
 import {
   Play, Pause, StepBack, StepForward, Rewind, FastForward,
@@ -249,6 +249,23 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     v.muted = !v.muted;
   };
 
+  // mpv 模式：点击静音按钮 = 弹/关原生竖排音量弹窗（按钮上方，原生窗 z-order 在
+  // mpv 画面 popup 之上，完全可见可拖；拖动由 Rust 直接下发 mpv volume，UI 轮询回读）
+  const muteBtnRef = useRef<HTMLButtonElement>(null);
+  const handleShowVolumePopup = () => {
+    const btn = muteBtnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const dark = document.documentElement.classList.contains('dark');
+    void mpvShowVolumePopup(
+      Math.round((r.left + r.width / 2) * dpr),
+      Math.round(r.top * dpr),
+      muted ? 0 : Math.round(volume * 100),
+      dark,
+    );
+  };
+
   const cycleRate = () => {
     const idx = RATES.indexOf(rate);
     const next = RATES[(idx + 1) % RATES.length];
@@ -421,25 +438,20 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
 
       {/* 静音按钮 + 悬停音量条。横向音量条不再常驻控制条 —— 它从进度条上抢宽度 */}
       <div className="relative group shrink-0">
-        <button onClick={toggleMute} className={iconBtn} title={muted ? t('video.unmute') : t('video.mute')}>
+        <button
+          ref={muteBtnRef}
+          onClick={mpvMode ? handleShowVolumePopup : toggleMute}
+          className={iconBtn}
+          title={mpvMode ? t('video.volume') : (muted ? t('video.unmute') : t('video.mute'))}
+        >
           <VolumeIcon size={16} />
         </button>
-        {/* mpv 模式：竖排弹窗必然伸进媒体区被 popup 盖住（airspace 反转），
-            改为**控制条内**的横向滑条（absolute 于按钮左侧，不超出 h-12 条高）。
+        {/* mpv 模式：竖排弹窗必然伸进媒体区，被 popup 盖住（airspace 反转）。
+            改为**原生竖排音量弹窗**（Win32 trackbar，z-order 在 popup 之上，
+            完全可见可拖；点击按钮弹出/关闭，拖动由 Rust 直接下发 mpv volume）。
             <video> 模式保持竖排弹窗不变（2026-10-16 指挥官定的样式）。 */}
         {mpvMode ? (
-          <div className="absolute right-full top-1/2 -translate-y-1/2 mr-1 hidden group-hover:flex items-center w-24 h-8 px-2 rounded-lg bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 shadow-lg">
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={muted ? 0 : volume}
-              onChange={(e) => changeVolume(Number(e.target.value))}
-              className="w-full"
-              aria-label={t('video.volume')}
-            />
-          </div>
+          <div className="pointer-events-none" />
         ) : (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 hidden group-hover:flex flex-col items-center pb-1">
           <div className="px-2 py-2 rounded-lg bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 shadow-lg">

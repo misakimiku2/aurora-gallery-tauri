@@ -144,6 +144,31 @@ pub fn mpv_player_set_menu_labels(labels: Vec<String>) -> Result<(), String> {
     imp::set_menu_labels(labels)
 }
 
+/// 显示/切换关闭 **原生竖排音量弹窗**（mpv 模式专用）。
+///
+/// `anchorX/anchorY` = 静音按钮**顶部中心**的屏幕物理像素（前端 × devicePixelRatio）；
+/// 弹窗显示在其正上方（原生窗口 z-order 在 mpv 画面 popup 之上，完全可见）。
+/// `volume` = 当前音量 0-100；`dark` = 暗色主题（弹窗底色跟随）。
+/// 已显示时再次调用 = 关闭（toggle）。拖动滑条由 Rust 直接下发 mpv volume，
+/// 前端控制条由 250ms 轮询回读刷新。
+#[tauri::command]
+pub fn mpv_player_show_volume_popup(
+    anchor_x: f64,
+    anchor_y: f64,
+    volume: f64,
+    dark: bool,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        imp::show_volume_popup(anchor_x, anchor_y, volume, dark)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (anchor_x, anchor_y, volume, dark);
+        Err("原生播放内核仅支持 Windows 桌面端".to_string())
+    }
+}
+
 // ── 实现层：Windows ───────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -155,19 +180,37 @@ mod imp {
 
     use libloading::{Library, Symbol};
     use tauri::{Emitter, Manager};
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
-    use windows::Win32::Graphics::Gdi::{ClientToScreen, PtInRect};
+    use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Graphics::Gdi::{
+        BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, FillRect, PtInRect, HGDIOBJ,
+        PAINTSTRUCT,
+    };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Controls::{
+        InitCommonControlsEx, ICC_BAR_CLASSES, TBS_NOTICKS, TBS_VERT, INITCOMMONCONTROLSEX,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CallNextHookEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-        DestroyMenu, DestroyWindow, GetCursorPos, GetWindowRect, RegisterClassW, SetForegroundWindow,
-        SetWindowPos, SetWindowsHookExW, TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HMENU,
-        HWND_MESSAGE, MF_STRING, MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, TRACK_POPUP_MENU_FLAGS,
-        TPM_NONOTIFY, TPM_RIGHTBUTTON, WINDOW_STYLE, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW,
-        HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-        WM_RBUTTONDOWN, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
+        DestroyMenu, DestroyWindow, GetClientRect, GetCursorPos, GetWindowRect, LoadCursorW,
+        RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW,
+        TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HMENU, HWND_MESSAGE, IDC_ARROW, MF_STRING,
+        MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, TRACK_POPUP_MENU_FLAGS, TPM_NONOTIFY,
+        TPM_RIGHTBUTTON, WINDOW_STYLE, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW, HWND_TOP,
+        SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_HSCROLL, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
+        WM_RBUTTONDOWN, WM_VSCROLL, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
+
+    // trackbar 消息（windows crate 未包装 TBM_*，手写；WM_USER 基址）
+    const TBM_GETPOS: u32 = 0x0400;
+    const TBM_SETPOS: u32 = 0x0405;
+
+    /// COLORREF = 0x00BBGGRR（Windows 蓝-绿-红序）
+    #[inline]
+    fn colorref(r: u32, g: u32, b: u32) -> COLORREF {
+        COLORREF(r | (g << 8) | (b << 16))
+    }
 
     /// 媒体显示区 rect（相对视口，**物理像素** —— DPI 换算在前端 `devicePixelRatio` 做）。
     #[derive(Debug, Clone, Copy)]
@@ -279,6 +322,246 @@ mod imp {
     ];
     /// message-only 窗口句柄（TrackPopupMenu 的 WM_COMMAND 落点；isize，0 = 未建）。
     static MENU_WINDOW: Mutex<isize> = Mutex::new(0);
+
+    // ── 原生竖排音量弹窗 ───────────────────────────────────────────
+    //
+    // mpv 模式下 WebView 的竖排音量弹窗物理上画不进画面区（popup 之上无 HTML），
+    // 但**原生窗口可以叠在 mpv popup 之上**（右键原生菜单同理）。
+    // 本弹窗 = 无边框原生小窗 + comctl32 trackbar（TBS_VERT 竖排），
+    // WS_EX_NOACTIVATE ⇒ 拖滑条不抢键盘焦点；WS_EX_TOOLWINDOW ⇒ 不进任务栏。
+
+    const VOLUME_CLASS: &str = "AuroraMpvVolumePopup\0";
+    const TRACKBAR_CLASS: &str = "msctls_trackbar32\0";
+    const VOLUME_W: i32 = 40;
+    const VOLUME_H: i32 = 168;
+    const VOLUME_GAP: i32 = 8;
+
+    /// 音量弹窗句柄（isize，0 = 未创建）与其内 trackbar 句柄。
+    static VOLUME_POPUP: Mutex<isize> = Mutex::new(0);
+    static VOLUME_TRACKBAR: Mutex<isize> = Mutex::new(0);
+    /// 弹窗底色刷子（暗/亮主题切换时重建）。
+    static VOLUME_BRUSH: Mutex<isize> = Mutex::new(0);
+
+    /// 弹窗窗口过程：背景自绘（主题色）+ trackbar 拖动 → 实时下发 mpv volume。
+    unsafe extern "system" fn volume_popup_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_CREATE => {
+                // 竖排 trackbar：范围 0-100，子控件铺满弹窗（留 8px 边距）
+                let trackbar = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    PCWSTR(TRACKBAR_CLASS.encode_utf16().collect::<Vec<u16>>().as_ptr()),
+                    PCWSTR(std::ptr::null()),
+                    WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | TBS_VERT | TBS_NOTICKS),
+                    4,
+                    8,
+                    VOLUME_W - 8,
+                    VOLUME_H - 16,
+                    Some(hwnd),
+                    None,
+                    None,
+                    None,
+                )
+                .ok();
+                if let Some(t) = trackbar {
+                    *match VOLUME_TRACKBAR.lock() {
+                        Ok(mut g) => g,
+                        Err(p) => p.into_inner(),
+                    } = t.0 as isize;
+                }
+                LRESULT(0)
+            }
+            WM_VSCROLL | WM_HSCROLL => {
+                // 拖动/点击 trackbar：读当前值 → 直接下发 mpv volume（前端轮询回读刷新 UI）
+                let trackbar = *match VOLUME_TRACKBAR.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                if trackbar != 0 {
+                    if let Ok(lib) = mpv() {
+                        let pos = unsafe {
+                            SendMessageW(
+                                HWND(trackbar as *mut c_void),
+                                TBM_GETPOS,
+                                Some(WPARAM(0)),
+                                Some(LPARAM(0)),
+                            )
+                            .0
+                        } as f64;
+                        let vol = pos.clamp(0.0, 100.0).to_string();
+                        let args = [
+                            c"set".as_ptr(),
+                            c"volume".as_ptr(),
+                            vol.as_ptr() as *const c_char,
+                            std::ptr::null(),
+                        ];
+                        let guard = lock_surface();
+                        if let Some(s) = guard.as_ref() {
+                            unsafe { (lib.command)(s.ctx, args.as_ptr()) };
+                        }
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_ERASEBKGND => {
+                // 底色按主题：暗 = #262626，亮 = 白
+                let dark = *match VOLUME_BRUSH.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                } != 0;
+                let mut ps = PAINTSTRUCT::default();
+                let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+                let brush = unsafe {
+                    CreateSolidBrush(if dark { colorref(0x26, 0x26, 0x26) } else { colorref(0xFF, 0xFF, 0xFF) })
+                };
+                unsafe {
+                    let mut rc = windows::Win32::Foundation::RECT::default();
+                    let _ = GetClientRect(hwnd, &mut rc);
+                    FillRect(hdc, &rc, brush);
+                    let _ = DeleteObject(HGDIOBJ(brush.0 as *mut c_void));
+                }
+                LRESULT(1)
+            }
+            WM_LBUTTONDOWN => {
+                // 点弹窗空白处（非 trackbar）= 关闭（trackbar 自捕获鼠标不冒泡到这）
+                hide_volume_popup();
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    /// 确保音量弹窗的窗口类注册。
+    fn ensure_volume_class() -> Result<(), String> {
+        static ONCE: OnceLock<Result<(), String>> = OnceLock::new();
+        ONCE
+            .get_or_init(|| {
+                let name: Vec<u16> = VOLUME_CLASS.encode_utf16().collect();
+                let hmodule = unsafe { GetModuleHandleW(None) }
+                    .map_err(|e| format!("GetModuleHandleW 失败: {}", e))?;
+                let wc = WNDCLASSW {
+                    lpfnWndProc: Some(volume_popup_proc),
+                    hInstance: HINSTANCE(hmodule.0),
+                    hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
+                    lpszClassName: PCWSTR(name.as_ptr()),
+                    ..Default::default()
+                };
+                if unsafe { RegisterClassW(&wc) } == 0 {
+                    return Err("RegisterClassW(音量弹窗) 失败".to_string());
+                }
+                Ok(())
+            })
+            .as_ref()
+            .map(|_| ())
+            .map_err(|e| e.clone())
+    }
+
+    /// 显示（或 toggle 关闭）竖排音量弹窗。
+    pub fn show_volume_popup(anchor_x: f64, anchor_y: f64, volume: f64, dark: bool) -> Result<(), String> {
+        unsafe { InitCommonControlsEx(&INITCOMMONCONTROLSEX { dwICC: ICC_BAR_CLASSES, dwSize: 1 }) };
+        ensure_volume_class()?;
+
+        let existing = *match VOLUME_POPUP.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if existing != 0 {
+            // 已显示 → toggle 关闭
+            hide_volume_popup();
+            return Ok(());
+        }
+
+        // 主题底色刷子（暗/亮切换时重建）
+        {
+            let mut g = match VOLUME_BRUSH.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            let want: isize = if dark { 1 } else { 0 };
+            if *g != want {
+                let brush = unsafe {
+                    CreateSolidBrush(if dark { colorref(0x26, 0x26, 0x26) } else { colorref(0xFF, 0xFF, 0xFF) })
+                };
+                if *g != 0 {
+                    unsafe { DeleteObject(HGDIOBJ(*g as *mut c_void)) };
+                }
+                *g = brush.0 as isize;
+            }
+        }
+
+        let parent = match lock_surface().as_ref() {
+            Some(s) => s.parent,
+            None => return Err("尚未挂接 mpv".to_string()),
+        };
+        // 位置：静音按钮顶部中心上方（原生窗口在 mpv popup 之上，可自由覆盖画面区）
+        let x = (anchor_x as i32) - VOLUME_W / 2;
+        let y = (anchor_y as i32) - VOLUME_H - VOLUME_GAP;
+
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOPMOST.0),
+                PCWSTR(VOLUME_CLASS.encode_utf16().collect::<Vec<u16>>().as_ptr()),
+                PCWSTR(std::ptr::null()),
+                WINDOW_STYLE(WS_POPUP.0 | WS_VISIBLE.0),
+                x,
+                y,
+                VOLUME_W,
+                VOLUME_H,
+                Some(HWND(parent as *mut c_void)),
+                None,
+                None,
+                None,
+            )
+        }
+        .map_err(|e| format!("创建音量弹窗失败: {}", e))?;
+
+        // 初始音量位置（TBM_SETPOS：TRUE = 重绘）
+        let trackbar = *match VOLUME_TRACKBAR.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if trackbar != 0 {
+            unsafe {
+                SendMessageW(
+                    HWND(trackbar as *mut c_void),
+                    TBM_SETPOS,
+                    Some(WPARAM(1)),
+                    Some(LPARAM(volume.clamp(0.0, 100.0) as isize)),
+                );
+            }
+        }
+
+        *match VOLUME_POPUP.lock() {
+            Ok(mut g) => g,
+            Err(p) => p.into_inner(),
+        } = hwnd.0 as isize;
+        Ok(())
+    }
+
+    /// 隐藏音量弹窗（toggle 关闭 / 会话销毁时）。幂等。
+    pub fn hide_volume_popup() {
+        let hwnd = *match VOLUME_POPUP.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if hwnd != 0 {
+            unsafe {
+                let _ = DestroyWindow(HWND(hwnd as *mut c_void));
+            }
+            *match VOLUME_POPUP.lock() {
+                Ok(mut g) => g,
+                Err(p) => p.into_inner(),
+            } = 0;
+            *match VOLUME_TRACKBAR.lock() {
+                Ok(mut g) => g,
+                Err(p) => p.into_inner(),
+            } = 0;
+        }
+    }
 
     /// popup 上原生的鼠标交互 → WebView 事件（`mpv-surface`）。
     #[derive(Debug, Clone, serde::Serialize)]
@@ -1009,6 +1292,7 @@ mod imp {
             }
             drop(guard);
             disable_click_forward();
+            hide_volume_popup();
         }
         Ok(())
     }
@@ -1091,6 +1375,10 @@ mod imp {
     }
 
     pub fn set_menu_labels(_labels: Vec<String>) -> Result<(), String> {
+        Err(unsupported())
+    }
+
+    pub fn show_volume_popup(_x: f64, _y: f64, _volume: f64, _dark: bool) -> Result<(), String> {
         Err(unsupported())
     }
 }
