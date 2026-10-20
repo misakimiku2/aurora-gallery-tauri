@@ -179,7 +179,7 @@ mod imp {
     use std::time::{Duration, Instant};
 
     use libloading::{Library, Symbol};
-    use tauri::{Emitter, Manager};
+    use tauri::Emitter;
     use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::Graphics::Gdi::{
         BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, FillRect, PtInRect, HGDIOBJ,
@@ -193,12 +193,13 @@ mod imp {
         AppendMenuW, CallNextHookEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
         DestroyMenu, DestroyWindow, GetClientRect, GetCursorPos, GetWindowRect, LoadCursorW,
         RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW,
-        TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HMENU, HWND_MESSAGE, IDC_ARROW, MF_STRING,
+        TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HWND_MESSAGE, IDC_ARROW, MF_STRING,
         MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, TRACK_POPUP_MENU_FLAGS, TPM_NONOTIFY,
         TPM_RIGHTBUTTON, WINDOW_STYLE, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW, HWND_TOP,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_HSCROLL, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
-        WM_RBUTTONDOWN, WM_VSCROLL, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
+        SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_CREATE, WM_ERASEBKGND, WM_HSCROLL,
+        WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_VSCROLL, WS_CHILD,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+        WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
 
@@ -248,7 +249,6 @@ mod imp {
     const MPV_EVENT_END_FILE: c_int = 7;
 
     // client.h: mpv_format
-    const MPV_FORMAT_STRING: u32 = 1;
     const MPV_FORMAT_FLAG: u32 = 3;
     const MPV_FORMAT_DOUBLE: u32 = 5;
 
@@ -462,7 +462,7 @@ mod imp {
 
     /// 显示（或 toggle 关闭）竖排音量弹窗。
     pub fn show_volume_popup(anchor_x: f64, anchor_y: f64, volume: f64, dark: bool) -> Result<(), String> {
-        unsafe { InitCommonControlsEx(&INITCOMMONCONTROLSEX { dwICC: ICC_BAR_CLASSES, dwSize: 1 }) };
+        unsafe { let _ = InitCommonControlsEx(&INITCOMMONCONTROLSEX { dwICC: ICC_BAR_CLASSES, dwSize: 1 }); };
         ensure_volume_class()?;
 
         let existing = *match VOLUME_POPUP.lock() {
@@ -487,7 +487,7 @@ mod imp {
                     CreateSolidBrush(if dark { colorref(0x26, 0x26, 0x26) } else { colorref(0xFF, 0xFF, 0xFF) })
                 };
                 if *g != 0 {
-                    unsafe { DeleteObject(HGDIOBJ(*g as *mut c_void)) };
+                    unsafe { let _ = DeleteObject(HGDIOBJ(*g as *mut c_void)); };
                 }
                 *g = brush.0 as isize;
             }
@@ -935,7 +935,6 @@ mod imp {
             return cur;
         }
         let name: Vec<u16> = SURFACE_CLASS.encode_utf16().collect();
-        let hmodule = GetModuleHandleW(None).ok();
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             PCWSTR(name.as_ptr()),
