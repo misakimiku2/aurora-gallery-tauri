@@ -11,10 +11,10 @@ import { useToasts } from '../hooks/useToasts';
 import { isWebDecodableVideo, webCanDecodeCodec } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
 import {
-  mpvOpen, mpvSetRect, mpvStop, getViewportRect, getMpvStateCache, nextMpvSession,
-  getMediaBackground, onMpvSurface,
+  mpvOpen, mpvSetRect, mpvStop, mpvCommand, getViewportRect, getMpvStateCache, nextMpvSession,
+  getMediaBackground, onMpvSurface, onMpvMenuAction, mpvSetMenuLabels,
   mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
-  mpvVolumeNudge, mpvSetMuted, mpvSetSpeed,
+  mpvVolumeNudge, mpvSetMuted, mpvSetSpeed, mpvCycleRate,
 } from '../utils/mpvPlayer';
 import { openWithDefaultApp } from '../api/tauri-bridge/files';
 import {
@@ -659,30 +659,54 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   }, [mpvActive]);
 
   // popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发，`mpv-surface` 事件）：
-  // 点击 = 播放/暂停切换（与 <video> 模式的 handleVideoSurfaceClick 同一直觉）；
-  // 滚轮 = 音量步进（与 <video> 模式滚轮口径一致）；
-  // 右键 = 打开上下文菜单 —— popup 覆盖区内 HTML 全部不可见，菜单必须锚定在
-  // media 区之外（视口左上、顶栏下方），否则被 popup 盖住。
+  // 点击 = 播放/暂停切换；滚轮 = 音量步进（与 <video> 模式滚轮口径一致）。
+  // 右键由 Rust 直接弹**原生菜单**（TrackPopupMenu 画在系统层，能出现在鼠标位置；
+  // WebView 菜单会被 popup 盖住画不进画面区），选择结果经 `mpv-menu-action` 回来分派。
   useEffect(() => {
     if (!mpvActive) return;
     let un: (() => void) | null = null;
+    let unMenu: (() => void) | null = null;
     let disposed = false;
     onMpvSurface((e) => {
       if (e.kind === 'click') {
-        // 点击画面时若右键菜单开着，一并关闭（popup 挡住 WebView 的外点关闭路径）
-        setContextMenu((prev) => (prev.visible ? { x: prev.x, y: prev.y, visible: false } : prev));
         void mpvTogglePlay();
       } else if (e.kind === 'wheel') {
         void mpvVolumeNudge(e.delta > 0 ? 0.05 : -0.05);
-      } else if (e.kind === 'contextmenu') {
-        // 右键菜单必须锚定在 media 区之外（popup 覆盖区内 HTML 不可见）：
-        // 固定视口左上、顶栏下方，后续测边距的 useEffect 仍会做边界修正
-        setContextMenu({ x: 12, y: 60, visible: true });
-        setMenuPos({ top: '60px', left: '12px' });
       }
     }).then((u) => { if (disposed) u(); else un = u; });
-    return () => { disposed = true; un?.(); };
-  }, [mpvActive]);
+    onMpvMenuAction((action) => {
+      switch (action) {
+        case 'toggle-play': void mpvTogglePlay(); break;
+        case 'seek-back': void mpvSeekRelative(-5); break;
+        case 'seek-fwd': void mpvSeekRelative(5); break;
+        case 'cycle-rate': void mpvCycleRate(); break;
+        case 'toggle-loop': void mpvCommand(['cycle', 'loop']); break;
+        case 'open-external':
+          if (file.path) openWithDefaultApp(file.path).catch(() => {});
+          break;
+        case 'show-in-explorer':
+          onViewInExplorer(file.id);
+          break;
+      }
+    }).then((u) => { if (disposed) u(); else unMenu = u; });
+    return () => { disposed = true; un?.(); unMenu?.(); };
+  }, [mpvActive, file.id, file.path, onViewInExplorer]);
+
+  // 右键原生菜单文案（按当前语言下发；语言切换后下次打开视频生效）。
+  // 顺序约定见 Rust MENU_ACTIONS：0 播放/暂停 · 1 后退5s · 2 前进5s ·
+  // 3 切换倍速 · 4 循环 · 5 系统播放器 · 6 资源管理器。
+  useEffect(() => {
+    if (!mpvActive) return;
+    void mpvSetMenuLabels([
+      `${t('video.play')} / ${t('video.pause')}`,
+      t('video.back5s'),
+      t('video.forward5s'),
+      t('video.rate'),
+      t('video.loop'),
+      t('video.openExternalPlayer'),
+      t('context.viewInExplorer'),
+    ]);
+  }, [mpvActive, t]);
 
   // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
   // 稳定化：总文档 §3.2 的 asset protocol 按 ≤1MB 分片返回，单次 seek/播放会多次触发

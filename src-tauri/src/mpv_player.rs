@@ -137,6 +137,13 @@ pub fn mpv_player_stop(session: u64) -> Result<(), String> {
     imp::stop(session)
 }
 
+/// 下发右键原生菜单文案（按当前语言；下标约定见 imp::MENU_ACTIONS）。
+/// 顺序：0 播放/暂停 · 1 后退5s · 2 前进5s · 3 切换倍速 · 4 循环 · 5 系统播放器 · 6 资源管理器。
+#[tauri::command]
+pub fn mpv_player_set_menu_labels(labels: Vec<String>) -> Result<(), String> {
+    imp::set_menu_labels(labels)
+}
+
 // ── 实现层：Windows ───────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -152,11 +159,13 @@ mod imp {
     use windows::Win32::Graphics::Gdi::{ClientToScreen, PtInRect};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect,
-        RegisterClassW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx,
-        HHOOK, MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW,
-        HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-        WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
+        AppendMenuW, CallNextHookEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+        DestroyMenu, DestroyWindow, GetCursorPos, GetWindowRect, RegisterClassW, SetForegroundWindow,
+        SetWindowPos, SetWindowsHookExW, TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HMENU,
+        HWND_MESSAGE, MF_STRING, MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, TRACK_POPUP_MENU_FLAGS,
+        TPM_NONOTIFY, TPM_RIGHTBUTTON, WINDOW_STYLE, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW,
+        HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_LBUTTONDOWN, WM_MOUSEWHEEL,
+        WM_RBUTTONDOWN, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
 
@@ -256,6 +265,20 @@ mod imp {
     static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
     /// WH_MOUSE_LL 钩子句柄（isize，0 = 未装）。装/卸都在主线程（有消息循环）。
     static MOUSE_HOOK: Mutex<isize> = Mutex::new(0);
+    /// 右键菜单文案（前端按当前语言下发，下标约定见 set_menu_labels）。
+    static MENU_LABELS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    /// 右键菜单动作 → 事件值（与前端 `onMpvMenuAction` 对齐）。
+    const MENU_ACTIONS: [&str; 7] = [
+        "toggle-play",
+        "seek-back",
+        "seek-fwd",
+        "cycle-rate",
+        "toggle-loop",
+        "open-external",
+        "show-in-explorer",
+    ];
+    /// message-only 窗口句柄（TrackPopupMenu 的 WM_COMMAND 落点；isize，0 = 未建）。
+    static MENU_WINDOW: Mutex<isize> = Mutex::new(0);
 
     /// popup 上原生的鼠标交互 → WebView 事件（`mpv-surface`）。
     #[derive(Debug, Clone, serde::Serialize)]
@@ -378,6 +401,17 @@ mod imp {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        // 右键原生菜单（TrackPopupMenu）的选择结果以 WM_COMMAND 落到 message-only 窗口；
+        // 同一个 WndProc 也服务渲染 popup，收到陌生 WM_COMMAND 的概率为零，统一处理无害。
+        if msg == WM_COMMAND {
+            let id = (wparam.0 & 0xFFFF) as usize;
+            if id >= 101 && id < 101 + MENU_ACTIONS.len() {
+                if let Some(app) = APP.get() {
+                    let _ = app.emit("mpv-menu-action", MENU_ACTIONS[id - 101]);
+                }
+            }
+            return LRESULT(0);
+        }
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 
@@ -506,27 +540,40 @@ mod imp {
                 _ => None,
             };
             if let Some(kind) = kind {
-                let inside = (|| -> bool {
+                let hit = (|| -> Option<isize> {
                     let guard = lock_surface();
-                    let Some(s) = guard.as_ref() else { return false };
+                    let Some(s) = guard.as_ref() else { return None };
                     let mut r = windows::Win32::Foundation::RECT::default();
                     if unsafe { GetWindowRect(HWND(s.child as *mut c_void), &mut r) }.is_err() {
-                        return false;
+                        return None;
                     }
                     let pt = POINT { x: info.pt.x, y: info.pt.y };
-                    unsafe { PtInRect(&r, pt) }.as_bool()
-                })();
-                if inside {
-                    let delta = if kind == "wheel" {
-                        (info.mouseData >> 16) as i16
+                    if unsafe { PtInRect(&r, pt) }.as_bool() {
+                        Some(s.parent)
                     } else {
-                        0
-                    };
-                    if let Some(app) = APP.get() {
-                        let _ = app.emit(
-                            "mpv-surface",
-                            SurfaceMouse { kind: kind.to_string(), delta },
-                        );
+                        None
+                    }
+                })();
+                if let Some(parent) = hit {
+                    match kind {
+                        "contextmenu" => {
+                            // 右键 → 原生弹出菜单（TrackPopupMenu 画在系统层，能出现在
+                            // 鼠标位置；WebView 菜单会被 popup 盖住画不进画面区）。
+                            // 注意：不能在钩子回调里同步弹（模态阻塞钩子），投主线程任务。
+                            show_context_menu(parent);
+                        }
+                        "click" => {
+                            if let Some(app) = APP.get() {
+                                let _ = app.emit("mpv-surface", SurfaceMouse { kind: "click".into(), delta: 0 });
+                            }
+                        }
+                        "wheel" => {
+                            let delta = (info.mouseData >> 16) as i16;
+                            if let Some(app) = APP.get() {
+                                let _ = app.emit("mpv-surface", SurfaceMouse { kind: "wheel".into(), delta });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -585,6 +632,88 @@ mod imp {
                 Ok(mut g) => g,
                 Err(p) => p.into_inner(),
             } = 0;
+        });
+    }
+
+    // ── 右键原生菜单（TrackPopupMenu） ─────────────────────────────
+    //
+    // popup 覆盖区内 HTML 不可见 ⇒ WebView 右键菜单画不进画面区。改用**原生
+    // Win32 弹出菜单**：画在系统层（popup 之上）、出现在鼠标位置；选择结果以
+    // WM_COMMAND 落到 message-only 窗口 → emit `mpv-menu-action` → 前端执行。
+    // 菜单文案由前端在 set_menu_labels 按当前语言下发。
+
+    /// 确保存在接收 WM_COMMAND 的 message-only 窗口（主线程创建、主线程泵）。
+    unsafe fn ensure_menu_window() -> isize {
+        let cur = *match MENU_WINDOW.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if cur != 0 {
+            return cur;
+        }
+        let name: Vec<u16> = SURFACE_CLASS.encode_utf16().collect();
+        let hmodule = GetModuleHandleW(None).ok();
+        let hwnd = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            PCWSTR(name.as_ptr()),
+            PCWSTR(name.as_ptr()),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            // HWND_MESSAGE = message-only 窗口：不可见、不参与 z-order，只收消息
+            Some(HWND_MESSAGE),
+            None,
+            None,
+            None,
+        )
+        .ok();
+        let v = hwnd.map(|h| h.0 as isize).unwrap_or(0);
+        *match MENU_WINDOW.lock() {
+            Ok(mut g) => g,
+            Err(p) => p.into_inner(),
+        } = v;
+        v
+    }
+
+    /// 在鼠标位置弹出右键菜单（主线程任务；TrackPopupMenu 自带模态泵）。
+    fn show_context_menu(parent: isize) {
+        let Some(app) = APP.get() else { return };
+        let _ = app.run_on_main_thread(move || unsafe {
+            let labels = match MENU_LABELS.lock() {
+                Ok(g) => g.clone(),
+                Err(p) => p.into_inner().clone(),
+            };
+            let Some(menu) = CreatePopupMenu().ok() else { return };
+            // MF_STRING + 命令 id（101 起，映射见 MENU_ACTIONS）
+            for (i, label) in labels.iter().take(MENU_ACTIONS.len()).enumerate() {
+                let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = AppendMenuW(menu, MF_STRING, 101 + i, PCWSTR(wide.as_ptr()));
+            }
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            ensure_menu_window();
+            let menu_hwnd = *match MENU_WINDOW.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            if menu_hwnd == 0 {
+                let _ = DestroyMenu(menu);
+                return;
+            }
+            let _ = TrackPopupMenu(
+                menu,
+                // TPM_RIGHTBUTTON：左右键都可选中项；TPM_NONOTIFY：不发通知消息
+                TRACK_POPUP_MENU_FLAGS(TPM_RIGHTBUTTON.0 | TPM_NONOTIFY.0),
+                pt.x,
+                pt.y,
+                None,
+                HWND(menu_hwnd as *mut c_void),
+                None,
+            );
+            let _ = DestroyMenu(menu);
+            let _ = parent; // 预留：将来把菜单挂 owner
         });
     }
 
@@ -884,6 +1013,15 @@ mod imp {
         Ok(())
     }
 
+    pub fn set_menu_labels(labels: Vec<String>) -> Result<(), String> {
+        let mut g = match MENU_LABELS.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        *g = labels;
+        Ok(())
+    }
+
     /// PoC 诊断保留：开发期核对渲染窗口 rect 用（正式 UI 不依赖）。
     #[allow(dead_code)]
     fn window_rect(hwnd: isize) -> String {
@@ -949,6 +1087,10 @@ mod imp {
     }
 
     pub fn stop(_session: u64) -> Result<(), String> {
+        Err(unsupported())
+    }
+
+    pub fn set_menu_labels(_labels: Vec<String>) -> Result<(), String> {
         Err(unsupported())
     }
 }

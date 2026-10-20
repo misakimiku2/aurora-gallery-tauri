@@ -104,12 +104,14 @@ export const getMediaBackground = (el: HTMLElement): string | undefined => {
 
 /** popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发）。 */
 export interface MpvSurfaceEvent {
-  kind: 'click' | 'contextmenu' | 'wheel';
+  kind: 'click' | 'wheel';
   /** wheel 滚动量（正 = 滚轮向上 = 音量增） */
   delta: number;
 }
 
-/** 订阅 popup 鼠标事件（点击 = 播放/暂停、右键 = 菜单、滚轮 = 音量）。返回取消函数。 */
+/** 订阅 popup 鼠标事件（点击 = 播放/暂停、滚轮 = 音量）。返回取消函数。
+ *  右键不经过这里 —— 右键由 Rust 侧直接弹原生菜单（TrackPopupMenu，画在系统层、
+ *  能出现在鼠标位置），选择结果经 `onMpvMenuAction` 回来。 */
 export const onMpvSurface = async (
   handler: (e: MpvSurfaceEvent) => void
 ): Promise<() => void> => {
@@ -121,6 +123,33 @@ export const onMpvSurface = async (
     return () => {};
   }
 };
+
+/** 右键原生菜单的动作（Rust MENU_ACTIONS 顺序） */
+export type MpvMenuAction =
+  | 'toggle-play'
+  | 'seek-back'
+  | 'seek-fwd'
+  | 'cycle-rate'
+  | 'toggle-loop'
+  | 'open-external'
+  | 'show-in-explorer';
+
+/** 订阅右键原生菜单的选择结果。 */
+export const onMpvMenuAction = async (
+  handler: (action: MpvMenuAction) => void
+): Promise<() => void> => {
+  try {
+    const { listen } = await import('@tauri-apps/api/event');
+    const unlisten = await listen<string>('mpv-menu-action', (e) => handler(e.payload as MpvMenuAction));
+    return unlisten;
+  } catch {
+    return () => {};
+  }
+};
+
+/** 下发右键菜单文案（按当前语言；顺序约定见 Rust MENU_ACTIONS）。 */
+export const mpvSetMenuLabels = (labels: string[]): Promise<void> =>
+  call<void>('mpv_player_set_menu_labels', { labels }).catch(() => {});
 
 /** 轮询播放状态；同时写入模块级缓存。 */
 export const mpvPollState = async (): Promise<MpvState | null> => {
@@ -191,3 +220,13 @@ export const mpvSetLoop = (loopOn: boolean): Promise<void> =>
 /** 倍速（1.0 = 原速）。 */
 export const mpvSetSpeed = (rate: number): Promise<void> =>
   mpvCommand(['set', 'speed', String(Math.max(0.25, Math.min(4, rate)))]);
+
+const MPV_RATES = [0.5, 1, 1.25, 1.5, 2];
+
+/** 循环切换倍速（0.5 → 1 → 1.25 → 1.5 → 2 → 0.5），从状态缓存取当前值。 */
+export const mpvCycleRate = (): Promise<void> => {
+  const cur = lastState?.speed ?? 1;
+  const idx = MPV_RATES.indexOf(cur);
+  const next = MPV_RATES[(idx + 1) % MPV_RATES.length];
+  return mpvSetSpeed(next);
+};

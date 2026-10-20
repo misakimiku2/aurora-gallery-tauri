@@ -2018,6 +2018,7 @@ pub fn run() {
         mpv_player::mpv_player_state,
         mpv_player::mpv_player_command,
         mpv_player::mpv_player_stop,
+        mpv_player::mpv_player_set_menu_labels,
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,
