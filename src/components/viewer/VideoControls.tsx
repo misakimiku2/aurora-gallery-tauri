@@ -424,7 +424,10 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
         <button onClick={toggleMute} className={iconBtn} title={muted ? t('video.unmute') : t('video.mute')}>
           <VolumeIcon size={16} />
         </button>
-        {/* pb-1 让弹窗与按钮连成一片连续悬停区：鼠标从按钮移进弹窗不会中途断开 */}
+        {/* pb-1 让弹窗与按钮连成一片连续悬停区：鼠标从按钮移进弹窗不会中途断开。
+            mpv 模式隐藏弹窗：弹窗伸进媒体区会被 popup 盖住（ airspace 反转），
+            音量改走画面滚轮 / ↑↓ 键 / 静音切换。 */}
+        {!mpvMode && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 hidden group-hover:flex flex-col items-center pb-1">
           <div className="px-2 py-2 rounded-lg bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 shadow-lg">
             {/* 竖排音量自绘，不用原生 range：index.css 的全局 range 样式是按横排写的
@@ -452,6 +455,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
             </div>
           </div>
         </div>
+        )}
       </div>
       <button
         onClick={toggleLoop}

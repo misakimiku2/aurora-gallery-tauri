@@ -153,10 +153,10 @@ mod imp {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect,
-        RegisterClassW, SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
-        MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW, HWND_TOP,
-        SWP_SHOWWINDOW, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
-        WS_CLIPSIBLINGS,
+        RegisterClassW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx,
+        HHOOK, MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW,
+        HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+        WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
 
@@ -257,10 +257,10 @@ mod imp {
     /// WH_MOUSE_LL 钩子句柄（isize，0 = 未装）。装/卸都在主线程（有消息循环）。
     static MOUSE_HOOK: Mutex<isize> = Mutex::new(0);
 
-    /// popup 上原生的鼠标交互 → WebView 事件（`mpv://surface`）。
+    /// popup 上原生的鼠标交互 → WebView 事件（`mpv-surface`）。
     #[derive(Debug, Clone, serde::Serialize)]
     struct SurfaceMouse {
-        /// "click"（左键按下）| "wheel"（滚轮）
+        /// "click"（左键按下）| "contextmenu"（右键按下）| "wheel"（滚轮）
         kind: String,
         /// wheel 时的滚动量（正 = 远离用户 = 减小音量方向，与 DOM deltaY 同号）
         delta: i16,
@@ -467,7 +467,10 @@ mod imp {
                 pt.y,
                 w,
                 h,
-                SET_WINDOW_POS_FLAGS(SWP_SHOWWINDOW.0),
+                // ⚠️ SWP_NOACTIVATE 必须带：缺了它每次位置同步都会把 popup 激活成
+                // 前台窗口，键盘焦点从 WebView 被抢走 → 全部快捷键失效
+                //（2026-10-20 真机复现）。NOACTIVATE popup + 不激活式置顶才是正解。
+                SET_WINDOW_POS_FLAGS(SWP_SHOWWINDOW.0 | SWP_NOACTIVATE.0),
             );
         }
         Ok(())
@@ -492,12 +495,13 @@ mod imp {
     // 判断点击是否落在 popup rect 内，命中则向 WebView 发 `mpv://surface` 事件。
     // 回调只做几何判断 + emit（微秒级），不拖慢系统鼠标。
 
-    /// 钩子回调：只处理左键按下与滚轮，其余全部透传。
+    /// 钩子回调：只处理左键按下 / 右键 / 滚轮，其余全部透传。
     unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code >= 0 {
             let info = &*(lparam.0 as *const MSLLHOOKSTRUCT);
             let kind = match wparam.0 as u32 {
                 WM_LBUTTONDOWN => Some("click"),
+                WM_RBUTTONDOWN => Some("contextmenu"),
                 WM_MOUSEWHEEL => Some("wheel"),
                 _ => None,
             };
@@ -520,7 +524,7 @@ mod imp {
                     };
                     if let Some(app) = APP.get() {
                         let _ = app.emit(
-                            "mpv://surface",
+                            "mpv-surface",
                             SurfaceMouse { kind: kind.to_string(), delta },
                         );
                     }
@@ -531,55 +535,57 @@ mod imp {
     }
 
     /// 装鼠标钩子（必须在主线程 —— LL 钩子回调投到装钩线程，主线程才有消息循环）。
+    ///
+    /// **按 SURFACE 状态收敛，不用 installed 原子开关**：StrictMode 序列
+    /// open#1 → stop#1 → open#2 会让「装→卸→不装」把钩子留在卸下状态（真机复现：
+    /// 点击/滚轮转发全失效）；改为闭包里检查 SURFACE 当前是否活跃，任意交错顺序
+    /// 都收敛到正确终态。
     fn enable_click_forward() {
-        static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
         let Some(app) = APP.get() else { return };
-        let _ = app.run_on_main_thread(|| {
-            unsafe {
-                let hmodule = GetModuleHandleW(None).ok();
-                let hinstance = hmodule.map(|h| HINSTANCE(h.0));
-                let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), hinstance, 0);
-                if let Ok(h) = hook {
-                    *match MOUSE_HOOK.lock() {
-                        Ok(mut g) => g,
-                        Err(p) => p.into_inner(),
-                    } = h.0 as isize;
-                } else {
-                    INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
-                }
+        let _ = app.run_on_main_thread(|| unsafe {
+            let hook_cur = *match MOUSE_HOOK.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            if hook_cur != 0 {
+                return; // 已装
+            }
+            let surface_alive = lock_surface().is_some();
+            if !surface_alive {
+                return; // open 与 stop 竞态，stop 赢了 → 不装
+            }
+            let hmodule = GetModuleHandleW(None).ok();
+            let hinstance = hmodule.map(|h| HINSTANCE(h.0));
+            if let Ok(h) = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), hinstance, 0) {
+                *match MOUSE_HOOK.lock() {
+                    Ok(mut g) => g,
+                    Err(p) => p.into_inner(),
+                } = h.0 as isize;
             }
         });
     }
 
-    /// 卸载鼠标钩子（stop 销毁 surface 时；同样必须主线程）。
+    /// 卸载鼠标钩子（stop 销毁 surface 时；同样必须主线程、同样按状态收敛）。
     fn disable_click_forward() {
-        static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if !INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
-        if let Some(app) = APP.get() {
-            let _ = app.run_on_main_thread(|| {
-                let h = *match MOUSE_HOOK.lock() {
-                    Ok(mut g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                if h != 0 {
-                    unsafe {
-                        let _ = UnhookWindowsHookEx(HHOOK(h as *mut c_void));
-                    }
-                    *match MOUSE_HOOK.lock() {
-                        Ok(mut g) => g,
-                        Err(p) => p.into_inner(),
-                    } = 0;
-                }
-                INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
-            });
-        } else {
-            INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
+        let Some(app) = APP.get() else { return };
+        let _ = app.run_on_main_thread(|| unsafe {
+            let hook_cur = *match MOUSE_HOOK.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            if hook_cur == 0 {
+                return; // 未装
+            }
+            let surface_alive = lock_surface().is_some();
+            if surface_alive {
+                return; // stop 后又有新会话接管 → 留给新会话用
+            }
+            let _ = UnhookWindowsHookEx(HHOOK(hook_cur as *mut c_void));
+            *match MOUSE_HOOK.lock() {
+                Ok(mut g) => g,
+                Err(p) => p.into_inner(),
+            } = 0;
+        });
     }
 
     // ── mpv 会话 ────────────────────────────────────────────────────
@@ -772,6 +778,12 @@ mod imp {
         sync_surface_position();
         // popup 已就位 → 开启「点击/滚轮落在 popup 上」的转发
         enable_click_forward();
+        // 保险：把前台还给主窗口。SetWindowPos 已带 NOACTIVATE（不抢前台），
+        // 但若 popup 建立路径上仍有任何激活行为，键盘焦点就会留在 popup 上
+        // 导致全部快捷键失效（真机复现）。主窗口回前台 = 键盘回 WebView。
+        unsafe {
+            let _ = SetForegroundWindow(HWND(parent as *mut c_void));
+        }
         Ok(())
     }
 

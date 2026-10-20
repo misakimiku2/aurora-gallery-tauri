@@ -104,18 +104,18 @@ export const getMediaBackground = (el: HTMLElement): string | undefined => {
 
 /** popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发）。 */
 export interface MpvSurfaceEvent {
-  kind: 'click' | 'wheel';
+  kind: 'click' | 'contextmenu' | 'wheel';
   /** wheel 滚动量（正 = 滚轮向上 = 音量增） */
   delta: number;
 }
 
-/** 订阅 popup 鼠标事件（点击 = 播放/暂停切换、滚轮 = 音量）。返回取消函数。 */
+/** 订阅 popup 鼠标事件（点击 = 播放/暂停、右键 = 菜单、滚轮 = 音量）。返回取消函数。 */
 export const onMpvSurface = async (
   handler: (e: MpvSurfaceEvent) => void
 ): Promise<() => void> => {
   try {
     const { listen } = await import('@tauri-apps/api/event');
-    const unlisten = await listen<MpvSurfaceEvent>('mpv://surface', (e) => handler(e.payload));
+    const unlisten = await listen<MpvSurfaceEvent>('mpv-surface', (e) => handler(e.payload));
     return unlisten;
   } catch {
     return () => {};

@@ -658,18 +658,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [mpvActive]);
 
-  // popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发，`mpv://surface` 事件）：
+  // popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发，`mpv-surface` 事件）：
   // 点击 = 播放/暂停切换（与 <video> 模式的 handleVideoSurfaceClick 同一直觉）；
-  // 滚轮 = 音量步进（与 <video> 模式滚轮口径一致）。钩子在主线程，事件异步到达。
+  // 滚轮 = 音量步进（与 <video> 模式滚轮口径一致）；
+  // 右键 = 打开上下文菜单 —— popup 覆盖区内 HTML 全部不可见，菜单必须锚定在
+  // media 区之外（视口左上、顶栏下方），否则被 popup 盖住。
   useEffect(() => {
     if (!mpvActive) return;
     let un: (() => void) | null = null;
     let disposed = false;
     onMpvSurface((e) => {
       if (e.kind === 'click') {
+        // 点击画面时若右键菜单开着，一并关闭（popup 挡住 WebView 的外点关闭路径）
+        setContextMenu((prev) => (prev.visible ? { x: prev.x, y: prev.y, visible: false } : prev));
         void mpvTogglePlay();
       } else if (e.kind === 'wheel') {
         void mpvVolumeNudge(e.delta > 0 ? 0.05 : -0.05);
+      } else if (e.kind === 'contextmenu') {
+        // 右键菜单必须锚定在 media 区之外（popup 覆盖区内 HTML 不可见）：
+        // 固定视口左上、顶栏下方，后续测边距的 useEffect 仍会做边界修正
+        setContextMenu({ x: 12, y: 60, visible: true });
+        setMenuPos({ top: '60px', left: '12px' });
       }
     }).then((u) => { if (disposed) u(); else un = u; });
     return () => { disposed = true; un?.(); };
@@ -1429,13 +1438,32 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [isVideo, slideshowActive, file.id, slideshowConfig.isRandom]);
 
+  // 全屏时收起侧栏/详情面板（面板挤占媒体区宽度 → 观感「不像全屏」），退出时恢复。
+  // 与沉浸模式同一套收/放模式；Esc 退出的路径由下方 fullscreenchange 统一处理。
+  const fullscreenPrevLayoutRef = useRef<{ sidebar: boolean; metadata: boolean } | null>(null);
+  const restoreFullscreenLayout = () => {
+    const prev = fullscreenPrevLayoutRef.current;
+    fullscreenPrevLayoutRef.current = null;
+    if (prev) {
+      if (prev.sidebar && !layout.isSidebarVisible) onLayoutToggle('sidebar');
+      if (prev.metadata && !layout.isMetadataVisible) onLayoutToggle('metadata');
+    }
+  };
+
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) {
+      if (fullscreenPrevLayoutRef.current === null) {
+        const prev = { sidebar: layout.isSidebarVisible, metadata: layout.isMetadataVisible };
+        fullscreenPrevLayoutRef.current = prev;
+        if (prev.sidebar) onLayoutToggle('sidebar');
+        if (prev.metadata) onLayoutToggle('metadata');
+      }
       await rootRef.current?.requestFullscreen();
       setIsFullscreen(true);
     } else {
       await document.exitFullscreen();
       setIsFullscreen(false);
+      restoreFullscreenLayout();
     }
   };
 
@@ -1905,6 +1933,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       // 同步全屏状态（Esc 退出全屏时也要更新，否则视频控制条/顶栏图标会残留）
       setIsFullscreen(!!document.fullscreenElement);
       if (!document.fullscreenElement) {
+        // Esc 退出全屏：恢复全屏时收起的面板（与 toggleFullscreen 同一套）
+        restoreFullscreenLayout();
         if (slideshowActiveRef.current) {
           stopSlideshow();
         }
@@ -1915,7 +1945,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
-  }, []);
+  });
 
   // Safety: ensure settings modal is closed whenever slideshow becomes active
   useEffect(() => { if (slideshowActive) setShowSlideshowSettings(false); }, [slideshowActive]);
