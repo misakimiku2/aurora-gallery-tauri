@@ -4,7 +4,7 @@ import { useScrubSeek } from '../../hooks/useScrubSeek';
 import { runAssetProbe } from '../../utils/scrubProbe';
 import {
   mpvPollState, mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
-  mpvSetVolume, mpvSetMuted, mpvSetLoop,
+  mpvSetVolume, mpvSetMuted, mpvSetLoop, mpvSetSpeed,
 } from '../../utils/mpvPlayer';
 import {
   Play, Pause, StepBack, StepForward, Rewind, FastForward,
@@ -98,6 +98,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       setDuration(st.duration ?? 0);
       setVolume(Math.max(0, Math.min(1, st.volume / 100)));
       setMuted(st.muted);
+      setRate(st.speed > 0 ? st.speed : 1);
     };
     void tick();
     const timer = setInterval(() => { void tick(); }, 250);
@@ -249,12 +250,17 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
   };
 
   const cycleRate = () => {
-    // mpv 倍速 S2 接（mpv speed 属性）
-    if (mpvMode) return;
+    const idx = RATES.indexOf(rate);
+    const next = RATES[(idx + 1) % RATES.length];
+    if (mpvMode) {
+      // mpv speed 属性（轮询会回读确认）；立即 setRate 给按钮即时反馈
+      void mpvSetSpeed(next);
+      setRate(next);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
-    const idx = RATES.indexOf(v.playbackRate);
-    v.playbackRate = RATES[(idx + 1) % RATES.length];
+    v.playbackRate = next;
   };
 
   const toggleLoop = () => {
@@ -408,8 +414,8 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
 
       {/* 倍速：紧跟进度条右侧。定宽 w-12 是按最宽的「1.25x」算的（换档时不推挤后面的按钮），
           文字左对齐 —— 否则居中会让它的字形比左侧图标按钮多内缩约 9px，进度条两侧间距就不等了。
-          mpv 模式置灰（S2 接 mpv speed 属性）。 */}
-      <button onClick={cycleRate} disabled={mpvMode} className="px-2 py-1 text-xs text-left rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12 shrink-0 disabled:opacity-30 disabled:cursor-not-allowed" title={t('video.rate')}>
+          mpv 模式走 speed 属性（S2 起）。 */}
+      <button onClick={cycleRate} className="px-2 py-1 text-xs text-left rounded hover:bg-gray-100 dark:hover:bg-gray-800 tabular-nums w-12 shrink-0" title={t('video.rate')}>
         {rate}x
       </button>
 

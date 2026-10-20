@@ -12,8 +12,9 @@ import { isWebDecodableVideo, webCanDecodeCodec } from '../utils/mediaExtensions
 import { isAndroidSync } from '../utils/androidPlatform';
 import {
   mpvOpen, mpvSetRect, mpvStop, getViewportRect, getMpvStateCache, nextMpvSession,
+  getMediaBackground, onMpvSurface,
   mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
-  mpvVolumeNudge, mpvSetMuted,
+  mpvVolumeNudge, mpvSetMuted, mpvSetSpeed,
 } from '../utils/mpvPlayer';
 import { openWithDefaultApp } from '../api/tauri-bridge/files';
 import {
@@ -593,7 +594,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         const rect = el
           ? getViewportRect(el)
           : { x: 0, y: 0, w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) };
-        await mpvOpen(file.path!, rect, session);
+        // letterbox 背景跟随媒体区主题色（亮/暗/沉浸自动正确，替代 mpv 默认全黑）
+        const background = el ? getMediaBackground(el) : undefined;
+        await mpvOpen(file.path!, rect, session, background);
         if (cancelled) {
           // open 期间组件已卸载（Rust 侧可能已自行让位，这里兜底停自己的会话）
           await mpvStop(session);
@@ -611,10 +614,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [shouldUseMpv, file.path]);
 
-  // 媒体区 rect 跟随：窗口**缩放**（ResizeObserver：媒体区 CSS rect 变化）与
-  // 窗口**移动**（Tauri onMoved：CSS rect 不变但屏幕原点变了）→ 推送 rect 给 Rust
-  // 重算 popup 屏幕位置。rAF 节流合并两类触发；不走 Rust 消息 Hook（comctl32 v6
-  // 需 manifest，test exe 会 STATUS_ENTRYPOINT_NOT_FOUND，且手动链 wndproc 有跨线程风险）。
+  // 媒体区 rect / 背景跟随：
+  // - 窗口**缩放**（ResizeObserver：媒体区 CSS rect 变化）与窗口**移动**（Tauri onMoved：
+  //   CSS rect 不变但屏幕原点变了）→ 推送 rect 给 Rust 重算 popup 屏幕位置；
+  // - 背景色随每次推送顺带刷新（getComputedStyle 实时取，亮/暗/沉浸自动正确）；
+  // - 主题切换（html.dark class 变化）不伴随几何变化 → MutationObserver 单独触发。
+  // rAF 节流合并多源触发；不走 Rust 消息 Hook（comctl32 v6 需 manifest，test exe 会
+  // STATUS_ENTRYPOINT_NOT_FOUND，且手动链 wndproc 有跨线程风险）。
   useEffect(() => {
     if (!mpvActive) return;
     const el = containerRef.current;
@@ -622,12 +628,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     let raf = 0;
     const push = () => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { void mpvSetRect(getViewportRect(el)); });
+      raf = requestAnimationFrame(() => {
+        void mpvSetRect(getViewportRect(el), getMediaBackground(el));
+      });
     };
     push(); // mpvActive 置位的瞬间与 popup 建立之间可能有布局微变，幂等补一发
     const ro = new ResizeObserver(push);
     ro.observe(el);
     window.addEventListener('resize', push);
+    // 主题切换（亮/暗）：html 的 class 变化 → 推送新背景色
+    const themeObserver = new MutationObserver(push);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     let unlistenMoved: (() => void) | null = null;
     let disposed = false;
     import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) => {
@@ -641,9 +652,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      themeObserver.disconnect();
       window.removeEventListener('resize', push);
       unlistenMoved?.();
     };
+  }, [mpvActive]);
+
+  // popup 上的原生鼠标交互（WH_MOUSE_LL 钩子转发，`mpv://surface` 事件）：
+  // 点击 = 播放/暂停切换（与 <video> 模式的 handleVideoSurfaceClick 同一直觉）；
+  // 滚轮 = 音量步进（与 <video> 模式滚轮口径一致）。钩子在主线程，事件异步到达。
+  useEffect(() => {
+    if (!mpvActive) return;
+    let un: (() => void) | null = null;
+    let disposed = false;
+    onMpvSurface((e) => {
+      if (e.kind === 'click') {
+        void mpvTogglePlay();
+      } else if (e.kind === 'wheel') {
+        void mpvVolumeNudge(e.delta > 0 ? 0.05 : -0.05);
+      }
+    }).then((u) => { if (disposed) u(); else un = u; });
+    return () => { disposed = true; un?.(); };
   }, [mpvActive]);
 
   // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
@@ -1414,7 +1443,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // 全屏时两条工具条改成浮层（absolute），画面占满整屏；显隐因此不改变容器尺寸，
   // 画面不会跟着跳。隐藏后任意鼠标移动即唤回；指针停在工具条上时不隐藏，
   // 否则进度条拖到一半条就消失了。
-  const chromeOverlay = isFullscreen && isVideo && !slideshowActive;
+  // P4/S2：mpv 模式禁用 chromeOverlay 浮层 —— 浮层画在 WebView 内，会被 popup 盖住；
+  // 控制条保持独立条布局（媒体区外），rect 由 ResizeObserver 自动跟随
+  const chromeOverlay = isFullscreen && isVideo && !slideshowActive && !shouldUseMpv;
   const [chromeHidden, setChromeHidden] = useState(false);
   const chromeIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
@@ -1676,12 +1707,21 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             return;
           case '<':
             e.preventDefault();
-            // mpv 倍速在 S2 接（observe speed）；此处仅吞键防止输入字符
-            if (!mpvMode && v) v.playbackRate = Math.max(0.25, Math.round((v.playbackRate - 0.25) * 100) / 100);
+            if (mpvMode) {
+              const cur = mpvState?.speed ?? 1;
+              void mpvSetSpeed(Math.max(0.25, Math.round((cur - 0.25) * 100) / 100));
+              return;
+            }
+            if (v) v.playbackRate = Math.max(0.25, Math.round((v.playbackRate - 0.25) * 100) / 100);
             return;
           case '>':
             e.preventDefault();
-            if (!mpvMode && v) v.playbackRate = Math.min(4, Math.round((v.playbackRate + 0.25) * 100) / 100);
+            if (mpvMode) {
+              const cur = mpvState?.speed ?? 1;
+              void mpvSetSpeed(Math.min(4, Math.round((cur + 0.25) * 100) / 100));
+              return;
+            }
+            if (v) v.playbackRate = Math.min(4, Math.round((v.playbackRate + 0.25) * 100) / 100);
             return;
           case 'ArrowUp':
             e.preventDefault();
@@ -2020,7 +2060,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   return (
     <div
       ref={rootRef}
-      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode || chromeOverlay ? 'bg-black' : 'bg-white dark:bg-[#262626]'} ${chromeGone ? 'cursor-none' : ''} ${chromeOverlay ? 'dark' : ''}`}
+      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode || chromeOverlay || (shouldUseMpv && isFullscreen) ? 'bg-black' : 'bg-white dark:bg-[#262626]'} ${chromeGone ? 'cursor-none' : ''} ${chromeOverlay ? 'dark' : ''}`}
       onClick={(e) => {
         setContextMenu({ ...contextMenu, visible: false });
         setIsColorPickerOpen(false);

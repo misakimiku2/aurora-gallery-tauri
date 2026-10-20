@@ -52,6 +52,10 @@
 
 // ── 命令层：签名全平台一致，便于 `generate_handler!` 无条件注册 ──────────
 
+// app_handle() 来自 Manager trait（仅命令层用到）
+#[cfg(windows)]
+use tauri::Manager;
+
 /// 打开（或切换）mpv 播放的文件。
 ///
 /// `x/y/w/h` = 媒体显示区**相对视口**的 rect，**物理像素**（前端已按
@@ -59,6 +63,8 @@
 /// `session` = 前端自增的**会话令牌**：effect 重挂（React StrictMode 双挂载）
 /// 或快速切文件时，晚到的 open 若发现已有更新的会话则**自杀让位**，
 /// 不覆盖新会话的播放器。
+/// `background` = letterbox 区背景色（`#RRGGBB`，前端从媒体区 computed style 取，
+/// 与图片查看器主题一致；None = 维持默认黑）。
 /// 成功返回即已 `FILE_LOADED`（起播），失败返回错误文本（前端据此显示错误卡）。
 #[tauri::command]
 pub fn mpv_player_open(
@@ -69,6 +75,7 @@ pub fn mpv_player_open(
     w: f64,
     h: f64,
     session: u64,
+    background: Option<String>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -76,16 +83,17 @@ pub fn mpv_player_open(
             .hwnd()
             .map(|h| h.0 as isize)
             .map_err(|e| format!("取窗口句柄失败: {}", e))?;
-        imp::open(hwnd, &path, imp::ViewportRect { x, y, w, h }, session)
+        imp::open(hwnd, &path, imp::ViewportRect { x, y, w, h }, session, background, window.app_handle().clone())
     }
     #[cfg(not(windows))]
     {
-        let _ = (&window, &path, x, y, w, h, session);
+        let _ = (&window, &path, x, y, w, h, session, background);
         Err("原生播放内核仅支持 Windows 桌面端".to_string())
     }
 }
 
-/// 媒体区 rect 变化（窗口移动 / 缩放 / 布局变化）时由前端推送；Rust 立即同步 popup 位置。
+/// 媒体区 rect / 背景色变化（窗口移动、缩放、布局、主题切换）时由前端推送；
+/// Rust 立即同步 popup 位置与背景。
 #[tauri::command]
 pub fn mpv_player_set_rect(
     window: tauri::WebviewWindow,
@@ -93,18 +101,16 @@ pub fn mpv_player_set_rect(
     y: f64,
     w: f64,
     h: f64,
+    background: Option<String>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let hwnd = window
-            .hwnd()
-            .map(|h| h.0 as isize)
-            .map_err(|e| format!("取窗口句柄失败: {}", e))?;
-        imp::set_rect(hwnd, imp::ViewportRect { x, y, w, h })
+        let _ = &window;
+        imp::set_rect(imp::ViewportRect { x, y, w, h }, background)
     }
     #[cfg(not(windows))]
     {
-        let _ = (&window, x, y, w, h);
+        let _ = (&window, x, y, w, h, background);
         Err("原生播放内核仅支持 Windows 桌面端".to_string())
     }
 }
@@ -141,13 +147,16 @@ mod imp {
     use std::time::{Duration, Instant};
 
     use libloading::{Library, Symbol};
+    use tauri::{Emitter, Manager};
     use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
-    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::Graphics::Gdi::{ClientToScreen, PtInRect};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect, RegisterClassW,
-        SetWindowPos, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WNDCLASSW, HWND_TOP, SWP_SHOWWINDOW,
-        WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE, WS_CLIPSIBLINGS,
+        CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect,
+        RegisterClassW, SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
+        MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW, HWND_TOP,
+        SWP_SHOWWINDOW, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WS_EX_NOACTIVATE, WS_POPUP, WS_VISIBLE,
+        WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
 
@@ -169,6 +178,8 @@ mod imp {
         pub paused: bool,
         pub volume: f64,
         pub muted: bool,
+        /// 播放速率（1.0 = 原速）。
+        pub speed: f64,
         /// `core-idle`：无活跃播放（EOF / 出错 / 尚未加载）。
         pub idle: bool,
     }
@@ -239,6 +250,21 @@ mod imp {
         w: 0.0,
         h: 0.0,
     });
+    /// letterbox 背景色（`#RRGGBB`）。变化才下发 mpv，避免无谓的属性写。
+    static BACKGROUND: Mutex<Option<String>> = Mutex::new(None);
+    /// AppHandle：鼠标钩子回调（主线程）向 WebView 发事件用。
+    static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+    /// WH_MOUSE_LL 钩子句柄（isize，0 = 未装）。装/卸都在主线程（有消息循环）。
+    static MOUSE_HOOK: Mutex<isize> = Mutex::new(0);
+
+    /// popup 上原生的鼠标交互 → WebView 事件（`mpv://surface`）。
+    #[derive(Debug, Clone, serde::Serialize)]
+    struct SurfaceMouse {
+        /// "click"（左键按下）| "wheel"（滚轮）
+        kind: String,
+        /// wheel 时的滚动量（正 = 远离用户 = 减小音量方向，与 DOM deltaY 同号）
+        delta: i16,
+    }
 
     fn lock_surface() -> MutexGuard<'static, Option<Surface>> {
         match SURFACE.lock() {
@@ -458,10 +484,108 @@ mod imp {
         let _ = sync_child_to_rect(s.parent, s.child, &rect);
     }
 
+    // ── 点击/滚轮转发（WH_MOUSE_LL 低级鼠标钩子） ──────────────────
+    //
+    // popup 建在 invoke 线程且无人泵消息 ⇒ 它的 WndProc 收不到鼠标事件。
+    // 专用消息泵线程是一整套跨线程窗口管理（S2 评估过，风险大）；
+    // 改用 **低级鼠标钩子**：回调投到装钩线程（主线程，tao 事件循环有泵），
+    // 判断点击是否落在 popup rect 内，命中则向 WebView 发 `mpv://surface` 事件。
+    // 回调只做几何判断 + emit（微秒级），不拖慢系统鼠标。
+
+    /// 钩子回调：只处理左键按下与滚轮，其余全部透传。
+    unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if code >= 0 {
+            let info = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+            let kind = match wparam.0 as u32 {
+                WM_LBUTTONDOWN => Some("click"),
+                WM_MOUSEWHEEL => Some("wheel"),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                let inside = (|| -> bool {
+                    let guard = lock_surface();
+                    let Some(s) = guard.as_ref() else { return false };
+                    let mut r = windows::Win32::Foundation::RECT::default();
+                    if unsafe { GetWindowRect(HWND(s.child as *mut c_void), &mut r) }.is_err() {
+                        return false;
+                    }
+                    let pt = POINT { x: info.pt.x, y: info.pt.y };
+                    unsafe { PtInRect(&r, pt) }.as_bool()
+                })();
+                if inside {
+                    let delta = if kind == "wheel" {
+                        (info.mouseData >> 16) as i16
+                    } else {
+                        0
+                    };
+                    if let Some(app) = APP.get() {
+                        let _ = app.emit(
+                            "mpv://surface",
+                            SurfaceMouse { kind: kind.to_string(), delta },
+                        );
+                    }
+                }
+            }
+        }
+        unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    }
+
+    /// 装鼠标钩子（必须在主线程 —— LL 钩子回调投到装钩线程，主线程才有消息循环）。
+    fn enable_click_forward() {
+        static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let Some(app) = APP.get() else { return };
+        let _ = app.run_on_main_thread(|| {
+            unsafe {
+                let hmodule = GetModuleHandleW(None).ok();
+                let hinstance = hmodule.map(|h| HINSTANCE(h.0));
+                let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), hinstance, 0);
+                if let Ok(h) = hook {
+                    *match MOUSE_HOOK.lock() {
+                        Ok(mut g) => g,
+                        Err(p) => p.into_inner(),
+                    } = h.0 as isize;
+                } else {
+                    INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
+    }
+
+    /// 卸载鼠标钩子（stop 销毁 surface 时；同样必须主线程）。
+    fn disable_click_forward() {
+        static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if let Some(app) = APP.get() {
+            let _ = app.run_on_main_thread(|| {
+                let h = *match MOUSE_HOOK.lock() {
+                    Ok(mut g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                if h != 0 {
+                    unsafe {
+                        let _ = UnhookWindowsHookEx(HHOOK(h as *mut c_void));
+                    }
+                    *match MOUSE_HOOK.lock() {
+                        Ok(mut g) => g,
+                        Err(p) => p.into_inner(),
+                    } = 0;
+                }
+                INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
+        } else {
+            INSTALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     // ── mpv 会话 ────────────────────────────────────────────────────
 
     /// 新建并初始化一个 mpv 核心（wid 渲染到 child）。
-    fn create_core(lib: &MpvLib, child: isize) -> Result<*mut c_void, String> {
+    fn create_core(lib: &MpvLib, child: isize, background: Option<&str>) -> Result<*mut c_void, String> {
         let ctx = unsafe { (lib.create)() };
         if ctx.is_null() {
             return Err("mpv_create 返回空指针".to_string());
@@ -484,6 +608,14 @@ mod imp {
             (lib.set_option_string)(ctx, c"input-default-bindings".as_ptr(), c"no".as_ptr())
         };
         let _ = unsafe { (lib.set_option_string)(ctx, c"input-vo-keyboard".as_ptr(), c"no".as_ptr()) };
+        // letterbox 背景 = 媒体区主题色（与图片查看器一致，替代 mpv 默认全黑）
+        if let Some(bg) = background {
+            if let Ok(cbg) = CString::new(bg) {
+                let _ = unsafe {
+                    (lib.set_option_string)(ctx, c"background-color".as_ptr(), cbg.as_ptr())
+                };
+            }
+        }
 
         let rc = unsafe { (lib.initialize)(ctx) };
         if rc < 0 {
@@ -491,6 +623,23 @@ mod imp {
             return Err(format!("mpv_initialize 失败: {}", err_text(lib, rc)));
         }
         Ok(ctx)
+    }
+
+    /// 运行时更新 letterbox 背景色（主题切换）。变化才下发；不支持运行时改的 vo 吞错
+    /// （下次 open 会以初始化选项生效）。
+    fn apply_background(lib: &MpvLib, ctx: *mut c_void, bg: &str) {
+        let ok = CString::new(bg).ok();
+        let Some(cbg) = ok else { return };
+        let args: [*const c_char; 4] = [
+            c"set".as_ptr(),
+            c"background-color".as_ptr(),
+            cbg.as_ptr(),
+            std::ptr::null(),
+        ];
+        let rc = unsafe { (lib.command)(ctx, args.as_ptr()) };
+        if rc < 0 {
+            log::debug!("[mpv] background-color 运行时更新被拒（{}），下次 open 生效", rc);
+        }
     }
 
     /// loadfile 并泵事件，直到 FILE_LOADED（成功）或 END_FILE（失败）。
@@ -531,8 +680,18 @@ mod imp {
 
     // ── 对外行为 ──────────────────────────────────────────────────
 
-    pub fn open(parent: isize, path: &str, rect: ViewportRect, session: u64) -> Result<(), String> {
+    pub fn open(
+        parent: isize,
+        path: &str,
+        rect: ViewportRect,
+        session: u64,
+        background: Option<String>,
+        app: tauri::AppHandle,
+    ) -> Result<(), String> {
         let lib = mpv()?;
+
+        // AppHandle 存全局（鼠标钩子回调发事件用；首次 open 登记一次）
+        let _ = APP.set(app);
 
         // rect 先落缓存：窗口创建、跟随同步都读它
         {
@@ -542,6 +701,16 @@ mod imp {
         // 会话令牌：登记「前端最新意图」。注册前若发现已有更新的会话 → 自杀让位
         //（StrictMode 双挂载 / 快速切文件时，晚到的 open 不得覆盖新会话的播放器）。
         LATEST_SESSION.fetch_max(session, std::sync::atomic::Ordering::SeqCst);
+        // 背景色缓存（新值记下；create_core 初始化选项 + 运行时 set 双保险）
+        {
+            let mut g = match BACKGROUND.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            if background.is_some() {
+                *g = background.clone();
+            }
+        }
 
         // ⚠️ 并发语义（为什么总是「新建窗口」而不是复用 ctx 换片）：
         // 快速切文件时 open(A) 的 load_and_wait（最长 5s，泵事件）可能与 cleanup 的
@@ -566,7 +735,7 @@ mod imp {
             rect.h.round() as i32,
         )?;
 
-        let ctx = match create_core(lib, child) {
+        let ctx = match create_core(lib, child, background.as_deref()) {
             Ok(c) => c,
             Err(e) => {
                 let _ = unsafe { DestroyWindow(HWND(child as *mut c_void)) };
@@ -601,15 +770,42 @@ mod imp {
         drop(guard);
 
         sync_surface_position();
+        // popup 已就位 → 开启「点击/滚轮落在 popup 上」的转发
+        enable_click_forward();
         Ok(())
     }
 
-    pub fn set_rect(_parent: isize, rect: ViewportRect) -> Result<(), String> {
+    pub fn set_rect(rect: ViewportRect, background: Option<String>) -> Result<(), String> {
+        let bg_changed = {
+            let mut g = match BACKGROUND.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            let changed = match (g.as_deref(), background.as_deref()) {
+                (Some(old), Some(new)) => old != new,
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if background.is_some() {
+                *g = background.clone();
+            }
+            changed
+        };
         {
             let mut g = lock_rect();
             *g = rect;
         }
         sync_surface_position();
+        if bg_changed {
+            // 主题切换（亮/暗）不伴随窗口几何变化，必须在这里推给 mpv
+            if let Ok(guard) = SURFACE.lock() {
+                if let Some(s) = guard.as_ref() {
+                    if let Some(bg) = background.as_deref() {
+                        apply_background(mpv()?, s.ctx, bg);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -622,6 +818,7 @@ mod imp {
         let time_pos = get_f64(lib, ctx, "time-pos");
         let duration = get_f64(lib, ctx, "duration");
         let volume = get_f64(lib, ctx, "volume").unwrap_or(100.0);
+        let speed = get_f64(lib, ctx, "speed").unwrap_or(1.0);
         let paused = get_flag(lib, ctx, "pause").unwrap_or(false);
         let muted = get_flag(lib, ctx, "mute").unwrap_or(false);
         let idle = get_flag(lib, ctx, "core-idle").unwrap_or(false);
@@ -632,6 +829,7 @@ mod imp {
             paused,
             volume,
             muted,
+            speed,
             idle,
         })
     }
@@ -668,6 +866,8 @@ mod imp {
                 unsafe { (lib.terminate_destroy)(s.ctx) };
                 let _ = unsafe { DestroyWindow(HWND(s.child as *mut c_void)) };
             }
+            drop(guard);
+            disable_click_forward();
         }
         Ok(())
     }
@@ -718,11 +918,13 @@ mod imp {
         _w: f64,
         _h: f64,
         _session: u64,
+        _background: Option<String>,
+        _app: tauri::AppHandle,
     ) -> Result<(), String> {
         Err(unsupported())
     }
 
-    pub fn set_rect(_window: tauri::WebviewWindow, _x: f64, _y: f64, _w: f64, _h: f64) -> Result<(), String> {
+    pub fn set_rect(_rect: ViewportRect, _background: Option<String>) -> Result<(), String> {
         Err(unsupported())
     }
 
