@@ -56,6 +56,9 @@
 ///
 /// `x/y/w/h` = 媒体显示区**相对视口**的 rect，**物理像素**（前端已按
 /// `devicePixelRatio` 从 CSS px 换算，见 `mpvPlayer.ts`）。
+/// `session` = 前端自增的**会话令牌**：effect 重挂（React StrictMode 双挂载）
+/// 或快速切文件时，晚到的 open 若发现已有更新的会话则**自杀让位**，
+/// 不覆盖新会话的播放器。
 /// 成功返回即已 `FILE_LOADED`（起播），失败返回错误文本（前端据此显示错误卡）。
 #[tauri::command]
 pub fn mpv_player_open(
@@ -65,6 +68,7 @@ pub fn mpv_player_open(
     y: f64,
     w: f64,
     h: f64,
+    session: u64,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -72,11 +76,11 @@ pub fn mpv_player_open(
             .hwnd()
             .map(|h| h.0 as isize)
             .map_err(|e| format!("取窗口句柄失败: {}", e))?;
-        imp::open(hwnd, &path, imp::ViewportRect { x, y, w, h })
+        imp::open(hwnd, &path, imp::ViewportRect { x, y, w, h }, session)
     }
     #[cfg(not(windows))]
     {
-        let _ = (&window, &path, x, y, w, h);
+        let _ = (&window, &path, x, y, w, h, session);
         Err("原生播放内核仅支持 Windows 桌面端".to_string())
     }
 }
@@ -118,9 +122,13 @@ pub fn mpv_player_command(args: Vec<String>) -> Result<(), String> {
 }
 
 /// 停止播放并销毁渲染窗口（切文件 / 关查看器时调用）。
+///
+/// `session` = 调用方自己的会话令牌：**只销毁完全匹配的 surface**。
+/// 令牌不匹配 = 已有更新的会话在播（StrictMode 重挂 / 快速切文件），忽略即可 ——
+/// 否则晚到的 stop 会误杀新会话（2026-10-20 真机复现：一帧画面后消失 + 尚未挂接 mpv）。
 #[tauri::command]
-pub fn mpv_player_stop() -> Result<(), String> {
-    imp::stop()
+pub fn mpv_player_stop(session: u64) -> Result<(), String> {
+    imp::stop(session)
 }
 
 // ── 实现层：Windows ───────────────────────────────────────────────────────
@@ -214,13 +222,17 @@ mod imp {
         child: isize,
         ctx: *mut c_void,
         parent: isize,
+        /// 前端会话令牌：stop 只杀完全匹配的会话；open 注册时非最新则自杀让位。
+        session: u64,
     }
 
     unsafe impl Send for Surface {}
     unsafe impl Sync for Surface {}
 
     static SURFACE: Mutex<Option<Surface>> = Mutex::new(None);
-    /// 最近一次前端推送的媒体区 rect（CSS px）。open / set_rect 写入，同步时读取。
+    /// 前端已知的最新的会话令牌（open 调用即更新）。晚到的 open 与之不等则让位。
+    static LATEST_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    /// 最近一次前端推送的媒体区 rect（物理 px）。open / set_rect 写入，同步时读取。
     static VIEWPORT_RECT: Mutex<ViewportRect> = Mutex::new(ViewportRect {
         x: 0.0,
         y: 0.0,
@@ -519,21 +531,23 @@ mod imp {
 
     // ── 对外行为 ──────────────────────────────────────────────────
 
-    pub fn open(parent: isize, path: &str, rect: ViewportRect) -> Result<(), String> {
+    pub fn open(parent: isize, path: &str, rect: ViewportRect, session: u64) -> Result<(), String> {
         let lib = mpv()?;
 
-        // rect 先落缓存：subclass 同步、窗口创建都读它
+        // rect 先落缓存：窗口创建、跟随同步都读它
         {
             let mut g = lock_rect();
             *g = rect;
         }
+        // 会话令牌：登记「前端最新意图」。注册前若发现已有更新的会话 → 自杀让位
+        //（StrictMode 双挂载 / 快速切文件时，晚到的 open 不得覆盖新会话的播放器）。
+        LATEST_SESSION.fetch_max(session, std::sync::atomic::Ordering::SeqCst);
 
         // ⚠️ 并发语义（为什么总是「新建窗口」而不是复用 ctx 换片）：
         // 快速切文件时 open(A) 的 load_and_wait（最长 5s，泵事件）可能与 cleanup 的
         // stop() 并发 —— 复用路径若不持锁用 ctx 就是 use-after-free；持锁泵事件又会让
-        // 主线程消息 Hook（WM_WINDOWPOSCHANGED → lock_surface）阻塞、窗口卡死。
-        // 本地新建的 ctx/child 在注册进 SURFACE 之前 stop() 摸不到它 ⇒ 天然安全。
-        // 代价仅是切文件时 popup 重建的黑闪（~百毫秒），S2 再评估复用优化。
+        // 同步逻辑阻塞。本地新建的 ctx/child 在注册进 SURFACE 之前 stop() 摸不到它
+        // ⇒ 天然安全。代价仅是切文件时 popup 重建的黑闪（~百毫秒），S2 再评估复用优化。
 
         // 新建路径：屏幕坐标 = 主窗口客户区原点 + 视口 rect（已含前端 DPI 换算）
         let hwnd = HWND(parent as *mut c_void);
@@ -566,6 +580,15 @@ mod imp {
             return Err(e);
         }
 
+        // 迟到让位：泵事件的 5s 里若前端已开了更新的会话（StrictMode 重挂 / 快速切文件），
+        // 本次 open **自杀**而不是替换 —— 否则会把新会话正在播的画面杀掉
+        //（2026-10-20 真机：一帧画面后消失就是这个竞态）。
+        if LATEST_SESSION.load(std::sync::atomic::Ordering::SeqCst) != session {
+            unsafe { (lib.terminate_destroy)(ctx) };
+            let _ = unsafe { DestroyWindow(HWND(child as *mut c_void)) };
+            return Ok(()); // 前端已不关心本会话；不报错（错误卡反而误导）
+        }
+
         // 成功：替换 surface（并发 open 串行注册，被替换者在此销毁，最终只留一个）
         let mut guard = lock_surface();
         if let Some(old) = guard.take() {
@@ -574,7 +597,7 @@ mod imp {
                 let _ = unsafe { DestroyWindow(HWND(old.child as *mut c_void)) };
             }
         }
-        *guard = Some(Surface { child, ctx, parent });
+        *guard = Some(Surface { child, ctx, parent, session });
         drop(guard);
 
         sync_surface_position();
@@ -634,12 +657,17 @@ mod imp {
         Ok(())
     }
 
-    pub fn stop() -> Result<(), String> {
+    pub fn stop(session: u64) -> Result<(), String> {
         let lib = mpv()?;
         let mut guard = lock_surface();
-        if let Some(s) = guard.take() {
-            unsafe { (lib.terminate_destroy)(s.ctx) };
-            let _ = unsafe { DestroyWindow(HWND(s.child as *mut c_void)) };
+        // 只销毁完全匹配自己会话的 surface：不匹配 = 已有更新会话在播，
+        // 晚到的 stop（StrictMode 卸载 / 切文件 cleanup）必须收手
+        let is_mine = guard.as_ref().map(|s| s.session == session).unwrap_or(false);
+        if is_mine {
+            if let Some(s) = guard.take() {
+                unsafe { (lib.terminate_destroy)(s.ctx) };
+                let _ = unsafe { DestroyWindow(HWND(s.child as *mut c_void)) };
+            }
         }
         Ok(())
     }
@@ -689,6 +717,7 @@ mod imp {
         _y: f64,
         _w: f64,
         _h: f64,
+        _session: u64,
     ) -> Result<(), String> {
         Err(unsupported())
     }
@@ -705,7 +734,7 @@ mod imp {
         Err(unsupported())
     }
 
-    pub fn stop() -> Result<(), String> {
+    pub fn stop(_session: u64) -> Result<(), String> {
         Err(unsupported())
     }
 }

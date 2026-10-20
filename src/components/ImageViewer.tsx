@@ -11,7 +11,7 @@ import { useToasts } from '../hooks/useToasts';
 import { isWebDecodableVideo, webCanDecodeCodec } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
 import {
-  mpvOpen, mpvSetRect, mpvStop, getViewportRect, getMpvStateCache,
+  mpvOpen, mpvSetRect, mpvStop, getViewportRect, getMpvStateCache, nextMpvSession,
   mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
   mpvVolumeNudge, mpvSetMuted,
 } from '../utils/mpvPlayer';
@@ -573,13 +573,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     return convertFileSrc(file.path);
   }, [isVideo, file.path, shouldUseMpv]);
 
-  // mpv 生命周期：切文件 / 关查看器 → stop + 销毁 popup（Rust 侧 terminate_destroy）
+  // mpv 生命周期：切文件 / 关查看器 → stop + 销毁 popup（Rust 侧 terminate_destroy）。
+  // session 令牌贯穿 open/stop：StrictMode 双挂载 / 快速切文件时，cleanup 的 stop
+  // 会晚于下一次 open 到达 —— Rust 只销毁完全匹配自己会话的 surface，防止误杀新会话
+  //（2026-10-20 真机：一帧画面后消失 + 尚未挂接 mpv，就是这个竞态）。
   useEffect(() => {
     if (!shouldUseMpv || !file.path) {
       setMpvActive(false);
       setMpvError(null);
       return;
     }
+    const session = nextMpvSession();
     let cancelled = false;
     setMpvError(null);
     setMpvActive(false);
@@ -589,8 +593,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         const rect = el
           ? getViewportRect(el)
           : { x: 0, y: 0, w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) };
-        await mpvOpen(file.path!, rect);
-        if (cancelled) { void mpvStop(); return; }
+        await mpvOpen(file.path!, rect, session);
+        if (cancelled) {
+          // open 期间组件已卸载（Rust 侧可能已自行让位，这里兜底停自己的会话）
+          await mpvStop(session);
+          return;
+        }
         setMpvActive(true);
       } catch (e) {
         // 打不开（坏文件 / dll 缺失 / 非 Windows）→ 显示错误卡（popup 未建立，HTML 可见）
@@ -599,7 +607,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     })();
     return () => {
       cancelled = true;
-      void mpvStop();
+      void mpvStop(session);
     };
   }, [shouldUseMpv, file.path]);
 
