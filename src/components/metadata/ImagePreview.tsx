@@ -6,7 +6,6 @@ import { getBlobCacheSync } from '../ImageViewer';
 import { getGlobalCache } from '../../utils/thumbnailCache';
 import { useVideoCover } from '../../hooks/useVideoCover';
 import { formatVideoDuration, isWebDecodableVideo } from '../../utils/mediaExtensions';
-import { ensureVideoPlayable } from '../../api/tauri-bridge/videoRemux';
 import { openWithDefaultApp } from '../../api/tauri-bridge/files';
 import { MiniVideoControls } from './MiniVideoControls';
 
@@ -28,11 +27,14 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
     viewerVideoOpen?: boolean,
 }) => {
     // 2026-10-16 修正（指挥官实机反馈）：播放按钮**在面板内就地播放**，不是跳查看器。
-    // 原生容器直接播源；非原生容器先走 P2 转封装（产物 MP4），准备期间显示进度。
+    // 2026-10-22：转封装链路已移除 —— 可解容器就地播源；不可解容器**不给播放按钮**，
+    // 直接给「用系统播放器打开」这一条真正走得通的出口（点了必然失败，不该让它出现）。
     const [playSrc, setPlaySrc] = useState<string | null>(null);
     const [preparing, setPreparing] = useState(false);
     const [playFailed, setPlayFailed] = useState(false);
-    // startInlinePlayback 的异步流程（remux 轮询可达 30s）要用最新值判断，
+    /** 容器不在 WebView2 可解清单内 → 应用内注定播不了（与 startInlinePlayback 同一判据） */
+    const videoUnsupported = !!file.path && !isWebDecodableVideo(file.path, file.meta?.format);
+    // startInlinePlayback 的异步流程要用最新值判断，
     // 闭包里的 openedInViewer 是点击时的旧值，所以走 ref。
     const openedInViewerRef = useRef(false);
     openedInViewerRef.current = !!openedInViewer;
@@ -56,29 +58,18 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
 
     const startInlinePlayback = async () => {
         if (playSrc || preparing || !file.path) return;
+        // 2026-10-22：转封装链路已整体移除 —— 容器不在可解清单内就直接判失败，
+        // 由 UI 出占位符 + 提示（不再让用户等一次注定无效的转换）。
+        if (!isWebDecodableVideo(file.path, file.meta?.format)) {
+            setPlayFailed(true);
+            return;
+        }
         setPreparing(true);
         setPlayFailed(false);
         try {
-            let target = file.path;
-            if (!isWebDecodableVideo(file.path, file.meta?.format)) {
-                let st = await ensureVideoPlayable(file.path);
-                // 非原生容器需要转封装（实测秒级）；后端同路径只跑一个任务，轮询安全
-                let waited = 0;
-                while (st.status === 'pending' && waited < 30_000) {
-                    await new Promise((r) => setTimeout(r, 400));
-                    waited += 400;
-                    st = await ensureVideoPlayable(file.path);
-                }
-                if (st.status === 'ready' && st.output_path) {
-                    target = st.output_path;
-                } else {
-                    setPlayFailed(true);
-                    return;
-                }
-            }
             // 异步准备期间查看器可能已接管本文件（播放查看）→ 放弃就地播，避免双播
             if (openedInViewerRef.current) return;
-            setPlaySrc(convertFileSrc(target));
+            setPlaySrc(convertFileSrc(file.path));
         } finally {
             setPreparing(false);
         }
@@ -241,7 +232,11 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
                             <div className="flex flex-col items-center justify-center gap-2">
                                 <VideoIcon className="text-gray-400" size={32} />
                                 <span className="text-xs text-gray-400 dark:text-gray-500">
-                                    {t ? t('video.coverPlaceholder') : '抽帧封面生成后显示'}
+                                    {/* 2026-10-22：不可播容器的封面**根本抽不出来**（WMV/ASF 实测
+                                        逐候选 seek 6/6 失败），再写「生成后显示」是空头承诺。 */}
+                                    {videoUnsupported
+                                        ? (t ? t('video.noCoverForFormat') : '此格式无法生成封面')
+                                        : (t ? t('video.coverPlaceholder') : '抽帧封面生成后显示')}
                                 </span>
                             </div>
                         )}
@@ -251,8 +246,9 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
                             </span>
                         )}
                         {/* 播放按钮：查看器已打开本文件（播放查看）时不显示 —— 该视频的播放入口
-                            已在查看器，小窗保留播放入口会造成双播/双入口（2026-10-16 指挥官指定） */}
-                        {!openedInViewer && (
+                            已在查看器，小窗保留播放入口会造成双播/双入口（2026-10-16 指挥官指定）。
+                            2026-10-22：不可播容器连按钮都不给（点了只是失败一次再出兜底）。 */}
+                        {!openedInViewer && !videoUnsupported && (
                             <button
                                 onClick={startInlinePlayback}
                                 title={t ? t('video.playHere') : '在此处播放'}
@@ -267,9 +263,19 @@ const ImagePreview = ({ file, resourceRoot, cachePath, t, openedInViewer, viewer
                                 </span>
                             </button>
                         )}
+                        {/* 不可播容器：不给播放入口，直接给外部播放器这条真出口 */}
+                        {!openedInViewer && videoUnsupported && file.path && (
+                            <button
+                                onClick={() => openWithDefaultApp(file.path).catch(() => {})}
+                                className="mt-2 px-2.5 py-1 text-xs rounded border border-subtle text-gray-600 dark:text-gray-300 hover:bg-surface flex items-center gap-1.5"
+                            >
+                                <ExternalLink size={12} />
+                                {t ? t('video.openExternalPlayer') : '用系统播放器打开'}
+                            </button>
+                        )}
                         {preparing && (
                             <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-black/70 text-white text-[11px] pointer-events-none">
-                                {t ? t('video.remuxing') : '正在准备播放…'}
+                                {t ? t('video.preparing') : '正在准备播放…'}
                             </span>
                         )}
                         </>)}

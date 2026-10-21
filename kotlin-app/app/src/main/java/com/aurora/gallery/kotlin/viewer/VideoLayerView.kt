@@ -76,6 +76,37 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     companion object {
         private const val TAG = "AuroraVideo"
+
+        /**
+         * 手机端放行的视频容器（2026-10-22）。
+         *
+         * 判的是**容器**不是编码：media3 自带这些 extractor，而 AVI / ASF(WMV) 连解封装
+         * 都进不去 —— 里面装什么编码都白搭。编码那一层（HEVC / AV1 / VC-1…）由设备的
+         * MediaCodec 决定，本层判不了，播不出来时照旧走 [onPlayError]。
+         *
+         * FLV 故意不在表内：media3 能解但**不可 seek**，拖进度条没反应，属于残缺体验。
+         * 桌面端备播链路已移除，手机端对这些容器没有第二条路，只能提前拦下并说明。
+         */
+        private val PLAYABLE_CONTAINERS = setOf(
+            "mp4", "m4v", "mov", "3gp", "3g2", "webm", "mkv", "ts", "m2ts", "mpg", "mpeg",
+        )
+
+        /**
+         * 从 URL 里取容器扩展名（小写、不含点）；取不到返回空串。
+         *
+         * LAN 项的扩展名藏在 `?path=` 里（`/api/image?path=xxx.avi`），本地项就是路径本身。
+         * ⚠️ 本地 `content://media/.../123` 这种 URI **没有文件名** → 空串，调用方一律放行，
+         * 宁可让 ExoPlayer 去撞一次失败，也不能误伤正常视频。
+         */
+        private fun containerExtOf(url: String): String {
+            val raw = runCatching { Uri.parse(url).getQueryParameter("path") }.getOrNull()
+                ?.takeIf { it.isNotBlank() } ?: url
+            val clean = raw.substringBefore('?').substringBefore('#')
+            val dot = clean.lastIndexOf('.')
+            if (dot < 0) return ""
+            return clean.substring(dot + 1).lowercase().filter { it.isLetterOrDigit() }
+        }
+
         /** 起播后静置多久收起工具栏（验收人：1-2 秒，取上限）。 */
         private const val CHROME_IDLE_MS = 2000L
         private const val TICK_MS = 250L
@@ -284,6 +315,14 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     var onPrepareLan: (
         (url: String, onProgress: (Float) -> Unit, onDone: (Boolean, String?) -> Unit) -> Unit
     )? = null
+
+    /**
+     * 2026-10-22：手机端解不开的容器 —— 起播**之前**就报上来（参数 = 扩展名，不带点）。
+     *
+     * 为什么不并入 [onPlayError]：那边的话术是「播放失败（错误码）」，而这里是**早就知道
+     * 播不了**，不是播了才失败；拦在前面还能省掉一次必然失败的起播与缓冲。
+     */
+    var onUnsupported: ((ext: String) -> Unit)? = null
 
     /**
      * 竖屏窄宽形制：把倍速与画面大小两颗从播控条摘掉，动作改走宿主「更多」菜单
@@ -829,14 +868,19 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /**
      * 起播（中央播放键与播控条的播放钮都走这里）。
      *
-     * LAN 项先过备播那一关：实测这台机的 `dumpsys media.extractor` 清单里**没有 AVI
-     * 也没有 ASF**，裸容器原样发过去必然解不开；而产物化在桌面要花 1 秒到几分钟，
-     * 把 `/api/image` 压在转换上会踩 ExoPlayer 的读超时。所以先问、等 `ready`、
-     * 再开同一个 URL（那时服务端会改发产物字节）。
+     * 2026-10-22 改口径：先过**容器**这一关（见 [PLAYABLE_CONTAINERS]）—— 手机解不开的
+     * AVI / WMV / ASF 直接拦下报 [onUnsupported]，不再让 ExoPlayer 去撞一次必然的失败。
+     * （原先靠桌面端备播产物化这条路已整体移除，服务端不再为手机转任何视频。）
      */
     fun start() {
         val url = mediaUrl
         if (boundFileId == null || url.isEmpty()) return
+        // ⚠️ 取不到扩展名一律放行：本地 content:// URI 没有文件名，判不了就不误伤。
+        val ext = containerExtOf(url)
+        if (ext.isNotEmpty() && ext !in PLAYABLE_CONTAINERS) {
+            onUnsupported?.invoke(ext)
+            return
+        }
         if (remoteSource && !prepared) {
             if (!preparing) beginPrepare(url)
             return

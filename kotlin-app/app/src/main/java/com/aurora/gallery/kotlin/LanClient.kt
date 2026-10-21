@@ -696,28 +696,8 @@ class LanClient(private val http: OkHttpClient) {
     fun imageUrl(base: String, token: String, remotePath: String): String =
         "$base/api/image?path=${lanQueryEncode(remotePath)}&token=${lanQueryEncode(token)}"
 
-    /**
-     * 备播状态（`/api/video/prepare`，2026-10-19）。`mode`：
-     * `direct`=容器手机能直接解 / `pending`=桌面正在产物化 / `ready`=产物已备好 / `failed`=备不出来。
-     */
-    data class LanVideoPrepare(val mode: String, val progress: Float, val message: String?)
-
-    /**
-     * 请桌面端把这份视频备成手机播得了的产物。
-     *
-     * 为什么要这一问：实测本机（Mate 40 Pro / EMUI 14.2）的 MediaExtractor 清单里
-     * **没有 AVI 也没有 ASF**，裸容器发过去必然解不开；而产物化要在桌面花 1 秒~几分钟，
-     * 直接把 `/api/image` 挂在转换上会踩 ExoPlayer 的读超时。所以先问、轮询、拿到
-     * `ready` 之后再照原 URL 播（服务端那时会改发产物字节）。
-     */
-    suspend fun videoPrepare(base: String, token: String, remotePath: String): LanVideoPrepare {
-        val json = getJson(base, token, "/api/video/prepare?path=${lanQueryEncode(remotePath)}")
-        return LanVideoPrepare(
-            mode = json.optString("mode", "direct"),
-            progress = json.optDouble("progress", 0.0).toFloat().coerceIn(0f, 1f),
-            message = json.optString("message").takeIf { it.isNotEmpty() },
-        )
-    }
+    // （2026-10-22：`videoPrepare` / `LanVideoPrepare` 已随桌面端 video_remux 一并移除。
+    // 桌面不再为手机产物化任何视频，LAN 视频一律按原 URL 直读。）
 
     /**
      * 便捷方法（阶段 4「保存到设备」/缩略图磁盘分支共用）：GET 一个**完整 URL** 并返回

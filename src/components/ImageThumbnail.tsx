@@ -9,8 +9,6 @@ import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { isVideoFile, formatVideoDuration, isWebDecodableVideo } from '../utils/mediaExtensions';
-// 视频 P2：悬停预览复用**已存在的** remux 产物（不触发任何转换）
-import { probeVideoRemuxCache } from '../api/tauri-bridge/videoRemux';
 
 // 视频扩展名判定已收敛到 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
 // 视频 P1（设计方案 §2.7 口径 C / UI 设计 §5.2）。
@@ -323,15 +321,11 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           // ⚠️ 这里刻意不走 readFileAsBase64——那会把整个文件读进内存，
           //    对 GB 级视频正是 §14.7 崩溃事故的形态（体积上限由 FileGrid 侧把关）。
           //
-          // 视频 P2（2026-10-15）：非 Web 可解容器（mkv/avi/…）源容器播不了，
-          // 只能用**已存在的 remux 产物**预览 —— **只查缓存、绝不触发转封装**（D6①），
-          // 否则滚一遍文件夹会排队几十个 GB 级转换任务。
+          // 2026-10-22：转封装产物已随 video_remux 一并移除 —— 非 Web 可解容器
+          // 不再有可播来源，直接保持静态封面（也不必担心滚一遍文件夹排队转换任务）。
           let previewTarget: string | null = null;
           if (isWebDecodableVideo(filePath)) {
             previewTarget = filePath;
-          } else {
-            const remuxed = await probeVideoRemuxCache(filePath);
-            previewTarget = remuxed;
           }
           if (!isMounted) return;
           if (!previewTarget) {

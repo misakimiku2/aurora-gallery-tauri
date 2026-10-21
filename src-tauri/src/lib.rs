@@ -26,13 +26,9 @@ pub mod ffmpeg_cover;
 // 视频封面 P1.5-B：ffmpeg 下载器（BtbN LGPL 静态源 + SHA256 pin），桌面专属。
 #[cfg(not(target_os = "android"))]
 pub mod ffmpeg_download;
-// 视频 P2：桌面端播放格式兜底 —— A 类容器（mkv/avi/flv/ts/3gp）remux 成 MP4 后播放，桌面专属。
-#[cfg(not(target_os = "android"))]
-pub mod video_remux;
-// 视频 P3（2026-10-19 真机实测）：B 类（WMV/VC-1、MJPEG）手机连解码器都拉不起来，
-// 只能重编 —— 点开现转要等几分钟，所以给一条后台预转队列，桌面专属。
-#[cfg(not(target_os = "android"))]
-pub mod transcode_batch;
+// 视频 P2/P3 的 `video_remux` 与 `transcode_batch` 已于 2026-10-22 整体移除：
+// remux 只换容器不改编码，AVI/WMV 转完照样播不了，白等还白占盘。
+// 现口径：播不了的格式一律占位符 + 提示用外部播放器，两端都不再转换。
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -1995,18 +1991,7 @@ pub fn run() {
         ffmpeg_download::ffmpeg_download_resume,
         ffmpeg_download::ffmpeg_download_cancel,
         ffmpeg_download::ffmpeg_download_cleanup,
-        // 视频 P2（2026-10-15）：A 类容器播放兜底 —— remux 成 MP4 后交给 asset 协议播放
-        video_remux::video_remux_ensure,
-        video_remux::video_remux_probe,
-        video_remux::video_remux_stats,
-        video_remux::video_remux_clear,
-        // 产物目录跟着资源根走（媒体盘）：启动时与切根后各报一次
-        video_remux::video_products_configure,
-        // 视频 P3 批量预转（2026-10-19）：B 类后台转码队列 + 产物独立清理
-        transcode_batch::transcode_batch_status,
-        transcode_batch::transcode_batch_start,
-        transcode_batch::transcode_batch_stop,
-        transcode_batch::transcode_clear_outputs,
+        // （video_remux_* 与 transcode_batch_* 命令已于 2026-10-22 随模块一并移除）
         scanner::scan_directory,
         file_operations::db_copy_file_metadata,
         scanner::force_rescan,

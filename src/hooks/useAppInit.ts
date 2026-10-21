@@ -12,7 +12,6 @@ import { pushRootHistory } from '../utils/rootHistory';
 import { getSourceUrls } from '../utils/sourceUrls';
 import { aiService } from '../services/aiService';
 import { setGlobalCacheRoot, setAndroidPlatform } from '../api/tauri-bridge';
-import { configureVideoProducts } from '../api/tauri-bridge/videoRemux';
 import {
   loadUserData as tauriLoadUserData,
   getDefaultPaths as tauriGetDefaultPaths,
@@ -168,12 +167,8 @@ export const useAppInit = ({
               if (!isAndroidNow && finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
                 const sep = finalSettings.paths.resourceRoot.includes('\\') ? '\\' : '/';
                 finalSettings.paths.cacheRoot = `${finalSettings.paths.resourceRoot}${sep}.Aurora_Cache`;
-                // 视频产物（remux / 转码）也是 GB 级的，同一个道理必须一起报给后端：
-                // 不报就落在 %LOCALAPPDATA% 回落目录，而本机 C: 只剩 20GB。
-                // 切根那条链由 Rust 的 switch_root_database 自己重报，不用这里管。
-                configureVideoProducts(finalSettings.paths.resourceRoot).then(dir => {
-                  if (dir) console.log('[useAppInit] video products dir:', dir);
-                });
+                // （2026-10-22：视频产物目录的报备随 video_remux 一并移除 —— 不再产出任何
+                // 转封装/转码产物，也就没有 GB 级副本要落到资源根。）
               }
 
               // 历史资源根（P3）：把本次启动用的这个根也并进历史，用户切走之后还能切回来。

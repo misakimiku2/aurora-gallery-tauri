@@ -434,18 +434,14 @@ export const translations = {
       frameCopyFailed: '复制当前帧失败',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: '抽帧封面生成后显示',
-      // 2026-10-15：播放失败降级提示（MKV/AVI 等 Web 不解容器此前黑屏无提示）
-      cannotPlay: '此格式暂不支持播放',
-      cannotPlayHint: 'MKV / AVI 等容器将在后续版本支持（可返回网格查看封面）',
+      // 2026-10-22 改口径：应用内不做转封装/转码，播不了的格式直接引导外部播放器
+      cannotPlay: '此格式无法在应用内播放',
+      cannotPlayHint: '请用系统播放器打开（如 AVI / WMV 等容器及其编码不受内置播放器支持）',
       cannotPlayFailed: '视频加载失败',
       cannotPlayFailedHint: '文件可能已损坏或无法访问',
-      // 视频 P2（2026-10-15）：A 类容器 remux 播放链路
-      remuxing: '正在准备播放…',
-      remuxingHint: '此容器需换装为 MP4 后才能播放（无损转封装，不重编码）',
-      remuxNoFfmpeg: '此容器需要 ffmpeg 组件才能播放',
-      remuxNoFfmpegHint: '可在「设置 → 常规 → 视频封面引擎」安装该组件',
-      remuxFailed: '转封装失败，无法在此播放',
-      remuxFailedHint: '原因',
+      preparing: '正在准备播放…',
+      // 2026-10-22：不可播容器（WMV/ASF 等）的封面根本抽不出来，占位文案不再承诺「生成后显示」
+      noCoverForFormat: '此格式无法生成封面',
       openExternalPlayer: '用系统播放器打开',
     },
     viewer: {
@@ -588,32 +584,8 @@ export const translations = {
       ffmpegRedownloadTip: '删除已下载的 ffmpeg 并重新获取（点击两次确认）',
       ffmpegConfirmCleanup: '确认删除并重下？',
       ffmpegUnverifiedSource: '来源未校验：由 latest 备份源安装（无 SHA-256），建议重新下载',
-      // 视频 P2（2026-10-15）：A 类容器 remux 产物缓存
-      videoPlaybackCache: '视频播放缓存',
-      videoCacheUsage: '已占用',
-      videoCacheFiles: '份产物',
-      videoCacheLimit: '上限',
-      videoCacheClear: '清理',
-      videoCacheClearTip: '删除所有转封装产物；下次播放该文件会重新生成',
-      videoCacheUnknown: '暂不可用',
-      // 视频 P3（2026-10-19 真机取证）：B 类格式后台预转队列
-      videoPretranscode: '手机播不了的格式 · 后台预转',
-      videoPretranscodeDesc:
-        'WMV/VC-1、MJPEG 这类手机连解码器都拉不起来的，先在电脑上重编一遍，转完再点开就是秒开。AVI 这类换层包装就能活的走点开时秒转，不进这个队列。',
-      videoPretranscodePending: '待转',
-      videoPretranscodeEst: '预估',
-      videoPretranscodeMinutes: '分钟',
-      videoPretranscodeRunning: '预转中',
-      videoPretranscodeStart: '开始预转',
-      videoPretranscodeStop: '停止',
-      videoPretranscodeStopping: '停止中（当前这只跑完才收）',
-      videoPretranscodeNone: '没有需要预转的文件',
-      videoPretranscodeFailed: '只失败',
-      videoPretranscodeNoFfmpeg: '需先装好上面的 ffmpeg 封面引擎',
-      videoPretranscodeOutputs: '转码产物',
-      videoPretranscodeClear: '清空转码产物',
-      videoPretranscodeClearTip:
-        '删除所有为手机重编的产物；重编一只要几分钟，所以它不跟「视频播放缓存」一起被清',
+      // （2026-10-22：视频播放缓存与后台预转两块 UI 已随 video_remux 移除，原
+      // videoPlaybackCache / videoCache* / videoPretranscode* 文案一并删除。）
       autoExtractPalette: '浏览时自动提取主色调',
       autoExtractPaletteDesc: '在图片查看器中浏览图片时，自动提取主色调信息',
       exitAction: '关闭主面板时',
@@ -1716,17 +1688,14 @@ export const translations = {
       frameCopyFailed: 'Failed to copy current frame',
       // 视频 P1（UI 设计 §5 / §6）：抽帧封面（P1.5）就绪前的大预览占位文案
       coverPlaceholder: 'Cover appears after frame extraction',
-      cannotPlay: 'Playback is not supported for this format',
-      cannotPlayHint: 'MKV / AVI containers are planned for a future version (cover is still available in the grid)',
+      // 2026-10-22: no in-app rewrapping/transcoding; unsupported formats go to the system player
+      cannotPlay: 'This format cannot be played in-app',
+      cannotPlayHint: 'Open it with the system player (containers such as AVI / WMV and their codecs are unsupported)',
       cannotPlayFailed: 'Failed to load video',
       cannotPlayFailedHint: 'The file may be corrupted or inaccessible',
-      // Video P2 (2026-10-15): remux playback for container-only unsupported formats
-      remuxing: 'Preparing playback…',
-      remuxingHint: 'This container must be rewrapped to MP4 first (lossless, no re-encoding)',
-      remuxNoFfmpeg: 'This container requires the FFmpeg component to play',
-      remuxNoFfmpegHint: 'Install it under Settings → General → Video cover engine',
-      remuxFailed: 'Rewrapping failed, playback is unavailable here',
-      remuxFailedHint: 'Reason',
+      preparing: 'Preparing playback…',
+      // 2026-10-22: covers can never be extracted for unsupported containers (WMV/ASF)
+      noCoverForFormat: 'No cover can be generated for this format',
       openExternalPlayer: 'Open with system player',
     },
     viewer: {
@@ -1869,32 +1838,8 @@ export const translations = {
       ffmpegRedownloadTip: 'Delete the downloaded ffmpeg and fetch it again (click twice to confirm)',
       ffmpegConfirmCleanup: 'Confirm removal?',
       ffmpegUnverifiedSource: 'Source unverified: installed from the latest fallback build (no SHA-256) — re-download recommended',
-      // Video P2 (2026-10-15): remux artifacts cache
-      videoPlaybackCache: 'Video playback cache',
-      videoCacheUsage: 'Used',
-      videoCacheFiles: 'artifacts',
-      videoCacheLimit: 'limit',
-      videoCacheClear: 'Clear',
-      videoCacheClearTip: 'Delete all rewrapped artifacts; they will be rebuilt on next playback',
-      videoCacheUnknown: 'Unavailable',
-      // 视频 P3（2026-10-19 真机取证）：B 类格式后台预转队列
-      videoPretranscode: 'Phone-incompatible formats · background pre-transcode',
-      videoPretranscodeDesc:
-        'WMV/VC-1 and MJPEG cannot be decoded on the phone at all, so re-encode them here first — then they open instantly. Container-only cases like AVI are rewrapped on open and stay out of this queue.',
-      videoPretranscodePending: 'queued',
-      videoPretranscodeEst: 'est.',
-      videoPretranscodeMinutes: 'min',
-      videoPretranscodeRunning: 'Transcoding',
-      videoPretranscodeStart: 'Pre-transcode all',
-      videoPretranscodeStop: 'Stop',
-      videoPretranscodeStopping: 'Stopping (finishing current file)',
-      videoPretranscodeNone: 'Nothing to pre-transcode',
-      videoPretranscodeFailed: 'failed',
-      videoPretranscodeNoFfmpeg: 'Install the ffmpeg engine above first',
-      videoPretranscodeOutputs: 'Transcoded outputs',
-      videoPretranscodeClear: 'Clear outputs',
-      videoPretranscodeClearTip:
-        'Deletes every phone re-encode. It takes minutes to rebuild, so it is not cleared together with the playback cache.',
+      // (2026-10-22: playback-cache and pre-transcode UI removed with video_remux;
+      // the videoPlaybackCache / videoCache* / videoPretranscode* strings went with them.)
       autoExtractPalette: 'Auto Extract Palette',
       autoExtractPaletteDesc: 'Automatically extract dominant colors when browsing images in the viewer',
       exitAction: 'When Closing',
