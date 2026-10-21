@@ -78,27 +78,6 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         private const val TAG = "AuroraVideo"
 
         /**
-         * 手机端放行的视频容器（2026-10-22）。
-         *
-         * 判的是**容器**不是编码：media3 自带这些 extractor，而 AVI / ASF(WMV) 连解封装
-         * 都进不去 —— 里面装什么编码都白搭。编码那一层（HEVC / AV1 / VC-1…）由设备的
-         * MediaCodec 决定，本层判不了，播不出来时照旧走 [onPlayError]。
-         *
-         * FLV 故意不在表内：media3 能解但**不可 seek**，拖进度条没反应，属于残缺体验。
-         * 桌面端备播链路已移除，手机端对这些容器没有第二条路，只能提前拦下并说明。
-         */
-        private val PLAYABLE_CONTAINERS = setOf(
-            "mp4", "m4v", "mov", "3gp", "3g2", "webm", "mkv", "ts", "m2ts", "mpg", "mpeg",
-        )
-
-        /**
-         * 从 URL 里取容器扩展名（小写、不含点）；取不到返回空串。
-         *
-         * LAN 项的扩展名藏在 `?path=` 里（`/api/image?path=xxx.avi`），本地项就是路径本身。
-         * ⚠️ 本地 `content://media/.../123` 这种 URI **没有文件名** → 空串，调用方一律放行，
-         * 宁可让 ExoPlayer 去撞一次失败，也不能误伤正常视频。
-         */
-        /**
          * 从 URL / 文件名里取容器扩展名（小写、只留字母数字）。
          *
          * LAN 项的扩展名藏在 `?path=` 里（`/api/image?path=xxx.avi`），先取 query 参数；
@@ -106,18 +85,17 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
          * 取不到就退回 [displayName]（ui 里那一栏显示的 `block_mpeg4.avi`）——
          * 少了这一层退回，本地 AVI/WMV 就拦不住，会白起一次必然失败的播放（模拟器实测）。
          * 两条都没有才返回空串（调用方按「判不了就放行」处理，不误伤）。
+         *
+         * 放行表本身在 [com.aurora.gallery.kotlin.VideoContainers.PLAYABLE]（扫描、LAN 解析
+         * 与本处共用一张表，三处口径必须一致）。
          */
         private fun containerExtOf(url: String, displayName: String = ""): String {
             val raw = runCatching { Uri.parse(url).getQueryParameter("path") }.getOrNull()
                 ?.takeIf { it.isNotBlank() } ?: url
-            val clean = raw.substringBefore('?').substringBefore('#')
-            val dot = clean.lastIndexOf('.')
-            if (dot >= 0 && dot < clean.length - 1) return normalizeExt(clean.substring(dot + 1))
-            return normalizeExt(displayName.substringAfterLast('.', ""))
+            val fromUrl = com.aurora.gallery.kotlin.VideoContainers.extOf(raw)
+            if (fromUrl.isNotEmpty()) return fromUrl
+            return com.aurora.gallery.kotlin.VideoContainers.extOf(displayName)
         }
-
-        private fun normalizeExt(raw: String): String =
-            raw.lowercase().filter { it.isLetterOrDigit() }
 
         /** 起播后静置多久收起工具栏（验收人：1-2 秒，取上限）。 */
         private const val CHROME_IDLE_MS = 2000L
@@ -904,8 +882,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     /**
      * 起播（中央播放键与播控条的播放钮都走这里）。
      *
-     * 2026-10-22 改口径：先过**容器**这一关（见 [PLAYABLE_CONTAINERS]）—— 手机解不开的
-     * AVI / WMV / ASF 直接拦下报 [onUnsupported]，不再让 ExoPlayer 去撞一次必然的失败。
+     * 2026-10-22 改口径：先过**容器**这一关（见 [com.aurora.gallery.kotlin.VideoContainers]）——
+     * 手机解不开的 AVI / WMV / ASF 直接拦下报 [onUnsupported]，不再让 ExoPlayer 去撞一次必然的失败。
      * （原先靠桌面端备播产物化这条路已整体移除，服务端不再为手机转任何视频。）
      */
     fun start() {
@@ -913,7 +891,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         if (boundFileId == null || url.isEmpty()) return
         // ⚠️ 取不到扩展名一律放行（不误伤）；本地项靠 [boundDisplayName] 兜底才判得出来。
         val ext = containerExtOf(url, boundDisplayName)
-        if (ext.isNotEmpty() && ext !in PLAYABLE_CONTAINERS) {
+        if (ext.isNotEmpty() && ext !in com.aurora.gallery.kotlin.VideoContainers.PLAYABLE) {
             onUnsupported?.invoke(ext)
             return
         }
@@ -1210,13 +1188,35 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
      * 走到这里，而在 onSizeChanged 里 setLayoutParams 属于「布局期间请求重排」，会多绕一帧。
      */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val areaW = measureSpecSize(widthMeasureSpec)
+        val areaH = measureSpecSize(heightMeasureSpec)
+        // [areaFrozenH] > 0 = 藏栏过渡中：媒体区高度按冻结值算，画框尺寸不跟着窗口分段 resize 变
+        val useH = if (areaFrozenH > 0) areaFrozenH else areaH
         (surfaceView.layoutParams as? LayoutParams)?.let { lp ->
-            val (w, h) = surfaceBoxSize(measureSpecSize(widthMeasureSpec), measureSpecSize(heightMeasureSpec))
+            val (w, h) = surfaceBoxSize(areaW, useH)
             lp.width = w
             lp.height = h
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
+
+    /**
+     * 冻结「媒体区高度」（[height] <= 0 或 [frozen] = false 即解除）。
+     *
+     * 影院态藏状态栏会让窗口分段 resize：本层是 MATCH_PARENT，区域变高 → [surfaceBoxSize]
+     * 按新高度重算 → 画面上下位移（16:9 是居中留白变了，竖屏视频则是画框尺寸直接变）。
+     * 藏栏期间按冻结值算，配合宿主 `applyImageAreaPin` 把本层钉在藏栏前的矩形上，
+     * 画面零位移；系统栏回来再解冻重排。
+     */
+    fun setAreaFrozen(frozen: Boolean, height: Int) {
+        val want = if (frozen && height > 0) height else 0
+        if (want == areaFrozenH) return
+        areaFrozenH = want
+        requestLayout()
+    }
+
+    /** 冻结的媒体区高度；0 = 未冻结。 */
+    private var areaFrozenH = 0
 
     private fun measureSpecSize(spec: Int): Int =
         if (MeasureSpec.getMode(spec) == MeasureSpec.UNSPECIFIED) 0 else MeasureSpec.getSize(spec)

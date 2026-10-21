@@ -889,6 +889,12 @@ class LanClient(private val http: OkHttpClient) {
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val path = o.optString("path")
             if (path.isEmpty()) return@mapNotNull null
+            // 2026-10-22（指挥官）：手机解不开的容器不上列——服务端照样会下发 AVI/WMV 项
+            //（桌面端要留着它们走「占位 + 外部播放器」），客户端按同一张表在解析这一层滤掉，
+            // 网格、搜索、标签视图一次覆盖。判据 = VideoContainers.PLAYABLE。
+            if (o.optString("type", "image") == "video" && !VideoContainers.isPlayableName(path)) {
+                return@mapNotNull null
+            }
             LanRemoteImage(
                 name = o.optString("name"),
                 path = path,

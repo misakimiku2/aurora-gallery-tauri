@@ -302,12 +302,20 @@ private fun GalleryViewModel.scanMediaCollection(
 
         while (c.moveToNext()) {
             val id = c.getLong(idCol)
+            val name = c.getString(nameCol) ?: ""
+            // 2026-10-22（指挥官）：手机解不开的容器**直接不入库**，列表里也不出现。
+            // 判据 = VideoContainers.PLAYABLE（与起播闸门、LAN 解析共用一张表）。
+            // AVI / WMV(ASF) 连 MediaExtractor 都没有，留着只会变成一张灰卡片 + 点开报错；
+            // 桌面端那种「占位 + 外部播放器」在手机上也没有第二出口（手机不能跳外部播放器）。
+            // 放在这里而不是 UI 层：文件夹数量、专题、人物、搜索全都从这份列表算，
+            // 只滤 UI 会出现「文件夹角标 3、点进去 2 张」。
+            if (withDuration && !VideoContainers.isPlayableName(name)) continue
             result.add(
                 MediaImage(
                     id = id,
                     contentUri = ContentUris.withAppendedId(collection, id).toString(),
                     path = c.getString(dataCol) ?: "",
-                    name = c.getString(nameCol) ?: "",
+                    name = name,
                     size = c.getLong(sizeCol),
                     dateAdded = c.getLong(addedCol),
                     dateModified = c.getLong(modifiedCol),

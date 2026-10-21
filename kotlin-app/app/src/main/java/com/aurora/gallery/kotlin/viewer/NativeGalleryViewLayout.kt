@@ -99,6 +99,15 @@ internal fun NativeGalleryView.applyImageAreaPin() {
         }
         imageAnchorValid = true
     }
+    // 视频层的「媒体区高度」跟着钉扎窗口一起冻结/解冻：只钉矩形不改尺寸的话，竖屏视频
+    // （9:16，高度受限）的画框仍会按变高的区域重算而变大，钉回去就成了溢出裁切。冻结之后
+    // 尺寸与矩形都停在藏栏前那一刻，画面逐像素不动。见 [VideoLayerView.setAreaFrozen]。
+    // ⚠ 锚无效（旋转后旧锚作废、或从未录到）时**必须解冻**，否则会拿上一个方向的高度
+    // 继续算画框——所以这一句排在下面那个 early return 之前。
+    videoLayer.setAreaFrozen(
+        frozen = imageAnchorValid && (isChromeHidden() || now < imagePinHoldUntil),
+        height = if (imageAnchorValid) imageAnchorBottomAbs - imageAnchorTopAbs else 0,
+    )
     if (!imageAnchorValid) return
     // 抽屉 fill/压缩有自己的图片几何（显式宽高与进度动画），不叠加钉扎
     if (drawerOpen || drawerWidthAnimator != null || drawerPanelProgress > 0f) return
@@ -117,8 +126,18 @@ internal fun NativeGalleryView.applyImageAreaPin() {
     }
 }
 
-/** 参与钉扎的 chrome：图片双 buffer + 顶栏 + 缩略图条 + 底部信息（幻灯片覆盖层除外）。 */
-private fun NativeGalleryView.pinnedChromeChildren(): List<View> = listOf(primaryView, secondaryView, topBar, thumbnailStrip, bottomInfo)
+/**
+ * 参与钉扎的 chrome：图片双 buffer + **视频层** + 顶栏 + 缩略图条 + 底部信息（幻灯片覆盖层除外）。
+ *
+ * 视频层 2026-10-22 补入（指挥官实测：点开 mp4、状态栏消失的一瞬间画面先上下移动再稳定）：
+ * 藏栏会让窗口分段 resize，视频层是 MATCH_PARENT，跟着变高，[VideoLayerView] 的
+ * `surfaceBoxSize` 按新高度重算居中量——16:9 内容虽是宽度受限（尺寸不变），但**信箱的
+ * 上下留白对半分**会变，画面就整体位移了半个增量。图片那两条早有钉扎所以不跳，视频这条
+ * 一直漏在外面。钉住后视频层在藏栏期间保持原屏幕矩形，画面零位移。
+ * 视频项才可见，图片项 height=0，录制时被 `v.height > 0` 过滤掉，不影响图片路径。
+ */
+private fun NativeGalleryView.pinnedChromeChildren(): List<View> =
+    listOf(primaryView, secondaryView, videoLayer, topBar, thumbnailStrip, bottomInfo)
 
 /** 系统栏当前是否由本查看器隐藏（沉浸切换或幻灯片覆盖，二者都不改对方标志）。 */
 private fun NativeGalleryView.isChromeHidden(): Boolean =
