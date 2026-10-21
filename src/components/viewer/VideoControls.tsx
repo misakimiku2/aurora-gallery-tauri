@@ -249,8 +249,10 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
     v.muted = !v.muted;
   };
 
-  // mpv 模式：点击静音按钮 = 弹/关原生竖排音量弹窗（按钮上方，原生窗 z-order 在
-  // mpv 画面 popup 之上，完全可见可拖；拖动由 Rust 直接下发 mpv volume，UI 轮询回读）
+  // mpv 模式：点击静音按钮 = 弹/关自绘竖排音量弹窗（按钮上方，原生窗 z-order 在
+  // mpv 画面 popup 之上，完全可见可拖；拖动由 Rust 直接下发 mpv volume，UI 轮询回读）。
+  // ⚠️ anchor 必须是**客户区**物理像素 —— Rust 侧做 ClientToScreen（早期版本把它
+  // 当屏幕坐标用，弹窗会飘到别的窗口/别的屏幕上，2026-10-21 修）。
   const muteBtnRef = useRef<HTMLButtonElement>(null);
   const handleShowVolumePopup = () => {
     const btn = muteBtnRef.current;
@@ -263,6 +265,7 @@ export const VideoControls: React.FC<VideoControlsProps> = ({
       Math.round(r.top * dpr),
       muted ? 0 : Math.round(volume * 100),
       dark,
+      dpr,
     );
   };
 

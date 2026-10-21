@@ -137,18 +137,49 @@ pub fn mpv_player_stop(session: u64) -> Result<(), String> {
     imp::stop(session)
 }
 
-/// 下发右键原生菜单文案（按当前语言；下标约定见 imp::MENU_ACTIONS）。
+/// 下发右键菜单文案 + 界面缩放（按当前语言；下标约定见 imp::MENU_ACTIONS）。
 /// 顺序：0 播放/暂停 · 1 后退5s · 2 前进5s · 3 切换倍速 · 4 循环 · 5 系统播放器 · 6 资源管理器。
+/// `scale` = devicePixelRatio（覆盖层窗口按它把 CSS px 换算成物理像素）。
+/// 主题明暗不必下发 —— Rust 侧从媒体区背景色亮度推断（亮=白底、暗=#3a3a3a）。
 #[tauri::command]
-pub fn mpv_player_set_menu_labels(labels: Vec<String>) -> Result<(), String> {
-    imp::set_menu_labels(labels)
+pub fn mpv_player_set_menu_labels(labels: Vec<String>, scale: f64) -> Result<(), String> {
+    imp::set_menu_labels(labels, scale)
 }
 
-/// 显示/切换关闭 **原生竖排音量弹窗**（mpv 模式专用）。
+/// 显示/隐藏 mpv 画面窗口（**不销毁会话，音频继续**）。
 ///
-/// `anchorX/anchorY` = 静音按钮**顶部中心**的屏幕物理像素（前端 × devicePixelRatio）；
-/// 弹窗显示在其正上方（原生窗口 z-order 在 mpv 画面 popup 之上，完全可见）。
-/// `volume` = 当前音量 0-100；`dark` = 暗色主题（弹窗底色跟随）。
+/// 用途：HTML 弹层（设置模态、文件夹树右键菜单、下拉…）盖住媒体区时，前端探测到
+/// 覆盖就把画面窗口藏起来 —— 原生 popup 会压在一切 HTML 之上（WebView2 airspace），
+/// 不让位就会把设置界面、文件夹树菜单全部挡住（2026-10-21 真机发现）。
+/// 解除覆盖后前端再传 `true` 显示回来。
+#[tauri::command]
+pub fn mpv_player_set_visible(visible: bool) -> Result<(), String> {
+    imp::set_visible(visible)
+}
+
+/// 下发右键菜单**图标**（lucide 渲染成的 RGBA 位图，base64；下标同 MENU_ACTIONS）。
+///
+/// 前端用 canvas 把 React 图标栅格化（抗锯齿质量与界面一致），Rust 按 alpha
+/// 混合进菜单 DIB 并按 hover 状态着色。解 base64 时从字节数推导边长。
+#[tauri::command]
+pub fn mpv_player_set_menu_icons(icons: Vec<String>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        crate::native_overlay::set_menu_icons(icons)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = icons;
+        Err("原生播放内核仅支持 Windows 桌面端".to_string())
+    }
+}
+
+/// 显示/切换关闭 **自绘竖排音量弹窗**（mpv 模式专用）。
+///
+/// `anchorX/anchorY` = 静音按钮**顶部中心**的**主窗口客户区**物理像素
+/// （前端 × devicePixelRatio）；**Rust 侧负责 ClientToScreen** ——
+/// 旧实现把客户区坐标直接当屏幕坐标用，弹窗会飘到别的窗口/别的屏幕上（2026-10-21 修）。
+/// `volume` = 当前音量 0-100；`scale` = devicePixelRatio。
 /// 已显示时再次调用 = 关闭（toggle）。拖动滑条由 Rust 直接下发 mpv volume，
 /// 前端控制条由 250ms 轮询回读刷新。
 #[tauri::command]
@@ -157,14 +188,15 @@ pub fn mpv_player_show_volume_popup(
     anchor_y: f64,
     volume: f64,
     dark: bool,
+    scale: f64,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
-        imp::show_volume_popup(anchor_x, anchor_y, volume, dark)
+        imp::show_volume_popup(anchor_x, anchor_y, volume, dark, scale)
     }
     #[cfg(not(windows))]
     {
-        let _ = (anchor_x, anchor_y, volume, dark);
+        let _ = (anchor_x, anchor_y, volume, dark, scale);
         Err("原生播放内核仅支持 Windows 桌面端".to_string())
     }
 }
@@ -180,38 +212,18 @@ mod imp {
 
     use libloading::{Library, Symbol};
     use tauri::Emitter;
-    use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
-    use windows::Win32::Graphics::Gdi::{
-        BeginPaint, ClientToScreen, CreateSolidBrush, DeleteObject, FillRect, PtInRect, HGDIOBJ,
-        PAINTSTRUCT,
-    };
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Graphics::Gdi::{ClientToScreen, PtInRect};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::Controls::{
-        InitCommonControlsEx, ICC_BAR_CLASSES, TBS_NOTICKS, TBS_VERT, INITCOMMONCONTROLSEX,
-    };
     use windows::Win32::UI::WindowsAndMessaging::{
-        AppendMenuW, CallNextHookEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-        DestroyMenu, DestroyWindow, GetClientRect, GetCursorPos, GetWindowRect, LoadCursorW,
-        RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW,
-        TrackPopupMenu, UnhookWindowsHookEx, HHOOK, HWND_MESSAGE, IDC_ARROW, MF_STRING,
-        MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, TRACK_POPUP_MENU_FLAGS, TPM_NONOTIFY,
-        TPM_RIGHTBUTTON, WINDOW_STYLE, WINDOW_EX_STYLE, WH_MOUSE_LL, WNDCLASSW, HWND_TOP,
-        SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_COMMAND, WM_CREATE, WM_ERASEBKGND, WM_HSCROLL,
-        WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_VSCROLL, WS_CHILD,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
-        WS_CLIPSIBLINGS,
+        CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect,
+        RegisterClassW, SetForegroundWindow, SetWindowPos, SetWindowsHookExW, ShowWindow,
+        UnhookWindowsHookEx, HHOOK, MSLLHOOKSTRUCT, SET_WINDOW_POS_FLAGS, WINDOW_EX_STYLE,
+        WH_MOUSE_LL, WNDCLASSW, HWND_TOP, SW_HIDE, SW_SHOW, SWP_HIDEWINDOW, SWP_NOACTIVATE,
+        SWP_SHOWWINDOW, WM_LBUTTONDOWN, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WS_EX_NOACTIVATE, WS_POPUP,
+        WS_VISIBLE, WS_CLIPSIBLINGS,
     };
     use windows::core::PCWSTR;
-
-    // trackbar 消息（windows crate 未包装 TBM_*，手写；WM_USER 基址）
-    const TBM_GETPOS: u32 = 0x0400;
-    const TBM_SETPOS: u32 = 0x0405;
-
-    /// COLORREF = 0x00BBGGRR（Windows 蓝-绿-红序）
-    #[inline]
-    fn colorref(r: u32, g: u32, b: u32) -> COLORREF {
-        COLORREF(r | (g << 8) | (b << 16))
-    }
 
     /// 媒体显示区 rect（相对视口，**物理像素** —— DPI 换算在前端 `devicePixelRatio` 做）。
     #[derive(Debug, Clone, Copy)]
@@ -293,6 +305,9 @@ mod imp {
     unsafe impl Sync for Surface {}
 
     static SURFACE: Mutex<Option<Surface>> = Mutex::new(None);
+    /// 画面窗口是否可见（HTML 弹层覆盖媒体区时前端置 false ⇒ popup 让位）。
+    /// 不放进 Surface：钩子回调里要无锁快速读。
+    static SURFACE_VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
     /// 前端已知的最新的会话令牌（open 调用即更新）。晚到的 open 与之不等则让位。
     static LATEST_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     /// 最近一次前端推送的媒体区 rect（物理 px）。open / set_rect 写入，同步时读取。
@@ -320,247 +335,117 @@ mod imp {
         "open-external",
         "show-in-explorer",
     ];
-    /// message-only 窗口句柄（TrackPopupMenu 的 WM_COMMAND 落点；isize，0 = 未建）。
-    static MENU_WINDOW: Mutex<isize> = Mutex::new(0);
+    /// 覆盖层界面缩放（devicePixelRatio，与菜单文案一起下发）。
+    static MENU_SCALE: Mutex<f64> = Mutex::new(1.0);
 
-    // ── 原生竖排音量弹窗 ───────────────────────────────────────────
+    // ── 覆盖层（右键菜单 / 竖排音量）────────────────────────────────
     //
-    // mpv 模式下 WebView 的竖排音量弹窗物理上画不进画面区（popup 之上无 HTML），
-    // 但**原生窗口可以叠在 mpv popup 之上**（右键原生菜单同理）。
-    // 本弹窗 = 无边框原生小窗 + comctl32 trackbar（TBS_VERT 竖排），
-    // WS_EX_NOACTIVATE ⇒ 拖滑条不抢键盘焦点；WS_EX_TOOLWINDOW ⇒ 不进任务栏。
+    // 两者都必须是**原生窗口**：mpv 画面 popup 叠在 WebView 之上，画面区内
+    // HTML 一律不可见（airspace）。而且必须建在**带消息泵的专用线程**上 ——
+    // invoke 线程没泵，窗口会「看得见、点不动、像穿透了一样」（S1 踩坑 4 同款，
+    // 旧音量弹窗正是死在这里）。
+    // 统一放到 `crate::native_overlay`：样式按前端 ContextMenu.tsx（菜单）与
+    // VideoControls.tsx（`<video>` 模式的竖排弹窗）对齐，不再用系统 TrackPopupMenu
+    // 和 comctl32 trackbar（系统样式与软件不搭，2026-10-21 指挥官点名）。
 
-    const VOLUME_CLASS: &str = "AuroraMpvVolumePopup\0";
-    const TRACKBAR_CLASS: &str = "msctls_trackbar32\0";
-    const VOLUME_W: i32 = 40;
-    const VOLUME_H: i32 = 168;
-    const VOLUME_GAP: i32 = 8;
-
-    /// 音量弹窗句柄（isize，0 = 未创建）与其内 trackbar 句柄。
-    static VOLUME_POPUP: Mutex<isize> = Mutex::new(0);
-    static VOLUME_TRACKBAR: Mutex<isize> = Mutex::new(0);
-    /// 弹窗底色刷子（暗/亮主题切换时重建）。
-    static VOLUME_BRUSH: Mutex<isize> = Mutex::new(0);
-
-    /// 弹窗窗口过程：背景自绘（主题色）+ trackbar 拖动 → 实时下发 mpv volume。
-    unsafe extern "system" fn volume_popup_proc(
-        hwnd: HWND,
-        msg: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
-        match msg {
-            WM_CREATE => {
-                // 竖排 trackbar：范围 0-100，子控件铺满弹窗（留 8px 边距）
-                let trackbar = CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    PCWSTR(TRACKBAR_CLASS.encode_utf16().collect::<Vec<u16>>().as_ptr()),
-                    PCWSTR(std::ptr::null()),
-                    WINDOW_STYLE(WS_CHILD.0 | WS_VISIBLE.0 | TBS_VERT | TBS_NOTICKS),
-                    4,
-                    8,
-                    VOLUME_W - 8,
-                    VOLUME_H - 16,
-                    Some(hwnd),
-                    None,
-                    None,
-                    None,
-                )
-                .ok();
-                if let Some(t) = trackbar {
-                    *match VOLUME_TRACKBAR.lock() {
-                        Ok(mut g) => g,
-                        Err(p) => p.into_inner(),
-                    } = t.0 as isize;
+    /// 主题明暗：从媒体区背景色亮度推断（与图片查看器同一口径，前端不必再传）。
+    fn theme_dark() -> bool {
+        let bg = match BACKGROUND.lock() {
+            Ok(g) => g.clone(),
+            Err(p) => p.into_inner().clone(),
+        };
+        match bg.as_deref() {
+            Some(hex) => {
+                let d = hex.trim_start_matches('#');
+                if d.len() < 6 {
+                    return true;
                 }
-                LRESULT(0)
+                let ch = |i: usize| u8::from_str_radix(&d[i..i + 2], 16).unwrap_or(0) as f64;
+                let lum = (0.299 * ch(0) + 0.587 * ch(2) + 0.114 * ch(4)) / 255.0;
+                lum < 0.5
             }
-            WM_VSCROLL | WM_HSCROLL => {
-                // 拖动/点击 trackbar：读当前值 → 直接下发 mpv volume（前端轮询回读刷新 UI）
-                let trackbar = *match VOLUME_TRACKBAR.lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                };
-                if trackbar != 0 {
-                    if let Ok(lib) = mpv() {
-                        let pos = unsafe {
-                            SendMessageW(
-                                HWND(trackbar as *mut c_void),
-                                TBM_GETPOS,
-                                Some(WPARAM(0)),
-                                Some(LPARAM(0)),
-                            )
-                            .0
-                        } as f64;
-                        let vol = pos.clamp(0.0, 100.0).to_string();
-                        let args = [
-                            c"set".as_ptr(),
-                            c"volume".as_ptr(),
-                            vol.as_ptr() as *const c_char,
-                            std::ptr::null(),
-                        ];
-                        let guard = lock_surface();
-                        if let Some(s) = guard.as_ref() {
-                            unsafe { (lib.command)(s.ctx, args.as_ptr()) };
-                        }
-                    }
-                }
-                LRESULT(0)
-            }
-            WM_ERASEBKGND => {
-                // 底色按主题：暗 = #262626，亮 = 白
-                let dark = *match VOLUME_BRUSH.lock() {
-                    Ok(g) => g,
-                    Err(p) => p.into_inner(),
-                } != 0;
-                let mut ps = PAINTSTRUCT::default();
-                let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
-                let brush = unsafe {
-                    CreateSolidBrush(if dark { colorref(0x26, 0x26, 0x26) } else { colorref(0xFF, 0xFF, 0xFF) })
-                };
-                unsafe {
-                    let mut rc = windows::Win32::Foundation::RECT::default();
-                    let _ = GetClientRect(hwnd, &mut rc);
-                    FillRect(hdc, &rc, brush);
-                    let _ = DeleteObject(HGDIOBJ(brush.0 as *mut c_void));
-                }
-                LRESULT(1)
-            }
-            WM_LBUTTONDOWN => {
-                // 点弹窗空白处（非 trackbar）= 关闭（trackbar 自捕获鼠标不冒泡到这）
-                hide_volume_popup();
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+            None => true,
         }
     }
 
-    /// 确保音量弹窗的窗口类注册。
-    fn ensure_volume_class() -> Result<(), String> {
-        static ONCE: OnceLock<Result<(), String>> = OnceLock::new();
-        ONCE
-            .get_or_init(|| {
-                let name: Vec<u16> = VOLUME_CLASS.encode_utf16().collect();
-                let hmodule = unsafe { GetModuleHandleW(None) }
-                    .map_err(|e| format!("GetModuleHandleW 失败: {}", e))?;
-                let wc = WNDCLASSW {
-                    lpfnWndProc: Some(volume_popup_proc),
-                    hInstance: HINSTANCE(hmodule.0),
-                    hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
-                    lpszClassName: PCWSTR(name.as_ptr()),
-                    ..Default::default()
-                };
-                if unsafe { RegisterClassW(&wc) } == 0 {
-                    return Err("RegisterClassW(音量弹窗) 失败".to_string());
-                }
-                Ok(())
-            })
-            .as_ref()
-            .map(|_| ())
-            .map_err(|e| e.clone())
-    }
-
-    /// 显示（或 toggle 关闭）竖排音量弹窗。
-    pub fn show_volume_popup(anchor_x: f64, anchor_y: f64, volume: f64, dark: bool) -> Result<(), String> {
-        unsafe { let _ = InitCommonControlsEx(&INITCOMMONCONTROLSEX { dwICC: ICC_BAR_CLASSES, dwSize: 1 }); };
-        ensure_volume_class()?;
-
-        let existing = *match VOLUME_POPUP.lock() {
+    /// 弹出自绘右键菜单（鼠标位置；由鼠标钩子命中画面时调用）。
+    fn show_context_menu(parent: isize) {
+        let labels = match MENU_LABELS.lock() {
+            Ok(g) => g.clone(),
+            Err(p) => p.into_inner().clone(),
+        };
+        if labels.is_empty() {
+            return;
+        }
+        let scale = *match MENU_SCALE.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        if existing != 0 {
-            // 已显示 → toggle 关闭
-            hide_volume_popup();
-            return Ok(());
-        }
-
-        // 主题底色刷子（暗/亮切换时重建）
-        {
-            let mut g = match VOLUME_BRUSH.lock() {
-                Ok(g) => g,
-                Err(p) => p.into_inner(),
-            };
-            let want: isize = if dark { 1 } else { 0 };
-            if *g != want {
-                let brush = unsafe {
-                    CreateSolidBrush(if dark { colorref(0x26, 0x26, 0x26) } else { colorref(0xFF, 0xFF, 0xFF) })
-                };
-                if *g != 0 {
-                    unsafe { let _ = DeleteObject(HGDIOBJ(*g as *mut c_void)); };
+        let app = APP.get().cloned();
+        crate::native_overlay::show_menu(crate::native_overlay::MenuRequest {
+            labels,
+            scale,
+            dark: theme_dark(),
+            parent,
+            on_pick: std::sync::Arc::new(move |idx: usize| {
+                if let (Some(app), Some(action)) = (app.as_ref(), MENU_ACTIONS.get(idx)) {
+                    let _ = app.emit("mpv-menu-action", *action);
                 }
-                *g = brush.0 as isize;
-            }
-        }
+            }),
+        });
+    }
 
+    /// 竖排音量弹窗（显示 / toggle 关闭）。
+    /// `anchor_x/anchor_y` = 静音按钮顶部中心的**主窗口客户区**物理像素
+    /// —— ClientToScreen 由覆盖层负责（旧实现漏了，弹窗会飘到别的窗口）。
+    pub fn show_volume_popup(
+        anchor_x: f64,
+        anchor_y: f64,
+        volume: f64,
+        dark: bool,
+        scale: f64,
+    ) -> Result<(), String> {
         let parent = match lock_surface().as_ref() {
             Some(s) => s.parent,
             None => return Err("尚未挂接 mpv".to_string()),
         };
-        // 位置：静音按钮顶部中心上方（原生窗口在 mpv popup 之上，可自由覆盖画面区）
-        let x = (anchor_x as i32) - VOLUME_W / 2;
-        let y = (anchor_y as i32) - VOLUME_H - VOLUME_GAP;
-
-        let hwnd = unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE(WS_EX_TOOLWINDOW.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOPMOST.0),
-                PCWSTR(VOLUME_CLASS.encode_utf16().collect::<Vec<u16>>().as_ptr()),
-                PCWSTR(std::ptr::null()),
-                WINDOW_STYLE(WS_POPUP.0 | WS_VISIBLE.0),
-                x,
-                y,
-                VOLUME_W,
-                VOLUME_H,
-                Some(HWND(parent as *mut c_void)),
-                None,
-                None,
-                None,
-            )
-        }
-        .map_err(|e| format!("创建音量弹窗失败: {}", e))?;
-
-        // 初始音量位置（TBM_SETPOS：TRUE = 重绘）
-        let trackbar = *match VOLUME_TRACKBAR.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if trackbar != 0 {
-            unsafe {
-                SendMessageW(
-                    HWND(trackbar as *mut c_void),
-                    TBM_SETPOS,
-                    Some(WPARAM(1)),
-                    Some(LPARAM(volume.clamp(0.0, 100.0) as isize)),
-                );
-            }
-        }
-
-        *match VOLUME_POPUP.lock() {
-            Ok(mut g) => g,
-            Err(p) => p.into_inner(),
-        } = hwnd.0 as isize;
+        crate::native_overlay::show_volume(crate::native_overlay::VolumeRequest {
+            anchor_x: anchor_x as i32,
+            anchor_y: anchor_y as i32,
+            value: volume,
+            scale,
+            dark,
+            parent,
+            on_change: std::sync::Arc::new(move |v: f64| {
+                let Ok(lib) = mpv() else { return };
+                let guard = lock_surface();
+                let Some(s) = guard.as_ref() else { return };
+                if s.parent != parent {
+                    return; // 会话已换，别写到新播放器上
+                }
+                let vol = format!("{:.0}", v.clamp(0.0, 100.0));
+                let args = [
+                    c"set".as_ptr(),
+                    c"volume".as_ptr(),
+                    vol.as_ptr() as *const c_char,
+                    std::ptr::null(),
+                ];
+                unsafe { (lib.command)(s.ctx, args.as_ptr()) };
+                // 拖到 0 以上时顺手解除静音（否则「拖了没声音」很困惑）
+                if v > 0.5 {
+                    let m = [c"set".as_ptr(), c"mute".as_ptr(), c"no".as_ptr(), std::ptr::null()];
+                    unsafe { (lib.command)(s.ctx, m.as_ptr()) };
+                }
+            }),
+        });
         Ok(())
     }
 
-    /// 隐藏音量弹窗（toggle 关闭 / 会话销毁时）。幂等。
-    pub fn hide_volume_popup() {
-        let hwnd = *match VOLUME_POPUP.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if hwnd != 0 {
-            unsafe {
-                let _ = DestroyWindow(HWND(hwnd as *mut c_void));
-            }
-            *match VOLUME_POPUP.lock() {
-                Ok(mut g) => g,
-                Err(p) => p.into_inner(),
-            } = 0;
-            *match VOLUME_TRACKBAR.lock() {
-                Ok(mut g) => g,
-                Err(p) => p.into_inner(),
-            } = 0;
-        }
+    /// 关闭音量弹窗（切文件 / 关查看器）。幂等。
+    /// 当前走 `stop → close_all`；保留供「只关音量不关菜单」的场景。
+    #[allow(dead_code)]
+    fn hide_volume_popup() {
+        crate::native_overlay::hide_volume();
     }
 
     /// popup 上原生的鼠标交互 → WebView 事件（`mpv-surface`）。
@@ -684,17 +569,6 @@ mod imp {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        // 右键原生菜单（TrackPopupMenu）的选择结果以 WM_COMMAND 落到 message-only 窗口；
-        // 同一个 WndProc 也服务渲染 popup，收到陌生 WM_COMMAND 的概率为零，统一处理无害。
-        if msg == WM_COMMAND {
-            let id = (wparam.0 & 0xFFFF) as usize;
-            if id >= 101 && id < 101 + MENU_ACTIONS.len() {
-                if let Some(app) = APP.get() {
-                    let _ = app.emit("mpv-menu-action", MENU_ACTIONS[id - 101]);
-                }
-            }
-            return LRESULT(0);
-        }
         DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 
@@ -787,7 +661,15 @@ mod imp {
                 // ⚠️ SWP_NOACTIVATE 必须带：缺了它每次位置同步都会把 popup 激活成
                 // 前台窗口，键盘焦点从 WebView 被抢走 → 全部快捷键失效
                 //（2026-10-20 真机复现）。NOACTIVATE popup + 不激活式置顶才是正解。
-                SET_WINDOW_POS_FLAGS(SWP_SHOWWINDOW.0 | SWP_NOACTIVATE.0),
+                SET_WINDOW_POS_FLAGS(
+                    // 隐藏期间（HTML 弹层覆盖中）必须带 HIDE，否则 rect 同步会把
+                    // 藏起来的画面窗口又顶回来
+                    if SURFACE_VISIBLE.load(std::sync::atomic::Ordering::SeqCst) {
+                        SWP_SHOWWINDOW.0
+                    } else {
+                        SWP_HIDEWINDOW.0
+                    } | SWP_NOACTIVATE.0,
+                ),
             );
         }
         Ok(())
@@ -823,14 +705,24 @@ mod imp {
                 _ => None,
             };
             if let Some(kind) = kind {
+                let pt = POINT { x: info.pt.x, y: info.pt.y };
+                // ① 覆盖层（自绘菜单 / 竖排音量）优先：点在它们身上就别再当「点画面」，
+                //    否则点菜单项/拖音量会顺带把视频暂停；点在它们外面则通知其关闭。
+                if crate::native_overlay::hit_test_exclusive(pt.x, pt.y) {
+                    return unsafe { CallNextHookEx(None, code, wparam, lparam) };
+                }
+                crate::native_overlay::notify_mouse_down(pt.x, pt.y);
                 let hit = (|| -> Option<isize> {
+                    // 画面被 HTML 弹层压住而隐藏时，不要把点击转发成「点画面」
+                    if !SURFACE_VISIBLE.load(std::sync::atomic::Ordering::SeqCst) {
+                        return None;
+                    }
                     let guard = lock_surface();
                     let Some(s) = guard.as_ref() else { return None };
                     let mut r = windows::Win32::Foundation::RECT::default();
                     if unsafe { GetWindowRect(HWND(s.child as *mut c_void), &mut r) }.is_err() {
                         return None;
                     }
-                    let pt = POINT { x: info.pt.x, y: info.pt.y };
                     if unsafe { PtInRect(&r, pt) }.as_bool() {
                         Some(s.parent)
                     } else {
@@ -840,9 +732,8 @@ mod imp {
                 if let Some(parent) = hit {
                     match kind {
                         "contextmenu" => {
-                            // 右键 → 原生弹出菜单（TrackPopupMenu 画在系统层，能出现在
-                            // 鼠标位置；WebView 菜单会被 popup 盖住画不进画面区）。
-                            // 注意：不能在钩子回调里同步弹（模态阻塞钩子），投主线程任务。
+                            // 右键 → 自绘原生菜单（覆盖层线程拥有，能画在画面之上；
+                            // WebView 菜单会被 popup 盖住画不进画面区）。
                             show_context_menu(parent);
                         }
                         "click" => {
@@ -915,87 +806,6 @@ mod imp {
                 Ok(mut g) => g,
                 Err(p) => p.into_inner(),
             } = 0;
-        });
-    }
-
-    // ── 右键原生菜单（TrackPopupMenu） ─────────────────────────────
-    //
-    // popup 覆盖区内 HTML 不可见 ⇒ WebView 右键菜单画不进画面区。改用**原生
-    // Win32 弹出菜单**：画在系统层（popup 之上）、出现在鼠标位置；选择结果以
-    // WM_COMMAND 落到 message-only 窗口 → emit `mpv-menu-action` → 前端执行。
-    // 菜单文案由前端在 set_menu_labels 按当前语言下发。
-
-    /// 确保存在接收 WM_COMMAND 的 message-only 窗口（主线程创建、主线程泵）。
-    unsafe fn ensure_menu_window() -> isize {
-        let cur = *match MENU_WINDOW.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if cur != 0 {
-            return cur;
-        }
-        let name: Vec<u16> = SURFACE_CLASS.encode_utf16().collect();
-        let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            PCWSTR(name.as_ptr()),
-            PCWSTR(name.as_ptr()),
-            WINDOW_STYLE(0),
-            0,
-            0,
-            0,
-            0,
-            // HWND_MESSAGE = message-only 窗口：不可见、不参与 z-order，只收消息
-            Some(HWND_MESSAGE),
-            None,
-            None,
-            None,
-        )
-        .ok();
-        let v = hwnd.map(|h| h.0 as isize).unwrap_or(0);
-        *match MENU_WINDOW.lock() {
-            Ok(mut g) => g,
-            Err(p) => p.into_inner(),
-        } = v;
-        v
-    }
-
-    /// 在鼠标位置弹出右键菜单（主线程任务；TrackPopupMenu 自带模态泵）。
-    fn show_context_menu(parent: isize) {
-        let Some(app) = APP.get() else { return };
-        let _ = app.run_on_main_thread(move || unsafe {
-            let labels = match MENU_LABELS.lock() {
-                Ok(g) => g.clone(),
-                Err(p) => p.into_inner().clone(),
-            };
-            let Some(menu) = CreatePopupMenu().ok() else { return };
-            // MF_STRING + 命令 id（101 起，映射见 MENU_ACTIONS）
-            for (i, label) in labels.iter().take(MENU_ACTIONS.len()).enumerate() {
-                let wide: Vec<u16> = label.encode_utf16().chain(std::iter::once(0)).collect();
-                let _ = AppendMenuW(menu, MF_STRING, 101 + i, PCWSTR(wide.as_ptr()));
-            }
-            let mut pt = POINT::default();
-            let _ = GetCursorPos(&mut pt);
-            ensure_menu_window();
-            let menu_hwnd = *match MENU_WINDOW.lock() {
-                Ok(g) => g,
-                Err(p) => p.into_inner(),
-            };
-            if menu_hwnd == 0 {
-                let _ = DestroyMenu(menu);
-                return;
-            }
-            let _ = TrackPopupMenu(
-                menu,
-                // TPM_RIGHTBUTTON：左右键都可选中项；TPM_NONOTIFY：不发通知消息
-                TRACK_POPUP_MENU_FLAGS(TPM_RIGHTBUTTON.0 | TPM_NONOTIFY.0),
-                pt.x,
-                pt.y,
-                None,
-                HWND(menu_hwnd as *mut c_void),
-                None,
-            );
-            let _ = DestroyMenu(menu);
-            let _ = parent; // 预留：将来把菜单挂 owner
         });
     }
 
@@ -1278,6 +1088,22 @@ mod imp {
         Ok(())
     }
 
+    /// 显示/隐藏画面窗口（不销毁会话）。见命令层文档。
+    pub fn set_visible(visible: bool) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        SURFACE_VISIBLE.store(visible, Ordering::SeqCst);
+        let guard = lock_surface();
+        if let Some(s) = guard.as_ref() {
+            unsafe {
+                let _ = ShowWindow(
+                    HWND(s.child as *mut c_void),
+                    if visible { SW_SHOW } else { SW_HIDE },
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn stop(session: u64) -> Result<(), String> {
         let lib = mpv()?;
         let mut guard = lock_surface();
@@ -1291,17 +1117,26 @@ mod imp {
             }
             drop(guard);
             disable_click_forward();
-            hide_volume_popup();
+            // 关掉可能还开着的菜单 / 音量弹窗（它们不属于任何会话，得显式收）
+            crate::native_overlay::close_all();
+            SURFACE_VISIBLE.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         Ok(())
     }
 
-    pub fn set_menu_labels(labels: Vec<String>) -> Result<(), String> {
+    pub fn set_menu_labels(labels: Vec<String>, scale: f64) -> Result<(), String> {
         let mut g = match MENU_LABELS.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
         *g = labels;
+        let mut s = match MENU_SCALE.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if scale > 0.25 {
+            *s = scale;
+        }
         Ok(())
     }
 
@@ -1373,11 +1208,21 @@ mod imp {
         Err(unsupported())
     }
 
-    pub fn set_menu_labels(_labels: Vec<String>) -> Result<(), String> {
+    pub fn set_menu_labels(_labels: Vec<String>, _scale: f64) -> Result<(), String> {
         Err(unsupported())
     }
 
-    pub fn show_volume_popup(_x: f64, _y: f64, _volume: f64, _dark: bool) -> Result<(), String> {
+    pub fn set_visible(_visible: bool) -> Result<(), String> {
+        Err(unsupported())
+    }
+
+    pub fn show_volume_popup(
+        _x: f64,
+        _y: f64,
+        _volume: f64,
+        _dark: bool,
+        _scale: f64,
+    ) -> Result<(), String> {
         Err(unsupported())
     }
 }

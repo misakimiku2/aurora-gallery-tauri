@@ -38,6 +38,12 @@ pub mod transcode_batch;
 // ⇒ 即便 remux 也解不出画面；而指挥官要求点击必须在软件内播放、不得外挂。
 // ⚠️ 模块**无条件编译**（桌面端命令注册分支跨越 macOS/Linux），平台差异在文件内部用 cfg 切。
 pub mod mpv_player;
+// 视频 P4/S2.5：桌面端**原生覆盖层**（自绘右键菜单 + 竖排音量弹窗）。
+// 必须原生：mpv 画面 popup 叠在 WebView 之上，画面区内 HTML 不可见（airspace）。
+// 必须自带消息泵线程：invoke 线程没泵 ⇒ 窗口「看得见点不动」（旧音量弹窗的病根）。
+// 纯 Win32，仅 Windows 编译；样式对齐前端 ContextMenu.tsx / VideoControls.tsx。
+#[cfg(windows)]
+pub(crate) mod native_overlay;
 // lan_share 的 types/session/device_manager 为平台无关代码，
 // 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
@@ -2018,6 +2024,8 @@ pub fn run() {
         mpv_player::mpv_player_state,
         mpv_player::mpv_player_command,
         mpv_player::mpv_player_stop,
+        mpv_player::mpv_player_set_visible,
+        mpv_player::mpv_player_set_menu_icons,
         mpv_player::mpv_player_set_menu_labels,
         mpv_player::mpv_player_show_volume_popup,
         scanner::scan_directory,

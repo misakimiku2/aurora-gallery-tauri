@@ -14,7 +14,7 @@ type Props = {
 
 export const GlobalToasts: React.FC<Props> = ({ deletionTasks, undoDelete, dismissDelete, showDragHint, isCompareMode, toast, t }) => {
   return (
-    <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">
+    <div data-mpv-ignore className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">
       {deletionTasks.map(task => (
         <ToastItem key={task.id} task={task} onUndo={() => undoDelete(task.id)} onDismiss={() => dismissDelete(task.id)} t={t} />
       ))}

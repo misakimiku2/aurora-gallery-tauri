@@ -12,11 +12,12 @@ import { isWebDecodableVideo, webCanDecodeCodec } from '../utils/mediaExtensions
 import { isAndroidSync } from '../utils/androidPlatform';
 import {
   mpvOpen, mpvSetRect, mpvStop, mpvCommand, getViewportRect, getMpvStateCache, nextMpvSession,
-  getMediaBackground, onMpvSurface, onMpvMenuAction, mpvSetMenuLabels,
+  getMediaBackground, onMpvSurface, onMpvMenuAction, mpvSetMenuLabels, mpvSetMenuIcons, mpvSetVisible,
   mpvTogglePlay, mpvSeekAbsolute, mpvSeekRelative, mpvFrameStep,
   mpvVolumeNudge, mpvSetMuted, mpvSetSpeed, mpvCycleRate,
 } from '../utils/mpvPlayer';
 import { openWithDefaultApp } from '../api/tauri-bridge/files';
+import { renderMpvMenuIcons } from '../utils/mpvMenuIcons';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -692,21 +693,88 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     return () => { disposed = true; un?.(); unMenu?.(); };
   }, [mpvActive, file.id, file.path, onViewInExplorer]);
 
-  // 右键原生菜单文案（按当前语言下发；语言切换后下次打开视频生效）。
+  // 右键自绘菜单文案（按当前语言下发；语言切换后下次打开视频生效）。
   // 顺序约定见 Rust MENU_ACTIONS：0 播放/暂停 · 1 后退5s · 2 前进5s ·
   // 3 切换倍速 · 4 循环 · 5 系统播放器 · 6 资源管理器。
+  // 第二个参数 = devicePixelRatio：覆盖层是原生窗口，尺寸要换算成物理像素。
+  // 主题明暗不用传 —— Rust 从媒体区背景色亮度推断（亮=白底、暗=#3a3a3a）。
+  // 图标单独下发（lucide 栅格化位图，见 mpvMenuIcons.ts）—— 手绘折线图标歪歪扭扭
+  // 还有锯齿（2026-10-21 真机反馈），栅格化位图与界面观感完全一致。
   useEffect(() => {
     if (!mpvActive) return;
-    void mpvSetMenuLabels([
-      `${t('video.play')} / ${t('video.pause')}`,
-      t('video.back5s'),
-      t('video.forward5s'),
-      t('video.rate'),
-      t('video.loop'),
-      t('video.openExternalPlayer'),
-      t('context.viewInExplorer'),
-    ]);
+    void mpvSetMenuLabels(
+      [
+        `${t('video.play')} / ${t('video.pause')}`,
+        t('video.back5s'),
+        t('video.forward5s'),
+        t('video.rate'),
+        t('video.loop'),
+        t('video.openExternalPlayer'),
+        t('context.viewInExplorer'),
+      ],
+      window.devicePixelRatio || 1,
+    );
+    void renderMpvMenuIcons(window.devicePixelRatio || 1).then((icons) => {
+      if (icons.length > 0) void mpvSetMenuIcons(icons);
+    });
   }, [mpvActive, t]);
+
+  // mpv 画面窗口是原生 popup，会压在一切 HTML 之上（WebView2 airspace）：
+  // 设置模态、文件夹树右键菜单……凡盖住媒体区的弹层都会被画面挡住
+  // （2026-10-21 真机发现）。 airspace 无解（除非 windowless 渲染），业界通用
+  // 折中 = **被 HTML 覆盖时让位**：用 elementFromPoint 在媒体区 9 个采样点探测，
+  // 命中弹层元素 → 隐藏画面窗口（音频继续）；解除覆盖 → 显示回来。
+  // DOM 弹层的挂载/卸载都走 body 子树变更 ⇒ MutationObserver 触发即可全覆盖。
+  useEffect(() => {
+    if (!mpvActive) return;
+    let raf = 0;
+    let last: boolean | null = null;
+    const check = () => {
+      raf = 0;
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) return;
+      const inset = 4;
+      const mx = r.left + r.width / 2;
+      const my = r.top + r.height / 2;
+      const samples: Array<[number, number]> = [
+        [mx, my],
+        [r.left + inset, r.top + inset],
+        [r.right - inset, r.top + inset],
+        [r.left + inset, r.bottom - inset],
+        [r.right - inset, r.bottom - inset],
+        [mx, r.top + inset],
+        [mx, r.bottom - inset],
+        [r.left + inset, my],
+        [r.right - inset, my],
+      ];
+      let covered = false;
+      for (const [x, y] of samples) {
+        const hit = document.elementFromPoint(x, y);
+        // data-mpv-ignore：明确豁免的浮层（如 toast），盖上去也不让画面让位
+        if (hit && !el.contains(hit) && !hit.closest('[data-mpv-ignore]')) {
+          covered = true;
+          break;
+        }
+      }
+      if (covered !== last) {
+        last = covered;
+        void mpvSetVisible(!covered);
+      }
+    };
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(check);
+    };
+    const ob = new MutationObserver(schedule);
+    ob.observe(document.body, { childList: true, subtree: true });
+    schedule();
+    return () => {
+      ob.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+      if (last === true) void mpvSetVisible(true); // 卸载时复位（stop 也会复位）
+    };
+  }, [mpvActive]);
 
   // 视频缓冲/seek 等待状态：驱动媒体区中央的等待遮罩（§3「seek 中/缓冲中显示 waiting 状态」）
   // 稳定化：总文档 §3.2 的 asset protocol 按 ≤1MB 分片返回，单次 seek/播放会多次触发

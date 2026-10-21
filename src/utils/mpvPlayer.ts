@@ -147,23 +147,40 @@ export const onMpvMenuAction = async (
   }
 };
 
-/** 下发右键菜单文案（按当前语言；顺序约定见 Rust MENU_ACTIONS）。 */
-export const mpvSetMenuLabels = (labels: string[]): Promise<void> =>
-  call<void>('mpv_player_set_menu_labels', { labels }).catch(() => {});
+/** 下发右键菜单文案 + 界面缩放（按当前语言；顺序约定见 Rust MENU_ACTIONS）。
+ *  `scale` = devicePixelRatio —— 覆盖层是原生窗口，尺寸要按它换算成物理像素。 */
+export const mpvSetMenuLabels = (labels: string[], scale: number): Promise<void> =>
+  call<void>('mpv_player_set_menu_labels', { labels, scale }).catch(() => {});
+
+/** 下发右键菜单图标（lucide 栅格化的 RGBA base64，见 mpvMenuIcons.ts；顺序同 MENU_ACTIONS）。 */
+export const mpvSetMenuIcons = (icons: string[]): Promise<void> =>
+  call<void>('mpv_player_set_menu_icons', { icons }).catch(() => {});
 
 /**
- * 显示/切换关闭原生**竖排音量弹窗**（mpv 模式）。
- * anchor = 静音按钮顶部中心的**屏幕物理像素**（CSS px × devicePixelRatio）；
- * 原生窗口 z-order 在 mpv 画面 popup 之上，可完全覆盖画面区、不被遮挡。
- * 拖动滑条由 Rust 直接下发 mpv volume，控制条 UI 由轮询回读刷新。
+ * 显示/隐藏 mpv 画面窗口（不销毁会话，音频继续）。
+ *
+ * 原生 popup 会压在一切 HTML 之上（WebView2 airspace）：设置模态、文件夹树
+ * 右键菜单……任何盖住媒体区的弹层都会被画面挡住（2026-10-21 真机发现）。
+ * 前端用 `document.elementFromPoint` 采样探测「媒体区被 HTML 覆盖」→ 藏起画面；
+ * 解除覆盖后再显示回来。这是 airspace 下的通用让位方案。
+ */
+export const mpvSetVisible = (visible: boolean): Promise<void> =>
+  call<void>('mpv_player_set_visible', { visible }).catch(() => {});
+
+/**
+ * 显示/切换关闭**自绘竖排音量弹窗**（mpv 模式）。
+ * anchor = 静音按钮顶部中心的**主窗口客户区**物理像素（CSS px × devicePixelRatio），
+ * Rust 侧负责 ClientToScreen；原生窗口 z-order 在 mpv 画面 popup 之上，可完全覆盖
+ * 画面区、不被遮挡。拖动滑条由 Rust 直接下发 mpv volume，控制条 UI 由轮询回读刷新。
  */
 export const mpvShowVolumePopup = (
   anchorX: number,
   anchorY: number,
   volume: number,
-  dark: boolean
+  dark: boolean,
+  scale: number,
 ): Promise<void> =>
-  call<void>('mpv_player_show_volume_popup', { anchorX, anchorY, volume, dark }).catch(() => {});
+  call<void>('mpv_player_show_volume_popup', { anchorX, anchorY, volume, dark, scale }).catch(() => {});
 
 /** 轮询播放状态；同时写入模块级缓存。 */
 export const mpvPollState = async (): Promise<MpvState | null> => {
