@@ -66,7 +66,12 @@ class MoreMenuPopup(
     private val context: Context,
     private val theme: DialogTheme,
     private val anchor: View,
-    private val menuItems: List<MoreMenuItem>
+    private val menuItems: List<MoreMenuItem>,
+    /**
+     * 关闭回调（2026-10-22）：调用点用它解除对宿主工具栏自动收起的「按住」——
+     * 菜单是独立 Dialog，开着时顶栏若滑走，菜单就悬空且锚点丢失。
+     */
+    private val onDismiss: (() -> Unit)? = null,
 ) {
     fun show() {
         val density = DialogUtils.density(context)
@@ -80,6 +85,8 @@ class MoreMenuPopup(
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
+        // 点菜单项/点外面/返回键三条关闭路径都会走这里，宿主只挂一处即可
+        if (onDismiss != null) dialog.setOnDismissListener { onDismiss.invoke() }
         dialog.window?.let { window ->
             window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
@@ -282,22 +289,49 @@ class MoreMenuPopup(
             // 菜单仍下坠一个 statusTop，insets 已报 0 而子窗口内容框原点滞后）。这里读
             // 弹窗实际落点与**当下重算**的锚点落点（menuPos，屏幕系）的差值一次修正——
             // 对任何坐标系偏差自洽，不再依赖系统栏状态假设，且两次之间顶栏真挪过也跟得上。
-            menuView.post {
-                val actual = IntArray(2)
-                window.decorView.getLocationOnScreen(actual)
-                val target = menuPos()
-                val dx = target.first - actual[0]
-                val dy = target.second - actual[1]
-                if (dx != 0 || dy != 0) {
-                    android.util.Log.d("AuroraMenu", "弹层自校准位移 dx=$dx dy=$dy（非 0 即初算与真实内容框有差）")
+            // 2026-10-22（真机报障：菜单先在下、随后突然上窜）：改完 window.attributes 只是
+            // 把新落点**交给** WindowManager，紧接着那一帧画的还是旧落点；此处若立刻
+            // alpha=1，就等于先在旧位置露一次面、下一帧再挪到校准后的位置。
+            // 修法不是「再等一帧」这种时序假设——视频解码忙时一帧也可能是几十毫秒——而是
+            // **轮询到落点真的到位再显形**：每 16ms 读一次窗口实际落点，与目标位比对，
+            // 对上了才显；仍未对上就再补一次位移（平移量自适应），最多 8 次后强制显形
+            // （宁可落点差几个像素，也不能让菜单一直不出现）。
+            val settle = object : Runnable {
+                private var attempts = 0
+                override fun run() {
+                    // 兜底已显形（600ms）就别再挪了——否则会在用户眼前再跳一次
+                    if (window.decorView.alpha >= 1f) return
+                    val actual = IntArray(2)
+                    window.decorView.getLocationOnScreen(actual)
+                    val target = menuPos()
+                    val dx = target.first - actual[0]
+                    val dy = target.second - actual[1]
+                    // 2px 内视为到位：像素对齐与 round 误差都可能留下 1px，追它没有意义
+                    if (Math.abs(dx) <= 2 && Math.abs(dy) <= 2) {
+                        window.decorView.alpha = 1f
+                        return
+                    }
+                    if (attempts == 0) {
+                        android.util.Log.d("AuroraMenu", "弹层自校准位移 dx=$dx dy=$dy（非 0 即初算与真实内容框有差）")
+                    }
+                    attempts++
+                    if (attempts > 8) {
+                        window.decorView.alpha = 1f
+                        return
+                    }
                     val p = window.attributes
                     p.x += dx
                     p.y += dy
                     window.attributes = p
+                    window.decorView.postDelayed(this, 16L)
                 }
-                window.decorView.alpha = 1f
             }
-            window.decorView.postDelayed({ window.decorView.alpha = 1f }, 120L)
+            menuView.post(settle)
+            // 兜底显形：万一上面那趟 post 在个别机型上没跑到（或轮询被长时间推迟），
+            // 也不能让菜单一直隐形。600ms 留足轮询收敛的余量；真到这一步宁可露在旧位。
+            window.decorView.postDelayed({
+                if (window.decorView.alpha < 1f) window.decorView.alpha = 1f
+            }, 600L)
         }
     }
 }

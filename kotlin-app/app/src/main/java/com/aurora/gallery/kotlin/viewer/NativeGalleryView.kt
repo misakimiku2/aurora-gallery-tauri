@@ -358,7 +358,8 @@ class NativeGalleryView @JvmOverloads constructor(
      */
     var setLocalVideoCover:
         ((contentUri: String, bitmap: android.graphics.Bitmap, onDone: (Boolean) -> Unit) -> Unit)? = null
-    var resetLocalVideoCover: ((contentUri: String, onDone: (Boolean) -> Unit) -> Unit)? = null
+    // （2026-10-22：`resetLocalVideoCover` 与其菜单项「重新抽帧」一并移除 ——
+    // 手机端用户不知道这项是干什么的，保留只会占一个菜单位。）
 
     // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
     internal fun colorBg() = palette.main
@@ -2290,6 +2291,12 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         // 2026-09-27 验收（M8b-8）：菜单项全线配 lucide 图标（色随文字，删除红=图标红）；
         // 「删除」是危险动作，统一挪到菜单最底部（远离高频区防误触，桌面 ContextMenu 同位）。
+        // 2026-10-22（真机报障：菜单先在下方出现、随后突然上窜）：视频态顶栏是**滑上去**
+        // 收起的，而菜单是独立 Dialog，不跟顶栏一起动。菜单开着的这两秒里顶栏一旦滑走，
+        // 菜单就悬在半空、锚点也没了——菜单里那次「按实际落点自校准」会顺着走掉的锚点
+        // 把菜单往上拽一次，读起来正是「先出现、然后往上跳」。所以开着菜单期间按住自动
+        // 收起，关掉再恢复计时（图片态没有自动收起，hold 对它无副作用）。
+        if (item.isVideo) videoLayer.holdChrome()
         MoreMenuPopup(
             context = context,
             theme = this,
@@ -2368,17 +2375,9 @@ class NativeGalleryView @JvmOverloads constructor(
                                 }
                             }
                         })
-                        add(MoreMenuItem("重新抽帧", colorTextPrimary(), iconRes = R.drawable.ic_lucide_rotate_ccw) {
-                            resetLocalVideoCover?.invoke(item.path) { ok ->
-                                Toast.makeText(
-                                    context,
-                                    if (ok) "已清除封面，进来时重抽一帧" else "没有可清除的封面",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                // 清掉之后重走一遍取图，静态位当场换回新抽的那帧
-                                if (ok) loadIntoView(activeView, currentIndex)
-                            }
-                        })
+                        // （2026-10-22：「重新抽帧」这项撤掉了 —— 用途不明，
+                        // 手机端不保留清封面重抽的入口。底层 `ThumbnailLoader.clearVideoCovers`
+                        // 仍在，将来要恢复从这里加回一项即可。）
                     }
                     add(MoreMenuItem("重命名", colorTextPrimary(), iconRes = R.drawable.ic_lucide_pencil) {
                         showRenameDialog()
@@ -2403,7 +2402,9 @@ class NativeGalleryView @JvmOverloads constructor(
                         showDeleteConfirmDialog()
                     })
                 }
-            }
+            },
+            // 三条关闭路径（选项/点外面/返回键）都从 Dialog 的 dismiss 汇合到这一处
+            onDismiss = { if (item.isVideo) videoLayer.releaseChrome() },
         ).show()
     }
 

@@ -98,14 +98,26 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
          * ⚠️ 本地 `content://media/.../123` 这种 URI **没有文件名** → 空串，调用方一律放行，
          * 宁可让 ExoPlayer 去撞一次失败，也不能误伤正常视频。
          */
-        private fun containerExtOf(url: String): String {
+        /**
+         * 从 URL / 文件名里取容器扩展名（小写、只留字母数字）。
+         *
+         * LAN 项的扩展名藏在 `?path=` 里（`/api/image?path=xxx.avi`），先取 query 参数；
+         * 本地项是 `content://media/external/video/media/123` 这种**没有文件名**的 URI，
+         * 取不到就退回 [displayName]（ui 里那一栏显示的 `block_mpeg4.avi`）——
+         * 少了这一层退回，本地 AVI/WMV 就拦不住，会白起一次必然失败的播放（模拟器实测）。
+         * 两条都没有才返回空串（调用方按「判不了就放行」处理，不误伤）。
+         */
+        private fun containerExtOf(url: String, displayName: String = ""): String {
             val raw = runCatching { Uri.parse(url).getQueryParameter("path") }.getOrNull()
                 ?.takeIf { it.isNotBlank() } ?: url
             val clean = raw.substringBefore('?').substringBefore('#')
             val dot = clean.lastIndexOf('.')
-            if (dot < 0) return ""
-            return clean.substring(dot + 1).lowercase().filter { it.isLetterOrDigit() }
+            if (dot >= 0 && dot < clean.length - 1) return normalizeExt(clean.substring(dot + 1))
+            return normalizeExt(displayName.substringAfterLast('.', ""))
         }
+
+        private fun normalizeExt(raw: String): String =
+            raw.lowercase().filter { it.isLetterOrDigit() }
 
         /** 起播后静置多久收起工具栏（验收人：1-2 秒，取上限）。 */
         private const val CHROME_IDLE_MS = 2000L
@@ -262,6 +274,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     }
 
     private var boundFileId: String? = null
+    /** 当前项的显示文件名（`play.mp4`）：本地 content:// URI 没有文件名，容器判定靠它。 */
+    private var boundDisplayName: String = ""
     private var mediaUrl: String = ""
     /** 当前这一路是不是远端（LAN）——决定要不要走备播那一关。 */
     private var remoteSource = false
@@ -278,6 +292,16 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     private var chromeHidden = false
     private var userDragging = false
     private var surface: Surface? = null
+
+    /**
+     * 工具栏收起被「按住」的层数（2026-10-22，真机报障：更多菜单先在下、随后上窜）。
+     *
+     * 更多菜单是独立 Dialog，不跟顶栏走。若菜单开着时 [scheduleChromeHide] 到期，顶栏
+     * 会整条滑出屏幕：菜单悬在半空、锚点消失，而菜单里那次「按实际落点自校准」读到的
+     * 锚点已经是滑走后的位置，于是把菜单往上拽一次（读作「先出现、然后突然往上」）。
+     * 持有时直接跳过收起排期，菜单关掉再恢复计时。
+     */
+    private var chromeHold = 0
 
     /** 解码器给的显示尺寸（已按 rotation 与 SAR 折算成"看起来"的宽高） */
     private var videoW = 0
@@ -779,7 +803,17 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
      * [width]/[height] 是服务端 browse 已经给过的容器宽高（A3 那轮补的）：先用它把几何摆正，
      * 等 `onVideoSizeChanged` 再按解码器口径精修。
      */
-    fun bind(fileId: String, url: String, durationMs: Long, width: Int, height: Int, remote: Boolean) {
+    fun bind(
+        fileId: String,
+        url: String,
+        durationMs: Long,
+        width: Int,
+        height: Int,
+        remote: Boolean,
+        /** UI 上显示的原始文件名。**判容器扩展名时是必需的兜底**：本地 content:// URI 里
+         *  没有文件名，只靠 URL 判会把 AVI/WMV 放过去（模拟器实测）。 */
+        displayName: String = "",
+    ) {
         if (boundFileId == fileId) {
             refreshLayerState()
             return
@@ -789,6 +823,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         // 档位换在这（起播之前）：本地与 LAN 的缓冲预算不同，见 [ensurePlayerProfile]
         ensurePlayerProfile(remote)
         boundFileId = fileId
+        boundDisplayName = displayName
         mediaUrl = url
         // 备播状态跟着这一路走：换项必须重新问过（上一项的「能播了」不算数）
         remoteSource = remote
@@ -808,6 +843,7 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
         stopPlayback()
         resetSurface()
         boundFileId = null
+        boundDisplayName = ""
         mediaUrl = ""
         fallbackDurationMs = 0L
     }
@@ -875,8 +911,8 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
     fun start() {
         val url = mediaUrl
         if (boundFileId == null || url.isEmpty()) return
-        // ⚠️ 取不到扩展名一律放行：本地 content:// URI 没有文件名，判不了就不误伤。
-        val ext = containerExtOf(url)
+        // ⚠️ 取不到扩展名一律放行（不误伤）；本地项靠 [boundDisplayName] 兜底才判得出来。
+        val ext = containerExtOf(url, boundDisplayName)
         if (ext.isNotEmpty() && ext !in PLAYABLE_CONTAINERS) {
             onUnsupported?.invoke(ext)
             return
@@ -1315,7 +1351,27 @@ internal class VideoLayerView(context: Context) : FrameLayout(context) {
 
     private fun scheduleChromeHide() {
         mainHandler.removeCallbacks(hideChrome)
+        // 有东西按着就不排期（更多菜单开着时不能让顶栏滑走，见 chromeHold 注释）
+        if (chromeHold > 0) return
         if (wantsToWatch) mainHandler.postDelayed(hideChrome, CHROME_IDLE_MS)
+    }
+
+    /**
+     * 按住工具栏的自动收起，配对调用 [releaseChrome]。
+     *
+     * 用于独立窗口的弹层（更多菜单）：弹层不跟顶栏一起动，顶栏一滑走它就悬空，
+     * 自校准还会顺着走掉的锚点把弹层拽一次。按住期间顶栏原地不动；释放后重新起算
+     * 2 秒（不是"立刻收"——用户刚关掉菜单，多半还要接着操作）。
+     */
+    fun holdChrome() {
+        chromeHold++
+        mainHandler.removeCallbacks(hideChrome)
+    }
+
+    /** 松开 [holdChrome]；计数归零才恢复收起计时。 */
+    fun releaseChrome() {
+        if (chromeHold > 0) chromeHold--
+        if (chromeHold == 0) scheduleChromeHide()
     }
 
     private val hideChrome = Runnable { if (wantsToWatch) hideChromeNow() }

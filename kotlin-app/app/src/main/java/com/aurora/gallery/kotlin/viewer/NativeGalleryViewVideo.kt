@@ -31,6 +31,8 @@ internal fun NativeGalleryView.syncVideoLayer() {
             item.fileId, item.path, item.durationMs, item.width, item.height,
             // LAN 项走小缓冲档：本地读文件不占网络，WiFi 上 50 秒囤积就是几十 MB 突发
             remote = item.isLan,
+            // 容器判定的兜底（本地 content:// URI 不带文件名，只靠 URL 判不出 avi/wmv）
+            displayName = item.name,
         )
         if (autoplay) {
             android.util.Log.i(NativeGalleryView.TAG, "视频翻页后自动起播: ${item.name}")

@@ -55,12 +55,7 @@ internal fun MainActivity.ensureViewer(): NativeGalleryView = viewer ?: NativeGa
             onDone(ok)
         }
     }
-    it.resetLocalVideoCover = { contentUri, onDone ->
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) { viewModel.thumbnailLoader.clearVideoCovers(contentUri) }
-            onDone(ok)
-        }
-    }
+    // （2026-10-22：`resetLocalVideoCover` 注入随菜单项「重新抽帧」一并移除。）
     // （2026-10-22：LAN 视频备播回调已移除 —— 桌面端不再为手机转码，视频层直接起播。）
     viewer = it
 }
