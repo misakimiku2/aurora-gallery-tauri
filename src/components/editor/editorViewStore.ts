@@ -23,6 +23,32 @@ const views = new Map<string, EditorViewSnapshot>();
 const listeners = new Set<() => void>();
 let flushScheduled = false;
 
+/**
+ * 「把某个点移到视口中央」的请求（全览图点击/拖动发出的）。
+ *
+ * `nonce` 用来区分「新的请求」与「上一次的旧值」——拖动时同一秒内会连发很多次，
+ * 只比较坐标会让"拖回原位"被判定为没变化。
+ */
+export interface PanRequest {
+  /** 代理图像素坐标 */
+  imgX: number;
+  imgY: number;
+  nonce: number;
+}
+
+const panRequests = new Map<string, PanRequest>();
+let panNonce = 0;
+
+/** 请画布把 (imgX, imgY)（代理图像素）移到视口中央。 */
+export function requestPanTo(tabId: string, imgX: number, imgY: number): void {
+  panRequests.set(tabId, { imgX, imgY, nonce: ++panNonce });
+  scheduleNotify();
+}
+
+export function peekPanRequest(tabId: string): PanRequest | undefined {
+  return panRequests.get(tabId);
+}
+
 function scheduleNotify() {
   if (flushScheduled) return;
   flushScheduled = true;

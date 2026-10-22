@@ -13,7 +13,7 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Eye, Image as ImageIcon, Plus } from 'lucide-react';
 import { EditorNavigator } from './EditorNavigator';
-import { getEditorView, subscribeEditorView } from './editorViewStore';
+import { getEditorView, requestPanTo, subscribeEditorView } from './editorViewStore';
 import { useEditorThumbnail } from './useEditorThumbnail';
 
 interface EditorPanelProps {
@@ -97,6 +97,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           imgWidth={previewWidth}
           imgHeight={previewHeight}
           view={view}
+          onNavigate={(x, y) => requestPanTo(tabId, x, y)}
         />
       </Section>
 

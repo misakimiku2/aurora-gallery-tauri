@@ -38,8 +38,9 @@ import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
-import { clearEditorView, setEditorView } from './editorViewStore';
+import { clearEditorView, peekPanRequest, setEditorView, subscribeEditorView } from './editorViewStore';
 import {
+  buildPreviewKey,
   EditorPreviewMeta,
   peekPreview,
   putPreview,
@@ -110,11 +111,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   // ---- 加载代理图 ----
   // 缓存键含裁剪参数：同一文件的不同裁剪结果是不同的图，必须分开缓存，
   // 否则「裁完再打开」会命中旧图。
-  const cacheKey = sourcePath
-    ? docCrop
-      ? `${sourcePath}#${docCrop.x},${docCrop.y},${docCrop.w},${docCrop.h}`
-      : sourcePath
-    : null;
+  const cacheKey = sourcePath ? buildPreviewKey(sourcePath, docCrop) : null;
 
   useEffect(() => {
     if (!sourcePath || !cacheKey) {
@@ -276,6 +273,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   }, [tabId, preview, transform, containerSize]);
 
   useEffect(() => () => clearEditorView(tabId), [tabId]);
+
+  // ---- 全览图发来的导航请求：把指定点移到视口中央 ----
+  const panRequest = useSyncExternalStore(subscribeEditorView, () => peekPanRequest(tabId));
+  const lastPanNonceRef = useRef(0);
+  useEffect(() => {
+    if (!panRequest || panRequest.nonce === lastPanNonceRef.current) return;
+    lastPanNonceRef.current = panRequest.nonce;
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setTransform(prev => ({
+      ...prev,
+      x: rect.width / 2 - panRequest.imgX * prev.scale,
+      y: rect.height / 2 - panRequest.imgY * prev.scale,
+    }));
+  }, [panRequest]);
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {

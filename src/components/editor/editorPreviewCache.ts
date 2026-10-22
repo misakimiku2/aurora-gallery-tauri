@@ -26,6 +26,20 @@ const CACHE_LIMIT = 6;
 const cache = new Map<string, EditorPreviewMeta>();
 const listeners = new Set<() => void>();
 
+/**
+ * 缓存键：文件路径 + 裁剪参数。
+ *
+ * **必须包含裁剪**——「裁剪前」和「裁剪后」是两张不同的图，共用键会让裁剪完成后
+ * 右侧面板仍然显示旧尺寸/旧缩略图（实测踩过：画布已变 1360×1440，面板还写着
+ * 3440×1440）。画布与右侧面板都通过这个函数取键，避免两处各写一遍又漏一处。
+ */
+export function buildPreviewKey(
+  path: string,
+  crop?: { x: number; y: number; w: number; h: number } | null,
+): string {
+  return crop ? `${path}#${crop.x},${crop.y},${crop.w},${crop.h}` : path;
+}
+
 function notify() {
   listeners.forEach(l => l());
 }

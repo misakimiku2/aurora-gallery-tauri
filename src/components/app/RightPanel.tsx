@@ -2,7 +2,7 @@ import React, { useSyncExternalStore } from 'react';
 import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
 import { EditorPanel } from '../editor/EditorPanel';
-import { peekPreview, subscribePreview } from '../editor/editorPreviewCache';
+import { buildPreviewKey, peekPreview, subscribePreview } from '../editor/editorPreviewCache';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
 
@@ -47,10 +47,11 @@ export const RightPanel = ({
   // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
   // 代理图元信息从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用
   // 把 0.5MB 的 data URL 提升到 React state（那会被 tabs 持久化带进 localStorage）。
-  const editorPath = activeTab.editorDocument?.path;
+  // 键必须与画布同源（含裁剪参数），否则裁完面板还显示旧尺寸。
+  const editorDoc = activeTab.editorDocument;
   const editorMeta = useSyncExternalStore(
     subscribePreview,
-    () => (editorPath ? peekPreview(editorPath) : undefined)
+    () => (editorDoc?.path ? peekPreview(buildPreviewKey(editorDoc.path, editorDoc.crop)) : undefined)
   );
 
   return (
