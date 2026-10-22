@@ -67,6 +67,8 @@ export const RightPanel = ({
               rotation: editorDoc.rotation,
               flipH: editorDoc.flipH,
               flipV: editorDoc.flipV,
+              // **故意不放 adjust**：调色只走 CSS/SVG 滤镜，不重新生成代理图，
+              // 否则每拖一格滑杆就要重跑一次 Rust（0.5s），手感直接废掉。
             }),
           )
         : undefined

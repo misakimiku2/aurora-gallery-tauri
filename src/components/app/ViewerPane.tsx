@@ -125,11 +125,15 @@ export const ViewerPane = ({
             tool={tab.editorTool ?? 'move'}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             isActive={tab.id === state.activeTabId}
+            // 注意：这里是把 editorDocument 的变换字段逐个喂给编辑器。
+            // 新增变换字段时**必须同时补到这里**——之前漏了 adjust，
+            // 结果滑杆能改、画布永远拿不到调色（用户实测：拖动完全没反应）。
             docTransform={{
               crop: tab.editorDocument?.crop,
               rotation: tab.editorDocument?.rotation,
               flipH: tab.editorDocument?.flipH,
               flipV: tab.editorDocument?.flipV,
+              adjust: tab.editorDocument?.adjust,
             }}
             onFileCreated={onEditorFileCreated}
             onDocTransformChange={next =>
