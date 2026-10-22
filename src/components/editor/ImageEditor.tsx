@@ -166,6 +166,28 @@ interface LayerProxyResponse {
   dataUrl: string;
 }
 
+/**
+ * 按路径合并同一张图的代理请求。
+ *
+ * 两处需要它：
+ * 1. **StrictMode**——dev 下 effect 会跑两遍，不合并就会把同一张图解码两次；
+ * 2. 初始化与缩略图/导入可能同时要同一张图。
+ *
+ * 失败不缓存（`delete` 后重新抛），否则一次偶发失败会把这路径永久钉死。
+ */
+const proxyPromises = new Map<string, Promise<LayerProxyResponse>>();
+
+function loadLayerProxy(path: string): Promise<LayerProxyResponse> {
+  const hit = proxyPromises.get(path);
+  if (hit) return hit;
+  const p = invoke<LayerProxyResponse>('editor_load_layer_proxy', { path }).catch(e => {
+    proxyPromises.delete(path);
+    throw e;
+  });
+  proxyPromises.set(path, p);
+  return p;
+}
+
 const FIT_PADDING = 60;
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 8;
@@ -328,7 +350,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     initStartedRef.current = doc.path;
 
     let cancelled = false;
-    invoke<LayerProxyResponse>('editor_load_layer_proxy', { path: doc.path })
+    loadLayerProxy(doc.path)
       .then(res => {
         if (cancelled) return;
         const m = orientationToBox(
@@ -370,6 +392,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
     return () => {
       cancelled = true;
+      /**
+       * ⚠️ **必须在清理时把标记清掉**。
+       *
+       * `main.tsx` 开着 `React.StrictMode`，dev 下 effect 会「挂载 → 清理 → 再挂载」。
+       * 若这里保留 `initStartedRef`，第 2 次 effect 会被 ref 直接挡回去，而第 1 次的
+       * promise 又因 `cancelled` 把结果丢掉 —— 初始化永远不完成，表现为画布一直停在
+       * 「正在打开…」且尺寸 0×0（实测踩过）。
+       *
+       * 清掉之后第 2 次会重新发起；第 1 次的过期结果仍由 `cancelled` 拦住，不会重复建层。
+       */
+      if (initStartedRef.current === doc.path) initStartedRef.current = null;
     };
   }, [doc, needsInit, onDocumentChange]);
 
@@ -383,9 +416,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     if (!proxyKey || !activeLayer?.source) return;
     if (takePreview(proxyKey)) return;
     let cancelled = false;
-    invoke<EditorPreviewMeta>('editor_load_layer_proxy', { path: activeLayer.source })
+    // 与初始化共用同一个请求（`loadLayerProxy` 按路径去重），不会为了缩略图再解一次
+    loadLayerProxy(activeLayer.source)
       .then(res => {
-        if (!cancelled) putPreview(proxyKey, res);
+        if (cancelled) return;
+        putPreview(proxyKey, {
+          width: res.naturalWidth,
+          height: res.naturalHeight,
+          previewWidth: res.previewWidth,
+          previewHeight: res.previewHeight,
+          dataUrl: res.dataUrl,
+        });
       })
       .catch(() => {
         /* 缩略图失败不影响编辑，面板会退回图标占位 */
@@ -693,7 +734,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       if (!picked || typeof picked !== 'string') return;
 
       // 与开文档同一条路：尺寸与 EXIF 方向都问 Rust，浏览器只负责画像素
-      const res = await invoke<LayerProxyResponse>('editor_load_layer_proxy', { path: picked });
+      const res = await loadLayerProxy(picked);
       const layer = createOrientedImageLayer({
         id: `layer-${Date.now().toString(36)}`,
         source: picked,
