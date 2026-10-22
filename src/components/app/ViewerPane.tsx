@@ -122,6 +122,14 @@ export const ViewerPane = ({
             tool={tab.editorTool ?? 'move'}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             isActive={tab.id === state.activeTabId}
+            docCrop={tab.editorDocument?.crop}
+            onDocCropChange={crop =>
+              updateTabById(tab.id, prev => ({
+                editorDocument: prev.editorDocument
+                  ? { ...prev.editorDocument, crop, dirty: true }
+                  : prev.editorDocument,
+              }))
+            }
           />
         </div>
       ))}

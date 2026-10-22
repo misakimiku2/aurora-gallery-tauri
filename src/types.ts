@@ -528,6 +528,13 @@ export interface EditorDocument {
   name: string;
   /** 未保存圆点 */
   dirty: boolean;
+  /**
+   * 累积裁剪（**相对源文件**的像素坐标，左上原点）。undefined = 未裁剪。
+   *
+   * 存绝对坐标而不是"上一次裁剪的增量"：这样连裁三次也是从原图切一次，
+   * 后端永远只做一次 `crop_image`，不会累积重编码损失。
+   */
+  crop?: { x: number; y: number; w: number; h: number };
 }
 
 /**

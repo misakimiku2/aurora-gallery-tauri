@@ -5,9 +5,10 @@
 //! 走 `aurora_core::imaging`，前端拿到的是已经降采样的 JPEG，**永远看不到源图全分辨率
 //! 像素**。Phase 2 的图层合成会在这条链路上继续往 core 里加，而不是把像素搬进前端。
 
-use aurora_core::imaging::{self, EncodeFormat};
+use aurora_core::imaging::{self, CropRect, EncodeFormat};
 use base64::{engine::general_purpose, Engine as _};
-use serde::Serialize;
+use image::RgbaImage;
+use serde::{Deserialize, Serialize};
 
 /// 代理图最长边上限（设计方案 §3.1：代理图长边 ≤ 2048px）。
 ///
@@ -41,6 +42,46 @@ pub struct EditorPreview {
     pub data_url: String,
 }
 
+/// 裁剪请求（原图像素坐标，左上原点）。
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct CropRequest {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl From<CropRequest> for CropRect {
+    fn from(v: CropRequest) -> Self {
+        CropRect::new(v.x, v.y, v.w, v.h)
+    }
+}
+
+/// RGBA → 代理图的统一出口。
+///
+/// `width`/`height` 报的是**当前文档尺寸**（裁剪之后），不是源文件尺寸 ——
+/// 与 PS 一致：裁完画布就变小了，状态栏显示的应该是新尺寸。
+fn build_preview(rgba: &RgbaImage) -> Result<EditorPreview, String> {
+    let (width, height) = (rgba.width(), rgba.height());
+
+    let proxy = imaging::resize_to_max_edge(rgba, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
+    let (preview_width, preview_height) = (proxy.width(), proxy.height());
+
+    let jpeg =
+        imaging::encode(&proxy, EncodeFormat::Jpeg, PREVIEW_JPEG_QUALITY).map_err(|e| e.to_string())?;
+
+    Ok(EditorPreview {
+        width,
+        height,
+        preview_width,
+        preview_height,
+        data_url: format!(
+            "data:image/jpeg;base64,{}",
+            general_purpose::STANDARD.encode(&jpeg)
+        ),
+    })
+}
+
 /// 解码源图并生成代理图。
 ///
 /// 编辑器只接受 `core::imaging` 认的格式（avif / svg / jxl 在 Phase 0 就被排除了），
@@ -49,26 +90,24 @@ pub struct EditorPreview {
 pub async fn editor_load_preview(path: String) -> Result<EditorPreview, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
-        let (width, height) = (rgba.width(), rgba.height());
-
-        let proxy =
-            imaging::resize_to_max_edge(&rgba, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
-        let (preview_width, preview_height) = (proxy.width(), proxy.height());
-
-        let jpeg = imaging::encode(&proxy, EncodeFormat::Jpeg, PREVIEW_JPEG_QUALITY)
-            .map_err(|e| e.to_string())?;
-
-        Ok(EditorPreview {
-            width,
-            height,
-            preview_width,
-            preview_height,
-            data_url: format!(
-                "data:image/jpeg;base64,{}",
-                general_purpose::STANDARD.encode(&jpeg)
-            ),
-        })
+        build_preview(&rgba)
     })
     .await
     .map_err(|e| format!("代理图任务失败: {e}"))?
+}
+
+/// 按矩形裁剪并重新生成代理图。
+///
+/// `crop` 是**相对源文件**的坐标（不是相对上一次裁剪的结果）—— 前端的累积裁剪
+/// 由它自己换算成绝对坐标后传进来。这样连着裁三次也只会从原图切一次，
+/// 不会累积重编码损失。
+#[tauri::command]
+pub async fn editor_crop_preview(path: String, crop: CropRequest) -> Result<EditorPreview, String> {
+    tokio::task::spawn_blocking(move || {
+        let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
+        let cropped = imaging::crop_image(&rgba, crop.into()).map_err(|e| e.to_string())?;
+        build_preview(&cropped)
+    })
+    .await
+    .map_err(|e| format!("裁剪任务失败: {e}"))?
 }

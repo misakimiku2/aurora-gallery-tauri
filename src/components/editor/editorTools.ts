@@ -40,7 +40,7 @@ export interface EditorToolDef {
 export const EDITOR_TOOLS: EditorToolDef[] = [
   { id: 'move', label: '移动', shortcut: 'V', icon: Move, available: true },
   { id: 'transform', label: '自由变换', shortcut: 'Ctrl+T', icon: Scaling, available: false },
-  { id: 'crop', label: '裁剪', shortcut: 'C', icon: Crop, available: false, dividerBefore: true },
+  { id: 'crop', label: '裁剪', shortcut: 'C', icon: Crop, available: true, dividerBefore: true },
   { id: 'hand', label: '抓手', shortcut: 'H', icon: Hand, available: true, dividerBefore: true },
   { id: 'zoom', label: '缩放', shortcut: 'Z', icon: ZoomIn, available: true },
   { id: 'eyedropper', label: '吸管', shortcut: 'I', icon: Pipette, available: false, dividerBefore: true },

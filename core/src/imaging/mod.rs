@@ -35,10 +35,12 @@
 //! 注意排除只针对**编辑器入口**：入库扫描的 `file_types::SUPPORTED_IMAGE_EXTENSIONS`
 //! 仍然识别 avif/svg/jxl（它们在画廊里照常显示，只是不能进编辑器）。
 
+mod crop;
 mod decode;
 mod encode;
 mod resize;
 
+pub use crop::{crop_image, CropRect};
 pub use decode::{
     decode_bytes, decode_file, is_excluded_extension, EDITOR_DECODABLE_EXTENSIONS,
     EDITOR_EXCLUDED_EXTENSIONS,
@@ -64,6 +66,15 @@ pub enum ImageError {
     UnsupportedFormat(String),
     #[error("图像尺寸无效: {0}×{1}")]
     InvalidDimensions(u32, u32),
+    #[error("裁剪区域超出图像范围: {x},{y} {w}×{h}（源图 {src_w}×{src_h}）")]
+    CropOutOfBounds {
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+        src_w: u32,
+        src_h: u32,
+    },
 }
 
 #[cfg(test)]
@@ -152,8 +163,52 @@ mod tests {
         }
     }
 
-    /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。
-    ///
+    #[test]
+    fn crop_takes_the_exact_sub_rect() {
+        let src = sample(10, 8);
+        let out = crop_image(&src, CropRect::new(2, 3, 4, 5)).expect("裁剪失败");
+        assert_eq!((out.width(), out.height()), (4, 5));
+        // 裁剪是纯几何操作：切出来的像素必须与原图逐点相同（连裁多次不累积损失的前提）
+        for y in 0..5 {
+            for x in 0..4 {
+                assert_eq!(out.get_pixel(x, y), src.get_pixel(2 + x, 3 + y));
+            }
+        }
+    }
+
+    #[test]
+    fn crop_rejects_out_of_bounds_instead_of_clamping() {
+        let src = sample(10, 8);
+        // 静默截断会掩盖坐标换算错误（把 CSS px 当图片 px、或忘了除缩放倍数），
+        // 表现为「裁出来少一块」且极难定位，所以越界必须报错
+        assert!(matches!(
+            crop_image(&src, CropRect::new(8, 0, 5, 5)),
+            Err(ImageError::CropOutOfBounds { .. })
+        ));
+        assert!(matches!(
+            crop_image(&src, CropRect::new(0, 6, 5, 5)),
+            Err(ImageError::CropOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn crop_rejects_zero_size() {
+        let src = sample(10, 8);
+        assert!(matches!(
+            crop_image(&src, CropRect::new(0, 0, 0, 5)),
+            Err(ImageError::InvalidDimensions(0, 5))
+        ));
+    }
+
+    #[test]
+    fn crop_full_is_a_no_op() {
+        let src = sample(9, 7);
+        assert!(CropRect::full(9, 7).is_full(9, 7));
+        let out = crop_image(&src, CropRect::full(9, 7)).expect("裁剪失败");
+        assert_eq!(out.into_raw(), src.into_raw());
+    }
+
+    /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。    ///
     /// 用法：
     /// ```text
     /// AURORA_IMAGING_BENCH="D:/big.png" \

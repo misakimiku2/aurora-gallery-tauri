@@ -36,6 +36,7 @@ import type { EditorToolId } from '../../types';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
+import { CropOverlay, CropArea } from './CropOverlay';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
 import { clearEditorView, setEditorView } from './editorViewStore';
 import {
@@ -62,6 +63,10 @@ interface ImageEditorProps {
    * 而键盘监听挂在 window 上 —— 不做这个判断，按一次 `V` 会让所有编辑器一起切工具。
    */
   isActive: boolean;
+  /** 已应用的累积裁剪（相对源文件的绝对坐标）；undefined = 未裁剪 */
+  docCrop?: { x: number; y: number; w: number; h: number };
+  /** 裁剪确认后回报；调用方负责写进 TabState.editorDocument 并置 dirty */
+  onDocCropChange: (crop: { x: number; y: number; w: number; h: number }) => void;
 }
 
 const FIT_PADDING = 60;
@@ -79,6 +84,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   tool,
   onToolChange,
   isActive,
+  docCrop,
+  onDocCropChange,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
@@ -87,6 +94,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [altHeld, setAltHeld] = useState(false);
+  /** 裁剪框（当前文档坐标，源图单位）。null = 不在裁剪态 */
+  const [cropRect, setCropRect] = useState<CropArea | null>(null);
   const hasFittedRef = useRef(false);
   const draggingRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
@@ -99,14 +108,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   isActiveRef.current = isActive;
 
   // ---- 加载代理图 ----
+  // 缓存键含裁剪参数：同一文件的不同裁剪结果是不同的图，必须分开缓存，
+  // 否则「裁完再打开」会命中旧图。
+  const cacheKey = sourcePath
+    ? docCrop
+      ? `${sourcePath}#${docCrop.x},${docCrop.y},${docCrop.w},${docCrop.h}`
+      : sourcePath
+    : null;
+
   useEffect(() => {
-    if (!sourcePath) {
+    if (!sourcePath || !cacheKey) {
       setPreview(null);
       setError(null);
       return;
     }
 
-    const cached = takePreview(sourcePath);
+    const cached = takePreview(cacheKey);
     if (cached) {
       setPreview(cached);
       setError(null);
@@ -120,10 +137,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     setError(null);
     hasFittedRef.current = false;
 
-    invoke<EditorPreviewMeta>('editor_load_preview', { path: sourcePath })
+    // cacheKey 已经涵盖 docCrop 的全部字段，所以依赖里不必再放 docCrop 对象
+    // （每次都新建对象会让依赖恒变，导致无谓的重新加载）
+    const request = docCrop
+      ? invoke<EditorPreviewMeta>('editor_crop_preview', { path: sourcePath, crop: docCrop })
+      : invoke<EditorPreviewMeta>('editor_load_preview', { path: sourcePath });
+
+    request
       .then(result => {
         if (cancelled) return;
-        putPreview(sourcePath, result);
+        putPreview(cacheKey, result);
         setPreview(result);
       })
       .catch((e: unknown) => {
@@ -138,17 +161,54 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [sourcePath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheKey, sourcePath]);
 
   // 缓存被外部刷新时（例如保存回写后 invalidate）跟着更新
   const cachedMeta = useSyncExternalStore(
     subscribePreview,
-    () => (sourcePath ? peekPreview(sourcePath) : undefined),
+    () => (cacheKey ? peekPreview(cacheKey) : undefined),
   );
   useEffect(() => {
     if (!cachedMeta) return;
     setPreview(prev => (prev === cachedMeta ? prev : cachedMeta));
   }, [cachedMeta]);
+
+  // ---- 裁剪 ----
+  // 进入裁剪工具时框复位为整图（PS 里点裁剪工具显示的就是整图框）
+  useEffect(() => {
+    if (tool !== 'crop' || !preview) {
+      setCropRect(null);
+      return;
+    }
+    setCropRect({ x: 0, y: 0, w: preview.width, h: preview.height });
+  }, [tool, preview]);
+
+  const commitCrop = useCallback(() => {
+    if (!cropRect || !preview) return;
+    const w = Math.round(cropRect.w);
+    const h = Math.round(cropRect.h);
+    if (w < 1 || h < 1) return;
+    // 框的坐标是相对**当前文档**的，要叠到已有裁剪的原点才能得到源图绝对坐标。
+    // 后端永远只对源图切一次，所以连裁多次不会累积重编码损失。
+    onDocCropChange({
+      x: Math.round((docCrop?.x ?? 0) + cropRect.x),
+      y: Math.round((docCrop?.y ?? 0) + cropRect.y),
+      w,
+      h,
+    });
+    onToolChange('move');
+  }, [cropRect, preview, docCrop, onDocCropChange, onToolChange]);
+
+  const cancelCrop = useCallback(() => {
+    onToolChange('move');
+  }, [onToolChange]);
+
+  // 键盘监听只依赖 onToolChange，不跟着 cropRect 每次变化重绑 → 用 ref 取最新实现
+  const commitCropRef = useRef(commitCrop);
+  commitCropRef.current = commitCrop;
+  const cancelCropRef = useRef(cancelCrop);
+  cancelCropRef.current = cancelCrop;
 
   // ---- 视图 ----
   const fitToView = useCallback(() => {
@@ -268,6 +328,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+0 / Ctrl+1 等后续再接
+
+      // 裁剪：Enter 确认 / Esc 取消（PS 行为）
+      if (toolRef.current === 'crop') {
+        if (e.key === 'Enter') {
+          commitCropRef.current();
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'Escape') {
+          cancelCropRef.current();
+          e.preventDefault();
+          return;
+        }
+      }
 
       const next = EDITOR_SHORTCUT_KEYS[e.key.toLowerCase()];
       if (next) {
@@ -417,7 +491,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         </div>
 
         {/* 工具选项条 */}
-        <EditorOptionsBar tool={tool} scale={transform.scale} onZoomTo={zoomTo} onFit={fitToView} />
+        <EditorOptionsBar
+          tool={tool}
+          scale={transform.scale}
+          onZoomTo={zoomTo}
+          onFit={fitToView}
+          cropRect={cropRect}
+          onCropCommit={commitCrop}
+          onCropCancel={cancelCrop}
+        />
 
         {/* 画布 */}
         <div
@@ -460,6 +542,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 maxWidth: 'none',
                 maxHeight: 'none',
               }}
+            />
+          )}
+          {preview && !error && tool === 'crop' && (
+            <CropOverlay
+              docWidth={preview.width}
+              docHeight={preview.height}
+              // 代理图 / 源图 的比例：裁剪框以源图坐标为准，显示时按它投影到屏幕
+              proxyScale={preview.width > 0 ? preview.previewWidth / preview.width : 1}
+              transform={transform}
+              rect={cropRect}
+              onChange={setCropRect}
             />
           )}
         </div>

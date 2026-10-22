@@ -13,6 +13,10 @@ interface EditorOptionsBarProps {
   scale: number;
   onZoomTo: (scale: number) => void;
   onFit: () => void;
+  /** 裁剪框当前尺寸（源图像素）；null = 还没开始拉框 */
+  cropRect?: { x: number; y: number; w: number; h: number } | null;
+  onCropCommit?: () => void;
+  onCropCancel?: () => void;
 }
 
 /** 裁剪比例预设（UI 设计 §7.1 的平台封面清单，待拍板项第 1 条）。 */
@@ -34,6 +38,9 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   scale,
   onZoomTo,
   onFit,
+  cropRect,
+  onCropCommit,
+  onCropCancel,
 }) => {
   const def = getEditorTool(tool);
 
@@ -62,15 +69,33 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
         <>
           <div className="flex items-center gap-1">
             {CROP_PRESETS.map(p => (
-              <span key={p.label} className={chip}>
+              <span key={p.label} className={chip} title="比例约束尚未接入">
                 {p.label}
               </span>
             ))}
           </div>
           <span className={`${label} ml-2`}>宽 × 高</span>
-          <span className={chip}>— × —</span>
-          <span className="ml-auto text-[11px] text-amber-600 dark:text-amber-400">
-            裁剪尚未接入：下一步实现
+          <span className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-200 w-24 shrink-0">
+            {cropRect ? `${Math.round(cropRect.w)} × ${Math.round(cropRect.h)}` : '— × —'}
+          </span>
+          <div className="flex items-center gap-1 ml-1">
+            <button
+              type="button"
+              onClick={onCropCommit}
+              className="px-2.5 h-6 rounded text-[11px] bg-blue-600 text-white hover:bg-blue-700"
+            >
+              应用裁剪
+            </button>
+            <button
+              type="button"
+              onClick={onCropCancel}
+              className="px-2.5 h-6 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+            >
+              取消
+            </button>
+          </div>
+          <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500">
+            Enter 应用 · Esc 取消 · 拖动框内可移动
           </span>
         </>
       )}
