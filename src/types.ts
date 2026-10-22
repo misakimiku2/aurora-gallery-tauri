@@ -530,6 +530,27 @@ export interface EditorDocument {
   dirty: boolean;
 }
 
+/**
+ * 编辑器工具（键位与语义照 Photoshop，UI 设计 §3）。
+ *
+ * Phase 1 只放行 `move` / `transform` / `crop` / `hand` / `zoom`；其余是骨架占位，
+ * 工具栏上灰显——**故意显示出来而不是藏起来**，因为 PS 的心智是"工具在那儿，
+ * 我还没用到"，藏起来反而让人以为产品缺功能。
+ */
+export type EditorToolId =
+  | 'move'
+  | 'transform'
+  | 'crop'
+  | 'hand'
+  | 'zoom'
+  | 'eyedropper'
+  | 'brush'
+  | 'eraser'
+  | 'fill'
+  | 'text'
+  | 'pen'
+  | 'shape';
+
 export interface TabState {
   id: string;
   folderId: string;
@@ -562,6 +583,8 @@ export interface TabState {
   sessionName?: string;
   /** 图片编辑文档句柄；仅 `viewMode === 'editor'` 时有值，与 `isCompareMode` 互斥 */
   editorDocument?: EditorDocument;
+  /** 图片编辑：当前选中的工具。未设 = `move`（PS 默认工具） */
+  editorTool?: EditorToolId;
   scrollToItemId?: string;
   history: {
     stack: HistoryItem[];

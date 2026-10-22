@@ -116,8 +116,11 @@ export const ViewerPane = ({
       {state.tabs.map(tab => tab.viewMode === 'editor' && (
         <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
           <ImageEditor
+            tabId={tab.id}
             sourcePath={tab.editorDocument?.path ?? null}
             documentName={tab.editorDocument?.name || '未命名'}
+            tool={tab.editorTool ?? 'move'}
+            onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             onClose={() => updateTabById(tab.id, { viewMode: 'browser', editorDocument: undefined })}
           />
         </div>

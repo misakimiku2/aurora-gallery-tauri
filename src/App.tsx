@@ -373,6 +373,8 @@ export const App: React.FC = () => {
                 viewingFileId: null,
                 isCompareMode: false,
                 editorDocument: { path: target.path, name: target.name, dirty: false },
+                // PS 默认工具是移动；每次进编辑器都复位，避免带着上次的工具进来
+                editorTool: 'move' as const,
               }
             : t
         ),

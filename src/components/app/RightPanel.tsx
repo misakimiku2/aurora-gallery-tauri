@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
+import { EditorPanel } from '../editor/EditorPanel';
+import { peekPreview, subscribePreview } from '../editor/editorPreviewCache';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
 
@@ -42,6 +44,15 @@ export const RightPanel = ({
   handlePerformSearch,
   toggleColorPicker,
 }: RightPanelProps) => {
+  // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
+  // 代理图元信息从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用
+  // 把 0.5MB 的 data URL 提升到 React state（那会被 tabs 持久化带进 localStorage）。
+  const editorPath = activeTab.editorDocument?.path;
+  const editorMeta = useSyncExternalStore(
+    subscribePreview,
+    () => (editorPath ? peekPreview(editorPath) : undefined)
+  );
+
   return (
     <>
       <div
@@ -50,6 +61,16 @@ export const RightPanel = ({
         <div
           className="h-full flex flex-col"
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
+          {activeTab.viewMode === 'editor' ? (
+            <EditorPanel
+              previewDataUrl={editorMeta?.dataUrl}
+              documentName={activeTab.editorDocument?.name || '未命名'}
+              width={editorMeta?.width ?? 0}
+              height={editorMeta?.height ?? 0}
+              previewWidth={editorMeta?.previewWidth ?? 0}
+              previewHeight={editorMeta?.previewHeight ?? 0}
+            />
+          ) : (
           <MetadataPanel
             files={state.files}
             selectedFileIds={activeTab.selectedFileIds}
@@ -74,6 +95,7 @@ export const RightPanel = ({
             settings={state.settings}
             aiConnectionStatus={state.aiConnectionStatus}
           />
+          )}
         </div>
       </div>
       {isAndroidPlatformCached() && (
