@@ -29,7 +29,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, Loader2, Maximize2, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
 import type { EditorToolId } from '../../types';
@@ -37,6 +37,7 @@ import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
+import { clearEditorView, setEditorView } from './editorViewStore';
 import {
   EditorPreviewMeta,
   peekPreview,
@@ -54,7 +55,13 @@ interface ImageEditorProps {
   documentName: string;
   tool: EditorToolId;
   onToolChange: (tool: EditorToolId) => void;
-  onClose: () => void;
+  /**
+   * 是否为当前激活的 Tab。
+   *
+   * 多个编辑器标签会同时挂载（非激活的用 `hidden` 藏起来，但**没有卸载**），
+   * 而键盘监听挂在 window 上 —— 不做这个判断，按一次 `V` 会让所有编辑器一起切工具。
+   */
+  isActive: boolean;
 }
 
 const FIT_PADDING = 60;
@@ -71,7 +78,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   documentName,
   tool,
   onToolChange,
-  onClose,
+  isActive,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
@@ -88,6 +95,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const altHeldRef = useRef(false);
   const toolRef = useRef(tool);
   toolRef.current = tool;
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
 
   // ---- 加载代理图 ----
   useEffect(() => {
@@ -180,6 +189,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     }
   }, [preview, fitToView]);
 
+  // ---- 视口尺寸 → 共享给全览图（RightPanel 树里的 Navigator 要画视口框）----
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!preview) return;
+    setEditorView(tabId, {
+      scale: transform.scale,
+      x: transform.x,
+      y: transform.y,
+      containerWidth: containerSize.w,
+      containerHeight: containerSize.h,
+      imgWidth: preview.previewWidth,
+      imgHeight: preview.previewHeight,
+    });
+  }, [tabId, preview, transform, containerSize]);
+
+  useEffect(() => () => clearEditorView(tabId), [tabId]);
+
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
     const el = containerRef.current;
@@ -213,6 +250,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   // ---- 键盘：工具切换 + 空格抓手 ----
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // 只有激活的编辑器标签才吃键盘（多个编辑器会同时挂载）
+      if (!isActiveRef.current) return;
       // 输入框/可编辑区域内不抢键（UI 设计 §8.2 的让路规则）
       if (isTextEditingTarget(e.target)) return;
 
@@ -370,18 +409,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             onClick={fitToView}
             disabled={!preview}
             className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="适应窗口"
+            // 与画布工具栏的「查看全部」同一个图标、同一个语义
+            title="查看全部"
           >
-            <Maximize2 size={15} />
-          </button>
-          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
-            title="关闭编辑器"
-          >
-            <X size={15} />
+            <Scan size={15} />
           </button>
         </div>
 

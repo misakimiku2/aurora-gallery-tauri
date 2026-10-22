@@ -63,6 +63,7 @@ export const RightPanel = ({
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
           {activeTab.viewMode === 'editor' ? (
             <EditorPanel
+              tabId={activeTab.id}
               previewDataUrl={editorMeta?.dataUrl}
               documentName={activeTab.editorDocument?.name || '未命名'}
               width={editorMeta?.width ?? 0}

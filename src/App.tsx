@@ -348,37 +348,42 @@ export const App: React.FC = () => {
   }, []);
 
   /**
-   * 图片编辑（C11）：在当前 Tab 里打开编辑器。
+   * 图片编辑（C11）：**新开一个标签页**打开编辑器，与「画布」（参考模式）同一心智。
    *
-   * 单点定义、两处入口共用（网格右键 + 查看器右键），避免「互斥规则」两份实现漂移。
-   * 三件事必须一起做：
-   * - `viewMode: 'editor'` —— 与 `isCompareMode` **互斥**（UI 设计 §1.1），
-   * - `viewingFileId: null` —— 否则查看器继续盖在上面，
-   * - `isCompareMode: false` —— 参考板与工作台不能同屏。
+   * 用户 2026-10-22 的验收意见：「编辑功能本身就是一个标签页，就像画布那样，
+   * 关闭标签就等于关闭编辑器」。所以这里不去改写当前标签——原来的网格标签留在
+   * 原地，关掉编辑器标签就回到它。这与 `useNavigation.handleOpenCompareInNewTab`
+   * 的建 Tab 方式一致（同一个 `DUMMY_TAB` 底，同样的 history 初值）。
    *
-   * 用函数式 setState 而不是读外层 `state`：这样 useCallback 零依赖，
-   * 也不会因为文件列表刷新导致回调重建。
+   * 单点定义、两处入口共用（网格右键 + 查看器右键），避免互斥规则两份实现漂移。
    */
   const openInEditor = useCallback((fileId: string) => {
     setState(prev => {
       const target = prev.files[fileId];
       if (!target?.path) return prev;
-      return {
-        ...prev,
-        tabs: prev.tabs.map(t =>
-          t.id === prev.activeTabId
-            ? {
-                ...t,
-                viewMode: 'editor' as const,
-                viewingFileId: null,
-                isCompareMode: false,
-                editorDocument: { path: target.path, name: target.name, dirty: false },
-                // PS 默认工具是移动；每次进编辑器都复位，避免带着上次的工具进来
-                editorTool: 'move' as const,
-              }
-            : t
-        ),
+      const current = prev.tabs.find(t => t.id === prev.activeTabId) ?? DUMMY_TAB;
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).slice(2, 11),
+        folderId: current.folderId,
+        viewMode: 'editor',
+        editorDocument: { path: target.path, name: target.name, dirty: false },
+        // PS 默认工具；新文档一律复位，避免继承上次的工具
+        editorTool: 'move',
+        history: {
+          stack: [{
+            folderId: current.folderId,
+            viewingId: null,
+            viewMode: 'browser',
+            searchQuery: '',
+            searchScope: 'all',
+            activeTags: [],
+            activePersonId: null,
+          }],
+          currentIndex: 0,
+        },
       };
+      return { ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id };
     });
   }, []);
 

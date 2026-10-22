@@ -121,7 +121,7 @@ export const ViewerPane = ({
             documentName={tab.editorDocument?.name || '未命名'}
             tool={tab.editorTool ?? 'move'}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
-            onClose={() => updateTabById(tab.id, { viewMode: 'browser', editorDocument: undefined })}
+            isActive={tab.id === state.activeTabId}
           />
         </div>
       ))}

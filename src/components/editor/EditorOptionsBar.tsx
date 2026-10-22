@@ -102,7 +102,7 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
               onClick={onFit}
               className="px-2 h-6 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700"
             >
-              适应窗口
+              查看全部
             </button>
           </div>
           <span className={`${label} ml-2`}>当前 {Math.round(scale * 100)}%</span>

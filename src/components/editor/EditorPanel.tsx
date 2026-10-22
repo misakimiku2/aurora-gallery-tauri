@@ -1,18 +1,25 @@
 /**
  * 编辑态右侧面板组（UI 设计 §4，PS 式）。
  *
- * 容器复用现有右面板（`RightPanel.tsx` 的 20rem 抽屉），内容在编辑态换成这一套；
- * 浏览态仍是 `MetadataPanel`。**不做选项卡、不做拖拽重排**——首版固定顺序堆叠、
- * 每个面板可折叠即可（UI 设计 §4.2 的推荐）。
+ * 顺序按用户 2026-10-22 的验收意见重排：**全览图置顶、图层沉底**。
+ * 这与 PS 的默认面板栈一致——Navigator 在最上，Layers 在最下，中间是属性类面板。
  *
- * Phase 1 的定位是**骨架**：面板、分组、视觉层级先到位，里面的图层模型与调色
- * 还没接引擎。所以每个面板都用 `pending` 标注哪些控件还没通，不装作可用。
+ * 容器复用现有右面板（`RightPanel` 的 20rem 抽屉），内容在编辑态换成这一套；
+ * 浏览态仍是 `MetadataPanel`。**不做选项卡、不做拖拽重排**（UI 设计 §4.2 推荐）。
+ *
+ * Phase 1 是**骨架**：面板、分组、视觉层级先到位，图层模型与调色还没接引擎。
+ * 每个面板都用文字说明哪些控件还没通，不装作可用。
  */
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Eye, Image as ImageIcon, Plus } from 'lucide-react';
+import { EditorNavigator } from './EditorNavigator';
+import { getEditorView, subscribeEditorView } from './editorViewStore';
+import { useEditorThumbnail } from './useEditorThumbnail';
 
 interface EditorPanelProps {
-  /** 代理图 data URL，只用于图层缩略图 */
+  /** 当前 Tab id：用于订阅该 Tab 的视口状态 */
+  tabId: string;
+  /** 代理图 data URL */
   previewDataUrl?: string;
   documentName: string;
   width: number;
@@ -62,6 +69,7 @@ const Slider: React.FC<{ label: string }> = ({ label }) => (
 );
 
 export const EditorPanel: React.FC<EditorPanelProps> = ({
+  tabId,
   previewDataUrl,
   documentName,
   width,
@@ -71,36 +79,30 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 }) => {
   const isProxy = previewWidth !== width || previewHeight !== height;
 
+  // 全览图的视口框需要编辑器画布的 scale/x/y —— 从共享 store 拿（rAF 节流）
+  const view = useSyncExternalStore(subscribeEditorView, () => getEditorView(tabId));
+
+  // 全览图用较长边的缩略（320 足够 20rem 面板宽度）
+  const navigatorThumb = useEditorThumbnail(previewDataUrl, 320);
+  // 图层行按 40px 显示，给 96px 源（2x 屏也清晰）；两个尺寸各算一次，
+  // 都是逐级减半的高质量降采样，避免用户看到的 64 倍缩小锯齿
+  const layerThumb = useEditorThumbnail(previewDataUrl, 96);
+
   return (
     <div className="h-full flex flex-col overflow-y-auto bg-panel">
-      {/* 图层 */}
-      <Section title="图层" hint="1 个">
-        <div className="flex items-center gap-2 px-1.5 py-1 rounded bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
-          <Eye size={12} className="text-neutral-500 shrink-0" />
-          <div className="w-8 h-8 shrink-0 rounded-sm overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
-            {previewDataUrl ? (
-              <img src={previewDataUrl} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <ImageIcon size={12} className="text-neutral-400" />
-            )}
-          </div>
-          <span className="text-[11px] truncate text-neutral-700 dark:text-neutral-200">背景</span>
-        </div>
-        <button
-          type="button"
-          disabled
-          className="w-full h-7 flex items-center justify-center gap-1 rounded border border-dashed border-neutral-300 dark:border-neutral-600 text-[11px] text-neutral-400 cursor-not-allowed"
-        >
-          <Plus size={11} /> 新建图层
-        </button>
-        <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          多图层、混合模式、不透明度将在 Phase 2 接入；现在是单图文档。
-        </p>
+      {/* 全览（PS 的 Navigator，置顶） */}
+      <Section title="全览">
+        <EditorNavigator
+          thumb={navigatorThumb}
+          imgWidth={previewWidth}
+          imgHeight={previewHeight}
+          view={view}
+        />
       </Section>
 
       {/* 属性 · 调整 */}
       <Section title="属性 · 调整">
-        <Row label="文档" value={documentName.length > 14 ? `${documentName.slice(0, 14)}…` : documentName} />
+        <Row label="文档" value={documentName.length > 16 ? `${documentName.slice(0, 16)}…` : documentName} />
         <Row label="画布" value={`${width} × ${height}`} />
         {isProxy && <Row label="代理" value={`${previewWidth} × ${previewHeight}`} />}
         <div className="pt-1 space-y-2">
@@ -142,6 +144,31 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       <Section title="文字" defaultOpen={false} hint="选中文字图层后可用">
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
           字体、字号、行距、描边、阴影——随文字工具一起在 Phase 2 接入。
+        </p>
+      </Section>
+
+      {/* 图层（用户要求沉到最下；与 PS 的默认面板栈一致） */}
+      <Section title="图层" hint="1 个">
+        <div className="flex items-center gap-2 px-1.5 py-1.5 rounded bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+          <Eye size={12} className="text-neutral-500 shrink-0" />
+          <div className="w-10 h-10 shrink-0 rounded-sm overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
+            {layerThumb ? (
+              <img src={layerThumb} alt="" className="w-full h-full object-cover" draggable={false} />
+            ) : (
+              <ImageIcon size={13} className="text-neutral-400" />
+            )}
+          </div>
+          <span className="text-[11px] truncate text-neutral-700 dark:text-neutral-200">背景</span>
+        </div>
+        <button
+          type="button"
+          disabled
+          className="w-full h-7 flex items-center justify-center gap-1 rounded border border-dashed border-neutral-300 dark:border-neutral-600 text-[11px] text-neutral-400 cursor-not-allowed"
+        >
+          <Plus size={11} /> 新建图层
+        </button>
+        <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
+          多图层、混合模式、不透明度将在 Phase 2 接入；现在是单图文档。
         </p>
       </Section>
     </div>
