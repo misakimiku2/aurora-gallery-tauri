@@ -44,7 +44,9 @@ import {
   Loader2,
   RotateCcw,
   RotateCw,
+  Redo2,
   Scan,
+  Undo2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -57,6 +59,7 @@ import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
 import { flipCropRect, rotateCropRect } from './cropGeometry';
 import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
+import { isSameGeometry, isSameTransform } from './transformState';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
 import { clearEditorView, peekPanRequest, setEditorView, subscribeEditorView } from './editorViewStore';
 import {
@@ -136,6 +139,104 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     () => toFeColorMatrixValues(buildAdjustMatrix(docAdjust)),
     [docAdjust],
   );
+
+  // ---- 撤销 / 重做 ----
+  //
+  // 历史记录的是**变换参数**而不是像素：一次撤销只是把 {crop, rotation, adjust}
+  // 换回上一组值，再由 Rust 重新渲染。代价是一次重新生成代理图（约 0.5s），
+  // 换来的是历史不占内存（存图像字节会瞬间吃掉几百 MB）。
+  //
+  // 连续操作要合并：拖动调色滑杆每秒能产生上百次 onChange，逐条入栈的话
+  // Ctrl+Z 要按几百下才回得去。所以同一类操作在 700ms 内**替换栈顶**而不是新增。
+  const [history, setHistory] = useState<{
+    stack: EditorTransform[];
+    index: number;
+    lastKey?: string;
+    lastAt: number;
+  }>({ stack: [], index: -1, lastAt: 0 });
+  const historyInitRef = useRef<string | null>(null);
+
+  /** 当前文档变换（用于入栈） */
+  const currentTransform: EditorTransform = {
+    crop: docCrop,
+    rotation: docRotation,
+    flipH: docFlipH,
+    flipV: docFlipV,
+    adjust: docAdjust,
+  };
+
+  // 打开文档（或换文档）时以当前状态作为历史起点
+  useEffect(() => {
+    if (!sourcePath) return;
+    if (historyInitRef.current === sourcePath) return;
+    historyInitRef.current = sourcePath;
+    setHistory({ stack: [currentTransform], index: 0, lastAt: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourcePath]);
+
+  // 所有变更（画布侧的裁剪/旋转/翻转 + 面板侧的调色）最终都会落到 docTransform 上，
+  // 所以统一在这里入栈 —— 一处收口，不用在每个 handler 里各自记一次。
+  const applyingHistoryRef = useRef(false);
+  const lastRecordedRef = useRef<EditorTransform | null>(null);
+
+  useEffect(() => {
+    if (!sourcePath) return;
+    const snap: EditorTransform = {
+      crop: docCrop,
+      rotation: docRotation,
+      flipH: docFlipH,
+      flipV: docFlipV,
+      adjust: docAdjust,
+    };
+    const prev = lastRecordedRef.current;
+    lastRecordedRef.current = snap;
+    if (!prev) return; // 第一次由上面的 sourcePath 分支建栈
+    if (applyingHistoryRef.current) {
+      applyingHistoryRef.current = false; // 这次变化是撤销/重做自己造成的，不能再入栈
+      return;
+    }
+    if (isSameTransform(prev, snap)) return; // 只是对象引用换了，值没变
+
+    // 只有调色在动 = 用户正拖着滑杆 → 合并进栈顶，否则 Ctrl+Z 要按几百下
+    const geometryUnchanged = isSameGeometry(prev, snap);
+
+    setHistory(h => {
+      const merge = geometryUnchanged && Date.now() - h.lastAt < 700 && h.stack.length > 0;
+      const head = h.stack.slice(0, merge ? h.index : h.index + 1);
+      head.push(snap);
+      return { stack: head, index: head.length - 1, lastAt: Date.now() };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docCrop, docRotation, docFlipH, docFlipV, docAdjust, sourcePath]);
+
+  const canUndo = history.index > 0;
+  const canRedo = history.index >= 0 && history.index < history.stack.length - 1;
+
+  const applyHistoryAt = useCallback(
+    (index: number) => {
+      const snap = history.stack[index];
+      if (!snap) return;
+      applyingHistoryRef.current = true;
+      setHistory(prev => ({ ...prev, index, lastKey: undefined, lastAt: 0 }));
+      onDocTransformChange(snap);
+    },
+    [history.stack, onDocTransformChange],
+  );
+
+  const undo = useCallback(() => {
+    if (!canUndo) return;
+    applyHistoryAt(history.index - 1);
+  }, [canUndo, history.index, applyHistoryAt]);
+
+  const redo = useCallback(() => {
+    if (!canRedo) return;
+    applyHistoryAt(history.index + 1);
+  }, [canRedo, history.index, applyHistoryAt]);
+
+  const undoRef = useRef(undo);
+  undoRef.current = undo;
+  const redoRef = useRef(redo);
+  redoRef.current = redo;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
   const [loading, setLoading] = useState(false);
@@ -552,6 +653,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         setAltHeld(true);
         return;
       }
+      // 撤销 / 重做：必须在下面那句「带修饰键就不管」之前处理
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redoRef.current();
+        else undoRef.current();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redoRef.current();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+0 / Ctrl+1 等后续再接
 
       // 裁剪：Enter 确认 / Esc 取消（PS 行为）
@@ -714,6 +827,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             </span>
           )}
           <div className="flex-1" />
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo2 size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="重做 (Ctrl+Shift+Z)"
+          >
+            <Redo2 size={15} />
+          </button>
+          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
           {/* 旋转 / 翻转：与裁剪同属几何变换，都只改文档状态，导出时由 Rust 在
               原图上一次性套用（不会因为连点几次而累积重编码损失） */}
           <button
