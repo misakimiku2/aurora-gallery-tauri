@@ -515,11 +515,33 @@ export interface HistoryItem {
   currentPage?: number;
 }
 
+/**
+ * 图片编辑（C11）文档句柄（UI 设计 §1.1）。
+ *
+ * 挂在 Tab 上而不是全局：一个 Tab 一个文档，多文档靠多 Tab——与本应用既有心智一致，
+ * 也避免在 Tab 内再造一层文档切换 UI。
+ */
+export interface EditorDocument {
+  /** 源文件路径；未保存的新文档为 undefined */
+  path?: string;
+  /** Tab 标题用 */
+  name: string;
+  /** 未保存圆点 */
+  dirty: boolean;
+}
+
 export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
+  /**
+   * `'editor'` = 图片编辑态（C11）。
+   *
+   * 它与 `isCompareMode` **互斥**——参考板与工作台不能共存于一个 Tab，两个独立布尔会
+   * 产生「都为 true」的非法态，在 UI 上表现为随机崩一半（UI 设计 §1.1）。旧持久化数据
+   * 没有这个取值，读出即浏览态。
+   */
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'editor';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;
@@ -538,6 +560,8 @@ export interface TabState {
   currentPage: number;
   isCompareMode: boolean;
   sessionName?: string;
+  /** 图片编辑文档句柄；仅 `viewMode === 'editor'` 时有值，与 `isCompareMode` 互斥 */
+  editorDocument?: EditorDocument;
   scrollToItemId?: string;
   history: {
     stack: HistoryItem[];

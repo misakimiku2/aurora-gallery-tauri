@@ -16,7 +16,7 @@ import {
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette, Clipboard,
-  Scan, AlertTriangle
+  Scan, AlertTriangle, Pencil
 } from 'lucide-react';
 
 
@@ -333,6 +333,12 @@ interface ViewerProps {
   onEditTags: () => void;
   onCopyTags: () => void;
   onAIAnalysis: (fileId: string) => void;
+  /**
+   * 图片编辑（C11）：在编辑器中打开这张图。
+   * 只对**本地**图片提供——LAN/安卓设备的图没有可直接解码的本地路径，
+   * 编辑器需要真路径走 `editor_load_preview`。不传则不显示入口。
+   */
+  onOpenEditor?: (fileId: string) => void;
   isAISearchEnabled: boolean;
   onToggleAISearch: () => void;
   t: (key: string) => string;
@@ -380,6 +386,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   onMoveToFolder,
   onNavigateToFolder,
   onAIAnalysis,
+  onOpenEditor,
   isAISearchEnabled,
   onToggleAISearch,
   t,
@@ -2405,6 +2412,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           <div className={menuItemClass} onClick={() => { onViewInExplorer(file.id); closeMenu(); }}>
             <ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
           </div>
+          {/* 图片编辑（C11）：只对本地图片给入口——LAN/安卓设备的图没有本地路径，
+              编辑器要靠真路径解码（`editor_load_preview`）。 */}
+          {!isVideo && (file.source === undefined || file.source === 'local') && onOpenEditor && (
+            <div className={menuItemClass} onClick={() => { onOpenEditor(file.id); closeMenu(); }}>
+              <Pencil size={iconSize} className="mr-2 opacity-70" /> 编辑图片
+            </div>
+          )}
           {(() => {
             const parentId = file.parentId;
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;

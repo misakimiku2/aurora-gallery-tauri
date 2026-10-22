@@ -2746,7 +2746,7 @@ export const App: React.FC = () => {
             handleReferenceModeChange={handleReferenceModeChange}
             isReferenceMode={isReferenceMode}
           />
-          <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
+          <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode || activeTab.viewMode === 'editor' ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
             <ToolbarPane
               lanUploadInputRef={lanUploadInputRef}
               handleUploadFilesSelected={handleUploadFilesSelected}

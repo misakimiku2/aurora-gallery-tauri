@@ -13,6 +13,9 @@ pub mod import_commands;
 pub mod system_commands;
 pub mod window_commands;
 pub mod color_commands;
+// 图片编辑器（C11 Phase 1）：仅桌面端注册，安卓端 T1 形态另议（UI 设计 §9）。
+#[cfg(not(target_os = "android"))]
+pub mod editor_commands;
 
 #[cfg(not(target_os = "android"))]
 pub mod clip;
@@ -2004,6 +2007,8 @@ pub fn run() {
         save_remote_thumbnail,
         image_utils::get_avif_preview,
         image_utils::get_jxl_preview,
+        // 图片编辑 C11 Phase 1：源文件 → 代理图（解码/缩放全在 core::imaging）
+        editor_commands::editor_load_preview,
         generate_drag_preview,
         system_commands::read_file_as_base64,
         file_operations::ensure_directory,

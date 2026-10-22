@@ -1,6 +1,7 @@
 import React from 'react';
 import { ImageViewer } from '../ImageViewer';
 import { ImageComparer } from '../ImageComparer';
+import { ImageEditor } from '../editor/ImageEditor';
 import { isAndroidSync } from '../../utils/androidPlatform';
 import { AppState, FileNode, FileType, TabState } from '../../types';
 
@@ -97,6 +98,18 @@ export const ViewerPane = ({
           onEditTags={() => setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: activeTab.viewingFileId } } }))}
           onCopyTags={() => handleCopyTags([activeTab.viewingFileId!])}
           onAIAnalysis={(id) => handleAIAnalysis([id])}
+          onOpenEditor={(fileId) => {
+            const target = state.files[fileId];
+            if (!target?.path) return;
+            // 进编辑器必须同时清掉查看器与参考模式：`viewMode === 'editor'` 与
+            // `isCompareMode` 是互斥的两个形态（UI 设计 §1.1），同 Tab 不能并存。
+            updateTabById(activeTab.id, {
+              viewMode: 'editor',
+              viewingFileId: null,
+              isCompareMode: false,
+              editorDocument: { path: target.path, name: target.name, dirty: false },
+            });
+          }}
           isAISearchEnabled={state.settings.search.isAISearchEnabled}
           onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
           t={t}
@@ -106,6 +119,17 @@ export const ViewerPane = ({
           handleAddToCompareCanvas={handleAddToCompareCanvas}
         />
       )}
+      {/* 图片编辑器（C11）：与参考模式互斥——`viewMode === 'editor'` 与 `isCompareMode`
+          不会同时成立（入口处强制清掉另一个），所以这里不需要额外的互斥门控。 */}
+      {state.tabs.map(tab => tab.viewMode === 'editor' && (
+        <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
+          <ImageEditor
+            sourcePath={tab.editorDocument?.path ?? null}
+            documentName={tab.editorDocument?.name || '未命名'}
+            onClose={() => updateTabById(tab.id, { viewMode: 'browser', editorDocument: undefined })}
+          />
+        </div>
+      ))}
       {state.tabs.map(tab => tab.isCompareMode && (
         <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
           <ImageComparer

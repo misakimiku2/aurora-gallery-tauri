@@ -1,6 +1,6 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
-import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin, HardDrive } from 'lucide-react';
+import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin, HardDrive, Pencil } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -130,6 +130,9 @@ export const TabBar: React.FC<TabBarProps> = ({
 
     if (tab.isCompareMode) return tab.sessionName || "画布01";
 
+    // 图片编辑（C11）：Tab 标题 = 文档名（UI 设计 §2）
+    if (tab.viewMode === 'editor') return tab.editorDocument?.name || "未命名";
+
     // Check if viewing a file inside a Book or Sequence folder
     if (tab.viewingFileId) {
       const file = files[tab.viewingFileId];
@@ -155,6 +158,8 @@ export const TabBar: React.FC<TabBarProps> = ({
     if (tab.viewMode === 'people-overview') return <User size={12} className="mr-1 text-purple-500 dark:text-purple-400" />;
 
     if (tab.isCompareMode) return <Scan size={12} className="mr-1 text-blue-500" />;
+
+    if (tab.viewMode === 'editor') return <Pencil size={12} className="mr-1 text-emerald-500" />;
 
     if (tab.viewingFileId) {
       const file = files[tab.viewingFileId];

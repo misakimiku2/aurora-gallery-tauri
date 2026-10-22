@@ -659,6 +659,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       return t('context.allPeople');
     }
     if (activeTab.isCompareMode) return activeTab.sessionName || '画布01';
+    // 图片编辑（C11）：顶栏标题跟随编辑器文档名
+    if (activeTab.viewMode === 'editor') return activeTab.editorDocument?.name || '未命名';
     if (activeTab.viewingFileId) {
       const file = state.files[activeTab.viewingFileId];
       if (file && file.parentId) {
