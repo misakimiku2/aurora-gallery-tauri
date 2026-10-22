@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ComparisonItem } from './types';
 
-const makeRotateCursor = (isDark: boolean) => {
-    const fill = isDark ? '%23ffffff' : '%23000000';
-    return `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M16 4v4l-4-4 4-4v4c4.42 0 8 3.58 8 8 0 1.57-.46 3.03-1.24 4.26L21.31 15a5.95 5.95 0 0 0 .69-2.74c0-3.31-2.69-6-6-6z' fill='${fill}'/%3E%3Cpath d='M16 28v-4l4 4-4 4v-4c-4.42 0-8-3.58-8-8 0-1.57.46-3.03 1.24-4.26L10.69 17a5.95 5.95 0 0 0-.69 2.74c0 3.31 2.69 6 6 6z' fill='${fill}'/%3E%3C/svg%3E") 16 16, alias`;
+/**
+ * 旋转手柄的光标。
+ *
+ * **双色描边**（白色外晕 + 黑色本体）：单一颜色必然有一半场景看不见——深色主题下
+ * 黑图标糊在背景里、浅色主题下白图标糊在白底上（用户实测反馈「描边太浅，完全看不清」）。
+ * 白晕负责在深底上分离轮廓，黑本体负责在浅底上可读，两个主题都成立。
+ *
+ * 图形沿用工具栏那个 `RotateCw`（lucide）的路径，只是把 viewBox 24 放大到 32 显示。
+ */
+const makeRotateCursor = () => {
+    const p = `%3Cpath d='M21.5 2v6h-6'/%3E%3Cpath d='M21.34 15.57a10 10 0 1 1-.57-8.38'/%3E`;
+    const svg =
+        `%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E` +
+        `%3Cg stroke='%23ffffff' stroke-width='4.5'%3E${p}%3C/g%3E` +
+        `%3Cg stroke='%23000000' stroke-width='2'%3E${p}%3C/g%3E` +
+        `%3C/svg%3E`;
+    return `url("data:image/svg+xml;charset=utf-8,${svg}") 16 16, alias`;
 };
 
 interface EditOverlayProps {
@@ -24,6 +38,10 @@ interface EditOverlayProps {
      * 唯一有意义的参照就是画布本身。不传 = 保持参考模式原有行为（纯增量改动）。
      */
     snapBounds?: { width: number; height: number };
+    /**
+     * @deprecated 自 2026-10-23 起不再影响旋转光标——光标改成"白晕 + 黑本体"的双色图标，
+     * 深浅主题下都能看清，不需要按主题切换。保留参数只是为了不动调用方。
+     */
     isDarkMode?: boolean;
     isEditMode?: boolean;
     isAndroid?: boolean;
@@ -100,7 +118,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     containerRef,
     isSnappingEnabled = true,
     snapBounds,
-    isDarkMode = false,
+    isDarkMode: _isDarkMode = false,
     isEditMode = true,
     isAndroid = false,
     onLongPress
@@ -670,7 +688,10 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                     if (pos === 'tc' || pos === 'bc') { style.left = '50%'; style.transform = 'translateX(-50%)'; }
                     if (pos === 'ml' || pos === 'mr') { style.top = '50%'; style.transform = 'translateY(-50%)'; }
 
-                    const cursors: Record<string, string> = { tl: 'nwse-resize', tr: 'nesw-resize', bl: 'nesw-resize', br: 'nwse-resize', tc: 'ns-resize', bc: 'ns-resize', ml: 'ew-resize', mr: 'ew-resize' };
+                    // ⚠️ 必须带 `cursor-` 前缀。原先写成 `nwse-resize` 这种裸名字，
+                    // Tailwind 里根本没有这个类 → 八个手柄全都没有方向光标，
+                    // 用户看到的就是画布那个统一的十字/移动光标（实测反馈）。
+                    const cursors: Record<string, string> = { tl: 'cursor-nwse-resize', tr: 'cursor-nesw-resize', bl: 'cursor-nesw-resize', br: 'cursor-nwse-resize', tc: 'cursor-ns-resize', bc: 'cursor-ns-resize', ml: 'cursor-ew-resize', mr: 'cursor-ew-resize' };
 
                     return (
                         <div
@@ -697,7 +718,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                                 borderRadius: isAndroid ? '50%' : '0',
                                 backgroundColor: isAndroid ? 'white' : 'transparent',
                                 border: isAndroid ? '1.5px solid #3b82f6' : 'none',
-                                cursor: makeRotateCursor(!!isDarkMode),
+                                cursor: makeRotateCursor(),
                                 zIndex: 110,
                                 display: 'flex',
                                 alignItems: 'center',

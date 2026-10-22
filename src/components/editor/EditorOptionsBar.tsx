@@ -28,6 +28,9 @@ interface EditorOptionsBarProps {
    */
   layerBox?: LayerBox;
   onLayerBoxChange?: (patch: Partial<LayerBox>) => void;
+  /** 吸附开关（拖动/缩放时贴画布边与中心） */
+  snapEnabled?: boolean;
+  onSnapToggle?: (enabled: boolean) => void;
 }
 
 /** 裁剪比例预设（UI 设计 §7.1 的平台封面清单）。`'doc'` = 跟随当前文档比例。 */
@@ -52,6 +55,30 @@ const ratioBtnActive =
 const numInput =
   'h-6 px-1 rounded text-[11px] tabular-nums border border-neutral-200 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200';
 
+/**
+ * 吸附开关。
+ *
+ * 放在**工具选项条**而不是文档栏：它只作用于当前工具（拖动/缩放时贴边），
+ * 与"旋转画布"那类文档级动作不是一个层级（设计稿 §10.1 的分界）。
+ */
+const SnapToggle: React.FC<{ enabled: boolean; onChange?: (v: boolean) => void }> = ({
+  enabled,
+  onChange,
+}) => (
+  <label
+    className={`${label} flex items-center gap-1.5 cursor-pointer select-none shrink-0`}
+    title="拖动 / 缩放时吸附到画布的四边与中心"
+  >
+    <input
+      type="checkbox"
+      checked={enabled}
+      onChange={e => onChange?.(e.target.checked)}
+      className="accent-blue-600"
+    />
+    吸附
+  </label>
+);
+
 /** 裁剪比例预设（UI 设计 §7.1 的平台封面清单，待拍板项第 1 条）。 */
 
 export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
@@ -67,6 +94,8 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   onCropRatioChange,
   layerBox,
   onLayerBoxChange,
+  snapEnabled = true,
+  onSnapToggle,
 }) => {
   const def = getEditorTool(tool);
 
@@ -81,12 +110,9 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
         <>
           <span className={label}>自动选择</span>
           <span className={chip}>无</span>
-          <label className={`${label} flex items-center gap-1.5 ml-2`}>
-            <input type="checkbox" disabled className="accent-blue-600" />
-            显示变换控件
-          </label>
-          <span className="ml-auto text-[11px] text-amber-600 dark:text-amber-400">
-            单图层文档：暂无可移动内容（图层功能在 Phase 2）
+          <SnapToggle enabled={snapEnabled} onChange={onSnapToggle} />
+          <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500">
+            拖动图层移动位置 · Ctrl+T 进入自由变换
           </span>
         </>
       )}
@@ -235,8 +261,9 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
               +90°
             </button>
           </div>
+          <SnapToggle enabled={snapEnabled} onChange={onSnapToggle} />
           <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500">
-            拖角缩放 · 四角外侧旋转 · 靠近画布边/中心会吸附 · Enter 提交 / Esc 取消
+            拖角缩放 · 四角外侧旋转 · Enter 提交 / Esc 取消
           </span>
         </>
       )}

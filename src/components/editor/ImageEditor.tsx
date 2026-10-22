@@ -538,6 +538,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   const [cropRatio, setCropRatio] = useState<number | null>(null);
 
+  /** 吸附开关（工具选项条上的那个）；默认开，与 PS 的「视图 > 对齐」同义 */
+  const [snapEnabled, setSnapEnabled] = useState(true);
+
   const handleCropRatioChange = useCallback(
     (ratio: number | null) => {
       setCropRatio(ratio);
@@ -1009,9 +1012,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         ? 'crosshair'
         : effectiveTool === 'hand'
           ? 'grab'
-          : effectiveTool === 'transform'
-            ? 'move'
-            : 'default';
+          : 'default';
 
   // 图层的 CSS 变换：定界框 + 自然尺寸 → 六参 → matrix()
   const buildLayerStyle = useCallback(
@@ -1050,13 +1051,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     [tabId],
   );
 
-  // 透明用棋盘格——PS 的通用表达，用户一眼知道"这里没东西"
-  const backgroundCss =
-    canvas?.background === 'white'
-      ? '#ffffff'
-      : canvas?.background === 'black'
-        ? '#000000'
-        : 'repeating-conic-gradient(#d4d4d4 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px';
+  // 透明用棋盘格——PS 的通用表达，用户一眼知道"这里没东西"。
+  //
+  // ⚠️ 格子必须是**屏幕空间固定大小**：这个 div 带着 `scale(transform.scale)`，
+  // 如果 background-size 写死 16px，缩小到 25% 时一个格子只剩 4 个屏幕像素，
+  // 密到糊成一片灰（用户实测："看起来像一块灰色的密密麻麻的东西"）。
+  // 所以按缩放**反向补偿**，让格子永远 16 个屏幕像素。
+  const checkerScale = transform.scale > 0 ? transform.scale : 1;
+  const checkerSize = `${16 / checkerScale}px ${16 / checkerScale}px`;
+  const isTransparentBg = !canvas?.background || canvas.background === 'transparent';
 
   const docName = doc?.name || '未命名';
   const isReady = !!canvas;
@@ -1191,6 +1194,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             docAspect={canvas && canvas.height > 0 ? canvas.width / canvas.height : undefined}
             onCropRatioChange={handleCropRatioChange}
             layerBox={activeLayer?.box}
+            snapEnabled={snapEnabled}
+            onSnapToggle={setSnapEnabled}
             onLayerBoxChange={patch => {
               if (!doc || !activeLayer) return;
               onDocumentChange({
@@ -1231,7 +1236,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                   transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
                   transformOrigin: '0 0',
                   overflow: 'hidden',
-                  background: backgroundCss,
+                  backgroundColor:
+                    canvas.background === 'black'
+                      ? '#000000'
+                      : canvas.background === 'white'
+                        ? '#ffffff'
+                        : '#ffffff',
+                  backgroundImage: isTransparentBg
+                    ? 'repeating-conic-gradient(#d0d0d0 0% 25%, #ffffff 0% 50%)'
+                    : undefined,
+                  backgroundSize: isTransparentBg ? checkerSize : undefined,
                   boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
                 }}
               >
@@ -1270,7 +1284,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 onUpdateItem={handleOverlayUpdate}
                 onRemoveItem={() => {}}
                 containerRef={containerRef}
-                isSnappingEnabled
+                isSnappingEnabled={snapEnabled}
                 snapBounds={{ width: canvas.width, height: canvas.height }}
                 isEditMode={tool === 'transform'}
                 isDarkMode={document.documentElement.classList.contains('dark')}
