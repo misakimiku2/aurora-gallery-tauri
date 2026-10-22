@@ -29,7 +29,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, Download, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, FileOutput, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
 import type { EditorToolId } from '../../types';
@@ -68,6 +68,14 @@ interface ImageEditorProps {
   docCrop?: { x: number; y: number; w: number; h: number };
   /** 裁剪确认后回报；调用方负责写进 TabState.editorDocument 并置 dirty */
   onDocCropChange: (crop: { x: number; y: number; w: number; h: number }) => void;
+  /**
+   * 导出成功后回调：调用方应重扫导出的目标文件夹，让新文件进库并出现在网格里。
+   *
+   * 不在这里直接调 `scan_file`：单文件扫描只返回节点，**不写数据库**，
+   * 网格的数据源是 `state.files`（来自扫描 + 库），单插一个节点会和库对不上。
+   * 走文件夹重扫是项目里已经验证过的路径。
+   */
+  onFileCreated?: (targetPath: string) => void;
 }
 
 const FIT_PADDING = 60;
@@ -87,6 +95,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   isActive,
   docCrop,
   onDocCropChange,
+  onFileCreated,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
@@ -332,11 +341,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         text: `已导出 ${res.width}×${res.height}（${Math.round(res.bytes / 1024)} KB）`,
       });
       setTimeout(() => setExportState({ status: 'idle' }), 4000);
+
+      // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）
+      onFileCreated?.(target);
     } catch (e) {
       setExportState({ status: 'error', text: String(e) });
       setTimeout(() => setExportState({ status: 'idle' }), 6000);
     }
-  }, [sourcePath, docCrop]);
+  }, [sourcePath, docCrop, onFileCreated]);
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -549,7 +561,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             {exportState.status === 'working' ? (
               <Loader2 size={15} className="animate-spin" />
             ) : (
-              <Download size={15} />
+              // FileOutput 而不是 Download：这是「把文档导出成图片」，不是从网上下载
+              <FileOutput size={15} />
             )}
           </button>
           <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />

@@ -2772,6 +2772,18 @@ export const App: React.FC = () => {
             requestDelete={requestDelete}
             handleViewInExplorer={handleViewInExplorer}
             onOpenEditor={openInEditor}
+            onEditorFileCreated={(targetPath) => {
+              // 导出落在「当前文件夹」里才需要刷新——存到别处时，下次进那个文件夹
+              // 自然会扫到，在这里重扫当前文件夹反而是白跑一次。
+              const folderPath = state.files[activeTab.folderId]?.path;
+              const targetDir = targetPath.slice(
+                0,
+                Math.max(targetPath.lastIndexOf('\\'), targetPath.lastIndexOf('/')),
+              );
+              if (folderPath && folderPath.replace(/[\\/]+$/, '') === targetDir) {
+                void handleRefreshAnySource();
+              }
+            }}
             setState={setState}
             enterFolder={enterFolder}
             handleViewerSearch={handleViewerSearch}
