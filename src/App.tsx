@@ -387,6 +387,51 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  /**
+   * 新建空白文档 = **画布存在而图层为空**（最小图层模型 v2 的第二个解锁点）。
+   *
+   * 开一个新标签页而不是替换当前文档：本应用的心智是"一个 Tab 一个文档"，
+   * 换掉当前文档会让没保存的编辑无处可退。
+   */
+  const openBlankDocument = useCallback(
+    (canvas: { width: number; height: number; background: 'transparent' | 'white' | 'black' }) => {
+      setState(prev => {
+        const current = prev.tabs.find(t => t.id === prev.activeTabId) ?? DUMMY_TAB;
+        const blankCount = prev.tabs.filter(
+          t => t.viewMode === 'editor' && !t.editorDocument?.path,
+        ).length;
+        const newTab: TabState = {
+          ...DUMMY_TAB,
+          id: Math.random().toString(36).slice(2, 11),
+          folderId: current.folderId,
+          viewMode: 'editor',
+          editorDocument: {
+            name: `未命名-${blankCount + 1}`,
+            dirty: false,
+            version: 2,
+            canvas,
+            layers: [],
+          },
+          editorTool: 'move',
+          history: {
+            stack: [{
+              folderId: current.folderId,
+              viewingId: null,
+              viewMode: 'browser',
+              searchQuery: '',
+              searchScope: 'all',
+              activeTags: [],
+              activePersonId: null,
+            }],
+            currentIndex: 0,
+          },
+        };
+        return { ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id };
+      });
+    },
+    [],
+  );
+
   const { tasks } = state;
 
   const { startTask, updateTask } = useTasks(state, setState, t);
@@ -2788,6 +2833,7 @@ export const App: React.FC = () => {
               // 存到别的目录时这次重扫是白跑一趟，但那点开销远小于"看起来没生效"。
               await handleRefreshAnySource();
             }}
+            onEditorNewDocument={openBlankDocument}
             setState={setState}
             enterFolder={enterFolder}
             handleViewerSearch={handleViewerSearch}

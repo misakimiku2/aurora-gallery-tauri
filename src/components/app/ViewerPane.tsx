@@ -23,6 +23,8 @@ interface ViewerPaneProps {
   onOpenEditor?: (fileId: string) => void;
   /** 编辑器导出成功后回调（参数为导出到的完整路径），用于重扫目标文件夹 */
   onEditorFileCreated?: (targetPath: string) => void | Promise<void>;
+  /** 新建空白文档：由 App 开一个新标签页（一个 Tab 一个文档） */
+  onEditorNewDocument?: (canvas: { width: number; height: number; background: 'transparent' | 'white' | 'black' }) => void;
   /** 编辑器文档栏两端的面板开关（复用应用 TopBar 的同一套） */
   onToggleSidebar: () => void;
   isSidebarVisible: boolean;
@@ -61,6 +63,7 @@ export const ViewerPane = ({
   handleViewInExplorer,
   onOpenEditor,
   onEditorFileCreated,
+  onEditorNewDocument,
   onToggleSidebar,
   isSidebarVisible,
   onToggleMetadata,
@@ -140,6 +143,7 @@ export const ViewerPane = ({
             onToggleMetadata={onToggleMetadata}
             isMetadataVisible={isMetadataVisible}
             onFileCreated={onEditorFileCreated}
+            onNewDocument={onEditorNewDocument}
             onDocumentChange={next =>
               updateTabById(tab.id, { editorDocument: next })
             }

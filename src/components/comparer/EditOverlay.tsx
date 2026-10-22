@@ -17,6 +17,13 @@ interface EditOverlayProps {
     onInteractionEnd?: () => void;
     containerRef?: React.RefObject<HTMLDivElement>;
     isSnappingEnabled?: boolean;
+    /**
+     * 画布尺寸——提供后，吸附目标额外包含**画布四边与画布中心**。
+     *
+     * 为什么需要：参考模式里吸附的是"其他项"，而编辑器单图层时没有第二项可对齐，
+     * 唯一有意义的参照就是画布本身。不传 = 保持参考模式原有行为（纯增量改动）。
+     */
+    snapBounds?: { width: number; height: number };
     isDarkMode?: boolean;
     isEditMode?: boolean;
     isAndroid?: boolean;
@@ -92,6 +99,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     onInteractionEnd,
     containerRef,
     isSnappingEnabled = true,
+    snapBounds,
     isDarkMode = false,
     isEditMode = true,
     isAndroid = false,
@@ -145,10 +153,30 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
             if (isSnappingEnabled) {
                 const selectedIds = selectedItems.map(si => si.id);
 
-                allItems.forEach(item => {
-                    if (item.id === activeItem.id || selectedIds.includes(item.id)) return;
+                // 吸附目标 = 其他项 + （编辑器传入的）画布边/中心。
+                // 两类目标统一成同一结构，匹配逻辑只写一遍——单图层编辑器没有
+                // "其他项"可对齐，画布才是唯一有意义的参照。
+                const targets: Array<{ id: string; box: ReturnType<typeof getRotatedAABB> }> = allItems
+                    .filter(item => item.id !== activeItem.id && !selectedIds.includes(item.id))
+                    .map(item => ({ id: item.id, box: getRotatedAABB(item) }));
 
-                    const o = getRotatedAABB(item);
+                if (snapBounds) {
+                    targets.push({
+                        id: 'canvas',
+                        box: {
+                            l: 0,
+                            t: 0,
+                            r: snapBounds.width,
+                            b: snapBounds.height,
+                            cx: snapBounds.width / 2,
+                            cy: snapBounds.height / 2,
+                            width: snapBounds.width,
+                            height: snapBounds.height
+                        }
+                    });
+                }
+
+                targets.forEach(({ id: targetId, box: o }) => {
                     const m = getRotatedAABB({ ...activeItem, x: newX, y: newY });
 
                     const proximityThreshold = 200 / transform.scale;
@@ -178,7 +206,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                                     pos: s.val,
                                     start: yMin,
                                     end: yMax,
-                                    targetId: item.id
+                                    targetId
                                 });
                             }
                         });
@@ -206,7 +234,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                                     pos: s.val,
                                     start: xMin,
                                     end: xMax,
-                                    targetId: item.id
+                                    targetId
                                 });
                             }
                         });
@@ -388,7 +416,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                 window.removeEventListener('touchcancel', handleEnd);
             }
         };
-    }, [dragType, activeItem, transform, onUpdateItem, allItems, isAndroid]);
+    }, [dragType, activeItem, transform, onUpdateItem, allItems, isAndroid, snapBounds, isSnappingEnabled]);
 
     useEffect(() => {
         if (!isAndroid || !overlayRef.current) return;

@@ -58,8 +58,10 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
   FileOutput,
+  FilePlus,
   FlipHorizontal2,
   FlipVertical2,
+  ImagePlus,
   Loader2,
   RotateCcw,
   RotateCw,
@@ -72,12 +74,15 @@ import {
   PanelRight,
 } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
+import { EditOverlay } from '../comparer/EditOverlay';
+import type { ComparisonItem } from '../comparer/types';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
-import type { EditorCanvas, EditorDocument, EditorLayer, EditorToolId } from '../../types';
+import type { EditorCanvas, EditorDocument, EditorLayer, EditorToolId, LayerBox } from '../../types';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
+import { NewDocumentDialog } from './NewDocumentDialog';
 import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
 import {
   buildLayerPreviewKey,
@@ -133,6 +138,8 @@ interface ImageEditorProps {
    * 网格的数据源是 `state.files`（来自扫描 + 库），单插一个节点会和库对不上。
    */
   onFileCreated?: (targetPath: string) => void | Promise<void>;
+  /** 新建空白文档（由上层开一个新标签页——一个 Tab 一个文档） */
+  onNewDocument?: (canvas: EditorCanvas) => void;
   /** 切换左侧面板（与应用 TopBar 同一套开关，含安卓端互斥逻辑） */
   onToggleSidebar: () => void;
   isSidebarVisible: boolean;
@@ -163,13 +170,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   isActive,
   onDocumentChange,
   onFileCreated,
+  onNewDocument,
   onToggleSidebar,
   isSidebarVisible,
   onToggleMetadata,
   isMetadataVisible,
 }) => {
   const canvas = doc?.canvas;
-  const layerCount = doc?.layers?.length ?? 0;
+  const layers = useMemo(() => doc?.layers ?? [], [doc]);
+  const layerCount = layers.length;
   const activeLayer = useMemo(() => (doc ? resolveActiveLayer(doc) : undefined), [doc]);
 
   // ---- 调色预览 ----
@@ -179,6 +188,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const adjust = activeLayer?.adjust;
   const hasAdjust = !isZeroAdjustments(adjust);
   const adjustValues = useMemo(() => toFeColorMatrixValues(buildAdjustMatrix(adjust)), [adjust]);
+
+  /**
+   * 每个图层一份滤镜。
+   *
+   * 不能所有图层共用 `adjustFilterId`：那张滤镜的矩阵来自**活动图层**，两个图层调色
+   * 不同时非活动层会被套上错的颜色。所以画布上每层引用自己的 id；`adjustFilterId`
+   * 保留给右侧面板的缩略图（它只显示活动图层）。
+   */
+  const layerFilterId = (layerId: string) => `aurora-editor-layer-${tabId}-${layerId}`;
+  const layerFilters = useMemo(
+    () =>
+      (doc?.layers ?? []).map(l => ({
+        id: layerFilterId(l.id),
+        values: toFeColorMatrixValues(buildAdjustMatrix(l.adjust)),
+        on: !isZeroAdjustments(l.adjust),
+      })),
+    // layerFilterId 只依赖 tabId，变化时 layers 也会变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [doc?.layers, tabId],
+  );
 
   // ---- 撤销 / 重做 ----
   const [history, setHistory] = useState<{ stack: DocSnapshot[]; index: number; lastAt: number }>({
@@ -270,6 +299,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   isActiveRef.current = isActive;
 
   const [error, setError] = useState<string | null>(null);
+  const [showNewDoc, setShowNewDoc] = useState(false);
 
   // ---- 文档初始化 ----
   //
@@ -540,6 +570,124 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const cancelCropRef = useRef(cancelCrop);
   cancelCropRef.current = cancelCrop;
 
+  // ---- 自由变换（Ctrl+T）----
+  //
+  // 交互层直接复用参考模式的 `EditOverlay`（八向缩放 / 四角旋转 / 对角锚定缩放数学
+  // 都在里面，2.2.1 已验收）。编辑器这边只做三处适配：
+  //   1. 坐标原点 = 画布左上（comparer 是无限桌面），画布容器已经 overflow:hidden；
+  //   2. 选中项 = 活动图层；
+  //   3. 吸附目标额外加上画布四边与中心（`snapBounds`，单图层没有别的项可对齐）。
+  // 变换结果写回 layer.box，预览靠 CSS、导出靠同一组矩阵，不经过 Rust 往返。
+  const transformStartRef = useRef<LayerBox | null>(null);
+
+  useEffect(() => {
+    if (tool === 'transform' && activeLayer) {
+      if (!transformStartRef.current) transformStartRef.current = activeLayer.box;
+    } else {
+      transformStartRef.current = null;
+    }
+  }, [tool, activeLayer]);
+
+  const overlayItem = useMemo((): ComparisonItem | null => {
+    if (!activeLayer) return null;
+    const b = activeLayer.box;
+    return {
+      id: activeLayer.id,
+      x: b.x,
+      y: b.y,
+      width: b.w,
+      height: b.h,
+      rotation: b.rotation,
+      src: activeLayer.source ?? '',
+      opacity: 1,
+    };
+  }, [activeLayer]);
+
+  /** `EditOverlay` 的字段名（x/width/height）→ 图层的定界框字段（x/w/h） */
+  const handleOverlayUpdate = useCallback(
+    (_id: string, updates: Partial<ComparisonItem>) => {
+      if (!doc || !activeLayer) return;
+      const box: LayerBox = { ...activeLayer.box };
+      if (updates.x !== undefined) box.x = updates.x;
+      if (updates.y !== undefined) box.y = updates.y;
+      if (updates.width !== undefined) box.w = updates.width;
+      if (updates.height !== undefined) box.h = updates.height;
+      if (updates.rotation !== undefined) box.rotation = updates.rotation;
+      onDocumentChange({
+        ...doc,
+        layers: (doc.layers ?? []).map(l => (l.id === activeLayer.id ? { ...l, box } : l)),
+        dirty: true,
+      });
+    },
+    [doc, activeLayer, onDocumentChange],
+  );
+
+  /** Esc 取消本次变换：把定界框还原到进入变换时的样子（PS 行为） */
+  const cancelTransform = useCallback(() => {
+    const start = transformStartRef.current;
+    if (start && doc && activeLayer) {
+      onDocumentChange({
+        ...doc,
+        layers: (doc.layers ?? []).map(l => (l.id === activeLayer.id ? { ...l, box: start } : l)),
+        dirty: true,
+      });
+    }
+    onToolChange('move');
+  }, [doc, activeLayer, onDocumentChange, onToolChange]);
+
+  const cancelTransformRef = useRef(cancelTransform);
+  cancelTransformRef.current = cancelTransform;
+
+  // ---- 导入图层 ----
+  //
+  // 从任意文件系统路径导入（不受资源根限制，设计方案 §6.2）。自然尺寸由浏览器读，
+  // 不必为此跑一趟 Rust。默认按 contain 居中落位（§10 第 5 条已拍板）。
+  const handleImportLayer = useCallback(async () => {
+    if (!doc || !canvas) return;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const picked = await open({
+        multiple: false,
+        filters: [
+          {
+            name: '图片',
+            extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'ico'],
+          },
+        ],
+      });
+      if (!picked || typeof picked !== 'string') return;
+
+      const img = new Image();
+      img.onload = () => {
+        const nw = img.naturalWidth;
+        const nh = img.naturalHeight;
+        if (!nw || !nh) {
+          setError(`读不到图层尺寸：${picked}`);
+          return;
+        }
+        const layer = createImageLayer({
+          id: `layer-${Date.now().toString(36)}`,
+          source: picked,
+          naturalWidth: nw,
+          naturalHeight: nh,
+          canvas,
+        });
+        onDocumentChange({
+          ...doc,
+          version: EDITOR_DOC_VERSION,
+          canvas,
+          layers: [...(doc.layers ?? []), layer],
+          activeLayerId: layer.id,
+          dirty: true,
+        });
+      };
+      img.onerror = () => setError(`无法打开这张图：${picked}`);
+      img.src = convertFileSrc(picked);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [doc, canvas, onDocumentChange]);
+
   // ---- 导出 ----
   const [exportState, setExportState] = useState<{
     status: 'idle' | 'working' | 'done' | 'error';
@@ -661,6 +809,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         redoRef.current();
         return;
       }
+      // Ctrl+T：进入/退出自由变换（PS 行为）
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        onToolChange(toolRef.current === 'transform' ? 'move' : 'transform');
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (toolRef.current === 'crop') {
@@ -671,6 +825,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         }
         if (e.key === 'Escape') {
           cancelCropRef.current();
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // 自由变换：Enter 提交 / Esc 取消（PS 行为）
+      if (toolRef.current === 'transform') {
+        if (e.key === 'Enter') {
+          onToolChange('move');
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'Escape') {
+          cancelTransformRef.current();
           e.preventDefault();
           return;
         }
@@ -766,30 +934,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         ? 'crosshair'
         : effectiveTool === 'hand'
           ? 'grab'
-          : 'default';
+          : effectiveTool === 'transform'
+            ? 'move'
+            : 'default';
 
   // 图层的 CSS 变换：定界框 + 自然尺寸 → 六参 → matrix()
-  const layerStyle = useMemo((): React.CSSProperties | undefined => {
-    if (!activeLayer) return undefined;
-    const m = composeMatrix(activeLayer.box, {
-      width: activeLayer.naturalWidth,
-      height: activeLayer.naturalHeight,
-    });
-    return {
-      position: 'absolute',
-      left: 0,
-      top: 0,
-      width: activeLayer.naturalWidth,
-      height: activeLayer.naturalHeight,
-      // transform-origin 必须是 0 0：矩阵是在"内容像素坐标"里算的
-      transformOrigin: '0 0',
-      transform: toCssMatrix(m),
-      filter: hasAdjust ? `url(#${adjustFilterId})` : undefined,
-      // Tailwind preflight 给所有 img 设了 max-width:100%，必须顶回去
-      maxWidth: 'none',
-      maxHeight: 'none',
-    };
-  }, [activeLayer, hasAdjust, adjustFilterId]);
+  const buildLayerStyle = useCallback(
+    (layer: EditorLayer): React.CSSProperties => {
+      const m = composeMatrix(layer.box, {
+        width: layer.naturalWidth,
+        height: layer.naturalHeight,
+      });
+      const filterOn = !isZeroAdjustments(layer.adjust);
+      return {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: layer.naturalWidth,
+        height: layer.naturalHeight,
+        // transform-origin 必须是 0 0：矩阵是在"内容像素坐标"里算的
+        transformOrigin: '0 0',
+        transform: toCssMatrix(m),
+        filter: filterOn ? `url(#${layerFilterId(layer.id)})` : undefined,
+        opacity: layer.visible ? 1 : 0,
+        // Tailwind preflight 给所有 img 设了 max-width:100%，必须顶回去
+        maxWidth: 'none',
+        maxHeight: 'none',
+      };
+    },
+    // layerFilterId 只依赖 tabId
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tabId],
+  );
 
   // 透明用棋盘格——PS 的通用表达，用户一眼知道"这里没东西"
   const backgroundCss =
@@ -804,11 +980,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const legacy = isLegacyEditorDocument(doc);
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden bg-neutral-100 dark:bg-neutral-900">
+    <div className="relative w-full h-full flex flex-col overflow-hidden bg-neutral-100 dark:bg-neutral-900">
       <svg className="absolute w-0 h-0 pointer-events-none" aria-hidden="true">
+        {/* 活动图层的那一份，右侧面板的缩略图按这个 id 引用 */}
         <filter id={adjustFilterId} colorInterpolationFilters="sRGB">
           <feColorMatrix type="matrix" values={adjustValues} />
         </filter>
+        {/* 画布上每层各一份，互不干扰 */}
+        {layerFilters
+          .filter(f => f.on)
+          .map(f => (
+            <filter key={f.id} id={f.id} colorInterpolationFilters="sRGB">
+              <feColorMatrix type="matrix" values={f.values} />
+            </filter>
+          ))}
       </svg>
 
       {legacy && (
@@ -826,6 +1011,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           title="切换左侧面板"
         >
           <Sidebar size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
+        <button
+          type="button"
+          onClick={() => setShowNewDoc(true)}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
+          title="新建空白文档"
+        >
+          <FilePlus size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={handleImportLayer}
+          disabled={!canvas}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="导入图层（任意路径的图片）"
+        >
+          <ImagePlus size={15} />
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
         <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[34%]">
@@ -904,6 +1107,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             cropRatio={cropRatio}
             docAspect={canvas && canvas.height > 0 ? canvas.width / canvas.height : undefined}
             onCropRatioChange={handleCropRatioChange}
+            layerBox={activeLayer?.box}
+            onLayerBoxChange={patch => {
+              if (!doc || !activeLayer) return;
+              onDocumentChange({
+                ...doc,
+                layers: (doc.layers ?? []).map(l =>
+                  l.id === activeLayer.id ? { ...l, box: { ...l.box, ...patch } } : l,
+                ),
+                dirty: true,
+              });
+            }}
           />
 
           {/* 画布（视口） */}
@@ -938,15 +1152,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                   boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
                 }}
               >
-                {activeLayer?.source && (
-                  <img
-                    src={convertFileSrc(activeLayer.source)}
-                    alt={docName}
-                    draggable={false}
-                    style={layerStyle}
-                    onLoad={e => handleImageLoad(e.currentTarget)}
-                    onError={() => setError('无法打开这张图（编辑器支持 jpeg / png / gif / webp / bmp / tiff / ico）')}
-                  />
+                {/* 自底向上渲染；多图层是"白送的"——Rust 合成早就按数组写了 */}
+                {layers.map(l =>
+                  l.source ? (
+                    <img
+                      key={l.id}
+                      src={convertFileSrc(l.source)}
+                      alt={l.name}
+                      draggable={false}
+                      style={buildLayerStyle(l)}
+                      onLoad={e => handleImageLoad(e.currentTarget)}
+                      onError={() => setError(`无法打开图层「${l.name}」`)}
+                    />
+                  ) : null,
                 )}
               </div>
             )}
@@ -959,6 +1177,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 onLoad={e => handleImageLoad(e.currentTarget)}
                 onError={() => setError('无法打开这张图（编辑器支持 jpeg / png / gif / webp / bmp / tiff / ico）')}
                 className="absolute w-px h-px opacity-0 pointer-events-none"
+              />
+            )}
+
+            {/* 自由变换 / 移动：直接复用参考模式的 EditOverlay。
+                移动工具也能拖图层（v1 里它无事可做，只能伪装成抓手）。 */}
+            {(tool === 'move' || tool === 'transform') && overlayItem && canvas && !error && (
+              <EditOverlay
+                activeItem={overlayItem}
+                selectedItems={[overlayItem]}
+                allItems={[overlayItem]}
+                transform={transform}
+                onUpdateItem={handleOverlayUpdate}
+                onRemoveItem={() => {}}
+                containerRef={containerRef}
+                isSnappingEnabled
+                snapBounds={{ width: canvas.width, height: canvas.height }}
+                isEditMode={tool === 'transform'}
+                isDarkMode={document.documentElement.classList.contains('dark')}
               />
             )}
 
@@ -987,6 +1223,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           />
         </div>
       </div>
+
+      <NewDocumentDialog
+        open={showNewDoc}
+        onClose={() => setShowNewDoc(false)}
+        onCreate={c => {
+          setShowNewDoc(false);
+          onNewDocument?.(c);
+        }}
+      />
     </div>
   );
 };
