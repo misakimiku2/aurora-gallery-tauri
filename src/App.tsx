@@ -347,6 +347,39 @@ export const App: React.FC = () => {
     }));
   }, []);
 
+  /**
+   * 图片编辑（C11）：在当前 Tab 里打开编辑器。
+   *
+   * 单点定义、两处入口共用（网格右键 + 查看器右键），避免「互斥规则」两份实现漂移。
+   * 三件事必须一起做：
+   * - `viewMode: 'editor'` —— 与 `isCompareMode` **互斥**（UI 设计 §1.1），
+   * - `viewingFileId: null` —— 否则查看器继续盖在上面，
+   * - `isCompareMode: false` —— 参考板与工作台不能同屏。
+   *
+   * 用函数式 setState 而不是读外层 `state`：这样 useCallback 零依赖，
+   * 也不会因为文件列表刷新导致回调重建。
+   */
+  const openInEditor = useCallback((fileId: string) => {
+    setState(prev => {
+      const target = prev.files[fileId];
+      if (!target?.path) return prev;
+      return {
+        ...prev,
+        tabs: prev.tabs.map(t =>
+          t.id === prev.activeTabId
+            ? {
+                ...t,
+                viewMode: 'editor' as const,
+                viewingFileId: null,
+                isCompareMode: false,
+                editorDocument: { path: target.path, name: target.name, dirty: false },
+              }
+            : t
+        ),
+      };
+    });
+  }, []);
+
   const { tasks } = state;
 
   const { startTask, updateTask } = useTasks(state, setState, t);
@@ -2731,6 +2764,7 @@ export const App: React.FC = () => {
             handleAndroidDelete={handleAndroidDelete}
             requestDelete={requestDelete}
             handleViewInExplorer={handleViewInExplorer}
+            onOpenEditor={openInEditor}
             setState={setState}
             enterFolder={enterFolder}
             handleViewerSearch={handleViewerSearch}
@@ -3035,6 +3069,7 @@ export const App: React.FC = () => {
         closeContextMenu={closeContextMenu}
         handleOpenInNewTab={handleOpenInNewTab}
         handleViewInExplorer={handleViewInExplorer}
+        onOpenEditor={openInEditor}
         enterFolder={enterFolder}
         setModal={(type, data) => setState(s => ({ ...s, activeModal: { type: type as any, data } }))}
         startRename={startRename}

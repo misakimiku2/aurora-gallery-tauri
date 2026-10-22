@@ -4,7 +4,7 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play, Pencil
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
@@ -63,6 +63,13 @@ interface ContextMenuProps {
   handleSearchSimilarImages?: (imageId: string) => void;
   openClipSettings?: () => void;
   handleDownloadAndroidFiles?: (ids: string[]) => void;
+  /**
+   * 图片编辑（C11）：在编辑器中打开这张图。
+   *
+   * 只对**本地**图片提供——LAN / 安卓设备的图没有可直接解码的本地路径，
+   * 编辑器要靠真路径走 `editor_load_preview`。不传则不显示入口。
+   */
+  onOpenEditor?: (fileId: string) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -109,7 +116,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handleCopyImageToClipboard,
   handleSearchSimilarImages,
   openClipSettings,
-  handleDownloadAndroidFiles
+  handleDownloadAndroidFiles,
+  onOpenEditor
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -267,6 +275,21 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         {!isAndroidDevice && (
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}</div>
         )}
+        {/* 图片编辑（C11 Phase 1）：网格里的入口。
+            只对**本地图片**显示——LAN / 安卓设备没有本地路径，编辑器要靠真路径解码
+            （`editor_load_preview`）；文件夹与视频也没有「编辑」语义。 */}
+        {!isAndroidDevice && onOpenEditor && contextMenu.type === 'file-single' && contextMenu.targetId && (() => {
+          const f = files[contextMenu.targetId];
+          if (!f || f.type !== FileType.IMAGE) return null;
+          if (f.source === 'lan' || f.source === 'android') return null;
+          if (!f.path) return null;
+          return (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { onOpenEditor(f.id); closeContextMenu(); }}>
+              <Pencil size={iconSize} className="mr-2 opacity-70" />
+              编辑图片
+            </div>
+          );
+        })()}
         {contextMenu.type === 'file-single' && files[contextMenu.targetId!] && ((() => {
           const file = files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; if (isUnavailable) return null; return (<div className={isAndroidDevice ? 'mx-2 px-4 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center' : 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'} style={isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined} onClick={() => { if (parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
             <FolderOpen size={iconSize} className="mr-2 opacity-70" />

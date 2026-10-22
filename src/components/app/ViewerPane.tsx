@@ -19,6 +19,8 @@ interface ViewerPaneProps {
   handleAndroidDelete: (ids: string[]) => void;
   requestDelete: (ids: string[]) => void;
   handleViewInExplorer: (id: string) => void;
+  /** 图片编辑（C11）：网格右键与查看器右键共用同一个实现（App 侧单点定义） */
+  onOpenEditor?: (fileId: string) => void;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   enterFolder: (folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => void;
   handleViewerSearch: (query: string) => void;
@@ -50,6 +52,7 @@ export const ViewerPane = ({
   handleAndroidDelete,
   requestDelete,
   handleViewInExplorer,
+  onOpenEditor,
   setState,
   enterFolder,
   handleViewerSearch,
@@ -98,18 +101,7 @@ export const ViewerPane = ({
           onEditTags={() => setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: activeTab.viewingFileId } } }))}
           onCopyTags={() => handleCopyTags([activeTab.viewingFileId!])}
           onAIAnalysis={(id) => handleAIAnalysis([id])}
-          onOpenEditor={(fileId) => {
-            const target = state.files[fileId];
-            if (!target?.path) return;
-            // 进编辑器必须同时清掉查看器与参考模式：`viewMode === 'editor'` 与
-            // `isCompareMode` 是互斥的两个形态（UI 设计 §1.1），同 Tab 不能并存。
-            updateTabById(activeTab.id, {
-              viewMode: 'editor',
-              viewingFileId: null,
-              isCompareMode: false,
-              editorDocument: { path: target.path, name: target.name, dirty: false },
-            });
-          }}
+          onOpenEditor={onOpenEditor}
           isAISearchEnabled={state.settings.search.isAISearchEnabled}
           onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
           t={t}
