@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "platform": "desktop",
-  "version": "2.3.0",
-  "release_name": "v2.3.0",
-  "release_notes": "2.3.0 局域网共享收口（与安卓同步升级，桌面界面本版无改动）：\n\n【全新】\n· 局域网共享新增取色搜索端点：手机在局域网里选色，直接搜本机 colors.db（配合安卓端 2.3.0 使用）\n\n【修复】会话管理四处隐患：并发认证留下的悬垂会话、已失效令牌换壳复用、退出登录误杀同设备的新会话、过期清理时的写锁重入死锁（会把整张会话表永久冻结）；配合安卓端修掉退出重进后反复断连重连的振荡。\n\n完整清单见 Release 页。",
-  "published_at": "2026-10-11",
+  "version": "2.4.0",
+  "release_name": "v2.4.0",
+  "release_notes": "2.4.0 视频全线落地（与安卓同步升级）：\n\n【全新】\n· 12 种视频格式与图片一起入库、混排，卡片有封面帧 + 右下角时长角标\n· 查看器直接播：±5 秒 / 逐帧 / 倍速 / 音量 / 循环，拖进度条画面实时跟手；键位重排——← → 是快退快进，翻页换 [ ]，空格播放暂停\n· 右侧面板就地开小播放窗（带迷你控件、空格控制），幻灯片经过视频会真的播，右键可复制当前帧、生成缩略图也扩到视频\n· 顶栏新增「媒体类型」筛选（全部 / 仅图片 / 仅视频，按标签页各记一档）；设置多出「视频」这一类\n· 可选 FFmpeg 组件（约 164 MB）：装了 mkv / avi / wmv / flv 这些容器也能出封面帧，不装则 mp4 / mov / m4v / webm / mkv 仍走前端抽帧\n· 视频详情补齐帧率 / 码率 / 编码 / 旋转；局域网共享把视频一并带到对面\n\n【修复】共享过去的视频没有宽高与时长（卡片全正方形、录屏封面被裁、时长空白）、局域网里根级散文件与纯视频夹隐身（两端都升才完整）、封面永久空白 / 专挑暗场 / 竖拍变形、AVI 时长误报 00:00、「用系统播放器打开」只跳文件夹、全屏拖顶栏会挪走整个全屏、工具条被硬件视频层盖住唤不回、输入框打字误触发静音与全屏、Delete 误删文件、个别 mp4 点开干等十几秒。\n\n【注意】应用内播不了的格式（avi / wmv / flv / ts 等）改为占位提示 + 一键交系统播放器。完整清单见 Release 页。",
+  "published_at": "2026-10-22",
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "installer",
-      "name": "Aurora.Gallery_2.3.0_x64-setup.exe",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.3.0/Aurora.Gallery_2.3.0_x64-setup.exe",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.3.0/Aurora.Gallery_2.3.0_x64-setup.exe",
-      "size": 12766996,
-      "size_text": "12.2 MB",
-      "sha256": "7660b302ec465d9f7fc94ac35f9c4a814978795dba2805e44ed4026fed8729f9"
+      "name": "Aurora.Gallery_2.4.0_x64-setup.exe",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.4.0/Aurora.Gallery_2.4.0_x64-setup.exe",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.4.0/Aurora.Gallery_2.4.0_x64-setup.exe",
+      "size": 13118436,
+      "size_text": "12.5 MB",
+      "sha256": "6357bba968612ffa496a9498b5898f15377a97496dff99701280de747fff07ac"
     }
   ]
 }

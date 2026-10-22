@@ -1,22 +1,22 @@
 {
   "schema": 1,
   "platform": "android",
-  "version": "2.3.0",
-  "version_code": 7,
-  "release_name": "v2.3.0",
-  "release_notes": "2.3.0 局域网互联补齐 + 会话稳定性（安卓与桌面同步升级）：\n\n【全新】\n· 局域网视图搜索全量放开：总览实时过滤文件夹名、回车走桌面端全库搜索，日期 / 标签 / 取色在局域网里都能用\n· 取色搜索改由桌面 colors.db 引擎接管，结果以「颜色结果」虚拟目录呈现（需两端都是 2.3.0）\n· 复制 / 移动合并为一个双根树弹窗：本机相册与共享根并列手风琴展开，本机↔局域网互传直接选目标、失败可就地重试；顶栏「上传」按钮随之下线\n· AI 入口按连接态显隐：没连上服务器时三处菜单不再出现 AI 项，「AI 人物识别」改按局域网连接态显隐\n· 「AI 重命名」收进重命名弹窗（输入框下方紫色按钮），提案仍走「AI 重命名 N 张」确认两步落地\n\n【修复】局域网退出重进后每十几秒断连重连的振荡、远端卡片缺宽高导致的瀑布流全正方形 / 自适应整行等宽 / 查看器尺寸空白、远端图打开动画铺满整屏再缩回、移动后文件夹封面不重算（「操作过就排前面」现在对移动生效）、一批弹窗白底。桌面端一并收口会话管理四处隐患（含会把会话表冻死的过期清理死锁）。\n\n与 v2.2.1 同一把签名，直接覆盖安装即可。完整清单见 Release 页。",
-  "published_at": "2026-10-11",
+  "version": "2.4.0",
+  "version_code": 8,
+  "release_name": "v2.4.0",
+  "release_notes": "2.4.0 视频全线落地（安卓与桌面同步升级）：\n\n【全新】\n· 手机里的视频第一次进资源库：与图片混排、按视频真实比例占位、右下角时长角标、点开即播，纯视频相册不再是灰块\n· 按触屏重做的播放器：进视频自动全屏转影院黑底，双行播控条，横滑调进度（长片改两段式慢搜）、左半屏竖滑亮度、右半屏音量、双指捏合缩放，倍速五档、画面四档，倍速与循环跨视频记住\n· 视频封面三处到位（卡片 / 点开那屏 / 抽屉预览），停在想留的那一帧可「从当前帧设为封面」，清缓存也不丢\n· 局域网双向带视频：连桌面可直接播共享库里的视频，手机自己当服务端时同样共享；字节面改流式 + 断点续传，每次起播的流量从几十 MB 压到几 MB\n· 视频详情补齐桌面那套「更多详情」（帧率 / 码率 / 编码 / 旋转），详情文字整体抬大一档\n· 文件夹与专题封面放开视频那一路\n\n【修复】翻页残留上一条画面、要按两次才播下一条、拖进度条反复闪缓冲、长片横滑一下跳十几分钟、竖屏两颗键压住下一条视频、「更多」菜单先冒出再上窜、藏状态栏那一下画面上下跳、旋转过（竖拍）的视频取不到封面、起播瞬间纵向拉伸、片尾偶发闪退；mp4 两条容器病灶（长片只肯放开头几分钟 / 点开干等十几秒）现自动理顺。\n\n【注意】手机解不开的 AVI / WMV / ASF / FLV 不再进列表（本地与局域网都滤掉）。看桌面共享的视频，桌面请一起升到 2.4.0，旧桌面不下发视频宽高与时长。\n\n与 v2.3.0 同一把签名，直接覆盖安装即可。完整清单见 Release 页。",
+  "published_at": "2026-10-22",
   "min_version_code": 1,
   "homepage": "https://gitee.com/misakimiku2/aurora_gallery/releases",
   "assets": [
     {
       "kind": "apk",
-      "name": "AuroraGallery-v2.3.0.apk",
-      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.3.0/AuroraGallery-v2.3.0.apk",
-      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.3.0/AuroraGallery-v2.3.0.apk",
-      "size": 37468607,
-      "size_text": "35.7 MB",
-      "sha256": "963cc5a28fde6e3b4357b4fa71213fd848baaa9524fff982ea9d292af16fda75"
+      "name": "AuroraGallery-v2.4.0.apk",
+      "url": "https://gitee.com/misakimiku2/aurora_gallery/releases/download/v2.4.0/AuroraGallery-v2.4.0.apk",
+      "fallback_url": "https://github.com/misakimiku2/aurora-gallery-tauri/releases/download/v2.4.0/AuroraGallery-v2.4.0.apk",
+      "size": 39499653,
+      "size_text": "37.7 MB",
+      "sha256": "9ae4223649366cf6b90ca5b0a32704aeaea6785b2c4fa71d424f8814b031f7d1"
     }
   ]
 }
