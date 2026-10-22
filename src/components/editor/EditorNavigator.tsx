@@ -100,7 +100,8 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
       ref={boxRef}
       onMouseDown={onMouseDown}
       className="relative w-full rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-900 overflow-hidden"
-      style={{ height: BOX_HEIGHT, cursor: onNavigate ? 'crosshair' : 'default' }}
+      // 指针保持普通箭头：全览图是辅助面板，用十字线太抢眼（用户实测反馈）
+      style={{ height: BOX_HEIGHT }}
     >
       {ready ? (
         <>

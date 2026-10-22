@@ -408,8 +408,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       return;
     }
 
-    // 抓手 / 移动：拖动平移。裁剪与未接入工具暂不响应拖动
-    if (effectiveTool !== 'hand' && effectiveTool !== 'move') return;
+    // 只有抓手平移视图。**移动工具不平移**——它该移的是图层内容，
+    // 而 Phase 1 只有单张背景层、铺满画布，没有可移的东西。
+    // PS 里这种情况背景层是锁定的，拖动无效果；做成"退化成抓手"反而让人分不清
+    // 两个工具的区别（用户实测反馈「移动工具跟抓手一样」）。
+    if (effectiveTool !== 'hand') return;
 
     draggingRef.current = {
       startX: e.clientX,
@@ -451,7 +454,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   return (
     <div className="w-full h-full flex overflow-hidden bg-neutral-100 dark:bg-neutral-900">
-      <EditorToolbar activeTool={tool} onSelect={onToolChange} disabled={!sourcePath} />
+      <EditorToolbar
+        // 按住空格时抓手临时接管：工具栏上抓手高亮（PS 行为），但 Tab 记录的工具不变
+        activeTool={spaceHeld ? 'hand' : tool}
+        onSelect={onToolChange}
+        disabled={!sourcePath}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* 文档栏 */}
@@ -505,7 +513,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
         {/* 工具选项条 */}
         <EditorOptionsBar
-          tool={tool}
+          // 与工具栏一致：空格按住时切到抓手（PS 里选项条也会跟着变）
+          tool={spaceHeld ? 'hand' : tool}
           scale={transform.scale}
           onZoomTo={zoomTo}
           onFit={fitToView}

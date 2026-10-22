@@ -35,10 +35,22 @@ export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
   // 代理图 1:1 显示是清晰上限，超过 100% 就开始插值 —— 这正是「分辨率不足」的时机
   const beyondProxy = scale > 1;
 
+  // 工具提示随工具变。移动工具如实说明「没东西可移」，否则用户会以为它坏了
+  // （实测反馈：以为移动工具和抓手是同一个）
+  const hint = spaceHeld
+    ? '空格 = 抓手（松开回到原工具）'
+    : tool === 'move'
+      ? '单图层：暂无可移动内容 · 按 H 或按住空格拖动画布'
+      : tool === 'crop'
+        ? '拖动拉框 · Enter 应用 · Esc 取消'
+        : `快捷键 ${def.shortcut}`;
+
   return (
     <div className="h-6 shrink-0 flex items-center gap-3 px-3 border-t border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-[11px] text-neutral-500 dark:text-neutral-400 select-none">
-      <span className="font-medium text-neutral-700 dark:text-neutral-200">{def.label}</span>
-      <span>{spaceHeld ? '空格 = 抓手（松开回到选择工具）' : `快捷键 ${def.shortcut}`}</span>
+      <span className="font-medium text-neutral-700 dark:text-neutral-200">
+        {spaceHeld ? '抓手（临时）' : def.label}
+      </span>
+      <span>{hint}</span>
 
       <span className="flex-1" />
 

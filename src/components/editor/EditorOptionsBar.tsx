@@ -59,8 +59,8 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
             <input type="checkbox" disabled className="accent-blue-600" />
             显示变换控件
           </label>
-          <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500">
-            移动图片位置（拖动画布即可平移）
+          <span className="ml-auto text-[11px] text-amber-600 dark:text-amber-400">
+            单图层文档：暂无可移动内容（图层功能在 Phase 2）
           </span>
         </>
       )}
