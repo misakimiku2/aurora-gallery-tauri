@@ -516,6 +516,62 @@ export interface HistoryItem {
 }
 
 /**
+ * 编辑器画布（最小图层模型 v2）。
+ *
+ * 画布是**先于图层存在**的一等公民：新建空白文档时画布有尺寸、图层为空。
+ * 这与 v1 的"图即画布"根本不同——那套模型下没有图层概念，图永远铺满画布。
+ *
+ * 设计依据：《图片编辑-最小图层模型设计》§2。
+ */
+export interface EditorCanvas {
+  width: number;
+  height: number;
+  /** `'transparent'` 由前端画棋盘格；`'white'` / `'black'` 直接填实 */
+  background: 'transparent' | 'white' | 'black';
+}
+
+/**
+ * 图层定界框（PS 口径：屏幕上拖的那个框）。
+ *
+ * `w/h` 是**未旋转**的内容尺寸，旋转后的包围盒由它派生。这与 `ComparisonItem`
+ * （`src/components/comparer/types.ts`）逐项同构——不是巧合：自由变形要直接复用
+ * comparer 的 `EditOverlay`，模型不同构就得重写那 693 行（设计稿 §3.3）。
+ */
+export interface LayerBox {
+  /** 定界框左上在**画布坐标系**中的位置 */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 顺时针角度，任意实数（v1 只支持 90 档） */
+  rotation: number;
+  flipH: boolean;
+  flipV: boolean;
+  /**
+   * 倾斜。**最小模型只存不接 UI**（已拍板）：skew ≠ 0 时画布旋转 90° 会把倾斜框
+   * 压成包围盒、丢精度，所以自由变形先只做 移动 / 缩放 / 旋转 / 翻转 四项。
+   */
+  skewX: number;
+  skewY: number;
+}
+
+/** 编辑器图层（最小模型只有 `image` 一种；其余 kind 属 Phase 2）。 */
+export interface EditorLayer {
+  id: string;
+  kind: 'image';
+  /** 源文件路径；空层为 undefined */
+  source?: string;
+  /** 源图自然尺寸。由 Rust 回传，前端不猜 */
+  naturalWidth: number;
+  naturalHeight: number;
+  box: LayerBox;
+  /** 调色：v1 挂在文档上，v2 下沉到图层（设计稿 §4.1 本就说它是图层属性） */
+  adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
+  visible: boolean;
+  name: string;
+}
+
+/**
  * 图片编辑（C11）文档句柄（UI 设计 §1.1）。
  *
  * 挂在 Tab 上而不是全局：一个 Tab 一个文档，多文档靠多 Tab——与本应用既有心智一致，
@@ -528,6 +584,21 @@ export interface EditorDocument {
   name: string;
   /** 未保存圆点 */
   dirty: boolean;
+
+  // ---- v2：最小图层模型 ----
+  /**
+   * 模型版本。**不存在或不是 2 ⇒ v1 遗留数据**，按设计稿 §7 处理（不迁移，Tab 回退浏览态）。
+   *
+   * 注：Tab 目前**并未持久化**（每次启动由 `useAppInit` 重建 `tabs: [defaultTab]`），
+   * 所以这条今天是防御性设计——将来若给 Tab 加持久化，它就是迁移判据。
+   */
+  version?: 2;
+  canvas?: EditorCanvas;
+  /** 自底向上；最小模型长度 0..1 */
+  layers?: EditorLayer[];
+  activeLayerId?: string;
+
+  // ---- v1 遗留（S5 切到 canvas + layers 后整体删除）：crop / rotation / flipH / flipV / adjust ----
   /**
    * 累积裁剪（**当前可见坐标系**下的像素坐标，左上原点）。undefined = 未裁剪。
    *
