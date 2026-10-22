@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { computeRatioRect, normalizeRect, type CropArea } from '../cropGeometry';
+import {
+  computeRatioRect,
+  flipCropRect,
+  normalizeRect,
+  rotateCropRect,
+  type CropArea,
+} from '../cropGeometry';
 
 /**
  * 比例约束的数学锁。
@@ -142,5 +148,67 @@ describe('normalizeRect', () => {
       w: 50,
       h: 30,
     });
+  });
+});
+
+describe('旋转 / 翻转下的裁剪换算', () => {
+  const crop = { x: 100, y: 200, w: 300, h: 400 };
+  const W = 1000;
+  const H = 800;
+
+  it('顺时针 90°：矩形跟着内容转，宽高互换', () => {
+    const out = rotateCropRect(crop, W, H, true);
+    // x' = H - y - h = 800 - 200 - 400 = 200
+    // y' = x = 100；宽高互换
+    expect(out).toEqual({ x: 200, y: 100, w: 400, h: 300 });
+  });
+
+  it('逆时针 90°：与顺时针互为反操作', () => {
+    const once = rotateCropRect(crop, W, H, false);
+    // x' = y = 200；y' = W - x - w = 1000 - 100 - 300 = 600
+    expect(once).toEqual({ x: 200, y: 600, w: 400, h: 300 });
+    // 在新坐标系（H×W）里再转回去
+    const back = rotateCropRect(once, H, W, true);
+    expect(back).toEqual(crop);
+  });
+
+  it('转四次回到原矩形（坐标系每次交换宽高）', () => {
+    let cur = { ...crop };
+    let w = W;
+    let h = H;
+    for (let i = 0; i < 4; i++) {
+      cur = rotateCropRect(cur, w, h, true);
+      const nw = h;
+      h = w;
+      w = nw;
+    }
+    expect(cur).toEqual(crop);
+  });
+
+  it('水平翻转：x 镜像，尺寸不变', () => {
+    const out = flipCropRect(crop, W, H, true, false);
+    expect(out).toEqual({ x: W - 100 - 300, y: 200, w: 300, h: 400 });
+  });
+
+  it('垂直翻转：y 镜像', () => {
+    const out = flipCropRect(crop, W, H, false, true);
+    expect(out).toEqual({ x: 100, y: H - 200 - 400, w: 300, h: 400 });
+  });
+
+  it('翻转两次回原位', () => {
+    const once = flipCropRect(crop, W, H, true, false);
+    const twice = flipCropRect(once, W, H, true, false);
+    expect(twice).toEqual(crop);
+  });
+
+  it('同时水平 + 垂直 == 180° 旋转的矩形位置', () => {
+    const both = flipCropRect(crop, W, H, true, true);
+    const r180 = {
+      x: W - crop.x - crop.w,
+      y: H - crop.y - crop.h,
+      w: crop.w,
+      h: crop.h,
+    };
+    expect(both).toEqual(r180);
   });
 });

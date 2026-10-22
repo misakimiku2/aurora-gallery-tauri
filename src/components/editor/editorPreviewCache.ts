@@ -12,9 +12,12 @@
  * **保存功能上线后必须 `invalidatePreview(path)`**，否则用户改完看到的是旧图。
  */
 export interface EditorPreviewMeta {
-  /** 源图原始尺寸 */
+  /** 当前文档尺寸（裁剪之后） */
   width: number;
   height: number;
+  /** 裁剪**之前**的画框尺寸（旋转/翻转已应用）——旋转时换算 crop 要用它 */
+  frameWidth: number;
+  frameHeight: number;
   /** 代理图尺寸 */
   previewWidth: number;
   previewHeight: number;
@@ -27,17 +30,30 @@ const cache = new Map<string, EditorPreviewMeta>();
 const listeners = new Set<() => void>();
 
 /**
- * 缓存键：文件路径 + 裁剪参数。
+ * 缓存键：文件路径 + 全部几何变换（裁剪 / 旋转 / 翻转）。
  *
- * **必须包含裁剪**——「裁剪前」和「裁剪后」是两张不同的图，共用键会让裁剪完成后
- * 右侧面板仍然显示旧尺寸/旧缩略图（实测踩过：画布已变 1360×1440，面板还写着
- * 3440×1440）。画布与右侧面板都通过这个函数取键，避免两处各写一遍又漏一处。
+ * **必须包含变换**——「裁之前」和「裁之后」、「转之前」和「转之后」都是不同的图，
+ * 共用键会让变换完成后右侧面板仍然显示旧尺寸/旧缩略图（实测踩过：画布已变
+ * 1360×1440，面板还写着 3440×1440）。画布与右侧面板都通过这个函数取键，
+ * 避免两处各写一遍又漏一处。
  */
 export function buildPreviewKey(
   path: string,
-  crop?: { x: number; y: number; w: number; h: number } | null,
+  transform?: {
+    crop?: { x: number; y: number; w: number; h: number } | null;
+    rotation?: number;
+    flipH?: boolean;
+    flipV?: boolean;
+  } | null,
 ): string {
-  return crop ? `${path}#${crop.x},${crop.y},${crop.w},${crop.h}` : path;
+  if (!transform) return path;
+  const { crop, rotation = 0, flipH = false, flipV = false } = transform;
+  const cropPart = crop ? `#${crop.x},${crop.y},${crop.w},${crop.h}` : '';
+  const orientPart =
+    rotation || flipH || flipV
+      ? `@${rotation}${flipH ? 'h' : ''}${flipV ? 'v' : ''}`
+      : '';
+  return `${path}${cropPart}${orientPart}`;
 }
 
 function notify() {

@@ -29,14 +29,26 @@
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, FileOutput, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  AlertTriangle,
+  FileOutput,
+  FlipHorizontal2,
+  FlipVertical2,
+  Loader2,
+  RotateCcw,
+  RotateCw,
+  Scan,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
-import type { EditorToolId } from '../../types';
+import type { EditorToolId, EditorTransform } from '../../types';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
+import { flipCropRect, rotateCropRect } from './cropGeometry';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
 import { clearEditorView, peekPanRequest, setEditorView, subscribeEditorView } from './editorViewStore';
 import {
@@ -64,10 +76,10 @@ interface ImageEditorProps {
    * 而键盘监听挂在 window 上 —— 不做这个判断，按一次 `V` 会让所有编辑器一起切工具。
    */
   isActive: boolean;
-  /** 已应用的累积裁剪（相对源文件的绝对坐标）；undefined = 未裁剪 */
-  docCrop?: { x: number; y: number; w: number; h: number };
-  /** 裁剪确认后回报；调用方负责写进 TabState.editorDocument 并置 dirty */
-  onDocCropChange: (crop: { x: number; y: number; w: number; h: number }) => void;
+  /** 已应用的几何变换（裁剪 / 旋转 / 翻转）；字段缺省 = 未设置 */
+  docTransform?: EditorTransform;
+  /** 变换变化后回报；调用方负责写进 TabState.editorDocument 并置 dirty */
+  onDocTransformChange: (next: EditorTransform) => void;
   /**
    * 导出成功后回调：调用方应重扫导出的目标文件夹，让新文件进库并出现在网格里。
    *
@@ -96,10 +108,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   tool,
   onToolChange,
   isActive,
-  docCrop,
-  onDocCropChange,
+  docTransform,
+  onDocTransformChange,
   onFileCreated,
 }) => {
+  // 拆成原始值：对象每次渲染都是新引用，直接进依赖数组会让 effect 反复触发
+  const docCrop = docTransform?.crop;
+  const docRotation = docTransform?.rotation ?? 0;
+  const docFlipH = docTransform?.flipH ?? false;
+  const docFlipV = docTransform?.flipV ?? false;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
   const [loading, setLoading] = useState(false);
@@ -121,9 +138,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   isActiveRef.current = isActive;
 
   // ---- 加载代理图 ----
-  // 缓存键含裁剪参数：同一文件的不同裁剪结果是不同的图，必须分开缓存，
-  // 否则「裁完再打开」会命中旧图。
-  const cacheKey = sourcePath ? buildPreviewKey(sourcePath, docCrop) : null;
+  // 缓存键含全部几何变换：同一文件的「裁过/没裁过」「转过/没转过」是不同的图。
+  const cacheKey = sourcePath
+    ? buildPreviewKey(sourcePath, {
+        crop: docCrop,
+        rotation: docRotation,
+        flipH: docFlipH,
+        flipV: docFlipV,
+      })
+    : null;
 
   useEffect(() => {
     if (!sourcePath || !cacheKey) {
@@ -146,10 +169,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     setError(null);
     hasFittedRef.current = false;
 
-    // cacheKey 已经涵盖 docCrop 的全部字段，所以依赖里不必再放 docCrop 对象
+    // cacheKey 已经涵盖全部变换字段，所以依赖里不必再放对象
     // （每次都新建对象会让依赖恒变，导致无谓的重新加载）
-    const request = docCrop
-      ? invoke<EditorPreviewMeta>('editor_crop_preview', { path: sourcePath, crop: docCrop })
+    const hasTransform = Boolean(docCrop || docRotation || docFlipH || docFlipV);
+    const request = hasTransform
+      ? invoke<EditorPreviewMeta>('editor_render_preview', {
+          path: sourcePath,
+          crop: docCrop ?? null,
+          rotation: docRotation,
+          flipH: docFlipH,
+          flipV: docFlipV,
+        })
       : invoke<EditorPreviewMeta>('editor_load_preview', { path: sourcePath });
 
     request
@@ -229,20 +259,71 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     const w = Math.round(cropRect.w);
     const h = Math.round(cropRect.h);
     if (w < 1 || h < 1) return;
-    // 框的坐标是相对**当前文档**的，要叠到已有裁剪的原点才能得到源图绝对坐标。
-    // 后端永远只对源图切一次，所以连裁多次不会累积重编码损失。
-    onDocCropChange({
-      x: Math.round((docCrop?.x ?? 0) + cropRect.x),
-      y: Math.round((docCrop?.y ?? 0) + cropRect.y),
-      w,
-      h,
+    // 框的坐标是相对**当前文档**的，要叠到已有裁剪的原点才能得到绝对坐标。
+    // 后端永远只对原图处理一次，所以连裁多刀不会累积重编码损失。
+    onDocTransformChange({
+      crop: {
+        x: Math.round((docCrop?.x ?? 0) + cropRect.x),
+        y: Math.round((docCrop?.y ?? 0) + cropRect.y),
+        w,
+        h,
+      },
+      rotation: docRotation,
+      flipH: docFlipH,
+      flipV: docFlipV,
     });
     onToolChange('move');
-  }, [cropRect, preview, docCrop, onDocCropChange, onToolChange]);
+  }, [
+    cropRect,
+    preview,
+    docCrop,
+    docRotation,
+    docFlipH,
+    docFlipV,
+    onDocTransformChange,
+    onToolChange,
+  ]);
 
   const cancelCrop = useCallback(() => {
     onToolChange('move');
   }, [onToolChange]);
+
+  // ---- 旋转 / 翻转 ----
+  // crop 是「当前可见坐标系」里的矩形，旋转后坐标系跟着转，所以矩形必须一起换算，
+  // 否则用户会发现自己裁的那块区域在旋转之后变成了画面里别的地方。
+  // 换算用的 currentWidth/Height 是 **frame**（裁剪之前的画框），不是 preview 尺寸。
+  const handleRotate = useCallback(
+    (clockwise: boolean) => {
+      if (!preview) return;
+      const nextCrop = docCrop
+        ? rotateCropRect(docCrop, preview.frameWidth, preview.frameHeight, clockwise)
+        : undefined;
+      const nextRotation = (((docRotation + (clockwise ? 90 : 270)) % 360) + 360) % 360;
+      onDocTransformChange({
+        crop: nextCrop,
+        rotation: nextRotation,
+        flipH: docFlipH,
+        flipV: docFlipV,
+      });
+    },
+    [preview, docCrop, docRotation, docFlipH, docFlipV, onDocTransformChange],
+  );
+
+  const handleFlip = useCallback(
+    (horizontal: boolean) => {
+      if (!preview) return;
+      const nextCrop = docCrop
+        ? flipCropRect(docCrop, preview.frameWidth, preview.frameHeight, horizontal, !horizontal)
+        : undefined;
+      onDocTransformChange({
+        crop: nextCrop,
+        rotation: docRotation,
+        flipH: horizontal ? !docFlipH : docFlipH,
+        flipV: horizontal ? docFlipV : !docFlipV,
+      });
+    },
+    [preview, docCrop, docRotation, docFlipH, docFlipV, onDocTransformChange],
+  );
 
   // 键盘监听只依赖 onToolChange，不跟着 cropRect 每次变化重绑 → 用 ref 取最新实现
   const commitCropRef = useRef(commitCrop);
@@ -368,6 +449,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           path: sourcePath,
           crop: docCrop ?? null,
           targetPath: target,
+          // 与预览严格同一套变换，否则会「看到转过的、导出没转的」
+          rotation: docRotation,
+          flipH: docFlipH,
+          flipV: docFlipV,
         },
       );
       // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）。
@@ -390,7 +475,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setExportState({ status: 'error', text: String(e) });
       setTimeout(() => setExportState({ status: 'idle' }), 6000);
     }
-  }, [sourcePath, docCrop, onFileCreated]);
+  }, [sourcePath, docCrop, docRotation, docFlipH, docFlipV, onFileCreated]);
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -593,6 +678,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             </span>
           )}
           <div className="flex-1" />
+          {/* 旋转 / 翻转：与裁剪同属几何变换，都只改文档状态，导出时由 Rust 在
+              原图上一次性套用（不会因为连点几次而累积重编码损失） */}
+          <button
+            type="button"
+            onClick={() => handleRotate(false)}
+            disabled={!preview}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="逆时针旋转 90°"
+          >
+            <RotateCcw size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleRotate(true)}
+            disabled={!preview}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="顺时针旋转 90°"
+          >
+            <RotateCw size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFlip(true)}
+            disabled={!preview}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="水平翻转"
+          >
+            <FlipHorizontal2 size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleFlip(false)}
+            disabled={!preview}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="垂直翻转"
+          >
+            <FlipVertical2 size={15} />
+          </button>
+          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
           <button
             type="button"
             onClick={handleExport}

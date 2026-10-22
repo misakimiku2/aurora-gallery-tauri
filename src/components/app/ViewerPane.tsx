@@ -125,12 +125,17 @@ export const ViewerPane = ({
             tool={tab.editorTool ?? 'move'}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             isActive={tab.id === state.activeTabId}
-            docCrop={tab.editorDocument?.crop}
+            docTransform={{
+              crop: tab.editorDocument?.crop,
+              rotation: tab.editorDocument?.rotation,
+              flipH: tab.editorDocument?.flipH,
+              flipV: tab.editorDocument?.flipV,
+            }}
             onFileCreated={onEditorFileCreated}
-            onDocCropChange={crop =>
+            onDocTransformChange={next =>
               updateTabById(tab.id, prev => ({
                 editorDocument: prev.editorDocument
-                  ? { ...prev.editorDocument, crop, dirty: true }
+                  ? { ...prev.editorDocument, ...next, dirty: true }
                   : prev.editorDocument,
               }))
             }

@@ -137,3 +137,55 @@ export function computeRatioRect(
   const y = mode === 's' ? anchorY : anchorY - h;
   return roundRect({ x, y, w: Math.max(1, w), h: Math.max(1, h) });
 }
+
+/**
+ * 把裁剪矩形换算到「顺时针旋转 90° 之后」的新坐标系。
+ *
+ * 为什么要转换：渲染顺序是 `rotate → flip → crop`，`crop` 是相对**当前可见坐标系**
+ * 的矩形。用户点一次旋转，画面内容转了 90°，他仍然期望"还是我裁的那块内容"，
+ * 所以矩形必须跟着转，否则会变成另一块区域。
+ *
+ * 顺时针 90° 的映射：源 (x,y) → 目标 (H-1-y, x)，矩形则
+ * `x' = H - y - h, y' = x, w' = h, h' = w`（H 是**当前坐标系的像素高**）。
+ * 逆时针就是它的反函数。
+ */
+export function rotateCropRect(
+  crop: CropArea,
+  currentWidth: number,
+  currentHeight: number,
+  clockwise: boolean,
+): CropArea {
+  return clockwise
+    ? {
+        x: currentHeight - crop.y - crop.h,
+        y: crop.x,
+        w: crop.h,
+        h: crop.w,
+      }
+    : {
+        x: crop.y,
+        y: currentWidth - crop.x - crop.w,
+        w: crop.h,
+        h: crop.w,
+      };
+}
+
+/**
+ * 镜像时换算裁剪矩形（翻转不改尺寸，只把位置映射到对称边）。
+ *
+ * 可以同时水平和垂直，等价于 180° 旋转。
+ */
+export function flipCropRect(
+  crop: CropArea,
+  currentWidth: number,
+  currentHeight: number,
+  horizontal: boolean,
+  vertical: boolean,
+): CropArea {
+  return {
+    x: horizontal ? currentWidth - crop.x - crop.w : crop.x,
+    y: vertical ? currentHeight - crop.y - crop.h : crop.y,
+    w: crop.w,
+    h: crop.h,
+  };
+}

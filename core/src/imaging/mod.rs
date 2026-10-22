@@ -39,6 +39,7 @@ mod crop;
 mod decode;
 mod encode;
 mod resize;
+mod transform;
 
 pub use crop::{crop_image, CropRect};
 pub use decode::{
@@ -47,6 +48,7 @@ pub use decode::{
 };
 pub use encode::{encode, EncodeFormat};
 pub use resize::resize_to_max_edge;
+pub use transform::{flip_image, rotate_image, Rotation};
 
 use thiserror::Error;
 
@@ -75,6 +77,8 @@ pub enum ImageError {
         src_w: u32,
         src_h: u32,
     },
+    #[error("旋转角度无效: {0}°（只支持 0 / 90 / 180 / 270）")]
+    InvalidRotation(u32),
 }
 
 #[cfg(test)]
@@ -206,6 +210,78 @@ mod tests {
         assert!(CropRect::full(9, 7).is_full(9, 7));
         let out = crop_image(&src, CropRect::full(9, 7)).expect("裁剪失败");
         assert_eq!(out.into_raw(), src.into_raw());
+    }
+
+    #[test]
+    fn rotate90_swaps_axes_and_moves_pixels_clockwise() {
+        let src = sample(4, 2);
+        let out = rotate_image(&src, Rotation::Cw90);
+        assert_eq!((out.width(), out.height()), (2, 4), "90° 旋转必须交换宽高");
+        // 顺时针 90°：源 (x,y) → 目标 (h-1-y, x)
+        for y in 0..2 {
+            for x in 0..4 {
+                assert_eq!(out.get_pixel(1 - y, x), src.get_pixel(x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn rotate180_and_270_are_consistent() {
+        let src = sample(5, 3);
+        let r180 = rotate_image(&src, Rotation::Cw180);
+        assert_eq!((r180.width(), r180.height()), (5, 3), "180° 不交换宽高");
+        assert_eq!(r180.get_pixel(0, 0), src.get_pixel(4, 2));
+
+        // 270° = 逆时针 90°：源 (x,y) → 目标 (y, w-1-x)
+        let r270 = rotate_image(&src, Rotation::Cw270);
+        assert_eq!((r270.width(), r270.height()), (3, 5));
+        for y in 0..3 {
+            for x in 0..5 {
+                assert_eq!(r270.get_pixel(y, 4 - x), src.get_pixel(x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn four_rotations_return_to_original() {
+        let src = sample(7, 4);
+        let mut cur = src.clone();
+        for _ in 0..4 {
+            cur = rotate_image(&cur, Rotation::Cw90);
+        }
+        assert_eq!(cur.into_raw(), src.into_raw(), "转四次必须回到原图");
+    }
+
+    #[test]
+    fn flips_mirror_the_expected_axis() {
+        let src = sample(6, 3);
+        let h = flip_image(&src, true, false);
+        for y in 0..3 {
+            for x in 0..6 {
+                assert_eq!(h.get_pixel(5 - x, y), src.get_pixel(x, y));
+            }
+        }
+        let v = flip_image(&src, false, true);
+        for y in 0..3 {
+            for x in 0..6 {
+                assert_eq!(v.get_pixel(x, 2 - y), src.get_pixel(x, y));
+            }
+        }
+        // 水平 + 垂直 = 180° 旋转
+        let both = flip_image(&src, true, true);
+        assert_eq!(both.into_raw(), rotate_image(&src, Rotation::Cw180).into_raw());
+    }
+
+    #[test]
+    fn rotation_rejects_non_right_angles() {
+        for deg in [45u16, 30, 1, 359] {
+            assert!(matches!(
+                Rotation::from_degrees(deg),
+                Err(ImageError::InvalidRotation(_))
+            ));
+        }
+        // 360 等价于 0
+        assert_eq!(Rotation::from_degrees(360).unwrap(), Rotation::None);
     }
 
     /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。    ///

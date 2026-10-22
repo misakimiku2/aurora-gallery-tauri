@@ -51,7 +51,17 @@ export const RightPanel = ({
   const editorDoc = activeTab.editorDocument;
   const editorMeta = useSyncExternalStore(
     subscribePreview,
-    () => (editorDoc?.path ? peekPreview(buildPreviewKey(editorDoc.path, editorDoc.crop)) : undefined)
+    () =>
+      editorDoc?.path
+        ? peekPreview(
+            buildPreviewKey(editorDoc.path, {
+              crop: editorDoc.crop,
+              rotation: editorDoc.rotation,
+              flipH: editorDoc.flipH,
+              flipV: editorDoc.flipV,
+            }),
+          )
+        : undefined
   );
 
   return (

@@ -529,12 +529,28 @@ export interface EditorDocument {
   /** 未保存圆点 */
   dirty: boolean;
   /**
-   * 累积裁剪（**相对源文件**的像素坐标，左上原点）。undefined = 未裁剪。
+   * 累积裁剪（**当前可见坐标系**下的像素坐标，左上原点）。undefined = 未裁剪。
    *
-   * 存绝对坐标而不是"上一次裁剪的增量"：这样连裁三次也是从原图切一次，
-   * 后端永远只做一次 `crop_image`，不会累积重编码损失。
+   * 注意"当前可见坐标系"：渲染顺序是 rotate → flip → crop，所以旋转/翻转之后
+   * 这个矩形必须在同一时刻被换算到新坐标系（`rotateCropRect` / `flipCropRect`）。
+   * 存绝对坐标而不是"上一次的增量"，是为了让后端永远只对原图处理一次，
+   * 连裁多刀不累积重编码损失。
    */
   crop?: { x: number; y: number; w: number; h: number };
+  /** 顺时针旋转角度：0 / 90 / 180 / 270 */
+  rotation?: number;
+  /** 水平镜像 */
+  flipH?: boolean;
+  /** 垂直镜像 */
+  flipV?: boolean;
+}
+
+/** 编辑器的几何变换集合（裁剪 + 旋转 + 翻转），与 `EditorDocument` 的对应字段同构。 */
+export interface EditorTransform {
+  crop?: { x: number; y: number; w: number; h: number };
+  rotation?: number;
+  flipH?: boolean;
+  flipV?: boolean;
 }
 
 /**

@@ -28,9 +28,15 @@ const PREVIEW_JPEG_QUALITY: u8 = 90;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorPreview {
-    /// 源图原始尺寸（像素）。状态栏与「存储上限 = 画布 × 2」都按这个算。
+    /// 当前文档尺寸（裁剪之后）
     pub width: u32,
     pub height: u32,
+    /// **裁剪之前**的坐标系尺寸（旋转/翻转已应用）。
+    ///
+    /// 前端旋转/翻转时要把 `crop` 换算到新坐标系，而那一步需要知道「crop 所在的
+    /// 完整画框有多大」——`width/height` 是裁过的，推不出未裁的，所以单独给。
+    pub frame_width: u32,
+    pub frame_height: u32,
     /// 代理图尺寸。源图本就小于上限时与 `width`/`height` 相同。
     pub preview_width: u32,
     pub preview_height: u32,
@@ -59,9 +65,9 @@ impl From<CropRequest> for CropRect {
 
 /// RGBA → 代理图的统一出口。
 ///
-/// `width`/`height` 报的是**当前文档尺寸**（裁剪之后），不是源文件尺寸 ——
-/// 与 PS 一致：裁完画布就变小了，状态栏显示的应该是新尺寸。
-fn build_preview(rgba: &RgbaImage) -> Result<EditorPreview, String> {
+/// `width`/`height` 报的是**当前文档尺寸**（裁剪之后），`frame` 是裁剪之前的
+/// 画框尺寸（旋转/翻转已应用）——前端换算 `crop` 时需要后者。
+fn build_preview(rgba: &RgbaImage, frame: (u32, u32)) -> Result<EditorPreview, String> {
     let (width, height) = (rgba.width(), rgba.height());
 
     let proxy = imaging::resize_to_max_edge(rgba, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
@@ -73,6 +79,8 @@ fn build_preview(rgba: &RgbaImage) -> Result<EditorPreview, String> {
     Ok(EditorPreview {
         width,
         height,
+        frame_width: frame.0,
+        frame_height: frame.1,
         preview_width,
         preview_height,
         data_url: format!(
@@ -90,7 +98,7 @@ fn build_preview(rgba: &RgbaImage) -> Result<EditorPreview, String> {
 pub async fn editor_load_preview(path: String) -> Result<EditorPreview, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
-        build_preview(&rgba)
+        build_preview(&rgba, (rgba.width(), rgba.height()))
     })
     .await
     .map_err(|e| format!("代理图任务失败: {e}"))?
@@ -143,13 +151,20 @@ pub async fn editor_export_image(
     crop: Option<CropRequest>,
     target_path: String,
     quality: Option<u8>,
+    rotation: Option<u16>,
+    flip_h: Option<bool>,
+    flip_v: Option<bool>,
 ) -> Result<EditorExportResult, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
-        let image = match crop {
-            Some(c) => imaging::crop_image(&rgba, c.into()).map_err(|e| e.to_string())?,
-            None => rgba,
-        };
+        let rot = imaging::Rotation::from_degrees(rotation.unwrap_or(0)).map_err(|e| e.to_string())?;
+
+        // 与预览严格同一顺序，否则会出现「看到的是转过的、导出的是没转的」
+        let mut image = imaging::rotate_image(&rgba, rot);
+        image = imaging::flip_image(&image, flip_h.unwrap_or(false), flip_v.unwrap_or(false));
+        if let Some(c) = crop {
+            image = imaging::crop_image(&image, c.into()).map_err(|e| e.to_string())?;
+        }
 
         let format = encode_format_from_path(&target_path)?;
         let bytes = imaging::encode(&image, format, quality.unwrap_or(EXPORT_JPEG_QUALITY))
@@ -169,18 +184,36 @@ pub async fn editor_export_image(
     .map_err(|e| format!("导出任务失败: {e}"))?
 }
 
-/// 按矩形裁剪并重新生成代理图。
+/// 按当前文档状态（旋转 / 翻转 / 裁剪）重新生成代理图。
 ///
-/// `crop` 是**相对源文件**的坐标（不是相对上一次裁剪的结果）—— 前端的累积裁剪
-/// 由它自己换算成绝对坐标后传进来。这样连着裁三次也只会从原图切一次，
-/// 不会累积重编码损失。
+/// 处理顺序固定为 **rotate → flip → crop → resize → encode**，与 `core::imaging`
+/// 模块文档里写的口径一致。`crop` 是**当前可见坐标系**下的矩形（旋转/翻转之后），
+/// 所以旋转那一刻由前端把已有 crop 换算到新坐标系，后端不做坐标反算。
+///
+/// 三个参数都可缺省：全缺省时等价于「原图直出」，所以这个命令同时承担了
+/// `editor_load_preview` 的职责（后者保留为无参便捷入口）。
 #[tauri::command]
-pub async fn editor_crop_preview(path: String, crop: CropRequest) -> Result<EditorPreview, String> {
+pub async fn editor_render_preview(
+    path: String,
+    crop: Option<CropRequest>,
+    rotation: Option<u16>,
+    flip_h: Option<bool>,
+    flip_v: Option<bool>,
+) -> Result<EditorPreview, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
-        let cropped = imaging::crop_image(&rgba, crop.into()).map_err(|e| e.to_string())?;
-        build_preview(&cropped)
+        let rot = imaging::Rotation::from_degrees(rotation.unwrap_or(0)).map_err(|e| e.to_string())?;
+
+        let mut image = imaging::rotate_image(&rgba, rot);
+        image = imaging::flip_image(&image, flip_h.unwrap_or(false), flip_v.unwrap_or(false));
+        // crop 之前的画框尺寸：前端旋转/翻转时靠它把 crop 换算到新坐标系
+        let frame = (image.width(), image.height());
+        if let Some(c) = crop {
+            image = imaging::crop_image(&image, c.into()).map_err(|e| e.to_string())?;
+        }
+
+        build_preview(&image, frame)
     })
     .await
-    .map_err(|e| format!("裁剪任务失败: {e}"))?
+    .map_err(|e| format!("渲染任务失败: {e}"))?
 }
