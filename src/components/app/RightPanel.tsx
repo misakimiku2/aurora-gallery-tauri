@@ -23,6 +23,13 @@ interface RightPanelProps {
   onPerformSearch: (query: string) => void;
   handlePerformSearch: (query: string) => void;
   toggleColorPicker: () => void;
+  /** 编辑器调色参数变化（写回 editorDocument.adjust） */
+  onEditorAdjustChange?: (adjust: {
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    temperature: number;
+  }) => void;
 }
 
 // 右侧面板：元数据面板（桌面）+ 颜色选择器面板（安卓）
@@ -43,6 +50,7 @@ export const RightPanel = ({
   onPerformSearch,
   handlePerformSearch,
   toggleColorPicker,
+  onEditorAdjustChange,
 }: RightPanelProps) => {
   // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
   // 代理图元信息从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用
@@ -81,6 +89,8 @@ export const RightPanel = ({
               height={editorMeta?.height ?? 0}
               previewWidth={editorMeta?.previewWidth ?? 0}
               previewHeight={editorMeta?.previewHeight ?? 0}
+              adjust={activeTab.editorDocument?.adjust}
+              onAdjustChange={next => onEditorAdjustChange?.(next)}
             />
           ) : (
           <MetadataPanel

@@ -35,12 +35,16 @@
 //! 注意排除只针对**编辑器入口**：入库扫描的 `file_types::SUPPORTED_IMAGE_EXTENSIONS`
 //! 仍然识别 avif/svg/jxl（它们在画廊里照常显示，只是不能进编辑器）。
 
+mod adjust;
 mod crop;
 mod decode;
 mod encode;
 mod resize;
 mod transform;
 
+pub use adjust::{
+    apply_color_matrix, is_identity_adjustment, ColorMatrix,
+};
 pub use crop::{crop_image, CropRect};
 pub use decode::{
     decode_bytes, decode_file, is_excluded_extension, EDITOR_DECODABLE_EXTENSIONS,
@@ -282,6 +286,96 @@ mod tests {
         }
         // 360 等价于 0
         assert_eq!(Rotation::from_degrees(360).unwrap(), Rotation::None);
+    }
+
+    // ---- 调色 ----
+
+    fn solid(r: u8, g: u8, b: u8, a: u8) -> image::RgbaImage {
+        let mut img = image::RgbaImage::new(1, 1);
+        img.put_pixel(0, 0, image::Rgba([r, g, b, a]));
+        img
+    }
+
+    fn adjust(img: &image::RgbaImage, b: f32, c: f32, s: f32, t: f32) -> [u8; 4] {
+        let m = ColorMatrix::from_adjustments(b, c, s, t);
+        apply_color_matrix(img, &m).get_pixel(0, 0).0
+    }
+
+    #[test]
+    fn zero_adjustments_are_identity() {
+        let src = sample(8, 8);
+        let m = ColorMatrix::from_adjustments(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(m, ColorMatrix::identity(), "全 0 必须退化成单位矩阵");
+        assert!(is_identity_adjustment(0.0, 0.0, 0.0, 0.0));
+        assert_eq!(apply_color_matrix(&src, &m).into_raw(), src.into_raw());
+    }
+
+    #[test]
+    fn brightness_is_multiplicative_not_additive() {
+        // CSS brightness() 是乘法，若实现成加法，预览与导出的暗部走向会相反
+        let out = adjust(&solid(100, 100, 100, 255), 0.5, 0.0, 0.0, 0.0);
+        assert_eq!(&out[..3], &[150, 150, 150]); // 100 * 1.5
+
+        let black = adjust(&solid(100, 100, 100, 255), -1.0, 0.0, 0.0, 0.0);
+        assert_eq!(&black[..3], &[0, 0, 0]); // 增益 0
+    }
+
+    #[test]
+    fn contrast_pivots_around_mid_gray() {
+        // 中灰 128 是轴心，不该被推动
+        let mid = adjust(&solid(128, 128, 128, 255), 0.0, 0.5, 0.0, 0.0);
+        assert!((mid[0] as i32 - 128).abs() <= 1, "中灰应基本不动，实际 {}", mid[0]);
+
+        // 亮的更亮、暗的更暗
+        let bright = adjust(&solid(200, 200, 200, 255), 0.0, 0.5, 0.0, 0.0);
+        assert!(bright[0] > 200);
+        let dark = adjust(&solid(60, 60, 60, 255), 0.0, 0.5, 0.0, 0.0);
+        assert!(dark[0] < 60);
+    }
+
+    #[test]
+    fn saturation_minus_one_turns_gray() {
+        let out = adjust(&solid(255, 0, 0, 255), 0.0, 0.0, -1.0, 0.0);
+        assert_eq!(out[0], out[1], "去饱和后三通道必须相等");
+        assert_eq!(out[1], out[2]);
+    }
+
+    #[test]
+    fn temperature_warms_by_raising_red_and_lowering_blue() {
+        let warm = adjust(&solid(100, 100, 100, 255), 0.0, 0.0, 0.0, 1.0);
+        assert!(warm[0] > 100, "暖调抬红");
+        assert_eq!(warm[1], 100, "绿通道不动");
+        assert!(warm[2] < 100, "暖调压蓝");
+
+        let cool = adjust(&solid(100, 100, 100, 255), 0.0, 0.0, 0.0, -1.0);
+        assert!(cool[0] < 100);
+        assert!(cool[2] > 100);
+    }
+
+    #[test]
+    fn alpha_is_never_touched() {
+        let out = adjust(&solid(10, 20, 30, 77), 0.8, 0.5, -0.5, 0.6);
+        assert_eq!(out[3], 77);
+    }
+
+    #[test]
+    fn adjustment_order_is_pinned() {
+        // 顺序换了结果就不同（矩阵不可交换），所以写死在这里防止有人"顺手优化"
+        let actual = ColorMatrix::from_adjustments(0.2, 0.3, 0.4, 0.5);
+        let expected = ColorMatrix::brightness(0.2)
+            .then(&ColorMatrix::contrast(0.3))
+            .then(&ColorMatrix::saturation(0.4))
+            .then(&ColorMatrix::temperature(0.5));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn combined_adjustments_snapshot() {
+        // 与前端 TS 实现共享的采样值：两边都必须算出同一组数字，
+        // 否则会出现"预览偏暖、导出偏冷"这类所见非所得。
+        // 手算复核：(120,90,60) → 亮度×1.2 → 对比 1.3 绕 127.5 → 饱和 1.4 → 色温 R×1.15/B×0.85
+        let out = adjust(&solid(120, 90, 60, 255), 0.2, 0.3, 0.4, 0.5);
+        assert_eq!(out, [190, 100, 29, 255]);
     }
 
     /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。    ///

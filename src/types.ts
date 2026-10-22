@@ -543,6 +543,14 @@ export interface EditorDocument {
   flipH?: boolean;
   /** 垂直镜像 */
   flipV?: boolean;
+  /**
+   * 调色参数（-100..100，0 = 不变）。
+   *
+   * 语义上是**图层属性**（UI 设计 §4.1「属性·调整」作用于选中图层），现在只有一张
+   * 背景层所以等价于整画面；Phase 2 引入多图层后这个结构会下沉到 `Layer` 上，
+   * 文档级不再保留。
+   */
+  adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
 }
 
 /** 编辑器的几何变换集合（裁剪 + 旋转 + 翻转），与 `EditorDocument` 的对应字段同构。 */
@@ -551,6 +559,7 @@ export interface EditorTransform {
   rotation?: number;
   flipH?: boolean;
   flipV?: boolean;
+  adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
 }
 
 /**

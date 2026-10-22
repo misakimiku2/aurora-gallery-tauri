@@ -154,6 +154,7 @@ pub async fn editor_export_image(
     rotation: Option<u16>,
     flip_h: Option<bool>,
     flip_v: Option<bool>,
+    adjust: Option<AdjustRequest>,
 ) -> Result<EditorExportResult, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
@@ -165,6 +166,7 @@ pub async fn editor_export_image(
         if let Some(c) = crop {
             image = imaging::crop_image(&image, c.into()).map_err(|e| e.to_string())?;
         }
+        image = apply_adjustments(image, adjust);
 
         let format = encode_format_from_path(&target_path)?;
         let bytes = imaging::encode(&image, format, quality.unwrap_or(EXPORT_JPEG_QUALITY))
@@ -184,7 +186,45 @@ pub async fn editor_export_image(
     .map_err(|e| format!("导出任务失败: {e}"))?
 }
 
-/// 按当前文档状态（旋转 / 翻转 / 裁剪）重新生成代理图。
+/// 调色请求。四个参数都是 `-100 ..= 100`，0 = 不变（与前端滑杆同一口径）。
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(default)]
+pub struct AdjustRequest {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub temperature: f32,
+}
+
+impl AdjustRequest {
+    fn is_noop(&self) -> bool {
+        self.brightness == 0.0
+            && self.contrast == 0.0
+            && self.saturation == 0.0
+            && self.temperature == 0.0
+    }
+}
+
+/// 在全分辨率像素上应用调色。
+///
+/// 放在 **crop 之后、resize 之前**：裁剪先缩小处理面积，而在全分辨率上做乘加能让
+/// clamp 更准（先缩放到代理尺寸再调色会把超界的高光提前压平）。
+fn apply_adjustments(image: RgbaImage, adjust: Option<AdjustRequest>) -> RgbaImage {
+    let Some(a) = adjust else { return image };
+    if a.is_noop() {
+        return image; // 全 0 时一个像素都不碰
+    }
+    // 前端用 -100..100，core 用 -1..1
+    let matrix = imaging::ColorMatrix::from_adjustments(
+        a.brightness / 100.0,
+        a.contrast / 100.0,
+        a.saturation / 100.0,
+        a.temperature / 100.0,
+    );
+    imaging::apply_color_matrix(&image, &matrix)
+}
+
+/// 按当前文档状态（旋转 / 翻转 / 裁剪 / 调色）重新生成代理图。
 ///
 /// 处理顺序固定为 **rotate → flip → crop → resize → encode**，与 `core::imaging`
 /// 模块文档里写的口径一致。`crop` 是**当前可见坐标系**下的矩形（旋转/翻转之后），
@@ -199,6 +239,7 @@ pub async fn editor_render_preview(
     rotation: Option<u16>,
     flip_h: Option<bool>,
     flip_v: Option<bool>,
+    adjust: Option<AdjustRequest>,
 ) -> Result<EditorPreview, String> {
     tokio::task::spawn_blocking(move || {
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
@@ -211,6 +252,7 @@ pub async fn editor_render_preview(
         if let Some(c) = crop {
             image = imaging::crop_image(&image, c.into()).map_err(|e| e.to_string())?;
         }
+        image = apply_adjustments(image, adjust);
 
         build_preview(&image, frame)
     })

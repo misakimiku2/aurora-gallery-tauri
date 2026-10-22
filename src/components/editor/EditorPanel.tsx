@@ -13,6 +13,7 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Eye, Image as ImageIcon, Plus } from 'lucide-react';
 import { EditorNavigator } from './EditorNavigator';
+import { Adjustments, isZeroAdjustments, ZERO_ADJUSTMENTS } from './colorMatrix';
 import { getEditorView, requestPanTo, subscribeEditorView } from './editorViewStore';
 import { useEditorThumbnail } from './useEditorThumbnail';
 
@@ -26,6 +27,9 @@ interface EditorPanelProps {
   height: number;
   previewWidth: number;
   previewHeight: number;
+  /** 调色参数（-100..100） */
+  adjust?: Adjustments;
+  onAdjustChange: (next: Adjustments) => void;
 }
 
 const Section: React.FC<{
@@ -58,13 +62,35 @@ const Row: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   </div>
 );
 
-const Slider: React.FC<{ label: string }> = ({ label }) => (
+const Slider: React.FC<{
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  onReset: () => void;
+}> = ({ label, value, onChange, onReset }) => (
   <div className="space-y-1">
     <div className="flex items-center justify-between text-[11px]">
-      <span className="text-neutral-400 dark:text-neutral-500">{label}</span>
-      <span className="tabular-nums text-neutral-400 dark:text-neutral-500">0</span>
+      {/* 双击标签归零：PS 也是这个交互 */}
+      <span
+        className="text-neutral-500 dark:text-neutral-400 cursor-pointer select-none"
+        onDoubleClick={onReset}
+        title="双击归零"
+      >
+        {label}
+      </span>
+      <span className="tabular-nums text-neutral-700 dark:text-neutral-200 w-8 text-right">
+        {value}
+      </span>
     </div>
-    <input type="range" min={-100} max={100} defaultValue={0} disabled className="w-full accent-blue-600 opacity-40" />
+    <input
+      type="range"
+      min={-100}
+      max={100}
+      step={1}
+      value={value}
+      onChange={e => onChange(Number(e.target.value))}
+      className="w-full accent-blue-600"
+    />
   </div>
 );
 
@@ -76,8 +102,14 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   height,
   previewWidth,
   previewHeight,
+  adjust,
+  onAdjustChange,
 }) => {
   const isProxy = previewWidth !== width || previewHeight !== height;
+  const adj = adjust ?? ZERO_ADJUSTMENTS;
+  const hasAdjust = !isZeroAdjustments(adj);
+  /** 与 ImageEditor 里定义的那个 SVG 滤镜同 id（跨子树引用同一份 filter 定义） */
+  const adjustFilter = hasAdjust ? `url(#aurora-editor-adjust-${tabId})` : undefined;
 
   // 全览图的视口框需要编辑器画布的 scale/x/y —— 从共享 store 拿（rAF 节流）
   const view = useSyncExternalStore(subscribeEditorView, () => getEditorView(tabId));
@@ -98,6 +130,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           imgHeight={previewHeight}
           view={view}
           onNavigate={(x, y) => requestPanTo(tabId, x, y)}
+          imgFilter={adjustFilter}
         />
       </Section>
 
@@ -107,13 +140,43 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         <Row label="画布" value={`${width} × ${height}`} />
         {isProxy && <Row label="代理" value={`${previewWidth} × ${previewHeight}`} />}
         <div className="pt-1 space-y-2">
-          <Slider label="亮度" />
-          <Slider label="对比度" />
-          <Slider label="饱和度" />
-          <Slider label="色温" />
+          <Slider
+            label="亮度"
+            value={adj.brightness}
+            onChange={v => onAdjustChange({ ...adj, brightness: v })}
+            onReset={() => onAdjustChange({ ...adj, brightness: 0 })}
+          />
+          <Slider
+            label="对比度"
+            value={adj.contrast}
+            onChange={v => onAdjustChange({ ...adj, contrast: v })}
+            onReset={() => onAdjustChange({ ...adj, contrast: 0 })}
+          />
+          <Slider
+            label="饱和度"
+            value={adj.saturation}
+            onChange={v => onAdjustChange({ ...adj, saturation: v })}
+            onReset={() => onAdjustChange({ ...adj, saturation: 0 })}
+          />
+          <Slider
+            label="色温"
+            value={adj.temperature}
+            onChange={v => onAdjustChange({ ...adj, temperature: v })}
+            onReset={() => onAdjustChange({ ...adj, temperature: 0 })}
+          />
         </div>
+        {hasAdjust && (
+          <button
+            type="button"
+            onClick={() => onAdjustChange(ZERO_ADJUSTMENTS)}
+            className="w-full h-6 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+          >
+            重置全部调整
+          </button>
+        )}
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          调色滑杆尚未接入引擎，接入后会走 `core::imaging` 的 transform 段。
+          实时预览由显卡完成（拖动零延迟）；导出时 Rust 按**同一套颜色矩阵**重算，
+          所见即所得。双击滑杆标签可单项归零。
         </p>
       </Section>
 
@@ -154,7 +217,13 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           <Eye size={12} className="text-neutral-500 shrink-0" />
           <div className="w-10 h-10 shrink-0 rounded-sm overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
             {layerThumb ? (
-              <img src={layerThumb.src} alt="" className="w-full h-full object-cover" draggable={false} />
+              <img
+                src={layerThumb.src}
+                alt=""
+                className="w-full h-full object-cover"
+                style={{ filter: adjustFilter }}
+                draggable={false}
+              />
             ) : (
               <ImageIcon size={13} className="text-neutral-400" />
             )}

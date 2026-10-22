@@ -22,6 +22,8 @@ interface EditorNavigatorProps {
   view?: EditorViewSnapshot;
   /** 点击/拖动全览图 → 请画布把该点移到视口中央（代理图像素坐标） */
   onNavigate?: (imgX: number, imgY: number) => void;
+  /** 缩略图也要套上当前调色滤镜，否则「画布偏暖、全览正常」 */
+  imgFilter?: string;
 }
 
 /** 全览区固定高度（CSS px） */
@@ -35,6 +37,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
   imgHeight,
   view,
   onNavigate,
+  imgFilter,
 }) => {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [boxW, setBoxW] = useState(0);
@@ -126,7 +129,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
             alt="全览"
             draggable={false}
             className="absolute select-none"
-            style={{ left: offX, top: offY, width: dispW, height: dispH }}
+            style={{ left: offX, top: offY, width: dispW, height: dispH, filter: imgFilter }}
           />
           {frame && (
             <div

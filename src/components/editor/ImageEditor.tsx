@@ -27,7 +27,14 @@
  * 这与看图软件（滚轮即缩放）相反，是刻意的。UI 设计 §8.2 同时要求编辑态下
  * 查看器/视频的键位全部失效——本组件自管键盘监听，天然隔离。
  */
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
@@ -49,6 +56,7 @@ import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
 import { flipCropRect, rotateCropRect } from './cropGeometry';
+import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
 import { clearEditorView, peekPanRequest, setEditorView, subscribeEditorView } from './editorViewStore';
 import {
@@ -117,6 +125,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const docRotation = docTransform?.rotation ?? 0;
   const docFlipH = docTransform?.flipH ?? false;
   const docFlipV = docTransform?.flipV ?? false;
+  const docAdjust = docTransform?.adjust;
+
+  // ---- 调色预览 ----
+  // 预览走浏览器原生 SVG feColorMatrix（GPU，拖动零延迟），导出走 Rust 逐像素。
+  // 两端用同一套矩阵公式（见 colorMatrix.ts 顶部注释），矩阵值由单测锁死。
+  const adjustFilterId = `aurora-editor-adjust-${tabId}`;
+  const hasAdjust = !isZeroAdjustments(docAdjust);
+  const adjustValues = useMemo(
+    () => toFeColorMatrixValues(buildAdjustMatrix(docAdjust)),
+    [docAdjust],
+  );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
   const [loading, setLoading] = useState(false);
@@ -271,6 +290,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       rotation: docRotation,
       flipH: docFlipH,
       flipV: docFlipV,
+      // 几何变换不能顺手把调色丢掉——用户调完色再裁一刀不该回到原色
+      adjust: docAdjust,
     });
     onToolChange('move');
   }, [
@@ -282,6 +303,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     docFlipV,
     onDocTransformChange,
     onToolChange,
+    docAdjust,
   ]);
 
   const cancelCrop = useCallback(() => {
@@ -304,9 +326,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         rotation: nextRotation,
         flipH: docFlipH,
         flipV: docFlipV,
+        adjust: docAdjust,
       });
     },
-    [preview, docCrop, docRotation, docFlipH, docFlipV, onDocTransformChange],
+    [preview, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onDocTransformChange],
   );
 
   const handleFlip = useCallback(
@@ -320,9 +343,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         rotation: docRotation,
         flipH: horizontal ? !docFlipH : docFlipH,
         flipV: horizontal ? docFlipV : !docFlipV,
+        adjust: docAdjust,
       });
     },
-    [preview, docCrop, docRotation, docFlipH, docFlipV, onDocTransformChange],
+    [preview, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onDocTransformChange],
   );
 
   // 键盘监听只依赖 onToolChange，不跟着 cropRect 每次变化重绑 → 用 ref 取最新实现
@@ -453,6 +477,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           rotation: docRotation,
           flipH: docFlipH,
           flipV: docFlipV,
+          adjust: docAdjust ?? null,
         },
       );
       // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）。
@@ -475,7 +500,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setExportState({ status: 'error', text: String(e) });
       setTimeout(() => setExportState({ status: 'idle' }), 6000);
     }
-  }, [sourcePath, docCrop, docRotation, docFlipH, docFlipV, onFileCreated]);
+  }, [sourcePath, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onFileCreated]);
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -641,6 +666,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   return (
     <div className="w-full h-full flex overflow-hidden bg-neutral-100 dark:bg-neutral-900">
+      {/*
+        调色滤镜定义。`colorInterpolationFilters="sRGB"` 不能省：SVG 默认在
+        linearRGB 空间做矩阵运算，而 Rust 侧是直接在 sRGB 字节上算的 —— 不显式指定
+        会让对比度/饱和度的观感与导出结果明显不同（尤其暗部）。
+      */}
+      <svg className="absolute w-0 h-0 pointer-events-none" aria-hidden="true">
+        <filter id={adjustFilterId} colorInterpolationFilters="sRGB">
+          <feColorMatrix type="matrix" values={adjustValues} />
+        </filter>
+      </svg>
+
       <EditorToolbar
         // 按住空格时抓手临时接管：工具栏上抓手高亮（PS 行为），但 Tab 记录的工具不变
         activeTool={spaceHeld ? 'hand' : tool}
@@ -811,6 +847,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               className="absolute left-0 top-0 origin-top-left select-none"
               style={{
                 transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+                // 调色预览：SVG feColorMatrix，参数全 0 时不出滤镜层
+                filter: hasAdjust ? `url(#${adjustFilterId})` : undefined,
                 // 放大超过 100% 用像素化：让「已经超出代理分辨率」一眼可见
                 imageRendering: transform.scale > 1 ? 'pixelated' : 'auto',
                 width: preview.previewWidth,

@@ -2954,6 +2954,13 @@ export const App: React.FC = () => {
         <RightPanel
           state={state}
           activeTab={activeTab}
+          onEditorAdjustChange={adjust =>
+            updateTabById(activeTab.id, prev => ({
+              editorDocument: prev.editorDocument
+                ? { ...prev.editorDocument, adjust, dirty: true }
+                : prev.editorDocument,
+            }))
+          }
           peopleWithDisplayCounts={peopleWithDisplayCounts}
           filesVersion={filesVersion}
           t={t}
