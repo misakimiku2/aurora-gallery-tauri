@@ -2791,20 +2791,21 @@ pub(crate) fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
+/// 图片判定：收敛到 `core::file_types`，不再自带第三份清单。
+///
+/// Phase 0 清理：这里原先是一份硬编码扩展名清单，与 `SUPPORTED_IMAGE_EXTENSIONS`
+/// 不同步（当时缺 `jfif` / `ico` / `svg`）——同一个服务端，扫描认的格式和 LAN 认的
+/// 格式能不一样。「改一处忘两处」的代价已经在 `.tif` 上付过一次（见 `file_types`
+/// 的同名单测），所以三处判定从此只有一份真源。
 fn is_image_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(
-        ext.as_str(),
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" | "jxl"
-    )
+    let ext = name.rsplit('.').next().unwrap_or("");
+    crate::file_types::is_supported_image(ext)
 }
 
+/// 视频判定：同上，收敛到 `core::file_types::SUPPORTED_VIDEO_EXTENSIONS`。
 fn is_video_file(name: &str) -> bool {
-    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    matches!(
-        ext.as_str(),
-        "mp4" | "mov" | "avi" | "mkv" | "webm" | "flv" | "wmv" | "m4v" | "mpg" | "mpeg" | "3gp" | "ts"
-    )
+    let ext = name.rsplit('.').next().unwrap_or("");
+    crate::file_types::is_supported_video(ext)
 }
 
 fn find_preview_images(

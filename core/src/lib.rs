@@ -16,6 +16,7 @@ pub mod db;
 pub mod file_types;
 pub mod ffi;
 pub mod ffi_container;
+pub mod imaging;
 pub mod import;
 pub mod mp4_editlist;
 pub mod mp4_mdat;

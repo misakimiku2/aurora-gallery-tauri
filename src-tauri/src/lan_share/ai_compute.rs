@@ -89,10 +89,11 @@ impl TempImage {
         let safe_ext = {
             let e = ext.to_ascii_lowercase();
             let e = e.trim_start_matches('.');
-            if matches!(
-                e,
-                "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" | "jxl"
-            ) {
+            // Phase 0 收敛：清单改用 `core::imaging` 的「Rust 侧真能解码」白名单。
+            // 原先是就地硬编码的第四份扩展名清单，而且写着 `avif` / `jxl` —— 那两个
+            // `image` 根本没编解码器，给了扩展名照样解不动；反过来 `ico` / `jfif`
+            // 明明能解却被兜底成 `.jpg`。
+            if aurora_core::imaging::EDITOR_DECODABLE_EXTENSIONS.contains(&e) {
                 format!(".{e}")
             } else {
                 ".jpg".to_string() // 未知扩展兜底 jpg（image 按字节解码为主，扩展只做格式选择）

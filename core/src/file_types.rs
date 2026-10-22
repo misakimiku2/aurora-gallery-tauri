@@ -90,7 +90,7 @@ pub struct ScanProgress {
 // （原 `SUPPORTED_EXTENSIONS` 只含图片，视频在扫描阶段就被丢弃——这是根因一）。
 // 视频 12 种与 LAN `is_video_file` 的列表对齐。
 pub const SUPPORTED_IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tiff", "ico", "svg", "avif", "jxl",
+    "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tiff", "tif", "ico", "svg", "avif", "jxl",
 ];
 
 pub const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
@@ -141,5 +141,36 @@ pub fn mime_for_extension(extension: &str) -> Option<&'static str> {
         "3gp" => Some("video/3gpp"),
         "ts" => Some("video/mp2t"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 双门一致性：白名单认的每个图片扩展名都必须能映射出 MIME。
+    ///
+    /// Phase 0 清理的旧账：`SUPPORTED_IMAGE_EXTENSIONS` 只写 `tiff`、`mime_for_extension`
+    /// 却认 `tif`，同一个格式两道门两种答案——扫描认、Eagle 导入不认（导入要过
+    /// `is_indexable`，它拿 ext → mime，拿不到就判不支持）。这条把两扇门焊死。
+    #[test]
+    fn image_extension_and_mime_tables_stay_in_sync() {
+        for ext in SUPPORTED_IMAGE_EXTENSIONS {
+            assert!(
+                mime_for_extension(ext).is_some(),
+                "白名单里的 `{ext}` 没有 MIME 映射"
+            );
+        }
+    }
+
+    /// `tif` / `tiff` 两种拼写必须同权——相机与手机导出的 tif 极常见，
+    /// 少认一个就是「扫得到但用不了」。
+    #[test]
+    fn both_tiff_spellings_are_recognised() {
+        for ext in ["tif", "tiff", "TIF", "TIFF"] {
+            assert!(is_supported_image(ext), "`{ext}` 应被识别为图片");
+        }
+        assert_eq!(mime_for_extension("tif"), Some("image/tiff"));
+        assert_eq!(mime_for_extension("tiff"), Some("image/tiff"));
     }
 }

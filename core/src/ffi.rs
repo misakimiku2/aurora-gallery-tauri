@@ -639,6 +639,12 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
 /// 缩略图目标尺寸（最长边，像素）。
 const THUMBNAIL_SIZE: u32 = 256;
 
+/// 安卓兜底缩略图的 JPEG 质量。
+///
+/// 沿用改造前 `write_to(ImageFormat::Jpeg)` 的默认值 75，别顺手调——这是覆盖
+/// MINI_KIND 系统缩略图的兜底升级路径，改质量会让全机缩略图缓存集体失效重算。
+const THUMBNAIL_JPEG_QUALITY: u8 = 75;
+
 /// 按标签取图片行（M4a 4.1：侧栏点一个标签 = 筛出该标签下的全部图，跨文件夹）。
 ///
 /// 为什么要在 Rust 侧多开这一条：安卓的 `list_images` 只按文件夹取，而侧栏标签上的
@@ -698,16 +704,23 @@ pub fn list_images_by_ids(file_ids: Vec<String>) -> Result<Vec<Image>, AuroraErr
 ///
 /// 用于「MINI_KIND 系统缩略图尺寸不足」时的兜底升级：Kotlin 端读取
 /// `content://` 原图字节后传入，返回 JPEG 字节供缓存与显示。
+///
+/// 图片编辑 Phase 0：本函数改成走 `imaging` 像素通道的第一版实现，是那条通道的
+/// 第一个（也是 Phase 0 唯一一个）消费者。行为与改造前等价——同为「最长边 256、
+/// 不放大、JPEG 质量 75」，差别只在缩放算法（`image` 的 `thumbnail()` 面积平均 →
+/// fast_image_resize 的 Lanczos3），256px 上肉眼无差，质量略优。
 #[uniffi::export]
 pub fn generate_thumbnail(data: Vec<u8>) -> Result<Vec<u8>, AuroraError> {
-    let img = image::load_from_memory(&data)
+    let rgba = crate::imaging::decode_bytes(&data)
         .map_err(|e| AuroraError::Thumbnail(format!("解码失败: {e}")))?;
-    let thumb = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
-    let mut cursor = std::io::Cursor::new(Vec::new());
-    thumb
-        .write_to(&mut cursor, image::ImageFormat::Jpeg)
-        .map_err(|e| AuroraError::Thumbnail(format!("编码失败: {e}")))?;
-    Ok(cursor.into_inner())
+    let thumb = crate::imaging::resize_to_max_edge(&rgba, THUMBNAIL_SIZE)
+        .map_err(|e| AuroraError::Thumbnail(format!("缩放失败: {e}")))?;
+    crate::imaging::encode(
+        &thumb,
+        crate::imaging::EncodeFormat::Jpeg,
+        THUMBNAIL_JPEG_QUALITY,
+    )
+    .map_err(|e| AuroraError::Thumbnail(format!("编码失败: {e}")))
 }
 
 /// `db::generate_id` 的导出（M4b 1.2 方案 A）：Kotlin 复制文件后对新 content_uri

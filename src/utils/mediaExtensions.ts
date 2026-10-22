@@ -2,8 +2,13 @@
  * 媒体扩展名表 —— 前端统一真源
  *
  * ⚠️ 与 `core/src/file_types.rs` 保持同步（视频 P1，设计方案 §2.7 口径 C）：
- * - `SUPPORTED_IMAGE_EXTENSIONS` ↔ Rust `file_types::SUPPORTED_EXTENSIONS`
+ * - `SUPPORTED_IMAGE_EXTENSIONS` ↔ Rust `file_types::SUPPORTED_IMAGE_EXTENSIONS`
  * - `SUPPORTED_VIDEO_EXTENSIONS` ↔ Rust `file_types::SUPPORTED_VIDEO_EXTENSIONS`（P1 新增）
+ *
+ * 改这里必须同时改 Rust 侧，同一条口径现在被四处共用：core 白名单、Rust LAN 的
+ * `is_image_file` / `is_video_file`（已改为直接调 core）、以及本文件。Phase 0 之前
+ * LAN 侧还各带一份硬编码副本，缺 `jfif`/`ico`/`svg`；`.tif` 也是「白名单不认、
+ * MIME 认」挂了很久。两边都已在 2026-10-22 收口。
  *
  * 历史遗留：全仓曾散落六套互不一致的扩展名表（types.ts / ImageThumbnail.tsx /
  * drag.ts / Rust LAN …），导致"某处能进、某处不能"。此处收敛为唯一真源，
@@ -12,7 +17,7 @@
 
 /** 图片扩展名（与 Rust `file_types::SUPPORTED_EXTENSIONS` 对齐） */
 export const SUPPORTED_IMAGE_EXTENSIONS = [
-  'jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'bmp', 'tiff', 'ico', 'svg', 'avif', 'jxl',
+  'jpg', 'jpeg', 'jfif', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'ico', 'svg', 'avif', 'jxl',
 ];
 
 /** 视频扩展名（与 Rust `file_types::SUPPORTED_VIDEO_EXTENSIONS` 对齐，12 种） */
