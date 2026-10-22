@@ -2176,7 +2176,11 @@ export const App: React.FC = () => {
     onRefresh: handleRefreshAnySource,
     onRequestDelete: requestDelete,
     selectedFileIds: activeTab.selectedFileIds,
-    isReferenceMode
+    isReferenceMode,
+    // 编辑态下**屏蔽标签页级的快捷键**（UI 设计 §8.2 的要求）。
+    // 直接冲突的就有 Ctrl+T：应用拿去开新标签，编辑器拿它进自由变换 —— 一次按键
+    // 会同时做两件事；Delete 在编辑器里将来要删图层，更不能顺手删文件。
+    isEditorMode: activeTab.viewMode === 'editor',
   });
 
   const pushHistoryRef = useRef(pushHistory);

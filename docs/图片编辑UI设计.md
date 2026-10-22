@@ -247,6 +247,12 @@ editorDocument?: {
 
 **规则**：编辑态下**视频与查看器键位全部失效**，空格 = 临时抓手（不是播放）。判定"当前焦点在哪个 surface"参照现成机制——`src/utils/keyboardTarget.ts` 的 `isTextEditingTarget`（`ImageViewer.tsx:1570` 用它 + `e.isComposing` 让路给文本框与输入法组合态）。
 
+> **2026-10-23 已落地（含一条原文没写的冲突）**：应用级快捷键集中在
+> `src/hooks/useKeyboardShortcuts.ts`，现在由 `App.tsx` 传 `isEditorMode`
+> （`activeTab.viewMode === 'editor'`），编辑态**整组让路**，只保留 `Ctrl+R`（应用级刷新，
+> 编辑器不占用）。原文漏掉的冲突是 **`Ctrl+T`**：应用拿去开新标签、编辑器拿它进自由变换，
+> 一次按键会同时做两件事——用户实测撞上过。`Delete` 同理（将来要删图层，绝不能顺手删文件）。
+
 **这条必须在 Phase 1 就落地**，不能等 Phase 5 的"快捷键"批次：键位口径不定，笔刷与钢笔的手感无从对齐（设计方案 §8 已登记快捷键在 Phase 5，但那指的是"补齐全量快捷键"，不是"第一次定口径"）。
 
 ### 8.3 首批键位表（PS 常用口径，**实施前逐条实测核对**）
