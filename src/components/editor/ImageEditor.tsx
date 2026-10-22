@@ -49,6 +49,8 @@ import {
   Undo2,
   ZoomIn,
   ZoomOut,
+  Sidebar,
+  PanelRight,
 } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
@@ -102,6 +104,12 @@ interface ImageEditorProps {
    * 走文件夹重扫是项目里已经验证过的路径。
    */
   onFileCreated?: (targetPath: string) => void | Promise<void>;
+  /** 切换左侧面板（与应用 TopBar 同一套开关，含安卓端互斥逻辑） */
+  onToggleSidebar: () => void;
+  isSidebarVisible: boolean;
+  /** 切换右侧面板 */
+  onToggleMetadata: () => void;
+  isMetadataVisible: boolean;
 }
 
 const FIT_PADDING = 60;
@@ -122,6 +130,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   docTransform,
   onDocTransformChange,
   onFileCreated,
+  onToggleSidebar,
+  isSidebarVisible,
+  onToggleMetadata,
+  isMetadataVisible,
 }) => {
   // 拆成原始值：对象每次渲染都是新引用，直接进依赖数组会让 effect 反复触发
   const docCrop = docTransform?.crop;
@@ -778,7 +790,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           : 'default';
 
   return (
-    <div className="w-full h-full flex overflow-hidden bg-neutral-100 dark:bg-neutral-900">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-neutral-100 dark:bg-neutral-900">
       {/*
         调色滤镜定义。`colorInterpolationFilters="sRGB"` 不能省：SVG 默认在
         linearRGB 空间做矩阵运算，而 Rust 侧是直接在 sRGB 字节上算的 —— 不显式指定
@@ -790,6 +802,164 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         </filter>
       </svg>
 
+      {/*
+        文档栏：贯穿顶部、盖在工具栏之上（骨架要求）。
+        两端的面板开关与应用 TopBar 同一套语义与图标（Sidebar / PanelRight）。
+      */}
+      <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 select-none">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className={`p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 ${isSidebarVisible ? 'text-blue-500' : ''}`}
+          title="切换左侧面板"
+        >
+          <Sidebar size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
+        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[38%]">
+          {documentName}
+        </span>
+        {preview && (
+          <span className="text-[11px] text-neutral-500 dark:text-neutral-400 shrink-0 tabular-nums">
+            {preview.width}×{preview.height}
+            {preview.previewWidth !== preview.width && (
+              <span className="ml-2 text-amber-600 dark:text-amber-400">
+                代理 {preview.previewWidth}×{preview.previewHeight}
+              </span>
+            )}
+          </span>
+        )}
+        {exportState.status === 'done' && (
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">
+            {exportState.text}
+          </span>
+        )}
+        {exportState.status === 'error' && (
+          <span
+            className="text-[11px] text-red-500 shrink-0 max-w-[22rem] truncate"
+            title={exportState.text}
+          >
+            {exportState.text}
+          </span>
+        )}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={undo}
+          disabled={!canUndo}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="撤销 (Ctrl+Z)"
+        >
+          <Undo2 size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={redo}
+          disabled={!canRedo}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="重做 (Ctrl+Shift+Z)"
+        >
+          <Redo2 size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
+        {/* 旋转 / 翻转：与裁剪同属几何变换，都只改文档状态，导出时由 Rust 在
+            原图上一次性套用（不会因为连点几次而累积重编码损失） */}
+        <button
+          type="button"
+          onClick={() => handleRotate(false)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="逆时针旋转 90°"
+        >
+          <RotateCcw size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleRotate(true)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="顺时针旋转 90°"
+        >
+          <RotateCw size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleFlip(true)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="水平翻转"
+        >
+          <FlipHorizontal2 size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleFlip(false)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="垂直翻转"
+        >
+          <FlipVertical2 size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={!preview || exportState.status === 'working'}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="导出为图片（PNG / JPEG / WebP）"
+        >
+          {exportState.status === 'working' ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            // FileOutput 而不是 Download：这是「把文档导出成图片」，不是从网上下载
+            <FileOutput size={15} />
+          )}
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
+        <button
+          type="button"
+          onClick={() => zoomAtCenter(1 / CLICK_ZOOM_STEP)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="缩小"
+        >
+          <ZoomOut size={15} />
+        </button>
+        <span className="text-[11px] tabular-nums text-neutral-600 dark:text-neutral-300 w-11 text-center">
+          {Math.round(transform.scale * 100)}%
+        </span>
+        <button
+          type="button"
+          onClick={() => zoomAtCenter(CLICK_ZOOM_STEP)}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="放大"
+        >
+          <ZoomIn size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={fitToView}
+          disabled={!preview}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          // 与画布工具栏的「查看全部」同一个图标、同一个语义
+          title="查看全部"
+        >
+          <Scan size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
+        <button
+          type="button"
+          onClick={onToggleMetadata}
+          className={`p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 ${isMetadataVisible ? 'text-blue-500' : ''}`}
+          title="切换右侧面板"
+        >
+          <PanelRight size={15} />
+        </button>
+      </div>
+
+      {/* 工具栏与画布区：在文档栏之下 */}
+      <div className="flex-1 flex min-h-0">
       <EditorToolbar
         // 按住空格时抓手临时接管：工具栏上抓手高亮（PS 行为），但 Tab 记录的工具不变
         activeTool={spaceHeld ? 'hand' : tool}
@@ -798,140 +968,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       />
 
       <div className="flex-1 flex flex-col min-w-0">
-        {/* 文档栏 */}
-        <div className="h-9 shrink-0 flex items-center gap-3 px-3 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 select-none">
-          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[38%]">
-            {documentName}
-          </span>
-          {preview && (
-            <span className="text-[11px] text-neutral-500 dark:text-neutral-400 shrink-0 tabular-nums">
-              {preview.width}×{preview.height}
-              {preview.previewWidth !== preview.width && (
-                <span className="ml-2 text-amber-600 dark:text-amber-400">
-                  代理 {preview.previewWidth}×{preview.previewHeight}
-                </span>
-              )}
-            </span>
-          )}
-          {exportState.status === 'done' && (
-            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">
-              {exportState.text}
-            </span>
-          )}
-          {exportState.status === 'error' && (
-            <span
-              className="text-[11px] text-red-500 shrink-0 max-w-[22rem] truncate"
-              title={exportState.text}
-            >
-              {exportState.text}
-            </span>
-          )}
-          <div className="flex-1" />
-          <button
-            type="button"
-            onClick={undo}
-            disabled={!canUndo}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="撤销 (Ctrl+Z)"
-          >
-            <Undo2 size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={redo}
-            disabled={!canRedo}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="重做 (Ctrl+Shift+Z)"
-          >
-            <Redo2 size={15} />
-          </button>
-          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-          {/* 旋转 / 翻转：与裁剪同属几何变换，都只改文档状态，导出时由 Rust 在
-              原图上一次性套用（不会因为连点几次而累积重编码损失） */}
-          <button
-            type="button"
-            onClick={() => handleRotate(false)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="逆时针旋转 90°"
-          >
-            <RotateCcw size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleRotate(true)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="顺时针旋转 90°"
-          >
-            <RotateCw size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlip(true)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="水平翻转"
-          >
-            <FlipHorizontal2 size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={() => handleFlip(false)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="垂直翻转"
-          >
-            <FlipVertical2 size={15} />
-          </button>
-          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={!preview || exportState.status === 'working'}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="导出为图片（PNG / JPEG / WebP）"
-          >
-            {exportState.status === 'working' ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : (
-              // FileOutput 而不是 Download：这是「把文档导出成图片」，不是从网上下载
-              <FileOutput size={15} />
-            )}
-          </button>
-          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-          <button
-            type="button"
-            onClick={() => zoomAtCenter(1 / CLICK_ZOOM_STEP)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="缩小"
-          >
-            <ZoomOut size={15} />
-          </button>
-          <span className="text-[11px] tabular-nums text-neutral-600 dark:text-neutral-300 w-11 text-center">
-            {Math.round(transform.scale * 100)}%
-          </span>
-          <button
-            type="button"
-            onClick={() => zoomAtCenter(CLICK_ZOOM_STEP)}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            title="放大"
-          >
-            <ZoomIn size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={fitToView}
-            disabled={!preview}
-            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-            // 与画布工具栏的「查看全部」同一个图标、同一个语义
-            title="查看全部"
-          >
-            <Scan size={15} />
-          </button>
-        </div>
 
         {/* 工具选项条 */}
         <EditorOptionsBar
@@ -1018,6 +1054,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           spaceHeld={spaceHeld}
         />
       </div>
+    </div>
     </div>
   );
 };

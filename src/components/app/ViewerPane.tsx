@@ -23,6 +23,11 @@ interface ViewerPaneProps {
   onOpenEditor?: (fileId: string) => void;
   /** 编辑器导出成功后回调（参数为导出到的完整路径），用于重扫目标文件夹 */
   onEditorFileCreated?: (targetPath: string) => void | Promise<void>;
+  /** 编辑器文档栏两端的面板开关（复用应用 TopBar 的同一套） */
+  onToggleSidebar: () => void;
+  isSidebarVisible: boolean;
+  onToggleMetadata: () => void;
+  isMetadataVisible: boolean;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   enterFolder: (folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => void;
   handleViewerSearch: (query: string) => void;
@@ -56,6 +61,10 @@ export const ViewerPane = ({
   handleViewInExplorer,
   onOpenEditor,
   onEditorFileCreated,
+  onToggleSidebar,
+  isSidebarVisible,
+  onToggleMetadata,
+  isMetadataVisible,
   setState,
   enterFolder,
   handleViewerSearch,
@@ -125,6 +134,10 @@ export const ViewerPane = ({
             tool={tab.editorTool ?? 'move'}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             isActive={tab.id === state.activeTabId}
+            onToggleSidebar={onToggleSidebar}
+            isSidebarVisible={isSidebarVisible}
+            onToggleMetadata={onToggleMetadata}
+            isMetadataVisible={isMetadataVisible}
             // 注意：这里是把 editorDocument 的变换字段逐个喂给编辑器。
             // 新增变换字段时**必须同时补到这里**——之前漏了 adjust，
             // 结果滑杆能改、画布永远拿不到调色（用户实测：拖动完全没反应）。

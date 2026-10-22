@@ -2758,6 +2758,12 @@ export const App: React.FC = () => {
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-content">
           <ViewerPane
+            // 文档栏两端的面板开关：复用 toggleSidebar / toggleMetadata
+            // （同一套互斥逻辑，安卓端不会两边同时开）
+            onToggleSidebar={toggleSidebar}
+            isSidebarVisible={state.layout.isSidebarVisible}
+            onToggleMetadata={toggleMetadata}
+            isMetadataVisible={state.layout.isMetadataVisible}
             activeTab={activeTab}
             state={state}
             displayFileIds={displayFileIds}
