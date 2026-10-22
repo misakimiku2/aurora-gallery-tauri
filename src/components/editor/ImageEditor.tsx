@@ -1286,7 +1286,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 containerRef={containerRef}
                 isSnappingEnabled={snapEnabled}
                 snapBounds={{ width: canvas.width, height: canvas.height }}
-                isEditMode={tool === 'transform'}
+                // 编辑态恒为 true：移动工具也要能拖动图层（拖动层由 canDragLayer 控制）
+                isEditMode
+                // 手柄只在自由变换时出现——移动工具只显示边界，PS 也是这样
+                showTransformHandles={tool === 'transform'}
                 isDarkMode={document.documentElement.classList.contains('dark')}
               />
             )}

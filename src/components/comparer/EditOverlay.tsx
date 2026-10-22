@@ -12,12 +12,15 @@ import { ComparisonItem } from './types';
  */
 const makeRotateCursor = () => {
     const p = `%3Cpath d='M21.5 2v6h-6'/%3E%3Cpath d='M21.34 15.57a10 10 0 1 1-.57-8.38'/%3E`;
+    // 尺寸 24 + 细描边（白晕 3.5 / 黑本体 1.75）：Windows 没有"旋转"系统光标，
+    // 只能手绘一张；画成 32px、笔画 2 会比系统的缩放箭头明显粗一圈，看着不像同一族
+    // （用户实测："跟其他的变化鼠标指针并不一样"）。这里按系统光标的常见尺寸与笔重对齐。
     const svg =
-        `%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E` +
-        `%3Cg stroke='%23ffffff' stroke-width='4.5'%3E${p}%3C/g%3E` +
-        `%3Cg stroke='%23000000' stroke-width='2'%3E${p}%3C/g%3E` +
+        `%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E` +
+        `%3Cg stroke='%23ffffff' stroke-width='3.5'%3E${p}%3C/g%3E` +
+        `%3Cg stroke='%23000000' stroke-width='1.75'%3E${p}%3C/g%3E` +
         `%3C/svg%3E`;
-    return `url("data:image/svg+xml;charset=utf-8,${svg}") 16 16, alias`;
+    return `url("data:image/svg+xml;charset=utf-8,${svg}") 12 12, alias`;
 };
 
 interface EditOverlayProps {
@@ -44,6 +47,14 @@ interface EditOverlayProps {
      */
     isDarkMode?: boolean;
     isEditMode?: boolean;
+    /**
+     * 是否显示**八个变换手柄 + 四角旋转区**。缺省等于 `isEditMode`。
+     *
+     * 单独拆出来是因为"能拖"和"能缩放手柄"是两件事：编辑器的移动工具要能拖动图层，
+     * 但不该摆出一圈手柄（PS 里移动工具只显示边界、不显示控制点）。
+     * 之前两者共用一个开关，结果移动工具连拖都拖不动（用户实测）。
+     */
+    showTransformHandles?: boolean;
     isAndroid?: boolean;
     onLongPress?: (worldX: number, worldY: number) => void;
 }
@@ -120,6 +131,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     snapBounds,
     isDarkMode: _isDarkMode = false,
     isEditMode = true,
+    showTransformHandles,
     isAndroid = false,
     onLongPress
 }) => {
@@ -135,7 +147,9 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
         clickOffset: { x: 0, y: 0 }
     });
 
-    const showHandles = isEditMode;
+    // 手柄只影响"缩放/旋转"，拖动层始终跟着编辑态走——两件事不该共用一个开关
+    const showHandles = showTransformHandles ?? isEditMode;
+    const canDragLayer = isEditMode;
 
     const getWorldCoords = (clientX: number, clientY: number) => {
         const rect = containerRef?.current?.getBoundingClientRect();
@@ -656,7 +670,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
 
             <div ref={overlayRef} className="absolute pointer-events-none"
                 style={{ left: screenX, top: screenY, width: screenW, height: screenH, transform: `rotate(${activeItem.rotation}deg)`, transformOrigin: 'center', border: '1px solid #3b82f6', zIndex: 100 }}>
-                {showHandles && (
+                {canDragLayer && (
                     <div
                         onMouseDown={(e) => handleMouseDown(e, 'move')}
                         data-handle-type="move"
