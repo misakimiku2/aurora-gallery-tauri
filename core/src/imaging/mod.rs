@@ -36,6 +36,7 @@
 //! 仍然识别 avif/svg/jxl（它们在画廊里照常显示，只是不能进编辑器）。
 
 mod adjust;
+mod affine;
 mod crop;
 mod decode;
 mod encode;
@@ -44,6 +45,9 @@ mod transform;
 
 pub use adjust::{
     apply_color_matrix, is_identity_adjustment, ColorMatrix,
+};
+pub use affine::{
+    composite, warp_affine, warp_into, AffineMatrix, CanvasBackground, CompositeLayer, Sampling,
 };
 pub use crop::{crop_image, CropRect};
 pub use decode::{
@@ -83,6 +87,8 @@ pub enum ImageError {
     },
     #[error("旋转角度无效: {0}°（只支持 0 / 90 / 180 / 270）")]
     InvalidRotation(u32),
+    #[error("仿射矩阵不可逆（行列式为 0）：图层被压成了一条线或一个点")]
+    DegenerateAffine,
 }
 
 #[cfg(test)]
@@ -376,6 +382,164 @@ mod tests {
         // 手算复核：(120,90,60) → 亮度×1.2 → 对比 1.3 绕 127.5 → 饱和 1.4 → 色温 R×1.15/B×0.85
         let out = adjust(&solid(120, 90, 60, 255), 0.2, 0.3, 0.4, 0.5);
         assert_eq!(out, [190, 100, 29, 255]);
+    }
+
+    // ---- 仿射与合成（Phase 1 收尾 · S3）----
+
+    fn filled(w: u32, h: u32, px: [u8; 4]) -> image::RgbaImage {
+        let mut img = image::RgbaImage::new(w, h);
+        for p in img.pixels_mut() {
+            *p = image::Rgba(px);
+        }
+        img
+    }
+
+    #[test]
+    fn warp_identity_copies_source_exactly() {
+        let src = sample(6, 4);
+        let out = warp_affine(&src, 6, 4, AffineMatrix::IDENTITY, Sampling::Bilinear).unwrap();
+        assert_eq!(out.into_raw(), src.into_raw());
+    }
+
+    #[test]
+    fn warp_translation_is_pixel_exact() {
+        let src = sample(4, 3);
+        let m = AffineMatrix::translation(2.0, 1.0);
+        let out = warp_affine(&src, 4, 3, m, Sampling::Bilinear).unwrap();
+
+        for y in 0..3 {
+            for x in 0..4 {
+                let got = *out.get_pixel(x, y);
+                let want = if x >= 2 && y >= 1 {
+                    *src.get_pixel(x - 2, y - 1)
+                } else {
+                    image::Rgba([0, 0, 0, 0])
+                };
+                assert_eq!(got, want, "({x},{y})");
+            }
+        }
+    }
+
+    /// **黄金标准交叉验证**：新写的仿射通道在 90° 这一特例上必须与既有 `rotate_image`
+    /// 逐像素相等。旧实现因此成为新实现的判据——迁移不是"重写 + 希望没写错"。
+    ///
+    /// 能严格相等靠的是"整数落点走最近邻"：旋转 90° 是纯像素搬移，不该被双线性糊掉，
+    /// 否则「连做十次也不掉画质」这条就不成立了。
+    #[test]
+    fn warp90_matches_rotate_image_pixel_for_pixel() {
+        let src = sample(4, 2);
+        let (w, h) = (src.width() as f64, src.height() as f64);
+        // 顺时针 90°：x' = h − y，y' = x
+        let m = AffineMatrix::from_array([0.0, 1.0, -1.0, 0.0, h, 0.0]);
+
+        let out = warp_affine(&src, 2, 4, m, Sampling::Bilinear).unwrap();
+        let golden = rotate_image(&src, Rotation::Cw90);
+
+        assert_eq!((out.width(), out.height()), (2, 4));
+        assert_eq!(out.into_raw(), golden.into_raw(), "90° 仿射必须与 rotate_image 完全一致");
+    }
+
+    #[test]
+    fn warp_flip_matches_flip_image_pixel_for_pixel() {
+        let src = sample(5, 3);
+        let w = src.width() as f64;
+        // 水平镜像：x' = w − x
+        let m = AffineMatrix::from_array([-1.0, 0.0, 0.0, 1.0, w, 0.0]);
+
+        let out = warp_affine(&src, 5, 3, m, Sampling::Bilinear).unwrap();
+        assert_eq!(out.into_raw(), flip_image(&src, true, false).into_raw());
+    }
+
+    #[test]
+    fn warp_rejects_degenerate_matrix() {
+        let src = sample(4, 4);
+        // 行列式 0：线性部分被压成一条线
+        let flat = AffineMatrix::from_array([1.0, 2.0, 2.0, 4.0, 0.0, 0.0]);
+        assert!(matches!(
+            warp_affine(&src, 4, 4, flat, Sampling::Bilinear),
+            Err(ImageError::DegenerateAffine)
+        ));
+        assert!(matches!(
+            warp_affine(&src, 4, 4, AffineMatrix::from_array([0.0; 6]), Sampling::Bilinear),
+            Err(ImageError::DegenerateAffine)
+        ));
+    }
+
+    #[test]
+    fn warp_only_touches_its_own_region() {
+        // 图层整体落在画布外 → 画布一个像素都不该被改
+        let mut canvas = filled(4, 4, [255, 255, 255, 255]);
+        let red = filled(2, 2, [255, 0, 0, 255]);
+        warp_into(&mut canvas, &red, AffineMatrix::translation(10.0, 10.0), Sampling::Bilinear)
+            .unwrap();
+        assert!(canvas.pixels().all(|p| *p == image::Rgba([255, 255, 255, 255])));
+    }
+
+    #[test]
+    fn matrix_invert_roundtrips() {
+        let m = AffineMatrix::from_array([1.5, 0.2, -0.3, 0.9, 7.0, -4.0]);
+        let inv = m.invert().unwrap();
+        let back = inv.invert().unwrap();
+        for (got, want) in back.to_array().iter().zip(m.to_array()) {
+            assert!((got - want).abs() < 1e-9);
+        }
+        // 映射再逆映射必须回到原点
+        let (x, y) = m.map_point(3.0, 4.0);
+        let (bx, by) = inv.map_point(x, y);
+        assert!((bx - 3.0).abs() < 1e-9 && (by - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn composite_fills_background_when_no_layers() {
+        let white = composite(3, 2, CanvasBackground::White, &[]).unwrap();
+        assert!(white.pixels().all(|p| *p == image::Rgba([255, 255, 255, 255])));
+
+        let black = composite(3, 2, CanvasBackground::Black, &[]).unwrap();
+        assert!(black.pixels().all(|p| *p == image::Rgba([0, 0, 0, 255])));
+
+        let clear = composite(3, 2, CanvasBackground::Transparent, &[]).unwrap();
+        assert!(clear.pixels().all(|p| p.0[3] == 0));
+    }
+
+    #[test]
+    fn composite_clips_layer_at_canvas_edge() {
+        let red = filled(2, 2, [255, 0, 0, 255]);
+        let canvas = composite(
+            4,
+            4,
+            CanvasBackground::White,
+            &[CompositeLayer { src: &red, matrix: AffineMatrix::translation(3.0, 3.0) }],
+        )
+        .unwrap();
+
+        // 2×2 的层放在 (3,3)，只有左上角落进 4×4 画布
+        assert_eq!(*canvas.get_pixel(3, 3), image::Rgba([255, 0, 0, 255]));
+        let mut red_count = 0;
+        for p in canvas.pixels() {
+            if *p == image::Rgba([255, 0, 0, 255]) {
+                red_count += 1;
+            }
+        }
+        assert_eq!(red_count, 1, "越界部分必须被裁掉，不能绕回画布另一侧");
+    }
+
+    #[test]
+    fn composite_blends_half_transparent_over_white() {
+        let half_red = filled(1, 1, [255, 0, 0, 128]);
+        let out = composite(
+            1,
+            1,
+            CanvasBackground::White,
+            &[CompositeLayer { src: &half_red, matrix: AffineMatrix::IDENTITY }],
+        )
+        .unwrap();
+
+        // src-over：a = 128/255 → G/B = 255 × (1 − 128/255) ≈ 127，R 保持 255
+        let px = out.get_pixel(0, 0).0;
+        assert_eq!(px[0], 255);
+        assert!((px[1] as i32 - 127).abs() <= 1, "绿通道应约 127，实际 {}", px[1]);
+        assert!((px[2] as i32 - 127).abs() <= 1, "蓝通道应约 127，实际 {}", px[2]);
+        assert_eq!(px[3], 255, "盖在白底上必须完全不透明");
     }
 
     /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。    ///

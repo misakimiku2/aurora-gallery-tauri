@@ -4,8 +4,17 @@
 //! §6.2（Phase 1 单图文档闭环）。这里只做「源文件 → 代理图」这一段：解码与缩放全部
 //! 走 `aurora_core::imaging`，前端拿到的是已经降采样的 JPEG，**永远看不到源图全分辨率
 //! 像素**。Phase 2 的图层合成会在这条链路上继续往 core 里加，而不是把像素搬进前端。
+//!
+//! ## v2：最小图层模型（S4 进行中）
+//!
+//! 文档从"平铺的 crop/rotation/flip"改成**画布 + 图层**，图层带一组仿射六参。
+//! 因此新增 `editor_load_layer_proxy` / `editor_render_document` / `editor_export_document`
+//! 三个命令。**旧的三个命令暂时保留**——前端 S5 还没切过来，此刻删掉会让编辑器直接开天窗。
+//! S5 落地时旧命令一并删除（`docs/图片编辑-最小图层模型设计.md` §8）。
 
-use aurora_core::imaging::{self, CropRect, EncodeFormat};
+use aurora_core::imaging::{
+    self, AffineMatrix, CanvasBackground, CompositeLayer, CropRect, EncodeFormat,
+};
 use base64::{engine::general_purpose, Engine as _};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
@@ -258,4 +267,195 @@ pub async fn editor_render_preview(
     })
     .await
     .map_err(|e| format!("渲染任务失败: {e}"))?
+}
+
+// ============================================================================
+// v2 · 最小图层模型（S4）
+//
+// 前端把「画布 + 图层（含仿射六参）」整份丢过来，Rust 只负责按同一组数做全分辨率合成。
+// 六参由前端 `layerTransform.ts` 的 `composeMatrix` 算出，**两端共用同一组数**（设计稿
+// §3.1），所以这里不接收 rotation / flip / scale 这类语义参数——避免再推导一次。
+// ============================================================================
+
+/// 画布请求。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasRequest {
+    pub width: u32,
+    pub height: u32,
+    /// `'transparent'`（默认） / `'white'` / `'black'`
+    pub background: Option<String>,
+}
+
+/// 单个图层请求。
+#[derive(Debug, Clone, Deserialize)]
+pub struct LayerRequest {
+    /// 源文件路径
+    pub path: String,
+    /// CSS 顺序的仿射六参 `[a,b,c,d,e,f]`
+    pub matrix: [f64; 6],
+    /// 调色（-100..100）；不传 = 不动
+    pub adjust: Option<AdjustRequest>,
+}
+
+/// 整份文档（画布 + 自底向上的图层）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRequest {
+    pub canvas: CanvasRequest,
+    pub layers: Vec<LayerRequest>,
+}
+
+fn parse_background(raw: Option<&str>) -> CanvasBackground {
+    match raw.unwrap_or("transparent").to_ascii_lowercase().as_str() {
+        "white" => CanvasBackground::White,
+        "black" => CanvasBackground::Black,
+        _ => CanvasBackground::Transparent,
+    }
+}
+
+/// 按文档状态合成出全分辨率 RGBA。
+///
+/// 顺序：**解码 → 调色 → 仿射重采样 → 合成到画布**。调色放在重采样之前，因为它
+/// 与位置无关，先做能让后续重采样拿到最终颜色（顺序反过来在本项目里结果一致，
+/// 但定死一处才不会有人"顺手优化"）。
+fn composite_document(doc: &DocumentRequest) -> Result<RgbaImage, String> {
+    let decoded: Vec<RgbaImage> = doc
+        .layers
+        .iter()
+        .map(|l| imaging::decode_file(&l.path).map_err(|e| e.to_string()))
+        .collect::<Result<_, _>>()?;
+
+    let prepared: Vec<RgbaImage> = decoded
+        .into_iter()
+        .zip(doc.layers.iter())
+        .map(|(img, l)| Ok(apply_adjustments(img, l.adjust)))
+        .collect::<Result<_, String>>()?;
+
+    let layers: Vec<CompositeLayer<'_>> = prepared
+        .iter()
+        .zip(doc.layers.iter())
+        .map(|(img, l)| CompositeLayer { src: img, matrix: AffineMatrix::from_array(l.matrix) })
+        .collect();
+
+    imaging::composite(
+        doc.canvas.width,
+        doc.canvas.height,
+        parse_background(doc.canvas.background.as_deref()),
+        &layers,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// 单个图层的代理图（**不含任何变换**）。
+///
+/// 变换交给前端 CSS（预览）与本文件的仿射合成（导出），所以这张图是"没变换过"的那张——
+/// 缓存键因此不必含变换，命中率不再被拖动打散（设计稿 §4.2）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerProxy {
+    /// 源图自然尺寸（前端算定界框缩放比要用）
+    pub natural_width: u32,
+    pub natural_height: u32,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub data_url: String,
+}
+
+/// 取一个图层的代理图：解码 → 调色 → 降采样，不套变换。
+#[tauri::command]
+pub async fn editor_load_layer_proxy(
+    path: String,
+    adjust: Option<AdjustRequest>,
+) -> Result<LayerProxy, String> {
+    tokio::task::spawn_blocking(move || {
+        let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
+        let (natural_width, natural_height) = (rgba.width(), rgba.height());
+        let image = apply_adjustments(rgba, adjust);
+
+        let proxy = imaging::resize_to_max_edge(&image, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
+        let (preview_width, preview_height) = (proxy.width(), proxy.height());
+        let jpeg =
+            imaging::encode(&proxy, EncodeFormat::Jpeg, PREVIEW_JPEG_QUALITY).map_err(|e| e.to_string())?;
+
+        Ok(LayerProxy {
+            natural_width,
+            natural_height,
+            preview_width,
+            preview_height,
+            data_url: format!(
+                "data:image/jpeg;base64,{}",
+                general_purpose::STANDARD.encode(&jpeg)
+            ),
+        })
+    })
+    .await
+    .map_err(|e| format!("图层代理任务失败: {e}"))?
+}
+
+/// 整份文档的合成分辨率预览（供超大图打底、以及将来多图层合成用）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRender {
+    /// 画布尺寸
+    pub width: u32,
+    pub height: u32,
+    pub preview_width: u32,
+    pub preview_height: u32,
+    pub data_url: String,
+}
+
+/// 按文档状态合成并降采样出预览图。
+#[tauri::command]
+pub async fn editor_render_document(doc: DocumentRequest) -> Result<DocumentRender, String> {
+    tokio::task::spawn_blocking(move || {
+        let canvas = composite_document(&doc)?;
+        let (width, height) = (canvas.width(), canvas.height());
+        let proxy = imaging::resize_to_max_edge(&canvas, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
+        let (preview_width, preview_height) = (proxy.width(), proxy.height());
+        let jpeg =
+            imaging::encode(&proxy, EncodeFormat::Jpeg, PREVIEW_JPEG_QUALITY).map_err(|e| e.to_string())?;
+
+        Ok(DocumentRender {
+            width,
+            height,
+            preview_width,
+            preview_height,
+            data_url: format!(
+                "data:image/jpeg;base64,{}",
+                general_purpose::STANDARD.encode(&jpeg)
+            ),
+        })
+    })
+    .await
+    .map_err(|e| format!("文档合成任务失败: {e}"))?
+}
+
+/// 把整份文档导出成一张图片（**全分辨率**，不受 2048 代理上限影响）。
+///
+/// 与预览走同一组仿射六参，所以"看到的就是导出的"。
+#[tauri::command]
+pub async fn editor_export_document(
+    doc: DocumentRequest,
+    target_path: String,
+    quality: Option<u8>,
+) -> Result<EditorExportResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let image = composite_document(&doc)?;
+        let format = encode_format_from_path(&target_path)?;
+        let bytes = imaging::encode(&image, format, quality.unwrap_or(EXPORT_JPEG_QUALITY))
+            .map_err(|e| e.to_string())?;
+
+        std::fs::write(&target_path, &bytes)
+            .map_err(|e| format!("写入失败({target_path}): {e}"))?;
+
+        Ok(EditorExportResult {
+            path: target_path,
+            width: image.width(),
+            height: image.height(),
+            bytes: bytes.len() as u64,
+        })
+    })
+    .await
+    .map_err(|e| format!("导出任务失败: {e}"))?
 }

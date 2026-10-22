@@ -2011,6 +2011,10 @@ pub fn run() {
         editor_commands::editor_load_preview,
         editor_commands::editor_render_preview,
         editor_commands::editor_export_image,
+        // v2 最小图层模型（S4）：画布 + 图层仿射六参；旧三条在 S5 前端切换后删除
+        editor_commands::editor_load_layer_proxy,
+        editor_commands::editor_render_document,
+        editor_commands::editor_export_document,
         generate_drag_preview,
         system_commands::read_file_as_base64,
         file_operations::ensure_directory,
