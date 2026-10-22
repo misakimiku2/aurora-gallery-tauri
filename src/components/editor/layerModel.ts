@@ -24,15 +24,20 @@ export const EDITOR_DOC_VERSION = 2 as const;
 /**
  * 是否 v1 遗留文档。
  *
- * 判定只看 `version`：不存在或不是 2，就是 v1 那套平铺字段的文档。**不做迁移**
- * （§7 已拍板）——迁移需要源图自然尺寸，而 v1 数据里没有，为了迁一个未发布功能的
- * 会话态去补一次异步解码不划算。
+ * 判定要**同时**满足两条：没有 v2 的 `version`，**且确实带着 v1 那套平铺字段**。
+ *
+ * 只看 `version` 是不够的：从画廊打开的文档由 `openInEditor` 建出来就是
+ * `{path, name, dirty}`（App 那边不知道图多大，画布与图层要等图加载才补），
+ * 它同样没有 `version`——只看 version 会把**刚打开的图片**误判成旧文档并弹出警告。
+ *
+ * **不做迁移**（§7 已拍板）：迁移需要源图自然尺寸，而 v1 数据里没有。
  *
  * 注：Tab 目前根本没持久化（`useAppInit` 每次启动重建 `tabs: [defaultTab]`），
  * 所以这条今天只是防御性设计，将来加持久化时它就是判据。
  */
 export function isLegacyEditorDocument(doc?: EditorDocument | null): boolean {
-  return !!doc && doc.version !== EDITOR_DOC_VERSION;
+  if (!doc || doc.version === EDITOR_DOC_VERSION) return false;
+  return Boolean(doc.crop || doc.rotation || doc.flipH || doc.flipV || doc.adjust);
 }
 
 /** 建画布。`background` 默认透明（PS 新建文档的默认也是白/透明二选一，这里取透明）。 */

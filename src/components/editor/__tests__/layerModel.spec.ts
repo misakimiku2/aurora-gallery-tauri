@@ -44,9 +44,21 @@ describe('isLegacyEditorDocument', () => {
     expect(isLegacyEditorDocument(null)).toBe(false);
   });
 
-  it('version 缺失或不是 2 都算遗留', () => {
-    expect(isLegacyEditorDocument({ name: 'x', dirty: false })).toBe(true);
+  it('没有 v2 版本号且带 v1 平铺字段才算是遗留', () => {
+    // v1 文档：有 crop/rotation/adjust 但没有 version
+    expect(isLegacyEditorDocument({ name: 'x', dirty: false, rotation: 90 })).toBe(true);
+    expect(isLegacyEditorDocument({ name: 'x', dirty: false, crop: { x: 0, y: 0, w: 1, h: 1 } })).toBe(true);
     expect(isLegacyEditorDocument({ name: 'x', dirty: false, version: 2 })).toBe(false);
+  });
+
+  it('刚从画廊打开的新文档（无 version、无遗留字段）不算遗留', () => {
+    // App.openInEditor 建出来的就是这个形状：画布与图层要等图加载才补，
+    // 只看 version 会把它误判成旧文档并弹出警告——用户实测会立刻看到那句警告。
+    expect(isLegacyEditorDocument({ name: 'photo.png', dirty: false, path: 'C:/a.png' })).toBe(false);
+    // 空画布文档也一样
+    expect(
+      isLegacyEditorDocument({ name: '未命名-1', dirty: false, version: 2, layers: [] }),
+    ).toBe(false);
   });
 
   it('与常量同源，不会两处各写一个数字', () => {
