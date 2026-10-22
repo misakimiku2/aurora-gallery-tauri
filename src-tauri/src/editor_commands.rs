@@ -191,6 +191,13 @@ pub struct LayerProxy {
     /// 源图自然尺寸（前端算定界框缩放比要用）
     pub natural_width: u32,
     pub natural_height: u32,
+    /// EXIF 方向 1..=8（1 = 不用转）。
+    ///
+    /// 这个值必须由 Rust 给：浏览器显示 `<img>` 时会**自动**按 EXIF 转正，而
+    /// `decode_file` 拿的是存储方向——两边不一致就是「屏幕正的、导出躺的」。
+    /// 前端因此显式关掉浏览器的自动旋转（`imageOrientation: 'none'`），
+    /// 把这里读到的角度一次性折进图层的 rotation/flip。
+    pub orientation: u8,
     pub preview_width: u32,
     pub preview_height: u32,
     pub data_url: String,
@@ -203,6 +210,8 @@ pub async fn editor_load_layer_proxy(
     adjust: Option<AdjustRequest>,
 ) -> Result<LayerProxy, String> {
     tokio::task::spawn_blocking(move || {
+        // 先读方向：它只看文件头 256KB，比解码整张图便宜得多
+        let orientation = imaging::read_orientation(&path);
         let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
         let (natural_width, natural_height) = (rgba.width(), rgba.height());
         let image = apply_adjustments(rgba, adjust);
@@ -215,6 +224,7 @@ pub async fn editor_load_layer_proxy(
         Ok(LayerProxy {
             natural_width,
             natural_height,
+            orientation,
             preview_width,
             preview_height,
             data_url: format!(

@@ -87,11 +87,12 @@ import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './c
 import {
   buildLayerPreviewKey,
   createCanvas,
-  createImageLayer,
+  createOrientedImageLayer,
   documentGeometrySignature,
   documentStateSignature,
   EDITOR_DOC_VERSION,
   isLegacyEditorDocument,
+  orientationToBox,
   resolveActiveLayer,
 } from './layerModel';
 import {
@@ -152,6 +153,17 @@ interface ImageEditorProps {
 interface DocSnapshot {
   canvas?: EditorCanvas;
   layers?: EditorLayer[];
+}
+
+/** `editor_load_layer_proxy` 的返回（camelCase 由 Rust 侧 serde 重命名） */
+interface LayerProxyResponse {
+  naturalWidth: number;
+  naturalHeight: number;
+  /** EXIF 方向 1..8；1 = 不用转 */
+  orientation: number;
+  previewWidth: number;
+  previewHeight: number;
+  dataUrl: string;
 }
 
 const FIT_PADDING = 60;
@@ -303,40 +315,63 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   // ---- 文档初始化 ----
   //
-  // 从画廊进来时只有 `{path, name}`（App.tsx 建 Tab 时不知道图的尺寸）。画布与图层
-  // 在这里补：先用原文件渲染一次读到自然尺寸，再按它建画布与铺满的图层。
+  // 从画廊进来时只有 `{path, name}`（App 建 Tab 时不知道图多大）。这里问 Rust 要
+  // **存储尺寸 + EXIF 方向**，而不是读浏览器 `<img>.naturalWidth`：浏览器对 `<img>`
+  // 默认按 EXIF 自动转正，给出的宽高是"转正后"的，而导出走的是存储方向的像素
+  // ——用它建画布会让显示与导出错位（S8 修的就是这个）。
   const needsInit = !!doc?.path && (!canvas || layerCount === 0);
+  const initStartedRef = useRef<string | null>(null);
 
-  const handleImageLoad = useCallback(
-    (el: HTMLImageElement) => {
-      setError(null);
-      if (!doc || !needsInit) return;
-      const nw = el.naturalWidth;
-      const nh = el.naturalHeight;
-      if (!nw || !nh) {
-        setError('读不到图片尺寸');
-        return;
-      }
-      const nextCanvas = createCanvas(nw, nh, 'transparent');
-      const layer = createImageLayer({
-        id: `layer-${Date.now().toString(36)}`,
-        source: doc.path,
-        naturalWidth: nw,
-        naturalHeight: nh,
-        canvas: nextCanvas,
-        name: doc.name,
+  useEffect(() => {
+    if (!doc?.path || !needsInit) return;
+    if (initStartedRef.current === doc.path) return;
+    initStartedRef.current = doc.path;
+
+    let cancelled = false;
+    invoke<LayerProxyResponse>('editor_load_layer_proxy', { path: doc.path })
+      .then(res => {
+        if (cancelled) return;
+        const m = orientationToBox(
+          { width: res.naturalWidth, height: res.naturalHeight },
+          res.orientation,
+        );
+        // 画布 = **转正后**的显示尺寸；图层自己带 rotation/flip 去对齐
+        const nextCanvas = createCanvas(m.displayWidth, m.displayHeight, 'transparent');
+        const layer = createOrientedImageLayer({
+          id: `layer-${Date.now().toString(36)}`,
+          source: doc.path,
+          naturalWidth: res.naturalWidth,
+          naturalHeight: res.naturalHeight,
+          orientation: res.orientation,
+          canvas: nextCanvas,
+          name: doc.name,
+        });
+        // 顺手把代理塞进缓存：缩略图与全览图马上要用，省一次 IPC
+        putPreview(`${doc.path}#${res.naturalWidth}x${res.naturalHeight}`, {
+          width: res.naturalWidth,
+          height: res.naturalHeight,
+          previewWidth: res.previewWidth,
+          previewHeight: res.previewHeight,
+          dataUrl: res.dataUrl,
+        });
+        setError(null);
+        onDocumentChange({
+          ...doc,
+          version: EDITOR_DOC_VERSION,
+          canvas: nextCanvas,
+          layers: [layer],
+          activeLayerId: layer.id,
+          dirty: doc.dirty, // 初始化不算改动，不置 dirty
+        });
+      })
+      .catch(e => {
+        if (!cancelled) setError(String(e));
       });
-      onDocumentChange({
-        ...doc,
-        version: EDITOR_DOC_VERSION,
-        canvas: nextCanvas,
-        layers: [layer],
-        activeLayerId: layer.id,
-        dirty: doc.dirty, // 初始化不算改动，不置 dirty
-      });
-    },
-    [doc, needsInit, onDocumentChange],
-  );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [doc, needsInit, onDocumentChange]);
 
   // ---- 缩略图用的 Rust 代理 ----
   //
@@ -657,32 +692,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       });
       if (!picked || typeof picked !== 'string') return;
 
-      const img = new Image();
-      img.onload = () => {
-        const nw = img.naturalWidth;
-        const nh = img.naturalHeight;
-        if (!nw || !nh) {
-          setError(`读不到图层尺寸：${picked}`);
-          return;
-        }
-        const layer = createImageLayer({
-          id: `layer-${Date.now().toString(36)}`,
-          source: picked,
-          naturalWidth: nw,
-          naturalHeight: nh,
-          canvas,
-        });
-        onDocumentChange({
-          ...doc,
-          version: EDITOR_DOC_VERSION,
-          canvas,
-          layers: [...(doc.layers ?? []), layer],
-          activeLayerId: layer.id,
-          dirty: true,
-        });
-      };
-      img.onerror = () => setError(`无法打开这张图：${picked}`);
-      img.src = convertFileSrc(picked);
+      // 与开文档同一条路：尺寸与 EXIF 方向都问 Rust，浏览器只负责画像素
+      const res = await invoke<LayerProxyResponse>('editor_load_layer_proxy', { path: picked });
+      const layer = createOrientedImageLayer({
+        id: `layer-${Date.now().toString(36)}`,
+        source: picked,
+        naturalWidth: res.naturalWidth,
+        naturalHeight: res.naturalHeight,
+        orientation: res.orientation,
+        canvas,
+      });
+      putPreview(`${picked}#${res.naturalWidth}x${res.naturalHeight}`, {
+        width: res.naturalWidth,
+        height: res.naturalHeight,
+        previewWidth: res.previewWidth,
+        previewHeight: res.previewHeight,
+        dataUrl: res.dataUrl,
+      });
+      onDocumentChange({
+        ...doc,
+        version: EDITOR_DOC_VERSION,
+        canvas,
+        layers: [...(doc.layers ?? []), layer],
+        activeLayerId: layer.id,
+        dirty: true,
+      });
     } catch (e) {
       setError(String(e));
     }
@@ -957,6 +991,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         transform: toCssMatrix(m),
         filter: filterOn ? `url(#${layerFilterId(layer.id)})` : undefined,
         opacity: layer.visible ? 1 : 0,
+        /**
+         * **必须关掉浏览器的 EXIF 自动转正**。
+         *
+         * 图层方向已经由 `defineBoxFromOrientation` 折进 rotation/flip 了；如果这里
+         * 让浏览器再转一次，就变成"转两遍"，而且 Rust 导出只按我们的变换算 ——
+         * 结果是屏幕和导出对不上。这是 S8 的核心那一行。
+         */
+        imageOrientation: 'none',
         // Tailwind preflight 给所有 img 设了 max-width:100%，必须顶回去
         maxWidth: 'none',
         maxHeight: 'none',
@@ -1161,7 +1203,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                       alt={l.name}
                       draggable={false}
                       style={buildLayerStyle(l)}
-                      onLoad={e => handleImageLoad(e.currentTarget)}
                       onError={() => setError(`无法打开图层「${l.name}」`)}
                     />
                   ) : null,
@@ -1169,15 +1210,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               </div>
             )}
 
-            {/* 初始化探针：还没有画布时先渲染一次只为读自然尺寸 */}
-            {needsInit && doc?.path && !canvas && (
-              <img
-                src={convertFileSrc(doc.path)}
-                alt=""
-                onLoad={e => handleImageLoad(e.currentTarget)}
-                onError={() => setError('无法打开这张图（编辑器支持 jpeg / png / gif / webp / bmp / tiff / ico）')}
-                className="absolute w-px h-px opacity-0 pointer-events-none"
-              />
+            {/* 初始化中：尺寸与方向要从 Rust 拿（见上面的 init effect） */}
+            {needsInit && !canvas && !error && (
+              <div className="absolute inset-0 flex items-center justify-center gap-2 text-neutral-500 pointer-events-none">
+                <Loader2 size={18} className="animate-spin" />
+                <span className="text-sm">正在打开…</span>
+              </div>
             )}
 
             {/* 自由变换 / 移动：直接复用参考模式的 EditOverlay。

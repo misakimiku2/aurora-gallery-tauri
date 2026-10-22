@@ -129,8 +129,13 @@ export function layerAABB(box: LayerBox): {
  *
  * 顺时针的点映射：`(px,py) → (H - py, px)`；逆时针是其反函数。
  *
- * ⚠️ `skew ≠ 0` 时这个换算是**精确**的（矩阵层面无损失），但定界框表示法下
- * 斜着的框转 90° 后仍是同一个框（只是 w/h 互换），所以 skew 只在最小模型里存、
+ * ⚠️ **`w/h` 保持不变，只映射中心**。定界框里的 `w/h` 是**未旋转的内容尺寸**，
+ * 旋转后"看起来变高变宽"是 `rotation` 带来的包围盒效果，不是尺寸变了。
+ * 早期版本在这里交换了 `w/h`，等于把内容凭空拉伸一次——`composeMatrix` 的
+ * `sx = w/naturalW` 立刻变成非等比缩放，表现为「转一下就变形」。
+ * （v1 的 `rotateCropRect` 确实交换 `w/h`，但那是**轴对齐矩形**的语义，不是定界框。）
+ *
+ * `skew ≠ 0` 时这个换算是精确的（矩阵层面无损失）；skew 只在最小模型里存、
  * 不接 UI——见设计稿 §10 第 3 条。
  */
 export function rotateDocumentCanvas<T extends LayerBox>(
@@ -146,12 +151,13 @@ export function rotateDocumentCanvas<T extends LayerBox>(
     layers: layers.map(box => {
       const cx = box.x + box.w / 2;
       const cy = box.y + box.h / 2;
+      // 中心映射：顺时针 (cx,cy) → (H−cy, cx)；逆时针 → (cy, W−cx)
+      const ncx = clockwise ? H - cy : cy;
+      const ncy = clockwise ? cx : W - cx;
       return {
         ...box,
-        x: clockwise ? H - cy - box.h / 2 : cy - box.h / 2,
-        y: clockwise ? cx - box.w / 2 : W - cx - box.w / 2,
-        w: box.h,
-        h: box.w,
+        x: ncx - box.w / 2,
+        y: ncy - box.h / 2,
         rotation: normalizeDegrees(box.rotation + delta),
       };
     }),

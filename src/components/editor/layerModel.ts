@@ -96,6 +96,108 @@ function baseNameOf(path: string | undefined, fallback: string): string {
   return raw.replace(/\.[^.]+$/, '') || fallback;
 }
 
+/**
+ * EXIF 方向（1..8）→ 图层的 rotation / flip 与"正确朝向下的显示尺寸"。
+ *
+ * **为什么需要它**：浏览器对 `<img>` 默认自动按 EXIF 转正，而 Rust `decode_file`
+ * 拿的是存储方向的像素。不统一的话就是「屏幕正的、导出躺的」。对策是关掉浏览器的
+ * 自动旋转（图层 img 设 `imageOrientation: 'none'`），把方向**一次性折进图层变换**。
+ *
+ * 这是设计稿 §5.1 的同一个哲学：低频算一次，不留第二个真源。
+ *
+ * 1..8 的标准映射（2/4 是镜像，5/7 是镜像+旋转），与 EXIF 规范一致。
+ */
+export function orientationToBox(
+  natural: { width: number; height: number },
+  orientation: number,
+): { rotation: number; flipH: boolean; flipV: boolean; displayWidth: number; displayHeight: number } {
+  const { width: w, height: h } = natural;
+  const swaps = orientation === 5 || orientation === 6 || orientation === 7 || orientation === 8;
+  const displayWidth = swaps ? h : w;
+  const displayHeight = swaps ? w : h;
+
+  switch (orientation) {
+    case 2:
+      return { rotation: 0, flipH: true, flipV: false, displayWidth, displayHeight };
+    case 3:
+      return { rotation: 180, flipH: false, flipV: false, displayWidth, displayHeight };
+    case 4:
+      return { rotation: 0, flipH: false, flipV: true, displayWidth, displayHeight };
+    case 5:
+      return { rotation: 270, flipH: true, flipV: false, displayWidth, displayHeight };
+    case 6:
+      return { rotation: 90, flipH: false, flipV: false, displayWidth, displayHeight };
+    case 7:
+      return { rotation: 90, flipH: true, flipV: false, displayWidth, displayHeight };
+    case 8:
+      return { rotation: 270, flipH: false, flipV: false, displayWidth, displayHeight };
+    default:
+      return { rotation: 0, flipH: false, flipV: false, displayWidth, displayHeight };
+  }
+}
+
+/**
+ * 建一个带 EXIF 方向的图片图层。
+ *
+ * 与 `createImageLayer` 的差别：这里先按**显示尺寸**（已转正）做 contain 适配，
+ * 再把"内容尺寸 × 缩放"装进定界框，并按旋转后的包围盒把框摆到正中间。
+ *
+ * 例：存储 4000×3000、orientation 6（顺时针 90°）→ 显示 3000×4000；
+ * 画布若就是 3000×4000，则定界框 w=4000、h=3000、rotation=90，
+ * 中心落在画布中心，包围盒正好铺满。
+ */
+export function createOrientedImageLayer(opts: {
+  id: string;
+  source?: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  /** EXIF 方向 1..8，缺省 1 */
+  orientation?: number;
+  canvas: { width: number; height: number };
+  name?: string;
+  /** 传 `false` 时按 1:1 原尺寸放置（不缩放、不居中） */
+  fitToCanvas?: boolean;
+}): EditorLayer {
+  const m = orientationToBox(
+    { width: opts.naturalWidth, height: opts.naturalHeight },
+    opts.orientation ?? 1,
+  );
+  const display = { width: m.displayWidth, height: m.displayHeight };
+  const fit =
+    opts.fitToCanvas === false
+      ? { x: 0, y: 0, w: display.width, h: display.height }
+      : fitLayerToCanvas(display, opts.canvas);
+
+  // 定界框尺寸直接取自 fit，**不做"先算比例再乘回去"**：那一步的浮点往返会让
+  // 无旋转的常见情况也得到 138.1395… 这种脏数字（单测当场抓到过）。
+  // contain 等比，所以方向没换时 w/h 就是 fit 的 w/h，换了就互换。
+  const swapped = m.displayWidth !== opts.naturalWidth || m.displayHeight !== opts.naturalHeight;
+  const w = swapped ? fit.h : fit.w;
+  const h = swapped ? fit.w : fit.h;
+
+  return {
+    id: opts.id,
+    kind: 'image',
+    source: opts.source,
+    naturalWidth: opts.naturalWidth,
+    naturalHeight: opts.naturalHeight,
+    box: {
+      // 定界框中心对准"显示区"的中心：旋转后包围盒才会落在 fit 里
+      x: fit.x + fit.w / 2 - w / 2,
+      y: fit.y + fit.h / 2 - h / 2,
+      w,
+      h,
+      rotation: m.rotation,
+      flipH: m.flipH,
+      flipV: m.flipV,
+      skewX: 0,
+      skewY: 0,
+    },
+    visible: true,
+    name: opts.name ?? baseNameOf(opts.source, '图层'),
+  };
+}
+
 /** 建一个图片图层。默认适配方式 = contain 居中（已拍板）。 */
 export function createImageLayer(opts: {
   id: string;
@@ -107,20 +209,7 @@ export function createImageLayer(opts: {
   /** 传 `false` 时按 1:1 原尺寸放置（不居中、不缩放） */
   fitToCanvas?: boolean;
 }): EditorLayer {
-  const fit = opts.fitToCanvas === false
-    ? { x: 0, y: 0, w: opts.naturalWidth, h: opts.naturalHeight }
-    : fitLayerToCanvas({ width: opts.naturalWidth, height: opts.naturalHeight }, opts.canvas);
-
-  return {
-    id: opts.id,
-    kind: 'image',
-    source: opts.source,
-    naturalWidth: opts.naturalWidth,
-    naturalHeight: opts.naturalHeight,
-    box: { ...createIdentityBox(0, 0), ...fit },
-    visible: true,
-    name: opts.name ?? baseNameOf(opts.source, '图层'),
-  };
+  return createOrientedImageLayer({ ...opts, orientation: 1 });
 }
 
 /**

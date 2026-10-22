@@ -85,36 +85,47 @@ describe('rotateDocumentCanvas（画布级 90° 旋转）', () => {
     expect(out.canvas).toEqual({ width: 100, height: 200 });
   });
 
-  it('顺时针结果与 v1 rotateCropRect 逐项相等（交叉验证）', () => {
+  it('顺时针：图层包围盒与 v1 rotateCropRect 逐项相等（交叉验证）', () => {
     const rect = { x: 5, y: 7, w: 30, h: 20 };
     const legacy = rotateCropRect(rect, canvas.width, canvas.height, true);
     const out = rotateDocumentCanvas(canvas, [box(rect)], true);
 
-    expect(out.layers[0]).toMatchObject({
-      x: legacy.x,
-      y: legacy.y,
-      w: legacy.w,
-      h: legacy.h,
-    });
+    // v1 的 crop 是**轴对齐矩形**，正好等于"定界框旋转后的包围盒"
+    const aabb = layerAABB(out.layers[0]);
+    expect(aabb.l).toBeCloseTo(legacy.x);
+    expect(aabb.t).toBeCloseTo(legacy.y);
+    expect(aabb.width).toBeCloseTo(legacy.w);
+    expect(aabb.height).toBeCloseTo(legacy.h);
   });
 
-  it('逆时针结果与 v1 rotateCropRect 逐项相等（交叉验证）', () => {
+  it('逆时针：图层包围盒与 v1 rotateCropRect 逐项相等（交叉验证）', () => {
     const rect = { x: 5, y: 7, w: 30, h: 20 };
     const legacy = rotateCropRect(rect, canvas.width, canvas.height, false);
     const out = rotateDocumentCanvas(canvas, [box(rect)], false);
 
-    expect(out.layers[0]).toMatchObject({
-      x: legacy.x,
-      y: legacy.y,
-      w: legacy.w,
-      h: legacy.h,
-    });
+    const aabb = layerAABB(out.layers[0]);
+    expect(aabb.l).toBeCloseTo(legacy.x);
+    expect(aabb.t).toBeCloseTo(legacy.y);
+    expect(aabb.width).toBeCloseTo(legacy.w);
+    expect(aabb.height).toBeCloseTo(legacy.h);
   });
 
-  it('铺满画布的图层转完之后仍然铺满（画布也换了尺寸）', () => {
+  it('**不交换 w/h**：内容尺寸不变，只加角度（交换会让内容被拉伸）', () => {
+    const src = box({ x: 5, y: 7, w: 30, h: 20 });
+    const out = rotateDocumentCanvas(canvas, [src], true).layers[0];
+    expect(out.w).toBe(30);
+    expect(out.h).toBe(20);
+    expect(out.rotation).toBe(90);
+  });
+
+  it('铺满画布的图层转完之后包围盒仍然铺满（画布也换了尺寸）', () => {
     const out = rotateDocumentCanvas(canvas, [box({ w: 200, h: 100 })], true);
     expect(out.canvas).toEqual({ width: 100, height: 200 });
-    expect(out.layers[0]).toMatchObject({ x: 0, y: 0, w: 100, h: 200 });
+    const aabb = layerAABB(out.layers[0]);
+    expect(aabb.l).toBeCloseTo(0);
+    expect(aabb.t).toBeCloseTo(0);
+    expect(aabb.width).toBeCloseTo(100);
+    expect(aabb.height).toBeCloseTo(200);
   });
 
   it('来回转四次回到原样', () => {

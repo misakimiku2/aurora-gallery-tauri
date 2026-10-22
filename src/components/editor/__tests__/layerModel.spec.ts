@@ -11,6 +11,7 @@ import {
   createCanvas,
   createIdentityBox,
   createImageLayer,
+  createOrientedImageLayer,
   documentGeometrySignature,
   documentStateSignature,
   EDITOR_DOC_VERSION,
@@ -18,8 +19,10 @@ import {
   isLegacyEditorDocument,
   layerGeometrySignature,
   layerStateSignature,
+  orientationToBox,
   resolveActiveLayer,
 } from '../layerModel';
+import { layerAABB } from '../layerTransform';
 
 const box = (over: Partial<LayerBox> = {}): LayerBox => ({
   ...createIdentityBox(200, 100),
@@ -237,6 +240,99 @@ describe('文档级签名（撤销栈用）', () => {
     const b = layer({ adjust: { brightness: 30, contrast: 0, saturation: 0, temperature: 0 } });
     expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
     expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
+  });
+});
+
+describe('orientationToBox（EXIF 方向）', () => {
+  // 手机竖拍的典型情况：存储 4000×3000 横向，EXIF 说"要顺时针转 90°"
+  const natural = { width: 4000, height: 3000 };
+
+  it('1 = 原样', () => {
+    expect(orientationToBox(natural, 1)).toEqual({
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      displayWidth: 4000,
+      displayHeight: 3000,
+    });
+  });
+
+  it('6 = 顺时针 90°，显示尺寸宽高互换', () => {
+    const m = orientationToBox(natural, 6);
+    expect(m.rotation).toBe(90);
+    expect([m.displayWidth, m.displayHeight]).toEqual([3000, 4000]);
+  });
+
+  it('8 = 逆时针 90°', () => {
+    const m = orientationToBox(natural, 8);
+    expect(m.rotation).toBe(270);
+    expect([m.displayWidth, m.displayHeight]).toEqual([3000, 4000]);
+  });
+
+  it('3 = 180°，尺寸不变', () => {
+    const m = orientationToBox(natural, 3);
+    expect(m.rotation).toBe(180);
+    expect([m.displayWidth, m.displayHeight]).toEqual([4000, 3000]);
+  });
+
+  it('2 / 4 = 纯镜像，尺寸不变', () => {
+    expect(orientationToBox(natural, 2)).toMatchObject({ flipH: true, flipV: false, rotation: 0 });
+    expect(orientationToBox(natural, 4)).toMatchObject({ flipH: false, flipV: true, rotation: 0 });
+  });
+
+  it('5 / 7 = 镜像 + 旋转，尺寸互换', () => {
+    expect(orientationToBox(natural, 5)).toMatchObject({ flipH: true, rotation: 270 });
+    expect(orientationToBox(natural, 7)).toMatchObject({ flipH: true, rotation: 90 });
+    expect(orientationToBox(natural, 7).displayWidth).toBe(3000);
+  });
+
+  it('非法/未知值按 1 处理（不转，安全默认）', () => {
+    for (const o of [0, 9, -1, 99]) {
+      expect(orientationToBox(natural, o)).toMatchObject({ rotation: 0, flipH: false, flipV: false });
+    }
+  });
+});
+
+describe('createOrientedImageLayer', () => {
+  it('orientation 6：定界框铺满"转正后"的画布', () => {
+    const canvas = createCanvas(3000, 4000); // 竖版
+    const l = createOrientedImageLayer({
+      id: 'L1',
+      source: 'C:/a.jpg',
+      naturalWidth: 4000, // 存储是横版
+      naturalHeight: 3000,
+      orientation: 6,
+      canvas,
+    });
+
+    // 内容尺寸不变，只是转了 90°——交换 w/h 会让内容被拉伸
+    expect(l.box.w).toBe(4000);
+    expect(l.box.h).toBe(3000);
+    expect(l.box.rotation).toBe(90);
+
+    const aabb = layerAABB(l.box);
+    expect(aabb.l).toBeCloseTo(0);
+    expect(aabb.t).toBeCloseTo(0);
+    expect(aabb.width).toBeCloseTo(3000);
+    expect(aabb.height).toBeCloseTo(4000);
+  });
+
+  it('orientation 1：与 createImageLayer 结果一致', () => {
+    const canvas = createCanvas(800, 600);
+    const a = createOrientedImageLayer({
+      id: 'L1',
+      naturalWidth: 1600,
+      naturalHeight: 1200,
+      orientation: 1,
+      canvas,
+    });
+    const b = createImageLayer({
+      id: 'L1',
+      naturalWidth: 1600,
+      naturalHeight: 1200,
+      canvas,
+    });
+    expect(a.box).toEqual(b.box);
   });
 });
 

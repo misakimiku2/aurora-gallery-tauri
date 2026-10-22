@@ -40,6 +40,7 @@ mod affine;
 mod crop;
 mod decode;
 mod encode;
+mod exif;
 mod resize;
 mod transform;
 
@@ -55,6 +56,7 @@ pub use decode::{
     EDITOR_EXCLUDED_EXTENSIONS,
 };
 pub use encode::{encode, EncodeFormat};
+pub use exif::read_orientation;
 pub use resize::resize_to_max_edge;
 pub use transform::{flip_image, rotate_image, Rotation};
 
@@ -540,6 +542,69 @@ mod tests {
         assert!((px[1] as i32 - 127).abs() <= 1, "绿通道应约 127，实际 {}", px[1]);
         assert!((px[2] as i32 - 127).abs() <= 1, "蓝通道应约 127，实际 {}", px[2]);
         assert_eq!(px[3], 255, "盖在白底上必须完全不透明");
+    }
+
+    // ---- EXIF 方向（S8）----
+
+    /// 造一份带 APP1/Exif 的最小 JPEG（只为喂解析器，不是可解码的图片）。
+    fn jpeg_with_orientation(orientation: u16, little: bool) -> Vec<u8> {
+        let p16 = |v: u16| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+        let p32 = |v: u32| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+
+        let mut tiff: Vec<u8> = Vec::new();
+        tiff.extend_from_slice(if little { b"II" } else { b"MM" });
+        tiff.extend_from_slice(&p16(0x002A));
+        tiff.extend_from_slice(&p32(8)); // IFD0 就在头后面
+        tiff.extend_from_slice(&p16(1)); // 一个条目
+        tiff.extend_from_slice(&p16(0x0112)); // tag: Orientation
+        tiff.extend_from_slice(&p16(3)); // 类型 SHORT
+        tiff.extend_from_slice(&p32(1)); // 数量 1
+        tiff.extend_from_slice(&p16(orientation)); // 值（占 4 字节字段的前 2 字节）
+        tiff.extend_from_slice(&[0, 0]);
+        tiff.extend_from_slice(&p32(0)); // next IFD = 0
+
+        let mut jpeg = vec![0xFF, 0xD8];
+        let seg_len = (2 + 6 + tiff.len()) as u16;
+        jpeg.extend_from_slice(&[0xFF, 0xE1]);
+        jpeg.extend_from_slice(&seg_len.to_be_bytes());
+        jpeg.extend_from_slice(b"Exif\0\0");
+        jpeg.extend_from_slice(&tiff);
+        jpeg.extend_from_slice(&[0xFF, 0xDA]); // 扫描开始，往后不再有元数据
+        jpeg
+    }
+
+    #[test]
+    fn exif_reads_orientation_both_byte_orders() {
+        // 6 = 顺时针 90°（手机竖拍最常见的那种）
+        assert_eq!(exif::parse_orientation(&jpeg_with_orientation(6, true)), Some(6));
+        assert_eq!(exif::parse_orientation(&jpeg_with_orientation(8, false)), Some(8));
+        assert_eq!(exif::parse_orientation(&jpeg_with_orientation(1, true)), Some(1));
+    }
+
+    #[test]
+    fn exif_rejects_out_of_range_orientation() {
+        // 0 / 9 不是合法方向 → 当作"没有方向信息"
+        assert_eq!(exif::parse_orientation(&jpeg_with_orientation(0, true)), None);
+        assert_eq!(exif::parse_orientation(&jpeg_with_orientation(9, true)), None);
+    }
+
+    #[test]
+    fn exif_falls_back_to_one_on_garbage() {
+        assert_eq!(exif::parse_orientation(&[]), None);
+        assert_eq!(exif::parse_orientation(&[0xFF, 0xD8, 0xFF, 0xDA]), None);
+        assert_eq!(exif::parse_orientation(b"\x89PNG\r\n\x1a\n"), None);
+        // 读不到文件时必须是 1（不转），不能是 0 或 panic
+        assert_eq!(read_orientation("C:/definitely/not/here.jpg"), 1);
+    }
+
+    /// 去掉 JPEG 外壳后，剩下的就是纯 TIFF 容器（数码相机直出的 .tif 是同一结构）。
+    #[test]
+    fn exif_tiff_container_is_supported() {
+        let jpeg = jpeg_with_orientation(6, true);
+        // 布局：SOI(2) + marker(2) + len(2) + "Exif\0\0"(6) + TIFF(26) + SOS(2)
+        let tiff = &jpeg[12..jpeg.len() - 2];
+        assert_eq!(tiff.len(), 26);
+        assert_eq!(exif::parse_orientation(tiff), Some(6));
     }
 
     /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。    ///
