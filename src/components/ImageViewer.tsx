@@ -336,7 +336,7 @@ interface ViewerProps {
   /**
    * 图片编辑（C11）：在编辑器中打开这张图。
    * 只对**本地**图片提供——LAN/安卓设备的图没有可直接解码的本地路径，
-   * 编辑器需要真路径走 `editor_load_preview`。不传则不显示入口。
+   * 编辑器需要真路径走 `editor_load_layer_proxy`。不传则不显示入口。
    */
   onOpenEditor?: (fileId: string) => void;
   isAISearchEnabled: boolean;
@@ -2413,7 +2413,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             <ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
           </div>
           {/* 图片编辑（C11）：只对本地图片给入口——LAN/安卓设备的图没有本地路径，
-              编辑器要靠真路径解码（`editor_load_preview`）。 */}
+              编辑器要靠真路径解码（`editor_load_layer_proxy`）。 */}
           {!isVideo && (file.source === undefined || file.source === 'local') && onOpenEditor && (
             <div className={menuItemClass} onClick={() => { onOpenEditor(file.id); closeMenu(); }}>
               <Pencil size={iconSize} className="mr-2 opacity-70" /> 编辑图片

@@ -2007,11 +2007,9 @@ pub fn run() {
         save_remote_thumbnail,
         image_utils::get_avif_preview,
         image_utils::get_jxl_preview,
-        // 图片编辑 C11 Phase 1：源文件 → 代理图（解码/缩放全在 core::imaging）
-        editor_commands::editor_load_preview,
-        editor_commands::editor_render_preview,
-        editor_commands::editor_export_image,
-        // v2 最小图层模型（S4）：画布 + 图层仿射六参；旧三条在 S5 前端切换后删除
+        // 图片编辑 C11：画布 + 图层仿射六参（v2 最小图层模型）。
+        // v1 的三条旧命令（editor_load_preview / editor_render_preview /
+        // editor_export_image）随 S5 前端切换一并删除。
         editor_commands::editor_load_layer_proxy,
         editor_commands::editor_render_document,
         editor_commands::editor_export_document,

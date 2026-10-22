@@ -11,9 +11,12 @@ import {
   createCanvas,
   createIdentityBox,
   createImageLayer,
+  documentGeometrySignature,
+  documentStateSignature,
   EDITOR_DOC_VERSION,
   fitLayerToCanvas,
   isLegacyEditorDocument,
+  layerGeometrySignature,
   layerStateSignature,
   resolveActiveLayer,
 } from '../layerModel';
@@ -180,6 +183,48 @@ describe('layerStateSignature', () => {
     const sig = layerStateSignature(layer());
     expect(layerStateSignature(layer({ id: 'L2' }))).toBe(sig);
     expect(layerStateSignature(layer({ name: 'renamed' }))).toBe(sig);
+  });
+});
+
+describe('文档级签名（撤销栈用）', () => {
+  const doc = (over: Partial<EditorDocument> = {}): EditorDocument =>
+    ({
+      name: 'doc',
+      dirty: false,
+      version: 2 as const,
+      canvas: createCanvas(800, 600),
+      layers: [layer()],
+      ...over,
+    }) as unknown as EditorDocument;
+
+  it('画布尺寸或背景变了，签名必变', () => {
+    const base = documentStateSignature(doc());
+    expect(documentStateSignature(doc({ canvas: createCanvas(801, 600) }))).not.toBe(base);
+    expect(documentStateSignature(doc({ canvas: createCanvas(800, 600, 'white') }))).not.toBe(base);
+  });
+
+  it('图层变了，签名必变', () => {
+    const base = documentStateSignature(doc());
+    const withMoved = doc({
+      layers: [layer({ box: box({ x: 40 }) })],
+    });
+    expect(documentStateSignature(withMoved)).not.toBe(base);
+  });
+
+  it('只动调色时几何签名不变——这是"合并成一步撤销"的判据', () => {
+    const before = doc();
+    const after = doc({
+      layers: [layer({ adjust: { brightness: 30, contrast: 0, saturation: 0, temperature: 0 } })],
+    });
+    expect(documentGeometrySignature(after)).toBe(documentGeometrySignature(before));
+    expect(documentStateSignature(after)).not.toBe(documentStateSignature(before));
+  });
+
+  it('layerGeometrySignature 不理会 adjust', () => {
+    const a = layer();
+    const b = layer({ adjust: { brightness: 30, contrast: 0, saturation: 0, temperature: 0 } });
+    expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
+    expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
   });
 });
 

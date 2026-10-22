@@ -150,6 +150,45 @@ export function layerStateSignature(layer: EditorLayer): string {
 }
 
 /**
+ * 图层**几何**签名：与 `layerStateSignature` 的差别是**不含 adjust**。
+ *
+ * 用途：判断"用户是不是只是在拖调色滑杆"——是的话，连续的变化要合并成一步撤销，
+ * 否则拖一次滑杆能灌进去上百条历史，Ctrl+Z 要按几百下才回得去（沿用 v1 的 700ms 合并）。
+ */
+export function layerGeometrySignature(layer: EditorLayer): string {
+  const b = layer.box;
+  return [
+    layer.source ?? 'none',
+    layer.naturalWidth,
+    layer.naturalHeight,
+    layer.visible ? 1 : 0,
+    b.x,
+    b.y,
+    b.w,
+    b.h,
+    b.rotation,
+    b.flipH ? 1 : 0,
+    b.flipV ? 1 : 0,
+    b.skewX,
+    b.skewY,
+  ].join('|');
+}
+
+/** 整份文档的状态签名（画布 + 全部图层，含 adjust）——撤销栈的"是否变了"判据。 */
+export function documentStateSignature(doc: EditorDocument): string {
+  const c = doc.canvas;
+  const canvasPart = c ? `${c.width}x${c.height}:${c.background}` : 'none';
+  return `${canvasPart}|${(doc.layers ?? []).map(layerStateSignature).join('+')}`;
+}
+
+/** 整份文档的几何签名（不含 adjust）——用于把"只动调色"识别出来并合并撤销。 */
+export function documentGeometrySignature(doc: EditorDocument): string {
+  const c = doc.canvas;
+  const canvasPart = c ? `${c.width}x${c.height}:${c.background}` : 'none';
+  return `${canvasPart}|${(doc.layers ?? []).map(layerGeometrySignature).join('+')}`;
+}
+
+/**
  * 图层图的缓存键（代理图 / 原图 URL 都用它）。
  *
  * **故意只含 `source`，不含任何变换**——这是 v2 相对 v1 最大的一处简化：

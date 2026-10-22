@@ -67,7 +67,7 @@ interface ContextMenuProps {
    * 图片编辑（C11）：在编辑器中打开这张图。
    *
    * 只对**本地**图片提供——LAN / 安卓设备的图没有可直接解码的本地路径，
-   * 编辑器要靠真路径走 `editor_load_preview`。不传则不显示入口。
+   * 编辑器要靠真路径走 `editor_load_layer_proxy`。不传则不显示入口。
    */
   onOpenEditor?: (fileId: string) => void;
 }
@@ -277,7 +277,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         )}
         {/* 图片编辑（C11 Phase 1）：网格里的入口。
             只对**本地图片**显示——LAN / 安卓设备没有本地路径，编辑器要靠真路径解码
-            （`editor_load_preview`）；文件夹与视频也没有「编辑」语义。 */}
+            （`editor_load_layer_proxy`）；文件夹与视频也没有「编辑」语义。 */}
         {!isAndroidDevice && onOpenEditor && contextMenu.type === 'file-single' && contextMenu.targetId && (() => {
           const f = files[contextMenu.targetId];
           if (!f || f.type !== FileType.IMAGE) return null;

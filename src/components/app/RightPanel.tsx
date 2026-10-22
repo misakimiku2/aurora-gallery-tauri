@@ -1,8 +1,9 @@
-import React, { useSyncExternalStore } from 'react';
+import React, { useMemo, useSyncExternalStore } from 'react';
 import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
 import { EditorPanel } from '../editor/EditorPanel';
-import { buildPreviewKey, peekPreview, subscribePreview } from '../editor/editorPreviewCache';
+import { peekPreview, subscribePreview } from '../editor/editorPreviewCache';
+import { buildLayerPreviewKey, resolveActiveLayer } from '../editor/layerModel';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
 
@@ -53,25 +54,16 @@ export const RightPanel = ({
   onEditorAdjustChange,
 }: RightPanelProps) => {
   // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
-  // 代理图元信息从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用
-  // 把 0.5MB 的 data URL 提升到 React state（那会被 tabs 持久化带进 localStorage）。
-  // 键必须与画布同源（含裁剪参数），否则裁完面板还显示旧尺寸。
+  // 缩略图从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用把 data URL
+  // 提升到 React state。
+  //
+  // **键必须与画布同源**：v2 里图层图是"没变换过"的那张，所以键只含 source
+  // （含变换的话拖一下就要重跑 Rust）。画布尺寸直接读文档，不再从代理图反推。
   const editorDoc = activeTab.editorDocument;
+  const editorLayer = useMemo(() => (editorDoc ? resolveActiveLayer(editorDoc) : undefined), [editorDoc]);
   const editorMeta = useSyncExternalStore(
     subscribePreview,
-    () =>
-      editorDoc?.path
-        ? peekPreview(
-            buildPreviewKey(editorDoc.path, {
-              crop: editorDoc.crop,
-              rotation: editorDoc.rotation,
-              flipH: editorDoc.flipH,
-              flipV: editorDoc.flipV,
-              // **故意不放 adjust**：调色只走 CSS/SVG 滤镜，不重新生成代理图，
-              // 否则每拖一格滑杆就要重跑一次 Rust（0.5s），手感直接废掉。
-            }),
-          )
-        : undefined
+    () => (editorLayer ? peekPreview(buildLayerPreviewKey(editorLayer) ?? '') : undefined),
   );
 
   return (
@@ -87,11 +79,11 @@ export const RightPanel = ({
               tabId={activeTab.id}
               previewDataUrl={editorMeta?.dataUrl}
               documentName={activeTab.editorDocument?.name || '未命名'}
-              width={editorMeta?.width ?? 0}
-              height={editorMeta?.height ?? 0}
+              width={editorDoc?.canvas?.width ?? 0}
+              height={editorDoc?.canvas?.height ?? 0}
               previewWidth={editorMeta?.previewWidth ?? 0}
               previewHeight={editorMeta?.previewHeight ?? 0}
-              adjust={activeTab.editorDocument?.adjust}
+              adjust={editorLayer?.adjust}
               onAdjustChange={next => onEditorAdjustChange?.(next)}
             />
           ) : (

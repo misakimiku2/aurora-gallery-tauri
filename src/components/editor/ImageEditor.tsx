@@ -1,5 +1,5 @@
 /**
- * 图片编辑器（C11 Phase 1）。
+ * 图片编辑器（C11 Phase 1 收尾 · S5）。
  *
  * 布局照 UI 设计 §2：
  *
@@ -11,10 +11,29 @@
  * │    ├──────────────────────────────────────────┤
  * │    │ 画布                                       │
  * │    ├──────────────────────────────────────────┤
- * │    │ 状态栏（代理倍率 / 画布尺寸 / 分辨率警告）  │
+ * │    │ 状态栏（画布尺寸 / 缩放 / 工具提示）        │
  * └────┴──────────────────────────────────────────┘
  * ```
- * 右侧的「图层 / 属性 / 颜色」面板由 `RightPanel` 在编辑态切换进来（容器复用）。
+ *
+ * ## v2：画布与图层分离（最小图层模型）
+ *
+ * 这一版把 v1 的"图即画布"改成了**画布 + 图层**：
+ *
+ * ```
+ * <视口 overflow:hidden>
+ *   └ <画布容器 width=canvas.w height=canvas.h overflow:hidden 背景=canvas.background>
+ *       └ <图层 img src=原文件 transform=matrix(a,b,c,d,e,f)>
+ * ```
+ *
+ * 由此得到三件事：
+ * 1. **图层可以脱离画布**——缩小、旋转任意角、超出边界（自由变形的前提）；
+ * 2. **画布可以脱离图层**——新建空白文档（S6）；
+ * 3. **变换不再重跑 Rust**——CSS 出预览、Rust 出导出，两端共用同一组矩阵六参
+ *    （`layerTransform.ts` 的 `composeMatrix`）。这与调色是同一个模式。
+ *
+ * 图层的显示源是**原文件**（`convertFileSrc`），不是 v1 那张 2048 的 JPEG 代理——
+ * 放大到 100% 终于能看到真像素（设计稿 §4.4：编辑器曾是本项目唯一看不到原图的看图路径）。
+ * Rust 代理降级为**缩略图与超大图打底**用。
  *
  * ## 交互口径：照 Photoshop
  *
@@ -35,7 +54,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
   FileOutput,
@@ -54,18 +73,36 @@ import {
 } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
-import type { EditorToolId, EditorTransform } from '../../types';
+import type { EditorCanvas, EditorDocument, EditorLayer, EditorToolId } from '../../types';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay, CropArea } from './CropOverlay';
-import { flipCropRect, rotateCropRect } from './cropGeometry';
 import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
-import { isSameGeometry, isSameTransform } from './transformState';
-import { EDITOR_SHORTCUT_KEYS } from './editorTools';
-import { clearEditorView, peekPanRequest, setEditorView, subscribeEditorView } from './editorViewStore';
 import {
-  buildPreviewKey,
+  buildLayerPreviewKey,
+  createCanvas,
+  createImageLayer,
+  documentGeometrySignature,
+  documentStateSignature,
+  EDITOR_DOC_VERSION,
+  isLegacyEditorDocument,
+  resolveActiveLayer,
+} from './layerModel';
+import {
+  composeMatrix,
+  flipDocumentCanvas,
+  rotateDocumentCanvas,
+  toCssMatrix,
+} from './layerTransform';
+import { EDITOR_SHORTCUT_KEYS } from './editorTools';
+import {
+  clearEditorView,
+  peekPanRequest,
+  setEditorView,
+  subscribeEditorView,
+} from './editorViewStore';
+import {
   EditorPreviewMeta,
   peekPreview,
   putPreview,
@@ -76,10 +113,8 @@ import {
 interface ImageEditorProps {
   /** 当前 Tab id：用于按 Tab 缓存编辑器状态 */
   tabId: string;
-  /** 源文件绝对路径；null 表示尚未打开文档 */
-  sourcePath: string | null;
-  /** Tab 标题用的文档名 */
-  documentName: string;
+  /** 文档句柄。canvas/layers 未初始化时编辑器会自己补（从图层图读自然尺寸） */
+  document?: EditorDocument;
   tool: EditorToolId;
   onToolChange: (tool: EditorToolId) => void;
   /**
@@ -89,19 +124,13 @@ interface ImageEditorProps {
    * 而键盘监听挂在 window 上 —— 不做这个判断，按一次 `V` 会让所有编辑器一起切工具。
    */
   isActive: boolean;
-  /** 已应用的几何变换（裁剪 / 旋转 / 翻转）；字段缺省 = 未设置 */
-  docTransform?: EditorTransform;
-  /** 变换变化后回报；调用方负责写进 TabState.editorDocument 并置 dirty */
-  onDocTransformChange: (next: EditorTransform) => void;
+  /** 文档变化后回报；调用方负责写回 TabState.editorDocument */
+  onDocumentChange: (next: EditorDocument) => void;
   /**
    * 导出成功后回调：调用方应重扫导出的目标文件夹，让新文件进库并出现在网格里。
    *
-   * 返回 Promise 时编辑器会等它完成再更新提示文案 —— 用户能亲眼看到
-   * 「画廊已刷新」，而不是猜刷新有没有发生。
-   *
    * 不在这里直接调 `scan_file`：单文件扫描只返回节点、**不写数据库**，
    * 网格的数据源是 `state.files`（来自扫描 + 库），单插一个节点会和库对不上。
-   * 走文件夹重扫是项目里已经验证过的路径。
    */
   onFileCreated?: (targetPath: string) => void | Promise<void>;
   /** 切换左侧面板（与应用 TopBar 同一套开关，含安卓端互斥逻辑） */
@@ -110,6 +139,12 @@ interface ImageEditorProps {
   /** 切换右侧面板 */
   onToggleMetadata: () => void;
   isMetadataVisible: boolean;
+}
+
+/** 撤销栈里的一步：只存参数，不存像素（一个 3440×1440 文档撤销十次就是几百 MB）。 */
+interface DocSnapshot {
+  canvas?: EditorCanvas;
+  layers?: EditorLayer[];
 }
 
 const FIT_PADDING = 60;
@@ -122,104 +157,75 @@ const CLICK_ZOOM_STEP = 1.25;
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({
   tabId,
-  sourcePath,
-  documentName,
+  document: doc,
   tool,
   onToolChange,
   isActive,
-  docTransform,
-  onDocTransformChange,
+  onDocumentChange,
   onFileCreated,
   onToggleSidebar,
   isSidebarVisible,
   onToggleMetadata,
   isMetadataVisible,
 }) => {
-  // 拆成原始值：对象每次渲染都是新引用，直接进依赖数组会让 effect 反复触发
-  const docCrop = docTransform?.crop;
-  const docRotation = docTransform?.rotation ?? 0;
-  const docFlipH = docTransform?.flipH ?? false;
-  const docFlipV = docTransform?.flipV ?? false;
-  const docAdjust = docTransform?.adjust;
+  const canvas = doc?.canvas;
+  const layerCount = doc?.layers?.length ?? 0;
+  const activeLayer = useMemo(() => (doc ? resolveActiveLayer(doc) : undefined), [doc]);
 
   // ---- 调色预览 ----
   // 预览走浏览器原生 SVG feColorMatrix（GPU，拖动零延迟），导出走 Rust 逐像素。
   // 两端用同一套矩阵公式（见 colorMatrix.ts 顶部注释），矩阵值由单测锁死。
   const adjustFilterId = `aurora-editor-adjust-${tabId}`;
-  const hasAdjust = !isZeroAdjustments(docAdjust);
-  const adjustValues = useMemo(
-    () => toFeColorMatrixValues(buildAdjustMatrix(docAdjust)),
-    [docAdjust],
-  );
+  const adjust = activeLayer?.adjust;
+  const hasAdjust = !isZeroAdjustments(adjust);
+  const adjustValues = useMemo(() => toFeColorMatrixValues(buildAdjustMatrix(adjust)), [adjust]);
 
   // ---- 撤销 / 重做 ----
-  //
-  // 历史记录的是**变换参数**而不是像素：一次撤销只是把 {crop, rotation, adjust}
-  // 换回上一组值，再由 Rust 重新渲染。代价是一次重新生成代理图（约 0.5s），
-  // 换来的是历史不占内存（存图像字节会瞬间吃掉几百 MB）。
-  //
-  // 连续操作要合并：拖动调色滑杆每秒能产生上百次 onChange，逐条入栈的话
-  // Ctrl+Z 要按几百下才回得去。所以同一类操作在 700ms 内**替换栈顶**而不是新增。
-  const [history, setHistory] = useState<{
-    stack: EditorTransform[];
-    index: number;
-    lastKey?: string;
-    lastAt: number;
-  }>({ stack: [], index: -1, lastAt: 0 });
+  const [history, setHistory] = useState<{ stack: DocSnapshot[]; index: number; lastAt: number }>({
+    stack: [],
+    index: -1,
+    lastAt: 0,
+  });
   const historyInitRef = useRef<string | null>(null);
-
-  /** 当前文档变换（用于入栈） */
-  const currentTransform: EditorTransform = {
-    crop: docCrop,
-    rotation: docRotation,
-    flipH: docFlipH,
-    flipV: docFlipV,
-    adjust: docAdjust,
-  };
-
-  // 打开文档（或换文档）时以当前状态作为历史起点
-  useEffect(() => {
-    if (!sourcePath) return;
-    if (historyInitRef.current === sourcePath) return;
-    historyInitRef.current = sourcePath;
-    setHistory({ stack: [currentTransform], index: 0, lastAt: 0 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sourcePath]);
-
-  // 所有变更（画布侧的裁剪/旋转/翻转 + 面板侧的调色）最终都会落到 docTransform 上，
-  // 所以统一在这里入栈 —— 一处收口，不用在每个 handler 里各自记一次。
   const applyingHistoryRef = useRef(false);
-  const lastRecordedRef = useRef<EditorTransform | null>(null);
+  const lastSignatureRef = useRef<string | null>(null);
 
+  // 文档身份（路径 + 是否已建画布）变化时以当前状态作为历史起点
+  const docIdentity = doc ? `${doc.path ?? 'blank'}#${canvas ? 'ready' : 'new'}` : null;
   useEffect(() => {
-    if (!sourcePath) return;
-    const snap: EditorTransform = {
-      crop: docCrop,
-      rotation: docRotation,
-      flipH: docFlipH,
-      flipV: docFlipV,
-      adjust: docAdjust,
-    };
-    const prev = lastRecordedRef.current;
-    lastRecordedRef.current = snap;
-    if (!prev) return; // 第一次由上面的 sourcePath 分支建栈
+    if (!docIdentity || !doc) return;
+    if (historyInitRef.current === docIdentity) return;
+    historyInitRef.current = docIdentity;
+    lastSignatureRef.current = documentStateSignature(doc);
+    setHistory({ stack: [{ canvas: doc.canvas, layers: doc.layers }], index: 0, lastAt: 0 });
+  }, [docIdentity, doc]);
+
+  // 所有变更（裁剪 / 旋转 / 翻转 / 调色）最终都落到文档上，所以统一在这里入栈——
+  // 一处收口，不用在每个 handler 里各记一次。
+  useEffect(() => {
+    if (!doc) return;
+    const sig = documentStateSignature(doc);
+    const prevSig = lastSignatureRef.current;
+    lastSignatureRef.current = sig;
+    if (prevSig === null) return; // 第一次由上面的 docIdentity 分支建栈
+    if (sig === prevSig) return;
     if (applyingHistoryRef.current) {
-      applyingHistoryRef.current = false; // 这次变化是撤销/重做自己造成的，不能再入栈
+      applyingHistoryRef.current = false; // 这次变化是撤销/重做自己造成的
       return;
     }
-    if (isSameTransform(prev, snap)) return; // 只是对象引用换了，值没变
 
     // 只有调色在动 = 用户正拖着滑杆 → 合并进栈顶，否则 Ctrl+Z 要按几百下
-    const geometryUnchanged = isSameGeometry(prev, snap);
-
+    const snap: DocSnapshot = { canvas: doc.canvas, layers: doc.layers };
     setHistory(h => {
-      const merge = geometryUnchanged && Date.now() - h.lastAt < 700 && h.stack.length > 0;
+      const at = h.stack[h.index];
+      const geometryUnchanged =
+        !!at && documentGeometrySignature({ ...doc, ...at } as EditorDocument) === documentGeometrySignature(doc);
+      const merge = geometryUnchanged && Date.now() - h.lastAt < 700;
       const head = h.stack.slice(0, merge ? h.index : h.index + 1);
       head.push(snap);
       return { stack: head, index: head.length - 1, lastAt: Date.now() };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docCrop, docRotation, docFlipH, docFlipV, docAdjust, sourcePath]);
+  }, [doc]);
 
   const canUndo = history.index > 0;
   const canRedo = history.index >= 0 && history.index < history.stack.length - 1;
@@ -227,41 +233,35 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const applyHistoryAt = useCallback(
     (index: number) => {
       const snap = history.stack[index];
-      if (!snap) return;
+      if (!snap || !doc) return;
       applyingHistoryRef.current = true;
-      setHistory(prev => ({ ...prev, index, lastKey: undefined, lastAt: 0 }));
-      onDocTransformChange(snap);
+      setHistory(prev => ({ ...prev, index, lastAt: 0 }));
+      onDocumentChange({ ...doc, canvas: snap.canvas, layers: snap.layers, dirty: true });
     },
-    [history.stack, onDocTransformChange],
+    [history.stack, doc, onDocumentChange],
   );
 
   const undo = useCallback(() => {
-    if (!canUndo) return;
-    applyHistoryAt(history.index - 1);
+    if (canUndo) applyHistoryAt(history.index - 1);
   }, [canUndo, history.index, applyHistoryAt]);
-
   const redo = useCallback(() => {
-    if (!canRedo) return;
-    applyHistoryAt(history.index + 1);
+    if (canRedo) applyHistoryAt(history.index + 1);
   }, [canRedo, history.index, applyHistoryAt]);
 
   const undoRef = useRef(undo);
   undoRef.current = undo;
   const redoRef = useRef(redo);
   redoRef.current = redo;
+
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [preview, setPreview] = useState<EditorPreviewMeta | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [altHeld, setAltHeld] = useState(false);
-  /** 裁剪框（当前文档坐标，源图单位）。null = 不在裁剪态 */
+  /** 裁剪框（**画布坐标系**）。null = 不在裁剪态 */
   const [cropRect, setCropRect] = useState<CropArea | null>(null);
   const hasFittedRef = useRef(false);
   const draggingRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
-  // 空格/Alt 的实时状态要能被事件处理器读到（闭包会捕获旧值），用 ref 同步一份
   const spaceHeldRef = useRef(false);
   const altHeldRef = useRef(false);
   const toolRef = useRef(tool);
@@ -269,219 +269,84 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
-  // ---- 加载代理图 ----
-  // 缓存键含全部几何变换：同一文件的「裁过/没裁过」「转过/没转过」是不同的图。
-  const cacheKey = sourcePath
-    ? buildPreviewKey(sourcePath, {
-        crop: docCrop,
-        rotation: docRotation,
-        flipH: docFlipH,
-        flipV: docFlipV,
-      })
-    : null;
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!sourcePath || !cacheKey) {
-      setPreview(null);
+  // ---- 文档初始化 ----
+  //
+  // 从画廊进来时只有 `{path, name}`（App.tsx 建 Tab 时不知道图的尺寸）。画布与图层
+  // 在这里补：先用原文件渲染一次读到自然尺寸，再按它建画布与铺满的图层。
+  const needsInit = !!doc?.path && (!canvas || layerCount === 0);
+
+  const handleImageLoad = useCallback(
+    (el: HTMLImageElement) => {
       setError(null);
-      return;
-    }
-
-    const cached = takePreview(cacheKey);
-    if (cached) {
-      setPreview(cached);
-      setError(null);
-      setLoading(false);
-      hasFittedRef.current = false;
-      return;
-    }
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    hasFittedRef.current = false;
-
-    // cacheKey 已经涵盖全部变换字段，所以依赖里不必再放对象
-    // （每次都新建对象会让依赖恒变，导致无谓的重新加载）
-    const hasTransform = Boolean(docCrop || docRotation || docFlipH || docFlipV);
-    const request = hasTransform
-      ? invoke<EditorPreviewMeta>('editor_render_preview', {
-          path: sourcePath,
-          crop: docCrop ?? null,
-          rotation: docRotation,
-          flipH: docFlipH,
-          flipV: docFlipV,
-        })
-      : invoke<EditorPreviewMeta>('editor_load_preview', { path: sourcePath });
-
-    request
-      .then(result => {
-        if (cancelled) return;
-        putPreview(cacheKey, result);
-        setPreview(result);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setPreview(null);
-        setError(String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+      if (!doc || !needsInit) return;
+      const nw = el.naturalWidth;
+      const nh = el.naturalHeight;
+      if (!nw || !nh) {
+        setError('读不到图片尺寸');
+        return;
+      }
+      const nextCanvas = createCanvas(nw, nh, 'transparent');
+      const layer = createImageLayer({
+        id: `layer-${Date.now().toString(36)}`,
+        source: doc.path,
+        naturalWidth: nw,
+        naturalHeight: nh,
+        canvas: nextCanvas,
+        name: doc.name,
       });
+      onDocumentChange({
+        ...doc,
+        version: EDITOR_DOC_VERSION,
+        canvas: nextCanvas,
+        layers: [layer],
+        activeLayerId: layer.id,
+        dirty: doc.dirty, // 初始化不算改动，不置 dirty
+      });
+    },
+    [doc, needsInit, onDocumentChange],
+  );
 
+  // ---- 缩略图用的 Rust 代理 ----
+  //
+  // 画布主显示走原文件，但右侧面板的图层行 / 全览图需要一张**小图**：直接从 3440px 缩到
+  // 40px 是浏览器做不好的 64 倍降采样（会满屏锯齿），所以用 Rust 那张 ≤2048 的代理。
+  // 这也是 §4.4 给代理分配的新角色（缩略图 + 超大图打底）。
+  const proxyKey = activeLayer ? buildLayerPreviewKey(activeLayer) : null;
+  useEffect(() => {
+    if (!proxyKey || !activeLayer?.source) return;
+    if (takePreview(proxyKey)) return;
+    let cancelled = false;
+    invoke<EditorPreviewMeta>('editor_load_layer_proxy', { path: activeLayer.source })
+      .then(res => {
+        if (!cancelled) putPreview(proxyKey, res);
+      })
+      .catch(() => {
+        /* 缩略图失败不影响编辑，面板会退回图标占位 */
+      });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey, sourcePath]);
+  }, [proxyKey, activeLayer?.source]);
 
-  // 缓存被外部刷新时（例如保存回写后 invalidate）跟着更新
-  const cachedMeta = useSyncExternalStore(
-    subscribePreview,
-    () => (cacheKey ? peekPreview(cacheKey) : undefined),
-  );
-  useEffect(() => {
-    if (!cachedMeta) return;
-    setPreview(prev => (prev === cachedMeta ? prev : cachedMeta));
-  }, [cachedMeta]);
-
-  // ---- 裁剪 ----
-  // 进入裁剪工具时框复位为整图（PS 里点裁剪工具显示的就是整图框）
-  useEffect(() => {
-    if (tool !== 'crop' || !preview) {
-      setCropRect(null);
-      return;
-    }
-    setCropRect({ x: 0, y: 0, w: preview.width, h: preview.height });
-  }, [tool, preview]);
-
-  /** 裁剪宽高比（w/h）；null = 自由裁剪 */
-  const [cropRatio, setCropRatio] = useState<number | null>(null);
-
-  // 切换比例：把现有框就地调成该比例（以当前框中心为锚，尽量保住已有大小）。
-  // 不重新生成整图框——用户已经摆好的位置不该因为点了个比例就跳走。
-  const handleCropRatioChange = useCallback(
-    (ratio: number | null) => {
-      setCropRatio(ratio);
-      if (!ratio) return;
-      setCropRect(prev => {
-        if (!prev || !preview || preview.height === 0) return prev;
-        const cx = prev.x + prev.w / 2;
-        const cy = prev.y + prev.h / 2;
-        let w = prev.w;
-        let h = w / ratio;
-        if (h > preview.height) {
-          h = preview.height;
-          w = h * ratio;
-        }
-        if (w > preview.width) {
-          w = preview.width;
-          h = w / ratio;
-        }
-        const x = Math.min(Math.max(cx - w / 2, 0), Math.max(0, preview.width - w));
-        const y = Math.min(Math.max(cy - h / 2, 0), Math.max(0, preview.height - h));
-        return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-      });
-    },
-    [preview],
-  );
-
-  const commitCrop = useCallback(() => {
-    if (!cropRect || !preview) return;
-    const w = Math.round(cropRect.w);
-    const h = Math.round(cropRect.h);
-    if (w < 1 || h < 1) return;
-    // 框的坐标是相对**当前文档**的，要叠到已有裁剪的原点才能得到绝对坐标。
-    // 后端永远只对原图处理一次，所以连裁多刀不会累积重编码损失。
-    onDocTransformChange({
-      crop: {
-        x: Math.round((docCrop?.x ?? 0) + cropRect.x),
-        y: Math.round((docCrop?.y ?? 0) + cropRect.y),
-        w,
-        h,
-      },
-      rotation: docRotation,
-      flipH: docFlipH,
-      flipV: docFlipV,
-      // 几何变换不能顺手把调色丢掉——用户调完色再裁一刀不该回到原色
-      adjust: docAdjust,
-    });
-    onToolChange('move');
-  }, [
-    cropRect,
-    preview,
-    docCrop,
-    docRotation,
-    docFlipH,
-    docFlipV,
-    onDocTransformChange,
-    onToolChange,
-    docAdjust,
-  ]);
-
-  const cancelCrop = useCallback(() => {
-    onToolChange('move');
-  }, [onToolChange]);
-
-  // ---- 旋转 / 翻转 ----
-  // crop 是「当前可见坐标系」里的矩形，旋转后坐标系跟着转，所以矩形必须一起换算，
-  // 否则用户会发现自己裁的那块区域在旋转之后变成了画面里别的地方。
-  // 换算用的 currentWidth/Height 是 **frame**（裁剪之前的画框），不是 preview 尺寸。
-  const handleRotate = useCallback(
-    (clockwise: boolean) => {
-      if (!preview) return;
-      const nextCrop = docCrop
-        ? rotateCropRect(docCrop, preview.frameWidth, preview.frameHeight, clockwise)
-        : undefined;
-      const nextRotation = (((docRotation + (clockwise ? 90 : 270)) % 360) + 360) % 360;
-      onDocTransformChange({
-        crop: nextCrop,
-        rotation: nextRotation,
-        flipH: docFlipH,
-        flipV: docFlipV,
-        adjust: docAdjust,
-      });
-    },
-    [preview, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onDocTransformChange],
-  );
-
-  const handleFlip = useCallback(
-    (horizontal: boolean) => {
-      if (!preview) return;
-      const nextCrop = docCrop
-        ? flipCropRect(docCrop, preview.frameWidth, preview.frameHeight, horizontal, !horizontal)
-        : undefined;
-      onDocTransformChange({
-        crop: nextCrop,
-        rotation: docRotation,
-        flipH: horizontal ? !docFlipH : docFlipH,
-        flipV: horizontal ? docFlipV : !docFlipV,
-        adjust: docAdjust,
-      });
-    },
-    [preview, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onDocTransformChange],
-  );
-
-  // 键盘监听只依赖 onToolChange，不跟着 cropRect 每次变化重绑 → 用 ref 取最新实现
-  const commitCropRef = useRef(commitCrop);
-  commitCropRef.current = commitCrop;
-  const cancelCropRef = useRef(cancelCrop);
-  cancelCropRef.current = cancelCrop;
+  // 缓存被刷新时（订阅驱动）让面板能拿到新缩略图
+  useSyncExternalStore(subscribePreview, () => (proxyKey ? peekPreview(proxyKey) : undefined));
 
   // ---- 视图 ----
   const fitToView = useCallback(() => {
     const el = containerRef.current;
-    if (!el || !preview) return;
+    if (!el || !canvas) return;
     const rect = el.getBoundingClientRect();
     const next = computeFitTransform(
       rect.width,
       rect.height,
-      { minX: 0, minY: 0, maxX: preview.previewWidth, maxY: preview.previewHeight },
+      { minX: 0, minY: 0, maxX: canvas.width, maxY: canvas.height },
       FIT_PADDING,
       1, // 不放大：小图按 100% 显示
     );
     if (next) setTransform(next);
-  }, [preview]);
+  }, [canvas]);
 
   const zoomAtCenter = useCallback((factor: number) => {
     const el = containerRef.current;
@@ -500,14 +365,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     });
   }, []);
 
+  // 画布尺寸变了（裁剪 / 旋转）要重新适应窗口
   useEffect(() => {
-    if (preview && !hasFittedRef.current) {
+    hasFittedRef.current = false;
+  }, [canvas?.width, canvas?.height]);
+
+  useEffect(() => {
+    if (canvas && !hasFittedRef.current) {
       hasFittedRef.current = true;
       fitToView();
     }
-  }, [preview, fitToView]);
+  }, [canvas, fitToView]);
 
-  // ---- 视口尺寸 → 共享给全览图（RightPanel 树里的 Navigator 要画视口框）----
+  // ---- 视口尺寸 → 共享给全览图 ----
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   useEffect(() => {
     const el = containerRef.current;
@@ -521,17 +391,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!preview) return;
+    if (!canvas) return;
     setEditorView(tabId, {
       scale: transform.scale,
       x: transform.x,
       y: transform.y,
       containerWidth: containerSize.w,
       containerHeight: containerSize.h,
-      imgWidth: preview.previewWidth,
-      imgHeight: preview.previewHeight,
+      imgWidth: canvas.width,
+      imgHeight: canvas.height,
     });
-  }, [tabId, preview, transform, containerSize]);
+  }, [tabId, canvas, transform, containerSize]);
 
   useEffect(() => () => clearEditorView(tabId), [tabId]);
 
@@ -551,23 +421,140 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     }));
   }, [panRequest]);
 
-  /** 导出状态（按钮旁的即时反馈，不弹窗） */
+  // ---- 裁剪：改画布尺寸（非破坏性）----
+  useEffect(() => {
+    if (tool !== 'crop' || !canvas) {
+      setCropRect(null);
+      return;
+    }
+    setCropRect({ x: 0, y: 0, w: canvas.width, h: canvas.height });
+  }, [tool, canvas]);
+
+  const [cropRatio, setCropRatio] = useState<number | null>(null);
+
+  const handleCropRatioChange = useCallback(
+    (ratio: number | null) => {
+      setCropRatio(ratio);
+      if (!ratio || !canvas) return;
+      setCropRect(prev => {
+        if (!prev || canvas.height === 0) return prev;
+        const cx = prev.x + prev.w / 2;
+        const cy = prev.y + prev.h / 2;
+        let w = prev.w;
+        let h = w / ratio;
+        if (h > canvas.height) {
+          h = canvas.height;
+          w = h * ratio;
+        }
+        if (w > canvas.width) {
+          w = canvas.width;
+          h = w / ratio;
+        }
+        return {
+          x: Math.min(Math.max(cx - w / 2, 0), Math.max(0, canvas.width - w)),
+          y: Math.min(Math.max(cy - h / 2, 0), Math.max(0, canvas.height - h)),
+          w: Math.round(w),
+          h: Math.round(h),
+        };
+      });
+    },
+    [canvas],
+  );
+
+  /**
+   * 提交裁剪 = **改画布尺寸 + 所有图层反向平移**。
+   *
+   * 非破坏性：像素一个都不裁掉，图层只是露在画布外面被 `overflow:hidden` 挡住。
+   * 导出按画布尺寸合成，所以成品与"真裁掉"完全一致；而 Ctrl+Z 能把画布改回去、内容还在。
+   */
+  const commitCrop = useCallback(() => {
+    if (!cropRect || !doc || !canvas) return;
+    const w = Math.round(cropRect.w);
+    const h = Math.round(cropRect.h);
+    if (w < 1 || h < 1) return;
+    const dx = Math.round(cropRect.x);
+    const dy = Math.round(cropRect.y);
+    onDocumentChange({
+      ...doc,
+      canvas: { ...canvas, width: w, height: h },
+      layers: (doc.layers ?? []).map(l => ({
+        ...l,
+        box: { ...l.box, x: l.box.x - dx, y: l.box.y - dy },
+      })),
+      dirty: true,
+    });
+    onToolChange('move');
+  }, [cropRect, doc, canvas, onDocumentChange, onToolChange]);
+
+  const cancelCrop = useCallback(() => onToolChange('move'), [onToolChange]);
+
+  // ---- 旋转 / 翻转（画布级，一次性换算）----
+  //
+  // 不留"文档转过 90°"的常驻字段：算完之后画布就是 H×W、图层就以新角度摆在上面，
+  // 全程只有一个角度可读（设计稿 §5.1）。
+  const handleRotate = useCallback(
+    (clockwise: boolean) => {
+      if (!doc || !canvas) return;
+      const boxes = (doc.layers ?? []).map(l => l.box);
+      const out = rotateDocumentCanvas(canvas, boxes, clockwise);
+      onDocumentChange({
+        ...doc,
+        canvas: { ...canvas, ...out.canvas },
+        layers: (doc.layers ?? []).map((l, i) => ({ ...l, box: out.layers[i] })),
+        dirty: true,
+      });
+    },
+    [doc, canvas, onDocumentChange],
+  );
+
+  const handleFlip = useCallback(
+    (horizontal: boolean) => {
+      if (!doc || !canvas) return;
+      const boxes = (doc.layers ?? []).map(l => l.box);
+      const out = flipDocumentCanvas(canvas, boxes, horizontal, !horizontal);
+      onDocumentChange({
+        ...doc,
+        canvas: { ...canvas, ...out.canvas },
+        layers: (doc.layers ?? []).map((l, i) => ({ ...l, box: out.layers[i] })),
+        dirty: true,
+      });
+    },
+    [doc, canvas, onDocumentChange],
+  );
+
+  /** 调色是**图层属性**（设计稿 §4.1），落在当前活动图层上 */
+  const handleAdjustChange = useCallback(
+    (next: NonNullable<EditorLayer['adjust']>) => {
+      if (!doc || !activeLayer) return;
+      onDocumentChange({
+        ...doc,
+        layers: (doc.layers ?? []).map(l => (l.id === activeLayer.id ? { ...l, adjust: next } : l)),
+        dirty: true,
+      });
+    },
+    [doc, activeLayer, onDocumentChange],
+  );
+
+  const commitCropRef = useRef(commitCrop);
+  commitCropRef.current = commitCrop;
+  const cancelCropRef = useRef(cancelCrop);
+  cancelCropRef.current = cancelCrop;
+
+  // ---- 导出 ----
   const [exportState, setExportState] = useState<{
     status: 'idle' | 'working' | 'done' | 'error';
     text?: string;
   }>({ status: 'idle' });
 
-  // ---- 导出成品 ----
-  // 与「保存 .aurora 工程文件」是两件事：这个只出图，不可再编辑。
   const handleExport = useCallback(async () => {
-    if (!sourcePath) return;
+    if (!doc || !canvas) return;
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
-      // 默认落在原文件旁边，命名 `<原名>_编辑.<ext>`，不动原图
-      const sepIdx = Math.max(sourcePath.lastIndexOf('\\'), sourcePath.lastIndexOf('/'));
-      const sep = sepIdx >= 0 ? sourcePath[sepIdx] : '\\';
-      const dir = sepIdx >= 0 ? sourcePath.slice(0, sepIdx) : '';
-      const base = sourcePath.slice(sepIdx + 1).replace(/\.[^.]+$/, '');
+      const raw = doc.path ?? '';
+      const sepIdx = Math.max(raw.lastIndexOf('\\'), raw.lastIndexOf('/'));
+      const sep = sepIdx >= 0 ? raw[sepIdx] : '\\';
+      const dir = sepIdx >= 0 ? raw.slice(0, sepIdx) : '';
+      const base = doc.name.replace(/\.[^.]+$/, '');
 
       const target = await save({
         filters: [
@@ -577,24 +564,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         ],
         defaultPath: `${dir}${sep}${base}_编辑.png`,
       });
-      if (!target) return; // 用户取消
+      if (!target) return;
 
       setExportState({ status: 'working' });
+      // 与预览**同一组矩阵六参**：前端算的矩阵原样交给 Rust，两端不各推一次。
+      // 这是"所见即所得"的保证——顺序/公式只存在一份（layerTransform.ts）。
       const res = await invoke<{ path: string; width: number; height: number; bytes: number }>(
-        'editor_export_image',
+        'editor_export_document',
         {
-          path: sourcePath,
-          crop: docCrop ?? null,
+          doc: {
+            canvas: {
+              width: canvas.width,
+              height: canvas.height,
+              background: canvas.background,
+            },
+            layers: (doc.layers ?? [])
+              .filter(l => l.source)
+              .map(l => ({
+                path: l.source,
+                matrix: composeMatrix(l.box, { width: l.naturalWidth, height: l.naturalHeight }),
+                adjust: l.adjust ?? null,
+              })),
+          },
           targetPath: target,
-          // 与预览严格同一套变换，否则会「看到转过的、导出没转的」
-          rotation: docRotation,
-          flipH: docFlipH,
-          flipV: docFlipV,
-          adjust: docAdjust ?? null,
         },
       );
-      // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）。
-      // 等它完成再改文案：刷新失败/还在跑时不会谎报"已刷新"。
       try {
         await onFileCreated?.(target);
         setExportState({
@@ -613,7 +607,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setExportState({ status: 'error', text: String(e) });
       setTimeout(() => setExportState({ status: 'idle' }), 6000);
     }
-  }, [sourcePath, docCrop, docRotation, docFlipH, docFlipV, docAdjust, onFileCreated]);
+  }, [doc, canvas, onFileCreated]);
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -622,8 +616,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = el.getBoundingClientRect();
-
-      // Ctrl/⌘ 或 Alt + 滚轮 = 缩放，以光标为中心
       if (e.ctrlKey || e.metaKey || e.altKey) {
         const factor = e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP;
         setTransform(prev =>
@@ -631,32 +623,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         );
         return;
       }
-
-      // Shift + 滚轮 = 横向滚动（PS 行为）
       if (e.shiftKey) {
         setTransform(prev => ({ ...prev, x: prev.x - e.deltaY }));
         return;
       }
-
-      // 无修饰键 = 滚动画布。deltaX 一并吃掉：触控板的横向手势也归这里
       setTransform(prev => ({ ...prev, x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ---- 键盘：工具切换 + 空格抓手 ----
+  // ---- 键盘 ----
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // 只有激活的编辑器标签才吃键盘（多个编辑器会同时挂载）
       if (!isActiveRef.current) return;
-      // 输入框/可编辑区域内不抢键（UI 设计 §8.2 的让路规则）
       if (isTextEditingTarget(e.target)) return;
 
       if (e.code === 'Space') {
         spaceHeldRef.current = true;
         setSpaceHeld(true);
-        // 必须挡住默认行为：否则按钮获得焦点后空格会触发点击
         e.preventDefault();
         return;
       }
@@ -665,7 +650,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         setAltHeld(true);
         return;
       }
-      // 撤销 / 重做：必须在下面那句「带修饰键就不管」之前处理
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) redoRef.current();
@@ -677,9 +661,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         redoRef.current();
         return;
       }
-      if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+0 / Ctrl+1 等后续再接
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      // 裁剪：Enter 确认 / Esc 取消（PS 行为）
       if (toolRef.current === 'crop') {
         if (e.key === 'Enter') {
           commitCropRef.current();
@@ -727,13 +710,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     };
   }, [onToolChange]);
 
-  // ---- 鼠标：按工具分派 ----
+  // ---- 鼠标 ----
   const effectiveTool: EditorToolId = spaceHeld ? 'hand' : tool;
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
 
-    // 缩放工具：单击放大，Alt+单击缩小（PS 行为）
     if (effectiveTool === 'zoom') {
       const el = containerRef.current;
       if (!el) return;
@@ -745,10 +727,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       return;
     }
 
-    // 只有抓手平移视图。**移动工具不平移**——它该移的是图层内容，
-    // 而 Phase 1 只有单张背景层、铺满画布，没有可移的东西。
-    // PS 里这种情况背景层是锁定的，拖动无效果；做成"退化成抓手"反而让人分不清
-    // 两个工具的区别（用户实测反馈「移动工具跟抓手一样」）。
+    // 只有抓手平移视图。移动工具留给自由变形（S7）——它该移的是**图层**，不是视口。
     if (effectiveTool !== 'hand') return;
 
     draggingRef.current = {
@@ -789,23 +768,56 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           ? 'grab'
           : 'default';
 
+  // 图层的 CSS 变换：定界框 + 自然尺寸 → 六参 → matrix()
+  const layerStyle = useMemo((): React.CSSProperties | undefined => {
+    if (!activeLayer) return undefined;
+    const m = composeMatrix(activeLayer.box, {
+      width: activeLayer.naturalWidth,
+      height: activeLayer.naturalHeight,
+    });
+    return {
+      position: 'absolute',
+      left: 0,
+      top: 0,
+      width: activeLayer.naturalWidth,
+      height: activeLayer.naturalHeight,
+      // transform-origin 必须是 0 0：矩阵是在"内容像素坐标"里算的
+      transformOrigin: '0 0',
+      transform: toCssMatrix(m),
+      filter: hasAdjust ? `url(#${adjustFilterId})` : undefined,
+      // Tailwind preflight 给所有 img 设了 max-width:100%，必须顶回去
+      maxWidth: 'none',
+      maxHeight: 'none',
+    };
+  }, [activeLayer, hasAdjust, adjustFilterId]);
+
+  // 透明用棋盘格——PS 的通用表达，用户一眼知道"这里没东西"
+  const backgroundCss =
+    canvas?.background === 'white'
+      ? '#ffffff'
+      : canvas?.background === 'black'
+        ? '#000000'
+        : 'repeating-conic-gradient(#d4d4d4 0% 25%, #ffffff 0% 50%) 0 0 / 16px 16px';
+
+  const docName = doc?.name || '未命名';
+  const isReady = !!canvas;
+  const legacy = isLegacyEditorDocument(doc);
+
   return (
     <div className="w-full h-full flex flex-col overflow-hidden bg-neutral-100 dark:bg-neutral-900">
-      {/*
-        调色滤镜定义。`colorInterpolationFilters="sRGB"` 不能省：SVG 默认在
-        linearRGB 空间做矩阵运算，而 Rust 侧是直接在 sRGB 字节上算的 —— 不显式指定
-        会让对比度/饱和度的观感与导出结果明显不同（尤其暗部）。
-      */}
       <svg className="absolute w-0 h-0 pointer-events-none" aria-hidden="true">
         <filter id={adjustFilterId} colorInterpolationFilters="sRGB">
           <feColorMatrix type="matrix" values={adjustValues} />
         </filter>
       </svg>
 
-      {/*
-        文档栏：贯穿顶部、盖在工具栏之上（骨架要求）。
-        两端的面板开关与应用 TopBar 同一套语义与图标（Sidebar / PanelRight）。
-      */}
+      {legacy && (
+        <div className="px-3 py-1.5 text-[11px] bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 shrink-0">
+          这是旧版编辑文档，已无法继续编辑——请重新打开这张图片。
+        </div>
+      )}
+
+      {/* 文档栏：画布级 / 文档级快捷操作（设计稿 §10.1） */}
       <div className="h-9 shrink-0 flex items-center gap-2 px-2 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 select-none">
         <button
           type="button"
@@ -816,17 +828,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           <Sidebar size={15} />
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
-        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[38%]">
-          {documentName}
+        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[34%]">
+          {docName}
         </span>
-        {preview && (
+        {canvas && (
           <span className="text-[11px] text-neutral-500 dark:text-neutral-400 shrink-0 tabular-nums">
-            {preview.width}×{preview.height}
-            {preview.previewWidth !== preview.width && (
-              <span className="ml-2 text-amber-600 dark:text-amber-400">
-                代理 {preview.previewWidth}×{preview.previewHeight}
-              </span>
-            )}
+            画布 {canvas.width}×{canvas.height}
           </span>
         )}
         {exportState.status === 'done' && (
@@ -835,226 +842,151 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           </span>
         )}
         {exportState.status === 'error' && (
-          <span
-            className="text-[11px] text-red-500 shrink-0 max-w-[22rem] truncate"
-            title={exportState.text}
-          >
+          <span className="text-[11px] text-red-500 shrink-0 max-w-[20rem] truncate" title={exportState.text}>
             {exportState.text}
           </span>
         )}
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={undo}
-          disabled={!canUndo}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="撤销 (Ctrl+Z)"
-        >
+        <button type="button" onClick={undo} disabled={!canUndo} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="撤销 (Ctrl+Z)">
           <Undo2 size={15} />
         </button>
-        <button
-          type="button"
-          onClick={redo}
-          disabled={!canRedo}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="重做 (Ctrl+Shift+Z)"
-        >
+        <button type="button" onClick={redo} disabled={!canRedo} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="重做 (Ctrl+Shift+Z)">
           <Redo2 size={15} />
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-        {/* 旋转 / 翻转：与裁剪同属几何变换，都只改文档状态，导出时由 Rust 在
-            原图上一次性套用（不会因为连点几次而累积重编码损失） */}
-        <button
-          type="button"
-          onClick={() => handleRotate(false)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="逆时针旋转 90°"
-        >
+        <button type="button" onClick={() => handleRotate(false)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="逆时针旋转画布 90°">
           <RotateCcw size={15} />
         </button>
-        <button
-          type="button"
-          onClick={() => handleRotate(true)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="顺时针旋转 90°"
-        >
+        <button type="button" onClick={() => handleRotate(true)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="顺时针旋转画布 90°">
           <RotateCw size={15} />
         </button>
-        <button
-          type="button"
-          onClick={() => handleFlip(true)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="水平翻转"
-        >
+        <button type="button" onClick={() => handleFlip(true)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="水平翻转画布">
           <FlipHorizontal2 size={15} />
         </button>
-        <button
-          type="button"
-          onClick={() => handleFlip(false)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="垂直翻转"
-        >
+        <button type="button" onClick={() => handleFlip(false)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="垂直翻转画布">
           <FlipVertical2 size={15} />
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-        <button
-          type="button"
-          onClick={handleExport}
-          disabled={!preview || exportState.status === 'working'}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="导出为图片（PNG / JPEG / WebP）"
-        >
-          {exportState.status === 'working' ? (
-            <Loader2 size={15} className="animate-spin" />
-          ) : (
-            // FileOutput 而不是 Download：这是「把文档导出成图片」，不是从网上下载
-            <FileOutput size={15} />
-          )}
+        <button type="button" onClick={handleExport} disabled={!isReady || exportState.status === 'working'} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="导出为图片（PNG / JPEG / WebP）">
+          {exportState.status === 'working' ? <Loader2 size={15} className="animate-spin" /> : <FileOutput size={15} />}
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-        <button
-          type="button"
-          onClick={() => zoomAtCenter(1 / CLICK_ZOOM_STEP)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="缩小"
-        >
+        <button type="button" onClick={() => zoomAtCenter(1 / CLICK_ZOOM_STEP)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="缩小">
           <ZoomOut size={15} />
         </button>
         <span className="text-[11px] tabular-nums text-neutral-600 dark:text-neutral-300 w-11 text-center">
           {Math.round(transform.scale * 100)}%
         </span>
-        <button
-          type="button"
-          onClick={() => zoomAtCenter(CLICK_ZOOM_STEP)}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          title="放大"
-        >
+        <button type="button" onClick={() => zoomAtCenter(CLICK_ZOOM_STEP)} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="放大">
           <ZoomIn size={15} />
         </button>
-        <button
-          type="button"
-          onClick={fitToView}
-          disabled={!preview}
-          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
-          // 与画布工具栏的「查看全部」同一个图标、同一个语义
-          title="查看全部"
-        >
+        <button type="button" onClick={fitToView} disabled={!isReady} className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40" title="查看全部">
           <Scan size={15} />
         </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
-        <button
-          type="button"
-          onClick={onToggleMetadata}
-          className={`p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 ${isMetadataVisible ? 'text-blue-500' : ''}`}
-          title="切换右侧面板"
-        >
+        <button type="button" onClick={onToggleMetadata} className={`p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 ${isMetadataVisible ? 'text-blue-500' : ''}`} title="切换右侧面板">
           <PanelRight size={15} />
         </button>
       </div>
 
-      {/* 工具栏与画布区：在文档栏之下 */}
       <div className="flex-1 flex min-h-0">
-      <EditorToolbar
-        // 按住空格时抓手临时接管：工具栏上抓手高亮（PS 行为），但 Tab 记录的工具不变
-        activeTool={spaceHeld ? 'hand' : tool}
-        onSelect={onToolChange}
-        disabled={!sourcePath}
-      />
+        <EditorToolbar activeTool={spaceHeld ? 'hand' : tool} onSelect={onToolChange} disabled={!doc} />
 
-      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0">
+          <EditorOptionsBar
+            tool={spaceHeld ? 'hand' : tool}
+            scale={transform.scale}
+            onZoomTo={zoomTo}
+            onFit={fitToView}
+            cropRect={cropRect}
+            onCropCommit={commitCrop}
+            onCropCancel={cancelCrop}
+            cropRatio={cropRatio}
+            docAspect={canvas && canvas.height > 0 ? canvas.width / canvas.height : undefined}
+            onCropRatioChange={handleCropRatioChange}
+          />
 
-        {/* 工具选项条 */}
-        <EditorOptionsBar
-          // 与工具栏一致：空格按住时切到抓手（PS 里选项条也会跟着变）
-          tool={spaceHeld ? 'hand' : tool}
-          scale={transform.scale}
-          onZoomTo={zoomTo}
-          onFit={fitToView}
-          cropRect={cropRect}
-          onCropCommit={commitCrop}
-          onCropCancel={cancelCrop}
-          cropRatio={cropRatio}
-          docAspect={preview && preview.height > 0 ? preview.width / preview.height : undefined}
-          onCropRatioChange={handleCropRatioChange}
-        />
+          {/* 画布（视口） */}
+          <div
+            ref={containerRef}
+            className="flex-1 relative overflow-hidden"
+            style={{ cursor }}
+            onMouseDown={onMouseDown}
+            onDoubleClick={fitToView}
+          >
+            {error && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center pointer-events-none">
+                <AlertTriangle size={22} className="text-amber-500" />
+                <span className="text-sm text-neutral-700 dark:text-neutral-200">无法打开这张图</span>
+                <span className="text-xs text-neutral-500 dark:text-neutral-400 break-all max-w-lg">{error}</span>
+              </div>
+            )}
 
-        {/* 画布 */}
-        <div
-          ref={containerRef}
-          className="flex-1 relative overflow-hidden"
-          style={{ cursor }}
-          onMouseDown={onMouseDown}
-          onDoubleClick={fitToView}
-        >
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center gap-2 text-neutral-500 pointer-events-none">
-              <Loader2 size={18} className="animate-spin" />
-              <span className="text-sm">正在生成代理图…</span>
-            </div>
-          )}
+            {/* 画布容器：图层超出这里的部分被裁掉，这就是"裁剪"的全部实现 */}
+            {canvas && !error && (
+              <div
+                className="absolute"
+                style={{
+                  left: 0,
+                  top: 0,
+                  width: canvas.width,
+                  height: canvas.height,
+                  transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+                  transformOrigin: '0 0',
+                  overflow: 'hidden',
+                  background: backgroundCss,
+                  boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
+                }}
+              >
+                {activeLayer?.source && (
+                  <img
+                    src={convertFileSrc(activeLayer.source)}
+                    alt={docName}
+                    draggable={false}
+                    style={layerStyle}
+                    onLoad={e => handleImageLoad(e.currentTarget)}
+                    onError={() => setError('无法打开这张图（编辑器支持 jpeg / png / gif / webp / bmp / tiff / ico）')}
+                  />
+                )}
+              </div>
+            )}
 
-          {error && !loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center pointer-events-none">
-              <AlertTriangle size={22} className="text-amber-500" />
-              <span className="text-sm text-neutral-700 dark:text-neutral-200">无法打开这张图</span>
-              <span className="text-xs text-neutral-500 dark:text-neutral-400 break-all max-w-lg">{error}</span>
-            </div>
-          )}
+            {/* 初始化探针：还没有画布时先渲染一次只为读自然尺寸 */}
+            {needsInit && doc?.path && !canvas && (
+              <img
+                src={convertFileSrc(doc.path)}
+                alt=""
+                onLoad={e => handleImageLoad(e.currentTarget)}
+                onError={() => setError('无法打开这张图（编辑器支持 jpeg / png / gif / webp / bmp / tiff / ico）')}
+                className="absolute w-px h-px opacity-0 pointer-events-none"
+              />
+            )}
 
-          {preview && !error && (
-            <img
-              src={preview.dataUrl}
-              alt={documentName}
-              draggable={false}
-              className="absolute left-0 top-0 origin-top-left select-none"
-              style={{
-                transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
-                // 调色预览：SVG feColorMatrix，参数全 0 时不出滤镜层
-                filter: hasAdjust ? `url(#${adjustFilterId})` : undefined,
-                // 放大超过 100% 用像素化：让「已经超出代理分辨率」一眼可见
-                imageRendering: transform.scale > 1 ? 'pixelated' : 'auto',
-                width: preview.previewWidth,
-                height: preview.previewHeight,
-                // Tailwind preflight 给所有 img 设了 `max-width:100%; height:auto`。
-                // 这里宽度/高度是布局尺寸，必须把 max-* 顶回去，否则宽被容器压小、
-                // 高不变 —— 3440×1440 的图会被压成近正方形。
-                maxWidth: 'none',
-                maxHeight: 'none',
-              }}
-            />
-          )}
-          {preview && !error && tool === 'crop' && (
-            <CropOverlay
-              docWidth={preview.width}
-              docHeight={preview.height}
-              // 代理图 / 源图 的比例：裁剪框以源图坐标为准，显示时按它投影到屏幕
-              proxyScale={preview.width > 0 ? preview.previewWidth / preview.width : 1}
-              transform={transform}
-              rect={cropRect}
-              aspectRatio={cropRatio}
-              onChange={setCropRect}
-            />
-          )}
+            {canvas && !error && tool === 'crop' && (
+              <CropOverlay
+                docWidth={canvas.width}
+                docHeight={canvas.height}
+                // 画布坐标 = 文档坐标，投影比例恒为 1——不再有"代理倍率"这一层
+                proxyScale={1}
+                transform={transform}
+                rect={cropRect}
+                aspectRatio={cropRatio}
+                onChange={setCropRect}
+              />
+            )}
+          </div>
+
+          <EditorStatusBar
+            tool={tool}
+            scale={transform.scale}
+            width={canvas?.width ?? 0}
+            height={canvas?.height ?? 0}
+            previewWidth={canvas?.width ?? 0}
+            previewHeight={canvas?.height ?? 0}
+            spaceHeld={spaceHeld}
+          />
         </div>
-
-        {/* 状态栏 */}
-        <EditorStatusBar
-          tool={tool}
-          scale={transform.scale}
-          width={preview?.width ?? 0}
-          height={preview?.height ?? 0}
-          previewWidth={preview?.previewWidth ?? 0}
-          previewHeight={preview?.previewHeight ?? 0}
-          spaceHeld={spaceHeld}
-        />
       </div>
-    </div>
     </div>
   );
 };

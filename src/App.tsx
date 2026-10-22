@@ -2960,12 +2960,21 @@ export const App: React.FC = () => {
         <RightPanel
           state={state}
           activeTab={activeTab}
+          // 调色是**图层属性**（最小图层模型 v2），落在当前活动图层上，
+          // 不再是文档级字段。没有图层时（空白文档）这一步是空操作。
           onEditorAdjustChange={adjust =>
-            updateTabById(activeTab.id, prev => ({
-              editorDocument: prev.editorDocument
-                ? { ...prev.editorDocument, adjust, dirty: true }
-                : prev.editorDocument,
-            }))
+            updateTabById(activeTab.id, prev => {
+              const doc = prev.editorDocument;
+              if (!doc?.layers?.length) return {};
+              const targetId = doc.activeLayerId ?? doc.layers[doc.layers.length - 1].id;
+              return {
+                editorDocument: {
+                  ...doc,
+                  layers: doc.layers.map(l => (l.id === targetId ? { ...l, adjust } : l)),
+                  dirty: true,
+                },
+              };
+            })
           }
           peopleWithDisplayCounts={peopleWithDisplayCounts}
           filesVersion={filesVersion}
