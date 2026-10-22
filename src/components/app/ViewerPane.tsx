@@ -22,7 +22,7 @@ interface ViewerPaneProps {
   /** 图片编辑（C11）：网格右键与查看器右键共用同一个实现（App 侧单点定义） */
   onOpenEditor?: (fileId: string) => void;
   /** 编辑器导出成功后回调（参数为导出到的完整路径），用于重扫目标文件夹 */
-  onEditorFileCreated?: (targetPath: string) => void;
+  onEditorFileCreated?: (targetPath: string) => void | Promise<void>;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   enterFolder: (folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => void;
   handleViewerSearch: (query: string) => void;

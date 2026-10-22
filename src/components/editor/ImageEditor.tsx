@@ -71,11 +71,14 @@ interface ImageEditorProps {
   /**
    * 导出成功后回调：调用方应重扫导出的目标文件夹，让新文件进库并出现在网格里。
    *
-   * 不在这里直接调 `scan_file`：单文件扫描只返回节点，**不写数据库**，
+   * 返回 Promise 时编辑器会等它完成再更新提示文案 —— 用户能亲眼看到
+   * 「画廊已刷新」，而不是猜刷新有没有发生。
+   *
+   * 不在这里直接调 `scan_file`：单文件扫描只返回节点、**不写数据库**，
    * 网格的数据源是 `state.files`（来自扫描 + 库），单插一个节点会和库对不上。
    * 走文件夹重扫是项目里已经验证过的路径。
    */
-  onFileCreated?: (targetPath: string) => void;
+  onFileCreated?: (targetPath: string) => void | Promise<void>;
 }
 
 const FIT_PADDING = 60;
@@ -336,14 +339,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           targetPath: target,
         },
       );
-      setExportState({
-        status: 'done',
-        text: `已导出 ${res.width}×${res.height}（${Math.round(res.bytes / 1024)} KB）`,
-      });
-      setTimeout(() => setExportState({ status: 'idle' }), 4000);
-
-      // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）
-      onFileCreated?.(target);
+      // 让画廊立刻能看见这张新图（否则退出编辑器后网格里没有它）。
+      // 等它完成再改文案：刷新失败/还在跑时不会谎报"已刷新"。
+      try {
+        await onFileCreated?.(target);
+        setExportState({
+          status: 'done',
+          text: `已导出 ${res.width}×${res.height}（${Math.round(res.bytes / 1024)} KB）· 画廊已刷新`,
+        });
+      } catch (refreshErr) {
+        setExportState({
+          status: 'done',
+          text: `已导出 ${res.width}×${res.height}（${Math.round(res.bytes / 1024)} KB）· 刷新失败，请手动刷新`,
+        });
+        console.error('[editor] 导出后刷新画廊失败', refreshErr);
+      }
+      setTimeout(() => setExportState({ status: 'idle' }), 5000);
     } catch (e) {
       setExportState({ status: 'error', text: String(e) });
       setTimeout(() => setExportState({ status: 'idle' }), 6000);

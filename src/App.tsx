@@ -2772,17 +2772,15 @@ export const App: React.FC = () => {
             requestDelete={requestDelete}
             handleViewInExplorer={handleViewInExplorer}
             onOpenEditor={openInEditor}
-            onEditorFileCreated={(targetPath) => {
-              // 导出落在「当前文件夹」里才需要刷新——存到别处时，下次进那个文件夹
-              // 自然会扫到，在这里重扫当前文件夹反而是白跑一次。
-              const folderPath = state.files[activeTab.folderId]?.path;
-              const targetDir = targetPath.slice(
-                0,
-                Math.max(targetPath.lastIndexOf('\\'), targetPath.lastIndexOf('/')),
-              );
-              if (folderPath && folderPath.replace(/[\\/]+$/, '') === targetDir) {
-                void handleRefreshAnySource();
-              }
+            onEditorFileCreated={async () => {
+              // 导出后重扫一次当前文件夹：新文件才会进库并出现在网格里。
+              //
+              // **不做路径比较**：`state.files` 里的 path 经过了
+              // `db::normalize_path`（反斜杠 → 正斜杠、去尾斜杠），而保存对话框
+              // 返回的是原始反斜杠路径 —— 拿两者直接比对永远不相等，刷新就悄悄
+              // 不执行（实测踩过：导出后网格里一直没有新文件）。
+              // 存到别的目录时这次重扫是白跑一趟，但那点开销远小于"看起来没生效"。
+              await handleRefreshAnySource();
             }}
             setState={setState}
             enterFolder={enterFolder}
