@@ -193,6 +193,37 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     setCropRect({ x: 0, y: 0, w: preview.width, h: preview.height });
   }, [tool, preview]);
 
+  /** 裁剪宽高比（w/h）；null = 自由裁剪 */
+  const [cropRatio, setCropRatio] = useState<number | null>(null);
+
+  // 切换比例：把现有框就地调成该比例（以当前框中心为锚，尽量保住已有大小）。
+  // 不重新生成整图框——用户已经摆好的位置不该因为点了个比例就跳走。
+  const handleCropRatioChange = useCallback(
+    (ratio: number | null) => {
+      setCropRatio(ratio);
+      if (!ratio) return;
+      setCropRect(prev => {
+        if (!prev || !preview || preview.height === 0) return prev;
+        const cx = prev.x + prev.w / 2;
+        const cy = prev.y + prev.h / 2;
+        let w = prev.w;
+        let h = w / ratio;
+        if (h > preview.height) {
+          h = preview.height;
+          w = h * ratio;
+        }
+        if (w > preview.width) {
+          w = preview.width;
+          h = w / ratio;
+        }
+        const x = Math.min(Math.max(cx - w / 2, 0), Math.max(0, preview.width - w));
+        const y = Math.min(Math.max(cy - h / 2, 0), Math.max(0, preview.height - h));
+        return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
+      });
+    },
+    [preview],
+  );
+
   const commitCrop = useCallback(() => {
     if (!cropRect || !preview) return;
     const w = Math.round(cropRect.w);
@@ -620,6 +651,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           cropRect={cropRect}
           onCropCommit={commitCrop}
           onCropCancel={cancelCrop}
+          cropRatio={cropRatio}
+          docAspect={preview && preview.height > 0 ? preview.width / preview.height : undefined}
+          onCropRatioChange={handleCropRatioChange}
         />
 
         {/* 画布 */}
@@ -673,6 +707,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               proxyScale={preview.width > 0 ? preview.previewWidth / preview.width : 1}
               transform={transform}
               rect={cropRect}
+              aspectRatio={cropRatio}
               onChange={setCropRect}
             />
           )}

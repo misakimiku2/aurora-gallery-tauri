@@ -17,12 +17,17 @@ interface EditorOptionsBarProps {
   cropRect?: { x: number; y: number; w: number; h: number } | null;
   onCropCommit?: () => void;
   onCropCancel?: () => void;
+  /** 当前裁剪宽高比（w/h）；null = 自由 */
+  cropRatio?: number | null;
+  /** 当前文档的宽高比，供「原始比例」预设使用 */
+  docAspect?: number;
+  onCropRatioChange?: (ratio: number | null) => void;
 }
 
-/** 裁剪比例预设（UI 设计 §7.1 的平台封面清单，待拍板项第 1 条）。 */
-const CROP_PRESETS: Array<{ label: string; ratio: number | null }> = [
+/** 裁剪比例预设（UI 设计 §7.1 的平台封面清单）。`'doc'` = 跟随当前文档比例。 */
+const CROP_PRESETS: Array<{ label: string; ratio: number | 'doc' | null }> = [
   { label: '自由', ratio: null },
-  { label: '原始比例', ratio: 0 },
+  { label: '原始比例', ratio: 'doc' },
   { label: '1:1', ratio: 1 },
   { label: '16:9', ratio: 16 / 9 },
   { label: '9:16', ratio: 9 / 16 },
@@ -32,6 +37,13 @@ const CROP_PRESETS: Array<{ label: string; ratio: number | null }> = [
 const label = 'text-[11px] text-neutral-500 dark:text-neutral-400';
 const chip =
   'px-2 h-6 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 text-neutral-500 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-900 cursor-not-allowed';
+/** 可点击的比例按钮 */
+const ratioBtn =
+  'px-2 h-6 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-700';
+const ratioBtnActive =
+  'px-2 h-6 rounded text-[11px] border border-blue-600 bg-blue-600 text-white';
+
+/** 裁剪比例预设（UI 设计 §7.1 的平台封面清单，待拍板项第 1 条）。 */
 
 export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   tool,
@@ -41,6 +53,9 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   cropRect,
   onCropCommit,
   onCropCancel,
+  cropRatio,
+  docAspect,
+  onCropRatioChange,
 }) => {
   const def = getEditorTool(tool);
 
@@ -68,11 +83,23 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
       {tool === 'crop' && (
         <>
           <div className="flex items-center gap-1">
-            {CROP_PRESETS.map(p => (
-              <span key={p.label} className={chip} title="比例约束尚未接入">
-                {p.label}
-              </span>
-            ))}
+            {CROP_PRESETS.map(p => {
+              // 'doc' 要落到当前文档的真实比例上；拿不到就禁用这一项
+              const value = p.ratio === 'doc' ? (docAspect ?? null) : p.ratio;
+              // 浮点比较用容差：16/9 两次算出来是同值，但别指望 null/0 以外的相等
+              const active = Math.abs((value ?? 0) - (cropRatio ?? 0)) < 1e-6;
+              return (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => onCropRatioChange?.(value)}
+                  disabled={p.ratio === 'doc' && !docAspect}
+                  className={active ? ratioBtnActive : ratioBtn}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
           </div>
           <span className={`${label} ml-2`}>宽 × 高</span>
           <span className="text-[11px] tabular-nums text-neutral-700 dark:text-neutral-200 w-24 shrink-0">

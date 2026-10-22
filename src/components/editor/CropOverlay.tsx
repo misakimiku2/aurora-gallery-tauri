@@ -12,16 +12,21 @@
  * - 拖 8 个把手 = 调整边/角
  * - 在框外拖动 = 重新拉一个新框
  * - Enter 确认 / Esc 取消
+ *
+ * 比例约束的数学在 `cropGeometry.ts`（纯函数 + 单测），这里只负责命中判定、
+ * 屏幕投影与鼠标事件。
  */
 import React, { useCallback, useRef } from 'react';
 import type { Transform } from '../comparer/viewport';
+import {
+  CropArea,
+  CropHandle,
+  clampNumber,
+  computeRatioRect,
+  normalizeRect,
+} from './cropGeometry';
 
-export interface CropArea {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
+export type { CropArea };
 
 interface CropOverlayProps {
   /** 文档（源图）尺寸 —— 坐标基准 */
@@ -31,24 +36,15 @@ interface CropOverlayProps {
   proxyScale: number;
   transform: Transform;
   rect: CropArea | null;
+  /** 宽高比（w/h）。null / undefined = 自由裁剪 */
+  aspectRatio?: number | null;
   onChange: (rect: CropArea) => void;
 }
-
-type HandleId = 'n' | 's' | 'w' | 'e' | 'nw' | 'ne' | 'sw' | 'se';
 
 /** 把手命中半径（屏幕 px） */
 const HANDLE_HIT = 10;
 /** 把手视觉尺寸（屏幕 px） */
 const HANDLE_SIZE = 8;
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
-
-/** 把矩形规整成非负宽高 */
-function normalize(a: CropArea): CropArea {
-  const x = Math.min(a.x, a.x + a.w);
-  const y = Math.min(a.y, a.y + a.h);
-  return { x, y, w: Math.abs(a.w), h: Math.abs(a.h) };
-}
 
 export const CropOverlay: React.FC<CropOverlayProps> = ({
   docWidth,
@@ -56,12 +52,13 @@ export const CropOverlay: React.FC<CropOverlayProps> = ({
   proxyScale,
   transform,
   rect,
+  aspectRatio,
   onChange,
 }) => {
   // 源图坐标 → 屏幕坐标的合成比例
   const screenRatio = proxyScale * transform.scale;
   const dragRef = useRef<{
-    mode: 'move' | 'new' | HandleId;
+    mode: 'move' | 'new' | CropHandle;
     startX: number;
     startY: number;
     origin: CropArea;
@@ -77,7 +74,7 @@ export const CropOverlay: React.FC<CropOverlayProps> = ({
   );
 
   const hitTest = useCallback(
-    (docX: number, docY: number): HandleId | 'inside' | 'outside' => {
+    (docX: number, docY: number): CropHandle | 'inside' | 'outside' => {
       if (!rect) return 'outside';
       const tol = HANDLE_HIT / screenRatio;
       const nearL = Math.abs(docX - rect.x) <= tol;
@@ -108,61 +105,90 @@ export const CropOverlay: React.FC<CropOverlayProps> = ({
     const bounds = e.currentTarget.getBoundingClientRect();
     const p = toDoc(e.clientX, e.clientY, bounds);
     const hit = hitTest(p.x, p.y);
+    const ratio = aspectRatio ?? null;
+
+    let mode: 'move' | 'new' | CropHandle;
+    let origin: CropArea;
 
     if (hit === 'outside' || !rect) {
-      // 从空白处拉新框
-      const start = {
-        x: clamp(p.x, 0, docWidth),
-        y: clamp(p.y, 0, docHeight),
+      const start: CropArea = {
+        x: clampNumber(p.x, 0, docWidth),
+        y: clampNumber(p.y, 0, docHeight),
         w: 0,
         h: 0,
       };
-      dragRef.current = { mode: 'new', startX: p.x, startY: p.y, origin: start };
+      mode = 'new';
+      origin = start;
       onChange(start);
     } else {
-      dragRef.current = {
-        mode: hit === 'inside' ? 'move' : hit,
-        startX: p.x,
-        startY: p.y,
-        origin: { ...rect },
-      };
+      mode = hit === 'inside' ? 'move' : hit;
+      origin = { ...rect };
     }
+    dragRef.current = { mode, startX: p.x, startY: p.y, origin };
 
     const onMove = (ev: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
       const cur = toDoc(ev.clientX, ev.clientY, bounds);
-      const dx = cur.x - d.startX;
-      const dy = cur.y - d.startY;
-      const o = d.origin;
 
+      // 移动整框：不受比例影响（比例本来就没变）
+      if (d.mode === 'move') {
+        const dx = cur.x - d.startX;
+        const dy = cur.y - d.startY;
+        onChange({
+          x: Math.round(clampNumber(d.origin.x + dx, 0, docWidth - d.origin.w)),
+          y: Math.round(clampNumber(d.origin.y + dy, 0, docHeight - d.origin.h)),
+          w: d.origin.w,
+          h: d.origin.h,
+        });
+        return;
+      }
+
+      if (ratio) {
+        onChange(
+          computeRatioRect(
+            d.mode,
+            { x: d.startX, y: d.startY },
+            cur,
+            d.origin,
+            ratio,
+            docWidth,
+            docHeight,
+          ),
+        );
+        return;
+      }
+
+      // 自由裁剪：从空白拉新框
       if (d.mode === 'new') {
-        const nx = clamp(Math.min(d.startX, cur.x), 0, docWidth);
-        const ny = clamp(Math.min(d.startY, cur.y), 0, docHeight);
-        const nw = clamp(Math.abs(cur.x - d.startX), 0, docWidth - nx);
-        const nh = clamp(Math.abs(cur.y - d.startY), 0, docHeight - ny);
+        const nx = clampNumber(Math.min(d.startX, cur.x), 0, docWidth);
+        const ny = clampNumber(Math.min(d.startY, cur.y), 0, docHeight);
+        const nw = clampNumber(Math.abs(cur.x - d.startX), 0, docWidth - nx);
+        const nh = clampNumber(Math.abs(cur.y - d.startY), 0, docHeight - ny);
         onChange({ x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh) });
         return;
       }
 
-      if (d.mode === 'move') {
-        const x = clamp(o.x + dx, 0, docWidth - o.w);
-        const y = clamp(o.y + dy, 0, docHeight - o.h);
-        onChange({ x: Math.round(x), y: Math.round(y), w: o.w, h: o.h });
-        return;
-      }
-
-      // 把手：按方向改边
+      // 自由裁剪：拖把手
+      const dx = cur.x - d.startX;
+      const dy = cur.y - d.startY;
+      const o = d.origin;
       let left = o.x;
       let top = o.y;
       let right = o.x + o.w;
       let bottom = o.y + o.h;
-      if (d.mode.includes('w')) left = clamp(o.x + dx, 0, right);
-      if (d.mode.includes('e')) right = clamp(o.x + o.w + dx, left, docWidth);
-      if (d.mode.includes('n')) top = clamp(o.y + dy, 0, bottom);
-      if (d.mode.includes('s')) bottom = clamp(o.y + o.h + dy, top, docHeight);
+      if (d.mode.includes('w')) left = clampNumber(o.x + dx, 0, right);
+      if (d.mode.includes('e')) right = clampNumber(o.x + o.w + dx, left, docWidth);
+      if (d.mode.includes('n')) top = clampNumber(o.y + dy, 0, bottom);
+      if (d.mode.includes('s')) bottom = clampNumber(o.y + o.h + dy, top, docHeight);
 
-      onChange(normalize({ x: left, y: top, w: right - left, h: bottom - top }));
+      const norm = normalizeRect({ x: left, y: top, w: right - left, h: bottom - top });
+      onChange({
+        x: Math.round(norm.x),
+        y: Math.round(norm.y),
+        w: Math.round(norm.w),
+        h: Math.round(norm.h),
+      });
     };
 
     const onUp = () => {
@@ -184,7 +210,7 @@ export const CropOverlay: React.FC<CropOverlayProps> = ({
   const sw = rect.w * screenRatio;
   const sh = rect.h * screenRatio;
 
-  const handles: Array<{ id: HandleId; left: number; top: number; cursor: string }> = [
+  const handles: Array<{ id: CropHandle; left: number; top: number; cursor: string }> = [
     { id: 'nw', left: 0, top: 0, cursor: 'nwse-resize' },
     { id: 'n', left: 0.5, top: 0, cursor: 'ns-resize' },
     { id: 'ne', left: 1, top: 0, cursor: 'nesw-resize' },
@@ -218,9 +244,7 @@ export const CropOverlay: React.FC<CropOverlayProps> = ({
         </div>
 
         {/* 尺寸读数 */}
-        <div
-          className="absolute left-1/2 -translate-x-1/2 -top-6 px-1.5 py-0.5 rounded bg-black/75 text-[11px] tabular-nums text-white whitespace-nowrap pointer-events-none"
-        >
+        <div className="absolute left-1/2 -translate-x-1/2 -top-6 px-1.5 py-0.5 rounded bg-black/75 text-[11px] tabular-nums text-white whitespace-nowrap pointer-events-none">
           {Math.round(rect.w)} × {Math.round(rect.h)}
         </div>
 
