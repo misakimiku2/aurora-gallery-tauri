@@ -154,7 +154,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           <Eye size={12} className="text-neutral-500 shrink-0" />
           <div className="w-10 h-10 shrink-0 rounded-sm overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
             {layerThumb ? (
-              <img src={layerThumb} alt="" className="w-full h-full object-cover" draggable={false} />
+              <img src={layerThumb.src} alt="" className="w-full h-full object-cover" draggable={false} />
             ) : (
               <ImageIcon size={13} className="text-neutral-400" />
             )}

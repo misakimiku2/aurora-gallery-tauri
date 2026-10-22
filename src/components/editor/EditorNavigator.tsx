@@ -2,16 +2,21 @@
  * 全览图（PS 的 Navigator 面板，UI 设计 §4 的面板组之首）。
  *
  * 显示整张图的缩略，并把**当前视口**画成一个框 —— 缩放到 400% 之后，这是唯一能让
- * 用户知道「我在图的哪个位置」的东西。Phase 1 只读，不接受点击导航（那需要一个
- * 从面板到画布的命令通道，留到接裁剪时一起做）。
+ * 用户知道「我在图的哪个位置」的东西。点击/拖动可以导航。
+ *
+ * 布局用**缩略图自己的宽高**（`thumb.width/height`），不是"当前文档尺寸"：
+ * 旋转 90° 时新尺寸先到、新缩略图后到（Image 解码异步），中间那一帧若用新尺寸撑
+ * 旧图，就会把图拉变形（用户实测的"全览图拉伸一下"）。同理，两者比例对不上时
+ * 不画视口框——否则框会跳到错误位置。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import type { EditorViewSnapshot } from './editorViewStore';
+import type { EditorThumb } from './useEditorThumbnail';
 
 interface EditorNavigatorProps {
-  /** 高质量缩略图（由 `useEditorThumbnail` 逐级降采样生成） */
-  thumb?: string;
-  /** 代理图尺寸 */
+  /** 高质量缩略图（由 `useEditorThumbnail` 逐级降采样生成，自带宽高） */
+  thumb?: EditorThumb;
+  /** 当前文档尺寸（裁剪之后），视口框按它换算 */
   imgWidth: number;
   imgHeight: number;
   view?: EditorViewSnapshot;
@@ -45,16 +50,27 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  const ready = Boolean(thumb && imgWidth > 0 && imgHeight > 0 && boxW > 0);
-  const scale = ready ? Math.min(boxW / imgWidth, BOX_HEIGHT / imgHeight, 1) : 0;
-  const dispW = imgWidth * scale;
-  const dispH = imgHeight * scale;
+  const thumbW = thumb?.width ?? 0;
+  const thumbH = thumb?.height ?? 0;
+  const ready = Boolean(thumb && thumbW > 0 && thumbH > 0 && boxW > 0);
+  // 不放大缩略图：它本来就只有 320px，撑满盒子只会更糊
+  const dispScale = ready ? Math.min(boxW / thumbW, BOX_HEIGHT / thumbH, 1) : 0;
+  const dispW = thumbW * dispScale;
+  const dispH = thumbH * dispScale;
   const offX = (boxW - dispW) / 2;
   const offY = (BOX_HEIGHT - dispH) / 2;
 
-  // 当前视口在图片坐标系里的矩形
+  /** 文档坐标 → 全览显示坐标的比例 */
+  const docToDisp = imgWidth > 0 ? dispW / imgWidth : 0;
+
+  // 缩略图与当前文档比例对不上 = 新图还没解码完（旋转后那一瞬）
+  const aspectMatches =
+    ready && imgWidth > 0 && imgHeight > 0
+      ? Math.abs(thumbW / thumbH - imgWidth / imgHeight) < 0.02
+      : false;
+
   let frame: { left: number; top: number; width: number; height: number } | null = null;
-  if (ready && view && view.scale > 0) {
+  if (aspectMatches && docToDisp > 0 && view && view.scale > 0) {
     const { scale: vs, x, y, containerWidth: cw, containerHeight: ch } = view;
     const left = Math.max(0, (0 - x) / vs);
     const top = Math.max(0, (0 - y) / vs);
@@ -62,22 +78,22 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
     const bottom = Math.min(imgHeight, (ch - y) / vs);
     if (right > left && bottom > top && (right - left < imgWidth || bottom - top < imgHeight)) {
       frame = {
-        left: offX + left * scale,
-        top: offY + top * scale,
-        width: (right - left) * scale,
-        height: (bottom - top) * scale,
+        left: offX + left * docToDisp,
+        top: offY + top * docToDisp,
+        width: (right - left) * docToDisp,
+        height: (bottom - top) * docToDisp,
       };
     }
   }
 
-  // 点击 / 拖动全览图导航（PS 的 Navigator 就是这样：点哪儿看哪儿）
+  // 点击 / 拖动导航（PS 的 Navigator 就是这样：点哪儿看哪儿）
   const navigateFromEvent = (clientX: number, clientY: number) => {
     const el = boxRef.current;
-    if (!el || !onNavigate || !ready || scale <= 0) return;
+    if (!el || !onNavigate || !ready || docToDisp <= 0) return;
     const r = el.getBoundingClientRect();
     onNavigate(
-      clamp((clientX - r.left - offX) / scale, 0, imgWidth),
-      clamp((clientY - r.top - offY) / scale, 0, imgHeight),
+      clamp((clientX - r.left - offX) / docToDisp, 0, imgWidth),
+      clamp((clientY - r.top - offY) / docToDisp, 0, imgHeight),
     );
   };
 
@@ -106,7 +122,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
       {ready ? (
         <>
           <img
-            src={thumb}
+            src={thumb!.src}
             alt="全览"
             draggable={false}
             className="absolute select-none"
