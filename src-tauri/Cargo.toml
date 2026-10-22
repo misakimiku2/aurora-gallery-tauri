@@ -117,3 +117,14 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+
+# 开发构建时让**依赖库**走优化、自己的 crate 保持 opt-level=0。
+#
+# 起因（2026-10-22 实测）：编辑器代理图管线在 debug 下要 3.6s，其中
+# `fast_image_resize` 的 Lanczos3 缩放独占 2.3s —— debug 构建关掉了 SIMD 与
+# 内联，这类纯计算库会慢 20~50 倍。设成优化后同一张 3440×1440 的图约 0.2s。
+#
+# 只对 `"*"`（依赖）生效，根 package 仍是 opt-level=0：本项目自己的代码量小、
+# 不是热点，保留增量编译速度更重要。首次开启需要重编一遍依赖（较久），之后无感。
+[profile.dev.package."*"]
+opt-level = 3

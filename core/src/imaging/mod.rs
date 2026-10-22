@@ -151,4 +151,53 @@ mod tests {
             assert!(!EDITOR_DECODABLE_EXTENSIONS.contains(ext));
         }
     }
+
+    /// 代理图管线的分阶段耗时基准（手动跑，不进常规测试）。
+    ///
+    /// 用法：
+    /// ```text
+    /// AURORA_IMAGING_BENCH="D:/big.png" \
+    ///   CARGO_TARGET_DIR=C:/cargo-target-core cargo test --lib \
+    ///   imaging::tests::bench_preview_pipeline -- --ignored --nocapture
+    /// ```
+    ///
+    /// 存在意义：用户反馈「生成代理有点久」，而这条链路有四段（解码 / 缩放 / 编码 /
+    /// base64），不分开计时就只能靠猜。改任何一段之前先跑一次，用数字决定优化哪段。
+    #[test]
+    #[ignore = "基准测试：需 AURORA_IMAGING_BENCH 指定一张真实大图"]
+    fn bench_preview_pipeline() {
+        let path = match std::env::var("AURORA_IMAGING_BENCH") {
+            Ok(p) if !p.is_empty() => p,
+            _ => {
+                eprintln!("跳过：未设置 AURORA_IMAGING_BENCH");
+                return;
+            }
+        };
+
+        let t0 = std::time::Instant::now();
+        let rgba = decode_file(&path).expect("解码失败");
+        let decode = t0.elapsed();
+
+        let t1 = std::time::Instant::now();
+        let proxy = resize_to_max_edge(&rgba, 2048).expect("缩放失败");
+        let resize = t1.elapsed();
+
+        let t2 = std::time::Instant::now();
+        let jpeg = encode(&proxy, EncodeFormat::Jpeg, 90).expect("编码失败");
+        let encode = t2.elapsed();
+
+        let t3 = std::time::Instant::now();
+        use base64::{engine::general_purpose, Engine as _};
+        let data_url = format!("data:image/jpeg;base64,{}", general_purpose::STANDARD.encode(&jpeg));
+        let b64 = t3.elapsed();
+
+        println!("---- 代理图管线 ----");
+        println!("源图     {}×{}", rgba.width(), rgba.height());
+        println!("代理     {}×{}", proxy.width(), proxy.height());
+        println!("解码     {:?}", decode);
+        println!("缩放     {:?}", resize);
+        println!("编码     {:?}  ({} KB)", encode, jpeg.len() / 1024);
+        println!("base64   {:?}  ({:.2} MB 字符串)", b64, data_url.len() as f64 / 1024.0 / 1024.0);
+        println!("合计     {:?}", decode + resize + encode + b64);
+    }
 }

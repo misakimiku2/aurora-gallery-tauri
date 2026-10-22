@@ -43,6 +43,41 @@ const ZOOM_STEP = 1.25;
 const MIN_SCALE = 0.02;
 const MAX_SCALE = 8;
 
+/**
+ * 代理图内存缓存（路径 → 代理图）。
+ *
+ * 为什么要它：一张 3440×1440 的图走完整管线要 0.2~0.4s（优化构建）/ 3.6s（debug），
+ * 而用户会反复关掉再打开同一个文档。缓存命中后是 0ms。
+ *
+ * 上限 6 张：每张 data URL 约 0.5MB，6 张约 3MB —— 比重算便宜得多，也不会把
+ * 内存撑到影响画廊（编辑器自己的目标是常驻 200–400MB，6 张代理图占比可忽略）。
+ *
+ * **失效策略：会话内不失效**。Phase 1 还没有「保存回写」功能，文件在编辑器打开
+ * 期间不会变；等保存功能上线，保存成功后必须 `previewCache.delete(path)`，
+ * 否则用户会看到改完之后仍然是旧图。
+ */
+const previewCache = new Map<string, EditorPreview>();
+const PREVIEW_CACHE_LIMIT = 6;
+
+/** 内存缓存用 LRU：命中时把该条挪到队尾（Map 保持插入顺序）。 */
+function readPreviewCache(path: string): EditorPreview | undefined {
+  const hit = previewCache.get(path);
+  if (!hit) return undefined;
+  previewCache.delete(path);
+  previewCache.set(path, hit);
+  return hit;
+}
+
+function writePreviewCache(path: string, preview: EditorPreview) {
+  previewCache.delete(path);
+  previewCache.set(path, preview);
+  while (previewCache.size > PREVIEW_CACHE_LIMIT) {
+    const oldest = previewCache.keys().next().value;
+    if (oldest === undefined) break;
+    previewCache.delete(oldest);
+  }
+}
+
 export const ImageEditor: React.FC<ImageEditorProps> = ({
   sourcePath,
   documentName,
@@ -64,6 +99,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setError(null);
       return;
     }
+
+    // 缓存命中：直接出图，连 loading 态都不用点亮
+    const cached = readPreviewCache(sourcePath);
+    if (cached) {
+      setPreview(cached);
+      setError(null);
+      setLoading(false);
+      hasFittedRef.current = false;
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -72,6 +118,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     invoke<EditorPreview>('editor_load_preview', { path: sourcePath })
       .then(result => {
         if (cancelled) return;
+        writePreviewCache(sourcePath, result);
         setPreview(result);
       })
       .catch((e: unknown) => {
@@ -271,6 +318,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               imageRendering: transform.scale > 1 ? 'pixelated' : 'auto',
               width: preview.previewWidth,
               height: preview.previewHeight,
+              // Tailwind preflight 给所有 img 设了 `max-width: 100%; height: auto`。
+              // 我们显式给了 width/height（布局尺寸由 fit 变换推导），若不把 max-width
+              // 顶回去，宽度会被容器限制而高度保持原值 —— 比例直接失真（3440×1440 的图
+              // 会被压成近正方形）。这两行是必须的，不是保险。
+              maxWidth: 'none',
+              maxHeight: 'none',
             }}
           />
         )}

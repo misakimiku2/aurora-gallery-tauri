@@ -37,3 +37,10 @@ icu_locale_core = "2"
 # M6b AI 编排下沉（D35a）：blocking 客户端自带 tokio 运行时线程，core 不直接依赖 tokio；
 # rustls-tls = webpki-roots 内嵌 CA（Android 不依赖系统证书库）；与 src-tauri 的 reqwest 0.12 版本对齐
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+
+# 依赖走优化、core 自身保持 opt-level=0（理由与 src-tauri 的同名配置一致：
+# 代理图管线的热点在 fast_image_resize / image，debug 下慢 20~50 倍）。
+# core 是独立 package，被 src-tauri 依赖时以 src-tauri 的 profile 为准；
+# 这一份只影响「在 core 目录下跑 test / bench」的场景。
+[profile.dev.package."*"]
+opt-level = 3
