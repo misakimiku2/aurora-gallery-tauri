@@ -96,6 +96,79 @@ pub async fn editor_load_preview(path: String) -> Result<EditorPreview, String> 
     .map_err(|e| format!("代理图任务失败: {e}"))?
 }
 
+/// 导出成品的 JPEG 质量。
+///
+/// 比代理图的 90 高一档：代理图是"看"的，导出是"留"的，多花几十 KB 换画质值得。
+const EXPORT_JPEG_QUALITY: u8 = 92;
+
+/// 导出结果（前端用来提示"导出到哪儿了、多大"）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorExportResult {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+}
+
+/// 按扩展名决定编码格式。**不支持就报错，不猜**——`foo.avif` 静默写成 PNG
+/// 会让用户拿到一个扩展名与内容不符的文件。
+fn encode_format_from_path(target: &str) -> Result<EncodeFormat, String> {
+    let ext = std::path::Path::new(target)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Ok(EncodeFormat::Png),
+        "jpg" | "jpeg" => Ok(EncodeFormat::Jpeg),
+        // 导出用无损 WebP：有损 WebP 需要 libwebp，而本项目刻意不引那份 C 依赖
+        "webp" => Ok(EncodeFormat::WebpLossless),
+        _ => Err(format!(
+            "不支持的导出格式: .{ext}（支持 png / jpg / webp）"
+        )),
+    }
+}
+
+/// 把当前文档导出成一张图片。
+///
+/// 全流程在 Rust：**从源文件重新解码**（不是拿代理图放大），套上裁剪，
+/// 编码，写盘。所以导出的是全分辨率成品，不受 2048px 代理上限影响。
+///
+/// `crop` 与 `editor_crop_preview` 用同一套坐标（相对源文件的绝对像素），
+/// 两处口径必须一致，否则"看到的是裁过的、导出的是原图"。
+#[tauri::command]
+pub async fn editor_export_image(
+    path: String,
+    crop: Option<CropRequest>,
+    target_path: String,
+    quality: Option<u8>,
+) -> Result<EditorExportResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let rgba = imaging::decode_file(&path).map_err(|e| e.to_string())?;
+        let image = match crop {
+            Some(c) => imaging::crop_image(&rgba, c.into()).map_err(|e| e.to_string())?,
+            None => rgba,
+        };
+
+        let format = encode_format_from_path(&target_path)?;
+        let bytes = imaging::encode(&image, format, quality.unwrap_or(EXPORT_JPEG_QUALITY))
+            .map_err(|e| e.to_string())?;
+
+        std::fs::write(&target_path, &bytes)
+            .map_err(|e| format!("写入失败({target_path}): {e}"))?;
+
+        Ok(EditorExportResult {
+            path: target_path,
+            width: image.width(),
+            height: image.height(),
+            bytes: bytes.len() as u64,
+        })
+    })
+    .await
+    .map_err(|e| format!("导出任务失败: {e}"))?
+}
+
 /// 按矩形裁剪并重新生成代理图。
 ///
 /// `crop` 是**相对源文件**的坐标（不是相对上一次裁剪的结果）—— 前端的累积裁剪

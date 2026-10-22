@@ -29,7 +29,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
+import { AlertTriangle, Download, Loader2, Scan, ZoomIn, ZoomOut } from 'lucide-react';
 import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
 import type { EditorToolId } from '../../types';
@@ -290,6 +290,54 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     }));
   }, [panRequest]);
 
+  /** 导出状态（按钮旁的即时反馈，不弹窗） */
+  const [exportState, setExportState] = useState<{
+    status: 'idle' | 'working' | 'done' | 'error';
+    text?: string;
+  }>({ status: 'idle' });
+
+  // ---- 导出成品 ----
+  // 与「保存 .aurora 工程文件」是两件事：这个只出图，不可再编辑。
+  const handleExport = useCallback(async () => {
+    if (!sourcePath) return;
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      // 默认落在原文件旁边，命名 `<原名>_编辑.<ext>`，不动原图
+      const sepIdx = Math.max(sourcePath.lastIndexOf('\\'), sourcePath.lastIndexOf('/'));
+      const sep = sepIdx >= 0 ? sourcePath[sepIdx] : '\\';
+      const dir = sepIdx >= 0 ? sourcePath.slice(0, sepIdx) : '';
+      const base = sourcePath.slice(sepIdx + 1).replace(/\.[^.]+$/, '');
+
+      const target = await save({
+        filters: [
+          { name: 'PNG', extensions: ['png'] },
+          { name: 'JPEG', extensions: ['jpg', 'jpeg'] },
+          { name: 'WebP（无损）', extensions: ['webp'] },
+        ],
+        defaultPath: `${dir}${sep}${base}_编辑.png`,
+      });
+      if (!target) return; // 用户取消
+
+      setExportState({ status: 'working' });
+      const res = await invoke<{ path: string; width: number; height: number; bytes: number }>(
+        'editor_export_image',
+        {
+          path: sourcePath,
+          crop: docCrop ?? null,
+          targetPath: target,
+        },
+      );
+      setExportState({
+        status: 'done',
+        text: `已导出 ${res.width}×${res.height}（${Math.round(res.bytes / 1024)} KB）`,
+      });
+      setTimeout(() => setExportState({ status: 'idle' }), 4000);
+    } catch (e) {
+      setExportState({ status: 'error', text: String(e) });
+      setTimeout(() => setExportState({ status: 'idle' }), 6000);
+    }
+  }, [sourcePath, docCrop]);
+
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
     const el = containerRef.current;
@@ -477,7 +525,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               )}
             </span>
           )}
+          {exportState.status === 'done' && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0">
+              {exportState.text}
+            </span>
+          )}
+          {exportState.status === 'error' && (
+            <span
+              className="text-[11px] text-red-500 shrink-0 max-w-[22rem] truncate"
+              title={exportState.text}
+            >
+              {exportState.text}
+            </span>
+          )}
           <div className="flex-1" />
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={!preview || exportState.status === 'working'}
+            className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+            title="导出为图片（PNG / JPEG / WebP）"
+          >
+            {exportState.status === 'working' ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <Download size={15} />
+            )}
+          </button>
+          <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
           <button
             type="button"
             onClick={() => zoomAtCenter(1 / CLICK_ZOOM_STEP)}

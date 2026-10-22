@@ -2010,6 +2010,7 @@ pub fn run() {
         // 图片编辑 C11 Phase 1：源文件 → 代理图（解码/缩放全在 core::imaging）
         editor_commands::editor_load_preview,
         editor_commands::editor_crop_preview,
+        editor_commands::editor_export_image,
         generate_drag_preview,
         system_commands::read_file_as_base64,
         file_operations::ensure_directory,
