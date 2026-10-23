@@ -19,13 +19,17 @@
  * **文档栏是贯穿顶部的整行**，工具选项条在右列——这不是排版偏好，是 §10.1 的分界：
  * 文档栏放**画布级/文档级**动作（旋转画布、导出、历史），选项条放**工具级**参数
  * （吸附开关、图层角度）。两者分处两地，用户才不会把"旋转画布"和"旋转图层"搞混。
- * 旧版注释把文档栏画在工具栏右边、还写了"关闭"按钮，都是 `e55afc2` 之前的形态。
  *
  * 另：旧文档（v1 数据）会在文档栏之上多一条黄色提示条；新建文档对话框是覆盖层。
  *
- * ## v2：画布与图层分离（最小图层模型）
+ * ## 本组件只做编排（防膨胀，进度文档 §7）
  *
- * 这一版把 v1 的"图即画布"改成了**画布 + 图层**：
+ * 键盘 → `useEditorKeyboard`、视口 → `useEditorViewport`、裁剪 → `useEditorCrop`、
+ * 撤销 → `useEditorHistory`、画布渲染 → `EditorCanvasLayers`，其余块在各自的
+ * 组件/模块文件。本文件只留：状态接线、文档级 handler、顶层 JSX。**加新功能时
+ * 逻辑进 hook、UI 进组件，别把这里再养大。**
+ *
+ * ## v2：画布与图层分离（最小图层模型）
  *
  * ```
  * <视口 overflow:hidden>
@@ -42,27 +46,9 @@
  * 图层的显示源是**原文件**（`convertFileSrc`），不是 v1 那张 2048 的 JPEG 代理——
  * 放大到 100% 终于能看到真像素（设计稿 §4.4：编辑器曾是本项目唯一看不到原图的看图路径）。
  * Rust 代理降级为**缩略图与超大图打底**用。
- *
- * ## 交互口径：照 Photoshop
- *
- * 用户明确要求「跟 Photoshop 完全一样的操作方式」，所以**滚轮不是缩放**：
- * - 滚轮 = 上下滚动画布；Shift+滚轮 = 左右滚动
- * - **Ctrl/⌘ + 滚轮 = 缩放**（Alt+滚轮同样缩放，PS 两种都认）
- * - 空格按住 = 临时抓手（松开回到原工具）
- * - 缩放工具：单击放大、Alt+单击缩小
- *
- * 这与看图软件（滚轮即缩放）相反，是刻意的。UI 设计 §8.2 同时要求编辑态下
- * 查看器/视频的键位全部失效——本组件自管键盘监听，天然隔离。
  */
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import {
   AlertTriangle,
   FileOutput,
@@ -84,24 +70,21 @@ import {
   Sidebar,
   PanelRight,
 } from 'lucide-react';
-import { computeFitTransform, Transform, zoomAtPoint } from '../comparer/viewport';
-import { EditOverlay } from '../comparer/EditOverlay';
 import type { ComparisonItem } from '../comparer/types';
-import { isTextEditingTarget } from '../../utils/keyboardTarget';
 import type { EditorCanvas, EditorDocument, EditorLayer, EditorToolId, LayerBox } from '../../types';
+import { EditOverlay } from '../comparer/EditOverlay';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorStatusBar } from './EditorStatusBar';
-import { CropOverlay, CropArea } from './CropOverlay';
+import { CropOverlay } from './CropOverlay';
 import { NewDocumentDialog } from './NewDocumentDialog';
+import { EditorCanvasLayers } from './EditorCanvasLayers';
 import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
 import {
   buildLayerPreviewKey,
   createCanvas,
   createLayerId,
   createOrientedImageLayer,
-  documentGeometrySignature,
-  documentStateSignature,
   EDITOR_DOC_VERSION,
   isLegacyEditorDocument,
   layerBlend,
@@ -112,22 +95,11 @@ import {
   resolveActiveLayer,
 } from './layerModel';
 import { loadLayerProxy } from './layerProxy';
-import {
-  composeMatrix,
-  flipDocumentCanvas,
-  pointInBox,
-  rotateDocumentCanvas,
-  toCssMatrix,
-} from './layerTransform';
-import { AutoSelectMode, EDITOR_SHORTCUT_KEYS } from './editorTools';
+import { composeMatrix, flipDocumentCanvas, pointInBox, rotateDocumentCanvas } from './layerTransform';
+import { AutoSelectMode } from './editorTools';
+import { CLICK_ZOOM_STEP } from './useEditorViewport';
 import { formatBytes, isProjectPath } from './projectFile';
 import { openProjectDialog, saveProject } from './projectIo';
-import {
-  clearEditorView,
-  peekPanRequest,
-  setEditorView,
-  subscribeEditorView,
-} from './editorViewStore';
 import {
   EditorPreviewMeta,
   peekPreview,
@@ -135,6 +107,10 @@ import {
   subscribePreview,
   takePreview,
 } from './editorPreviewCache';
+import { useEditorHistory } from './useEditorHistory';
+import { useEditorCrop } from './useEditorCrop';
+import { useEditorKeyboard } from './useEditorKeyboard';
+import { useEditorViewport } from './useEditorViewport';
 
 interface ImageEditorProps {
   /** 当前 Tab id：用于按 Tab 缓存编辑器状态 */
@@ -176,22 +152,6 @@ interface ImageEditorProps {
   onToggleMetadata: () => void;
   isMetadataVisible: boolean;
 }
-
-/** 撤销栈里的一步：只存参数，不存像素（一个 3440×1440 文档撤销十次就是几百 MB）。 */
-interface DocSnapshot {
-  canvas?: EditorCanvas;
-  layers?: EditorLayer[];
-}
-
-/** `editor_load_layer_proxy` 的返回与请求去重都在 `layerProxy.ts`（面板也要用同一张表）。 */
-
-const FIT_PADDING = 60;
-const MIN_SCALE = 0.02;
-const MAX_SCALE = 8;
-/** 滚轮缩放的每格倍率（PS 的一格约 1.1 倍，手感比 1.25 细腻） */
-const WHEEL_ZOOM_STEP = 1.1;
-/** 缩放工具单击的倍率 */
-const CLICK_ZOOM_STEP = 1.25;
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({
   tabId,
@@ -246,23 +206,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     [doc?.layers, tabId],
   );
 
-  // ---- 撤销 / 重做 ----
-  const [history, setHistory] = useState<{ stack: DocSnapshot[]; index: number; lastAt: number }>({
-    stack: [],
-    index: -1,
-    lastAt: 0,
-  });
-  const historyInitRef = useRef<string | null>(null);
-  const applyingHistoryRef = useRef(false);
-  const lastSignatureRef = useRef<string | null>(null);
+  // ---- 撤销 / 重做（useEditorHistory）----
+  const {
+    docIdentity,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+  } = useEditorHistory(doc, onDocumentChange);
 
-  // 文档身份（是否已建画布）变化时以当前状态作为历史起点。
-  //
-  // **刻意不含 `doc.path`**：保存工程会把路径从 `photo.jpg` 换成 `photo.aurora`，
-  // 若路径算进身份，"存一次"就等价于"换了一份文档"，撤销栈当场清空——用户刚存完
-  // 想再撤销一步就发现没了。一个 Tab 恒等于一个文档（`openInEditor` / `openBlankDocument`
-  // / `openProjectInEditor` 都是开新 Tab），所以"画布是否就绪"足以分段。
-  const docIdentity = doc ? (canvas ? 'ready' : 'new') : null;
+  // 新文档/刚打开：什么都没点，不该有选中框（与历史建栈同刻）
   /**
    * 上一次的活动图层 id——用来识别「用户在图层面板里换了一层」。
    *
@@ -271,18 +224,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
    * 但**只认「从 id 变到另一个 id」**：首次建栈（undefined → id）不算，
    * 那时用户什么都没点，PS 打开文件也不会先画一个框。
    */
+  const [layerSelected, setLayerSelected] = useState(false);
   const prevActiveLayerIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (!docIdentity || !doc) return;
-    if (historyInitRef.current === docIdentity) return;
-    historyInitRef.current = docIdentity;
-    lastSignatureRef.current = documentStateSignature(doc);
-    setHistory({ stack: [{ canvas: doc.canvas, layers: doc.layers }], index: 0, lastAt: 0 });
-    setLayerSelected(false); // 新文档/刚打开：什么都没点，不该有选中框
-    prevActiveLayerIdRef.current = doc.activeLayerId;
-  }, [docIdentity, doc]);
-
-  // 面板里换了一层 ⇒ 直接把变换框亮出来（见 prevActiveLayerIdRef 的说明）
+    setLayerSelected(false);
+  }, [docIdentity]);
   useEffect(() => {
     const id = doc?.activeLayerId;
     const prev = prevActiveLayerIdRef.current;
@@ -290,65 +236,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     if (id && prev && id !== prev) setLayerSelected(true);
   }, [doc?.activeLayerId]);
 
-  // 所有变更（裁剪 / 旋转 / 翻转 / 调色）最终都落到文档上，所以统一在这里入栈——
-  // 一处收口，不用在每个 handler 里各记一次。
-  useEffect(() => {
-    if (!doc) return;
-    const sig = documentStateSignature(doc);
-    const prevSig = lastSignatureRef.current;
-    lastSignatureRef.current = sig;
-    if (prevSig === null) return; // 第一次由上面的 docIdentity 分支建栈
-    if (sig === prevSig) return;
-    if (applyingHistoryRef.current) {
-      applyingHistoryRef.current = false; // 这次变化是撤销/重做自己造成的
-      return;
-    }
+  // ---- 视口（useEditorViewport）：containerRef / transform / 适应窗口 / 滚轮 ----
+  const {
+    containerRef,
+    transform,
+    containerSize,
+    fitToView,
+    zoomAtCenter,
+    zoomTo,
+    draggingRef,
+    handleViewportMouseDown,
+  } = useEditorViewport({ tabId, canvas });
 
-    // 只有调色在动 = 用户正拖着滑杆 → 合并进栈顶，否则 Ctrl+Z 要按几百下
-    const snap: DocSnapshot = { canvas: doc.canvas, layers: doc.layers };
-    setHistory(h => {
-      const at = h.stack[h.index];
-      const geometryUnchanged =
-        !!at && documentGeometrySignature({ ...doc, ...at } as EditorDocument) === documentGeometrySignature(doc);
-      const merge = geometryUnchanged && Date.now() - h.lastAt < 700;
-      const head = h.stack.slice(0, merge ? h.index : h.index + 1);
-      head.push(snap);
-      return { stack: head, index: head.length - 1, lastAt: Date.now() };
-    });
-  }, [doc]);
+  // ---- 裁剪（useEditorCrop）----
+  const {
+    cropRect,
+    setCropRect,
+    cropRatio,
+    handleCropRatioChange,
+    commitCrop,
+    cancelCrop,
+  } = useEditorCrop(tool, canvas, doc, onDocumentChange, onToolChange);
 
-  const canUndo = history.index > 0;
-  const canRedo = history.index >= 0 && history.index < history.stack.length - 1;
-
-  const applyHistoryAt = useCallback(
-    (index: number) => {
-      const snap = history.stack[index];
-      if (!snap || !doc) return;
-      applyingHistoryRef.current = true;
-      setHistory(prev => ({ ...prev, index, lastAt: 0 }));
-      onDocumentChange({ ...doc, canvas: snap.canvas, layers: snap.layers, dirty: true });
-    },
-    [history.stack, doc, onDocumentChange],
-  );
-
-  const undo = useCallback(() => {
-    if (canUndo) applyHistoryAt(history.index - 1);
-  }, [canUndo, history.index, applyHistoryAt]);
-  const redo = useCallback(() => {
-    if (canRedo) applyHistoryAt(history.index + 1);
-  }, [canRedo, history.index, applyHistoryAt]);
-
-  const undoRef = useRef(undo);
-  undoRef.current = undo;
-  const redoRef = useRef(redo);
-  redoRef.current = redo;
-
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
-  const [spaceHeld, setSpaceHeld] = useState(false);
-  const [altHeld, setAltHeld] = useState(false);
-  /** 裁剪框（**画布坐标系**）。null = 不在裁剪态 */
-  const [cropRect, setCropRect] = useState<CropArea | null>(null);
   /**
    * 移动工具的「自动选择」：
    * - `layer`（默认）：点画布时按顶层优先选中被点中的图层，再拖动它 —— 这就是 PS 那档；
@@ -356,21 +265,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
    *   也是 PS 的出厂默认值。图层多了之后自动选择容易"点一下就换了层"。
    */
   const [autoSelect, setAutoSelect] = useState<AutoSelectMode>('layer');
-  const hasFittedRef = useRef(false);
-  const draggingRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
-  const spaceHeldRef = useRef(false);
-  const altHeldRef = useRef(false);
-  const toolRef = useRef<EditorToolId | null>(tool);
-  toolRef.current = tool;
-  const isActiveRef = useRef(isActive);
-  isActiveRef.current = isActive;
+  /** 吸附开关（工具选项条上的那个）；默认开，与 PS 的「视图 > 对齐」同义 */
+  const [snapEnabled, setSnapEnabled] = useState(true);
 
   const [error, setError] = useState<string | null>(null);
   const [showNewDoc, setShowNewDoc] = useState(false);
-  // 键盘 effect 只挂一次，弹窗开关要走 ref（与 toolRef 同一个理由）
-  const showNewDocRef = useRef(false);
-  showNewDocRef.current = showNewDoc;
 
   // ---- 文档初始化 ----
   //
@@ -495,173 +395,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   // 缓存被刷新时（订阅驱动）让面板能拿到新缩略图
   useSyncExternalStore(subscribePreview, () => (proxyKey ? peekPreview(proxyKey) : undefined));
 
-  // ---- 视图 ----
-  const fitToView = useCallback(() => {
-    const el = containerRef.current;
-    if (!el || !canvas) return;
-    const rect = el.getBoundingClientRect();
-    const next = computeFitTransform(
-      rect.width,
-      rect.height,
-      { minX: 0, minY: 0, maxX: canvas.width, maxY: canvas.height },
-      FIT_PADDING,
-      1, // 不放大：小图按 100% 显示
-    );
-    if (next) setTransform(next);
-  }, [canvas]);
-
-  const zoomAtCenter = useCallback((factor: number) => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setTransform(prev => zoomAtPoint(prev, rect.width / 2, rect.height / 2, factor, MIN_SCALE, MAX_SCALE));
-  }, []);
-
-  const zoomTo = useCallback((target: number) => {
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setTransform(prev => {
-      const factor = target / prev.scale;
-      return zoomAtPoint(prev, rect.width / 2, rect.height / 2, factor, MIN_SCALE, MAX_SCALE);
-    });
-  }, []);
-
-  // 画布尺寸变了（裁剪 / 旋转）要重新适应窗口
-  useEffect(() => {
-    hasFittedRef.current = false;
-  }, [canvas?.width, canvas?.height]);
-
-  useEffect(() => {
-    if (canvas && !hasFittedRef.current) {
-      hasFittedRef.current = true;
-      fitToView();
-    }
-  }, [canvas, fitToView]);
-
-  // ---- 视口尺寸 → 共享给全览图 ----
-  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const measure = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    if (typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (!canvas) return;
-    setEditorView(tabId, {
-      scale: transform.scale,
-      x: transform.x,
-      y: transform.y,
-      containerWidth: containerSize.w,
-      containerHeight: containerSize.h,
-      imgWidth: canvas.width,
-      imgHeight: canvas.height,
-    });
-  }, [tabId, canvas, transform, containerSize]);
-
-  useEffect(() => () => clearEditorView(tabId), [tabId]);
-
-  // ---- 全览图发来的导航请求：把指定点移到视口中央 ----
-  const panRequest = useSyncExternalStore(subscribeEditorView, () => peekPanRequest(tabId));
-  const lastPanNonceRef = useRef(0);
-  useEffect(() => {
-    if (!panRequest || panRequest.nonce === lastPanNonceRef.current) return;
-    lastPanNonceRef.current = panRequest.nonce;
-    const el = containerRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    setTransform(prev => ({
-      ...prev,
-      x: rect.width / 2 - panRequest.imgX * prev.scale,
-      y: rect.height / 2 - panRequest.imgY * prev.scale,
-    }));
-  }, [panRequest]);
-
-  // ---- 裁剪：改画布尺寸（非破坏性）----
-  useEffect(() => {
-    if (tool !== 'crop' || !canvas) {
-      setCropRect(null);
-      return;
-    }
-    setCropRect({ x: 0, y: 0, w: canvas.width, h: canvas.height });
-  }, [tool, canvas]);
-
-  const [cropRatio, setCropRatio] = useState<number | null>(null);
-
-  /** 吸附开关（工具选项条上的那个）；默认开，与 PS 的「视图 > 对齐」同义 */
-  const [snapEnabled, setSnapEnabled] = useState(true);
-
-  /**
-   * 图层是否处于"被选中"状态（只影响那圈蓝框）。
-   *
-   * 打开文档时**不选中**——什么都没点却顶着一圈边框，看起来像已经选了图层
-   * （用户实测反馈）。点图层选中、点画布空白取消；自由变换态恒为选中，
-   * 否则刚拖出来的框会在松手前消失。
-   */
-  const [layerSelected, setLayerSelected] = useState(false);
-
-  const handleCropRatioChange = useCallback(
-    (ratio: number | null) => {
-      setCropRatio(ratio);
-      if (!ratio || !canvas) return;
-      setCropRect(prev => {
-        if (!prev || canvas.height === 0) return prev;
-        const cx = prev.x + prev.w / 2;
-        const cy = prev.y + prev.h / 2;
-        let w = prev.w;
-        let h = w / ratio;
-        if (h > canvas.height) {
-          h = canvas.height;
-          w = h * ratio;
-        }
-        if (w > canvas.width) {
-          w = canvas.width;
-          h = w / ratio;
-        }
-        return {
-          x: Math.min(Math.max(cx - w / 2, 0), Math.max(0, canvas.width - w)),
-          y: Math.min(Math.max(cy - h / 2, 0), Math.max(0, canvas.height - h)),
-          w: Math.round(w),
-          h: Math.round(h),
-        };
-      });
-    },
-    [canvas],
-  );
-
-  /**
-   * 提交裁剪 = **改画布尺寸 + 所有图层反向平移**。
-   *
-   * 非破坏性：像素一个都不裁掉，图层只是露在画布外面被 `overflow:hidden` 挡住。
-   * 导出按画布尺寸合成，所以成品与"真裁掉"完全一致；而 Ctrl+Z 能把画布改回去、内容还在。
-   */
-  const commitCrop = useCallback(() => {
-    if (!cropRect || !doc || !canvas) return;
-    const w = Math.round(cropRect.w);
-    const h = Math.round(cropRect.h);
-    if (w < 1 || h < 1) return;
-    const dx = Math.round(cropRect.x);
-    const dy = Math.round(cropRect.y);
-    onDocumentChange({
-      ...doc,
-      canvas: { ...canvas, width: w, height: h },
-      layers: (doc.layers ?? []).map(l => ({
-        ...l,
-        box: { ...l.box, x: l.box.x - dx, y: l.box.y - dy },
-      })),
-      dirty: true,
-    });
-    onToolChange('move');
-  }, [cropRect, doc, canvas, onDocumentChange, onToolChange]);
-
-  const cancelCrop = useCallback(() => onToolChange('move'), [onToolChange]);
-
   // ---- 旋转 / 翻转（画布级，一次性换算）----
   //
   // 不留"文档转过 90°"的常驻字段：算完之后画布就是 H×W、图层就以新角度摆在上面，
@@ -678,14 +411,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         dirty: true,
       });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [doc, canvas, onDocumentChange],
   );
 
   const handleFlip = useCallback(
     (horizontal: boolean) => {
       if (!doc || !canvas) return;
-      const boxes = (doc.layers ?? []).map(l => l.box);
-      const out = flipDocumentCanvas(canvas, boxes, horizontal, !horizontal);
+      const out = flipDocumentCanvas(canvas, (doc.layers ?? []).map(l => l.box), horizontal, !horizontal);
       onDocumentChange({
         ...doc,
         canvas: { ...canvas, ...out.canvas },
@@ -693,6 +426,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         dirty: true,
       });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [doc, canvas, onDocumentChange],
   );
 
@@ -708,11 +442,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     },
     [doc, activeLayer, onDocumentChange],
   );
-
-  const commitCropRef = useRef(commitCrop);
-  commitCropRef.current = commitCrop;
-  const cancelCropRef = useRef(cancelCrop);
-  cancelCropRef.current = cancelCrop;
 
   // ---- 自由变换（Ctrl+T）----
   //
@@ -779,9 +508,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     }
     onToolChange('move');
   }, [doc, activeLayer, onDocumentChange, onToolChange]);
-
-  const cancelTransformRef = useRef(cancelTransform);
-  cancelTransformRef.current = cancelTransform;
 
   // ---- 导入图层 ----
   //
@@ -996,169 +722,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     onDocumentChange({ ...doc, layers: r.layers, activeLayerId: r.activeLayerId, dirty: true });
   }, [doc, onDocumentChange]);
 
-  // 快捷键要能读到最新的 handler，而键盘 effect 只依赖 `onToolChange`（重挂监听会让
-  // 拖拽中的按键状态错乱），所以走 ref
-  const saveProjectRef = useRef(handleSaveProject);
-  saveProjectRef.current = handleSaveProject;
-  const openProjectRef = useRef(handleOpenProject);
-  openProjectRef.current = handleOpenProject;
-  const deleteLayerRef = useRef(handleDeleteActiveLayer);
-  deleteLayerRef.current = handleDeleteActiveLayer;
-  // 键盘 effect 只依赖 onToolChange（见上注释），锁状态走 ref 读最新值
-  const transformLockedRef = useRef(transformLocked);
-  transformLockedRef.current = transformLocked;
-
-  // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      if (e.ctrlKey || e.metaKey || e.altKey) {
-        const factor = e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP;
-        setTransform(prev =>
-          zoomAtPoint(prev, e.clientX - rect.left, e.clientY - rect.top, factor, MIN_SCALE, MAX_SCALE),
-        );
-        return;
-      }
-      if (e.shiftKey) {
-        setTransform(prev => ({ ...prev, x: prev.x - e.deltaY }));
-        return;
-      }
-      setTransform(prev => ({ ...prev, x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, []);
-
-  // ---- 键盘 ----
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!isActiveRef.current) return;
-      if (isTextEditingTarget(e.target)) return;
-      // 新建文档弹窗开着时，按键只归弹窗（Esc 它自己 capture 处理）——
-      // 不挡的话 V/C 这些快捷键会"穿透"弹窗改掉背后的工具（用户实测踩到）
-      if (showNewDocRef.current) return;
-
-      if (e.code === 'Space') {
-        spaceHeldRef.current = true;
-        setSpaceHeld(true);
-        e.preventDefault();
-        return;
-      }
-      if (e.key === 'Alt') {
-        altHeldRef.current = true;
-        setAltHeld(true);
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redoRef.current();
-        else undoRef.current();
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
-        e.preventDefault();
-        redoRef.current();
-        return;
-      }
-      // Ctrl+S / Ctrl+Shift+S / Ctrl+O：存工程与开工程（PS 的键位口径）
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        void saveProjectRef.current(e.shiftKey);
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
-        e.preventDefault();
-        void openProjectRef.current();
-        return;
-      }
-      // Ctrl+T：进入/退出自由变换（PS 行为）。活动层锁了像素/位置时**拒绝进入**
-      // （PS：锁像素禁变换，菜单灰掉按了没反应——这里同样静默）。
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
-        e.preventDefault();
-        if (transformLockedRef.current && toolRef.current !== 'transform') return;
-        onToolChange(toolRef.current === 'transform' ? 'move' : 'transform');
-        return;
-      }
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      if (toolRef.current === 'crop') {
-        if (e.key === 'Enter') {
-          commitCropRef.current();
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'Escape') {
-          cancelCropRef.current();
-          e.preventDefault();
-          return;
-        }
-      }
-
-      // 自由变换：Enter 提交 / Esc 取消（PS 行为）
-      if (toolRef.current === 'transform') {
-        if (e.key === 'Enter') {
-          onToolChange('move');
-          e.preventDefault();
-          return;
-        }
-        if (e.key === 'Escape') {
-          cancelTransformRef.current();
-          e.preventDefault();
-          return;
-        }
-      }
-
-      /**
-       * Delete = 删除活动图层（PS 行为）。只认 `Delete`，不认 `Backspace`：
-       * 后者在阅读/编辑时太容易误触，而 `isTextEditingTarget` 只能挡住输入框里的按键。
-       *
-       * 裁剪与自由变换状态下不抢这个键——那两个状态里没有"删图层"的语义，
-       * 抢了反而会让人在调整构图时把图层删掉。
-       */
-      if (e.key === 'Delete' && toolRef.current !== 'crop' && toolRef.current !== 'transform') {
-        e.preventDefault();
-        deleteLayerRef.current();
-        return;
-      }
-
-      const next = EDITOR_SHORTCUT_KEYS[e.key.toLowerCase()];
-      if (next) {
-        // 同一个工具的快捷键再按一次 = 取消选择（不选任何工具）
-        onToolChange(toolRef.current === next ? null : next);
-        e.preventDefault();
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        spaceHeldRef.current = false;
-        setSpaceHeld(false);
-      }
-      if (e.key === 'Alt') {
-        altHeldRef.current = false;
-        setAltHeld(false);
-      }
-    };
-    // 窗口失焦时复位：否则「按住空格切走」会永久卡在抓手
-    const onBlur = () => {
-      spaceHeldRef.current = false;
-      altHeldRef.current = false;
-      setSpaceHeld(false);
-      setAltHeld(false);
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('blur', onBlur);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('blur', onBlur);
-    };
-  }, [onToolChange]);
-
+  // ---- 键盘（useEditorKeyboard）----
+  const { spaceHeld, altHeld, altHeldRef } = useEditorKeyboard({
+    isActive,
+    tool,
+    showNewDoc,
+    transformLocked,
+    onToolChange,
+    actions: {
+      undo,
+      redo,
+      saveProject: handleSaveProject,
+      openProject: handleOpenProject,
+      deleteActiveLayer: handleDeleteActiveLayer,
+      commitCrop,
+      cancelCrop,
+      cancelTransform,
+    },
+  });
   // 变换态时给活动层上锁 → 立即退回移动工具（PS：锁像素/位置后变换不可用）。
   // 工具栏 / Ctrl+T 的"进入"另有拦截，这里兜底"已经进去了才上锁"的路径。
   useEffect(() => {
@@ -1170,83 +751,43 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const effectiveTool: EditorToolId | null = spaceHeld ? 'hand' : tool;
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-
-    if (effectiveTool === 'zoom') {
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const factor = altHeldRef.current ? 1 / CLICK_ZOOM_STEP : CLICK_ZOOM_STEP;
-      setTransform(prev =>
-        zoomAtPoint(prev, e.clientX - rect.left, e.clientY - rect.top, factor, MIN_SCALE, MAX_SCALE),
-      );
-      return;
-    }
+    // 视口部分（缩放单击 / 抓手拖拽）先接；被消费就不用看图层了
+    if (handleViewportMouseDown(e, effectiveTool, altHeldRef)) return;
 
     // 移动工具：点空白处取消选中；点在**别的图层**上就换成那一层（PS 的"点哪层选哪层"）。
     //
     // 只在"没点中活动层"时才做命中测试：点中活动层时 `EditOverlay` 的拖动层已经在拖它了，
     // 这时候再改选区就会变成"拖的是 A、选中的是 B"。
-    if (effectiveTool === 'move') {
-      const el = containerRef.current;
-      if (el && activeLayer) {
-        const rect = el.getBoundingClientRect();
-        const cx = (e.clientX - rect.left - transform.x) / transform.scale;
-        const cy = (e.clientY - rect.top - transform.y) / transform.scale;
-        if (!pointInBox(activeLayer.box, cx, cy)) {
-          // 自顶向下取第一个命中的**可见**图层（数组自底向上，所以倒着扫）。
-          // 自动选择 = 无 时不做这一步：点别的层不换选中层，换层只走图层面板。
-          let hit: EditorLayer | undefined;
-          if (autoSelect === 'layer') {
-            for (let i = layers.length - 1; i >= 0; i -= 1) {
-              const l = layers[i];
-              if (l.source && l.visible && pointInBox(l.box, cx, cy)) {
-                hit = l;
-                break;
-              }
-            }
-          }
-          if (hit) {
-            setLayerSelected(true);
-            // 只换选区：不置 dirty、不进撤销栈（签名里没有 activeLayerId）。
-            // 这一下**不开始拖动**——`EditOverlay` 只在按到活动层框内时才捕获拖动，
-            // 所以点别的层就是纯粹的"选中"，要拖它得再按一次（与 PS 一致）。
-            if (doc && hit.id !== activeLayer.id) {
-              onDocumentChange({ ...doc, activeLayerId: hit.id });
-            }
-          } else {
-            setLayerSelected(false);
-          }
+    if (effectiveTool !== 'move') return;
+    const el = containerRef.current;
+    if (!el || !activeLayer) return;
+    const rect = el.getBoundingClientRect();
+    const cx = (e.clientX - rect.left - transform.x) / transform.scale;
+    const cy = (e.clientY - rect.top - transform.y) / transform.scale;
+    if (pointInBox(activeLayer.box, cx, cy)) return;
+    // 自顶向下取第一个命中的**可见**图层（数组自底向上，所以倒着扫）。
+    // 自动选择 = 无 时不做这一步：点别的层不换选中层，换层只走图层面板。
+    let hit: EditorLayer | undefined;
+    if (autoSelect === 'layer') {
+      for (let i = layers.length - 1; i >= 0; i -= 1) {
+        const l = layers[i];
+        if (l.source && l.visible && pointInBox(l.box, cx, cy)) {
+          hit = l;
+          break;
         }
       }
-      return;
     }
-
-    // 只有抓手平移视图。移动工具留给自由变形——它该移的是**图层**，不是视口。
-    if (effectiveTool !== 'hand') return;
-
-    draggingRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      originX: transform.x,
-      originY: transform.y,
-    };
-    const onMove = (ev: MouseEvent) => {
-      const d = draggingRef.current;
-      if (!d) return;
-      setTransform(prev => ({
-        ...prev,
-        x: d.originX + (ev.clientX - d.startX),
-        y: d.originY + (ev.clientY - d.startY),
-      }));
-    };
-    const onUp = () => {
-      draggingRef.current = null;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    if (hit) {
+      setLayerSelected(true);
+      // 只换选区：不置 dirty、不进撤销栈（签名里没有 activeLayerId）。
+      // 这一下**不开始拖动**——`EditOverlay` 只在按到活动层框内时才捕获拖动，
+      // 所以点别的层就是纯粹的"选中"，要拖它得再按一次（与 PS 一致）。
+      if (doc && hit.id !== activeLayer.id) {
+        onDocumentChange({ ...doc, activeLayerId: hit.id });
+      }
+    } else {
+      setLayerSelected(false);
+    }
   };
 
   const cursor = spaceHeld
@@ -1262,58 +803,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         : effectiveTool === 'hand'
           ? 'grab'
           : 'default';
-
-  // 图层的 CSS 变换：定界框 + 自然尺寸 → 六参 → matrix()
-  const buildLayerStyle = useCallback(
-    (layer: EditorLayer): React.CSSProperties => {
-      const m = composeMatrix(layer.box, {
-        width: layer.naturalWidth,
-        height: layer.naturalHeight,
-      });
-      const filterOn = !isZeroAdjustments(layer.adjust);
-      return {
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        width: layer.naturalWidth,
-        height: layer.naturalHeight,
-        // transform-origin 必须是 0 0：矩阵是在"内容像素坐标"里算的
-        transformOrigin: '0 0',
-        transform: toCssMatrix(m),
-        filter: filterOn ? `url(#${layerFilterId(layer.id)})` : undefined,
-        // 预览直接吃 CSS 的 `mix-blend-mode`：名字与 Rust 侧同一套字符串，
-        // 所以这一行同时就是"导出会怎么混"的承诺（画布容器已 isolation，见渲染处注释）
-        mixBlendMode: layerBlend(layer),
-        // 可见性与不透明度合成同一个 CSS 值：隐藏 = 0，其余按百分比。
-        // （隐藏用 opacity 而不是 display:none，是为了保留 <img> 的解码结果，切回来不闪）
-        opacity: layer.visible ? layerOpacity(layer) / 100 : 0,
-        /**
-         * **必须关掉浏览器的 EXIF 自动转正**。
-         *
-         * 图层方向已经由 `orientationToBox` 折进 rotation/flip 了；如果这里
-         * 让浏览器再转一次，就变成"转两遍"，而且 Rust 导出只按我们的变换算 ——
-         * 结果是屏幕和导出对不上。这是 S8 的核心那一行。
-         */
-        imageOrientation: 'none',
-        // Tailwind preflight 给所有 img 设了 max-width:100%，必须顶回去
-        maxWidth: 'none',
-        maxHeight: 'none',
-      };
-    },
-    // layerFilterId 只依赖 tabId
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabId],
-  );
-
-  // 透明用棋盘格——PS 的通用表达，用户一眼知道"这里没东西"。
-  //
-  // ⚠️ 格子必须是**屏幕空间固定大小**：这个 div 带着 `scale(transform.scale)`，
-  // 如果 background-size 写死 16px，缩小到 25% 时一个格子只剩 4 个屏幕像素，
-  // 密到糊成一片灰（用户实测："看起来像一块灰色的密密麻麻的东西"）。
-  // 所以按缩放**反向补偿**，让格子永远 16 个屏幕像素。
-  const checkerScale = transform.scale > 0 ? transform.scale : 1;
-  const checkerSize = `${16 / checkerScale}px ${16 / checkerScale}px`;
-  const isTransparentBg = !canvas?.background || canvas.background === 'transparent';
 
   const docName = doc?.name || '未命名';
   const isReady = !!canvas;
@@ -1532,62 +1021,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               </div>
             )}
 
-            {/* 画布容器：图层超出这里的部分被裁掉，这就是"裁剪"的全部实现 */}
+            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers） */}
             {canvas && !error && (
-              <div
-                className="absolute"
-                style={{
-                  left: 0,
-                  top: 0,
-                  width: canvas.width,
-                  height: canvas.height,
-                  transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
-                  transformOrigin: '0 0',
-                  overflow: 'hidden',
-                  backgroundColor:
-                    canvas.background === 'black'
-                      ? '#000000'
-                      : canvas.background === 'white'
-                        ? '#ffffff'
-                        : '#ffffff',
-                  backgroundImage: isTransparentBg
-                    ? 'repeating-conic-gradient(#d0d0d0 0% 25%, #ffffff 0% 50%)'
-                    : undefined,
-                  backgroundSize: isTransparentBg ? checkerSize : undefined,
-                  boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
-                }}
-              >
-                {/*
-                  图层**混合组**：`isolation: isolate` 把 `mix-blend-mode` 的作用范围
-                  锁在组内——否则最底下那层会跟画布外的棋盘格/应用背景混在一起。
-
-                  白/黑底**画在组内**（它参与混合，与 Rust 先铺背景再叠层的顺序一致）；
-                  透明底的棋盘格留在组外——它只是"这里没东西"的装饰，不该被混。
-                */}
-                <div className="absolute inset-0" style={{ isolation: 'isolate' }}>
-                  {!isTransparentBg && (
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        backgroundColor: canvas.background === 'black' ? '#000000' : '#ffffff',
-                      }}
-                    />
-                  )}
-                  {/* 自底向上渲染；多图层是"白送的"——Rust 合成早就按数组写了 */}
-                  {layers.map(l =>
-                    l.source ? (
-                      <img
-                        key={l.id}
-                        src={convertFileSrc(l.source)}
-                        alt={l.name}
-                        draggable={false}
-                        style={buildLayerStyle(l)}
-                        onError={() => setError(`无法打开图层「${l.name}」`)}
-                      />
-                    ) : null,
-                  )}
-                </div>
-              </div>
+              <EditorCanvasLayers
+                tabId={tabId}
+                canvas={canvas}
+                transform={transform}
+                layers={layers}
+                onLayerError={setError}
+              />
             )}
 
             {/* 初始化中：尺寸与方向要从 Rust 拿（见上面的 init effect） */}
