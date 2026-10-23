@@ -120,6 +120,16 @@ pub struct CompositeLayer<'a> {
     pub blend: BlendMode,
 }
 
+/// 一个**组**的分段：成员先在透明子画布上按序合成（成员各自的 blend/opacity 生效），
+/// 得到组画布后再按组的 opacity/blend 整体叠到底板——PS 的组语义。
+/// 平层 = 单成员组（`blend: Normal`、`opacity: 100`）。
+pub struct CompositeGroup<'a> {
+    /// 组不透明度百分比（0..=100）
+    pub opacity: u8,
+    pub blend: BlendMode,
+    pub layers: Vec<CompositeLayer<'a>>,
+}
+
 /// 仿射重采样成一张新图（尺寸由调用方给定，落在外面的部分丢弃）。
 pub fn warp_affine(
     src: &RgbaImage,
@@ -252,10 +262,53 @@ pub fn composite(
     background: CanvasBackground,
     layers: &[CompositeLayer<'_>],
 ) -> Result<RgbaImage, ImageError> {
+    let mut canvas = filled_canvas(width, height, background)?;
+
+    for layer in layers {
+        warp_into(&mut canvas, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
+    }
+    Ok(canvas)
+}
+
+/// 带**组**的合成（`CompositeGroup`，见上）。平层与组混排：平层就是单成员组。
+///
+/// 组的合成顺序与 CSS 嵌套 div 的浏览器语义一致（成员先互相混 → 组画布按组的
+/// opacity/blend 叠上来），前端 `EditorCanvasLayers` 的分组渲染与之逐像素等价。
+pub fn composite_grouped(
+    width: u32,
+    height: u32,
+    background: CanvasBackground,
+    groups: &[CompositeGroup<'_>],
+) -> Result<RgbaImage, ImageError> {
+    let mut main = filled_canvas(width, height, background)?;
+
+    for group in groups {
+        // 组画布：透明底 + 成员按序合成
+        let mut sub = RgbaImage::new(width, height);
+        for layer in &group.layers {
+            warp_into(&mut sub, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
+        }
+        // 组不透明度 = 组画布整体 alpha 缩放（直通 alpha，见 imaging::opacity）
+        super::apply_opacity(&mut sub, group.opacity);
+        // 组画布整体按组 blend 叠到底板（子画布与主画布同尺寸，逐像素即可）
+        for (x, y, sp) in sub.enumerate_pixels() {
+            // blend_over 吃**预乘**样本（与 warp_into 内部同一套换算）
+            blend_over(&mut main, x, y, to_premultiplied(sp.0), group.blend);
+        }
+    }
+
+    Ok(main)
+}
+
+/// 背景填充好的画布（`composite` 的开头抽出来共用）。
+fn filled_canvas(
+    width: u32,
+    height: u32,
+    background: CanvasBackground,
+) -> Result<RgbaImage, ImageError> {
     if width == 0 || height == 0 {
         return Err(ImageError::InvalidDimensions(width, height));
     }
-
     let mut canvas = RgbaImage::new(width, height);
     let fill: [u8; 4] = match background {
         CanvasBackground::Transparent => [0, 0, 0, 0],
@@ -264,10 +317,6 @@ pub fn composite(
     };
     for p in canvas.pixels_mut() {
         *p = image::Rgba(fill);
-    }
-
-    for layer in layers {
-        warp_into(&mut canvas, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
     }
     Ok(canvas)
 }

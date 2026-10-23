@@ -56,7 +56,8 @@ pub use adjust::{
     apply_color_matrix, is_identity_adjustment, ColorMatrix,
 };
 pub use affine::{
-    composite, warp_affine, warp_into, AffineMatrix, CanvasBackground, CompositeLayer, Sampling,
+    composite, composite_grouped, warp_affine, warp_into, AffineMatrix, CanvasBackground,
+    CompositeGroup, CompositeLayer, Sampling,
 };
 pub use blend::{blend_channel, BlendMode};
 pub use crop::{crop_image, CropRect};

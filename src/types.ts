@@ -555,10 +555,15 @@ export interface LayerBox {
   skewY: number;
 }
 
-/** 编辑器图层（最小模型只有 `image` 一种；其余 kind 属 Phase 2）。 */
+/** 编辑器图层（`image` = 普通图层；`group` = 组行，见下面编组字段）。 */
 export interface EditorLayer {
   id: string;
-  kind: 'image';
+  /**
+   * 缺省 `'image'`（普通图层）；`'group'` = **组行**——不是像素，是"文件夹"条目：
+   * 没有 source，box 为零框占位，面板上显示为可折叠的文件夹行，
+   * 成员层的 `groupId` 指向它。
+   */
+  kind?: 'image' | 'group';
   /** 源文件路径；空层为 undefined */
   source?: string;
   /** 源图自然尺寸。由 Rust 回传，前端不猜 */
@@ -568,6 +573,10 @@ export interface EditorLayer {
   /** 调色：v1 挂在文档上，v2 下沉到图层（设计稿 §4.1 本就说它是图层属性） */
   adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
   visible: boolean;
+  /** 组行 id。只在 `kind === 'group'` 时有意义（成员层指向它，见 `groupId`）。 */
+  groupId?: string;
+  /** 组行可折叠（纯 UI 态：折叠只影响面板显示，渲染/导出照常） */
+  collapsed?: boolean;
   /**
    * 锁像素：禁一切**修改像素内容**的操作——现阶段 = 禁自由变换（Ctrl+T），
    * 等画笔/橡皮/填充进来后它们也归这格管。移动仍允许（PS 的"锁像素"画笔格口径）。

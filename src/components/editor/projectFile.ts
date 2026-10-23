@@ -39,6 +39,10 @@ export interface ProjectLayerPayload {
   /** 锁像素 / 锁位置（false = 未锁；显式写出，读工程时一眼能看懂） */
   lock_pixel: boolean;
   lock_position: boolean;
+  /** 条目类型："layer"（缺省）/ "group"（组行，source 为空串） */
+  layer_kind: string;
+  /** 成员层的组行 id（组行为 null） */
+  group_id: string | null;
   /** Rust 侧字段叫 `frame`，JSON 键是 `box`（`box` 在 Rust 里是保留字） */
   box: LayerBox;
   adjust: EditorAdjust | null;
@@ -62,6 +66,9 @@ export interface OpenedProjectPayload {
     /** 老工程缺这两字段时按 false（未锁） */
     lock_pixel?: boolean;
     lock_position?: boolean;
+    /** 老工程缺字段按 "layer" */
+    layer_kind?: string;
+    group_id?: string | null;
     box: LayerBox;
     adjust: EditorAdjust | null;
   }>;
@@ -130,7 +137,9 @@ export function buildSavePayload(doc: EditorDocument): ProjectSavePayload {
   if (!canvas || !(canvas.width > 0) || !(canvas.height > 0)) {
     throw new Error('画布尺寸无效，无法保存（请先打开图片或新建文档）');
   }
-  const layers = (doc.layers ?? []).filter(l => !!l.source);
+  // 组行（kind 'group'）没有 source 也要保留——它承载组结构；Rust 侧对空 source
+  // 天然跳过图片内嵌（save_project 的 digests 判空）。普通层依旧必须有 source。
+  const layers = (doc.layers ?? []).filter(l => !!l.source || l.kind === 'group');
   const activeLayerId = doc.activeLayerId && layers.some(l => l.id === doc.activeLayerId)
     ? doc.activeLayerId
     : null;
@@ -145,15 +154,18 @@ export function buildSavePayload(doc: EditorDocument): ProjectSavePayload {
     layers: layers.map(l => ({
       id: l.id,
       name: l.name,
-      source: l.source as string,
-      naturalWidth: l.naturalWidth,
-      naturalHeight: l.naturalHeight,
+      // 组行没有像素：source 存空串（Rust 侧据此跳过图片内嵌）
+      source: l.kind === 'group' ? '' : (l.source as string),
+      naturalWidth: l.kind === 'group' ? 0 : l.naturalWidth,
+      naturalHeight: l.kind === 'group' ? 0 : l.naturalHeight,
       visible: l.visible,
       // 显式写出来（而不是省掉）：Rust 侧缺省虽然也是 100/normal，但存进去的数要能一眼看懂
       opacity: layerOpacity(l),
       blend: layerBlend(l),
       lock_pixel: layerLocks(l).pixel,
       lock_position: layerLocks(l).position,
+      layer_kind: l.kind === 'group' ? 'group' : 'layer',
+      group_id: l.groupId ?? null,
       box: l.box,
       adjust: l.adjust ?? null,
     })),
@@ -228,7 +240,7 @@ export function projectPayloadToDocument(
     .filter(l => !!l.source)
     .map((l, index) => ({
       id: l.id || `layer-${index}`,
-      kind: 'image' as const,
+      // kind/groupId 在下方组结构段（老工程缺字段按平层）
       source: l.source as string,
       naturalWidth: Math.max(1, Math.round(finiteOr(l.naturalWidth, 1))),
       naturalHeight: Math.max(1, Math.round(finiteOr(l.naturalHeight, 1))),
@@ -242,6 +254,9 @@ export function projectPayloadToDocument(
       // 注意：EditorLayer 的字段是 camelCase，payload 侧才是 snake_case
       lockPixel: l.lock_pixel === true ? true : undefined,
       lockPosition: l.lock_position === true ? true : undefined,
+      // 组结构：组行 kind='group'；成员层的 groupId 指回组行 id。老工程缺字段按平层
+      kind: l.layer_kind === 'group' ? 'group' : undefined,
+      groupId: l.group_id ?? undefined,
       name: l.name || `图层 ${index + 1}`,
     }));
 

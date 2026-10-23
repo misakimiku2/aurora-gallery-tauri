@@ -159,12 +159,24 @@ pub struct LayerRequest {
     pub opacity: Option<u8>,
 }
 
-/// 整份文档（画布 + 自底向上的图层）。
+/// 一个**组**的分段（PS 的组语义）：成员先互相合成，组画布按组的 opacity/blend
+/// 整体叠到底板。平层 = 单成员组（opacity 100 / blend normal）——前端
+/// `splitSegments` 出口径，渲染（CSS 嵌套 div）与导出共用同一份分段。
+#[derive(Debug, Clone, Deserialize)]
+pub struct LayerGroupRequest {
+    #[serde(default = "default_opacity")]
+    pub opacity: u8,
+    #[serde(default)]
+    pub blend: Option<String>,
+    pub layers: Vec<LayerRequest>,
+}
+
+/// 整份文档（画布 + 自底向上的**分段**）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentRequest {
     pub canvas: CanvasRequest,
-    pub layers: Vec<LayerRequest>,
+    pub groups: Vec<LayerGroupRequest>,
 }
 
 fn parse_background(raw: Option<&str>) -> CanvasBackground {
@@ -181,37 +193,47 @@ fn parse_background(raw: Option<&str>) -> CanvasBackground {
 /// 无关，先做能让后续重采样拿到最终像素（顺序反过来在本项目里结果一致，但定死一处才不会
 /// 有人"顺手优化"）。不透明度落成 alpha 缩放，理由见 `imaging::opacity` 的文件头。
 fn composite_document(doc: &DocumentRequest) -> Result<RgbaImage, String> {
-    let decoded: Vec<RgbaImage> = doc
-        .layers
-        .iter()
-        .map(|l| imaging::decode_file(&l.path).map_err(|e| e.to_string()))
-        .collect::<Result<_, _>>()?;
-
-    let prepared: Vec<RgbaImage> = decoded
-        .into_iter()
-        .zip(doc.layers.iter())
-        .map(|(img, l)| {
-            let mut img = apply_adjustments(img, l.adjust);
+    // 组员的解码图必须活到合成结束：先收进本层 Vec，再组装带生命周期的 CompositeGroup
+    let mut decoded: Vec<RgbaImage> = Vec::new();
+    let mut group_specs: Vec<(u8, BlendMode, Vec<(usize, AffineMatrix, BlendMode)>)> = Vec::new();
+    for g in &doc.groups {
+        let mut members = Vec::new();
+        for l in &g.layers {
+            let mut img =
+                apply_adjustments(imaging::decode_file(&l.path).map_err(|e| e.to_string())?, l.adjust);
             imaging::apply_opacity(&mut img, l.opacity.unwrap_or(100).min(100));
-            Ok(img)
-        })
-        .collect::<Result<_, String>>()?;
+            let idx = decoded.len();
+            decoded.push(img);
+            members.push((
+                idx,
+                AffineMatrix::from_array(l.matrix),
+                l.blend.as_deref().map(BlendMode::parse).unwrap_or_default(),
+            ));
+        }
+        group_specs.push((g.opacity.min(100), g.blend.as_deref().map(BlendMode::parse).unwrap_or_default(), members));
+    }
 
-    let layers: Vec<CompositeLayer<'_>> = prepared
+    let groups: Vec<imaging::CompositeGroup<'_>> = group_specs
         .iter()
-        .zip(doc.layers.iter())
-        .map(|(img, l)| CompositeLayer {
-            src: img,
-            matrix: AffineMatrix::from_array(l.matrix),
-            blend: l.blend.as_deref().map(BlendMode::parse).unwrap_or_default(),
+        .map(|(opacity, blend, members)| imaging::CompositeGroup {
+            opacity: *opacity,
+            blend: *blend,
+            layers: members
+                .iter()
+                .map(|(idx, matrix, blend)| CompositeLayer {
+                    src: &decoded[*idx],
+                    matrix: *matrix,
+                    blend: *blend,
+                })
+                .collect(),
         })
         .collect();
 
-    imaging::composite(
+    imaging::composite_grouped(
         doc.canvas.width,
         doc.canvas.height,
         parse_background(doc.canvas.background.as_deref()),
-        &layers,
+        &groups,
     )
     .map_err(|e| e.to_string())
 }
@@ -375,6 +397,11 @@ pub struct ProjectLayerRequest {
     pub lock_pixel: bool,
     #[serde(default)]
     pub lock_position: bool,
+    /// 条目类型："layer"（缺省）/ "group"（组行，source 为空串）
+    #[serde(default)]
+    pub layer_kind: String,
+    #[serde(default)]
+    pub group_id: Option<String>,
     #[serde(default, rename = "box")]
     pub frame: ProjectBox,
     #[serde(default)]
@@ -424,6 +451,8 @@ pub async fn editor_save_project(
                 blend: l.blend,
                 lock_pixel: l.lock_pixel,
                 lock_position: l.lock_position,
+                layer_kind: l.layer_kind,
+                group_id: l.group_id,
                 frame: l.frame,
                 adjust: l.adjust,
             })

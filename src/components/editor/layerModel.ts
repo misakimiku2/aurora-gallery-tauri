@@ -239,15 +239,32 @@ export function createImageLayer(opts: {
  * ⚠️ 新增任何影响画面的字段，必须同步加到这里——`layerModel.spec.ts` 里有一条
  * "改任意一个字段签名必变"的单测盯着，漏了就是红的。
  */
+/** 签名兜底框：组行没有 box，占位让签名函数不用到处判空 */
+const EMPTY_BOX_FOR_SIGN = {
+  x: 0,
+  y: 0,
+  w: 0,
+  h: 0,
+  rotation: 0,
+  flipH: false,
+  flipV: false,
+  skewX: 0,
+  skewY: 0,
+};
+
 export function layerStateSignature(layer: EditorLayer): string {
-  const b = layer.box;
+  // 组行（kind 'group'）没有 box/source/naturalWidth——兜一个零框，签名里靠
+  // kind/groupId 区分；collapsed 是纯 UI 态，**不进**签名（折叠不该有撤销步）
+  const b = layer.box ?? EMPTY_BOX_FOR_SIGN;
   const a = layer.adjust;
   const adj = a ? `${a.brightness},${a.contrast},${a.saturation},${a.temperature}` : 'none';
   return [
     layer.id,
+    layer.kind ?? 'image',
+    layer.groupId ?? 'none',
     layer.source ?? 'none',
-    layer.naturalWidth,
-    layer.naturalHeight,
+    layer.naturalWidth ?? 0,
+    layer.naturalHeight ?? 0,
     layer.visible ? 1 : 0,
     layerOpacity(layer),
     layerBlend(layer),
@@ -275,12 +292,12 @@ export function layerStateSignature(layer: EditorLayer): string {
  * 否则拖一次滑杆能灌进去上百条历史，Ctrl+Z 要按几百下才回得去（沿用 v1 的 700ms 合并）。
  */
 export function layerGeometrySignature(layer: EditorLayer): string {
-  const b = layer.box;
+  const b = layer.box ?? EMPTY_BOX_FOR_SIGN;
   return [
     layer.id,
     layer.source ?? 'none',
-    layer.naturalWidth,
-    layer.naturalHeight,
+    layer.naturalWidth ?? 0,
+    layer.naturalHeight ?? 0,
     layer.visible ? 1 : 0,
     b.x,
     b.y,

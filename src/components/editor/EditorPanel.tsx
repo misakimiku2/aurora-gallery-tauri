@@ -38,6 +38,9 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Folder,
+  FolderMinus,
+  FolderPlus,
   Grid2x2,
   Image as ImageIcon,
   Lock,
@@ -66,6 +69,13 @@ import {
   setLayerOpacity,
   setLayerVisible,
 } from './layerModel';
+import {
+  createGroup,
+  deleteGroupWithMembers,
+  isGroupRow,
+  setGroupCollapsed,
+  ungroup,
+} from './layerGroups';
 import { BLEND_MODES, BlendMode, blendModeLabel, normalizeBlendMode } from './blendModes';
 import { ensureLayerPreview } from './layerProxy';
 import { composeMatrix } from './layerTransform';
@@ -549,6 +559,12 @@ const LayerRow: React.FC<{
   adjustFilter?: string;
   dragging: boolean;
   dropHint: DropPosition | null;
+  /** 组成员缩进；组行本身不缩进 */
+  indent?: boolean;
+  /** 组行：缩略图位置显示文件夹 + 折叠箭头（成员可能藏在折叠里） */
+  isGroup?: boolean;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   onSelect: () => void;
   onToggleVisible: () => void;
   onRename: (name: string) => void;
@@ -565,6 +581,10 @@ const LayerRow: React.FC<{
   adjustFilter,
   dragging,
   dropHint,
+  indent,
+  isGroup,
+  collapsed,
+  onToggleCollapse,
   onSelect,
   onToggleVisible,
   onRename,
@@ -619,6 +639,7 @@ const LayerRow: React.FC<{
       title={`${layer.name}（拖拽可调整顺序）`}
       className={[
         'relative flex items-center gap-1.5 px-1 py-1 rounded border cursor-pointer select-none',
+        indent ? 'ml-5' : '',
         active
           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800'
           : 'border-transparent hover:bg-neutral-100 dark:hover:bg-neutral-700',
@@ -656,6 +677,22 @@ const LayerRow: React.FC<{
           layer.visible ? '' : 'opacity-40',
         ].join(' ')}
       >
+        {isGroup ? (
+          /* 组行：文件夹图标 + 折叠箭头（点击切折叠，data-no-drag 防拖行） */
+          <button
+            type="button"
+            data-no-drag
+            onClick={e => {
+              e.stopPropagation();
+              onToggleCollapse?.();
+            }}
+            className="w-full h-full flex items-center justify-center gap-0.5 text-neutral-600 dark:text-neutral-300"
+            title={collapsed ? '展开组' : '折叠组'}
+          >
+            {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+            <Folder size={12} />
+          </button>
+        ) : null}
         {thumb ? (
           <img
             src={thumb.src}
@@ -791,7 +828,30 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   // 全览图用较长边的缩略（320 足够 20rem 面板宽度）
   const navigatorThumb = useEditorThumbnail(overviewUrl, 320);
 
-  const list = useMemo(() => layersTopDown(layers ?? []), [layers]);
+  /**
+   * 面板显示结构（自顶向下）：组行先出现、成员缩进随后，折叠时成员不渲染。
+   * 与自底向上数组的分段（`splitSegments`）是同一件事的两个方向。
+   */
+  const list = useMemo(() => {
+    const down = layersTopDown(layers ?? []);
+    const out: { layer: EditorLayer; indent: boolean; isGroup: boolean }[] = [];
+    for (let i = 0; i < down.length; i += 1) {
+      const l = down[i];
+      if (isGroupRow(l)) {
+        out.push({ layer: l, indent: false, isGroup: true });
+        // 成员段跳过（折叠不显示；展开时以缩进行插入）
+        let k = i + 1;
+        while (k < down.length && down[k].groupId === l.id) {
+          if (!l.collapsed) out.push({ layer: down[k], indent: true, isGroup: false });
+          k += 1;
+        }
+        i = k - 1;
+      } else {
+        out.push({ layer: l, indent: false, isGroup: false });
+      }
+    }
+    return out;
+  }, [layers]);
   /** 活动图层：`activeLayerId` 指向的层；指向已删的层时退回顶层（与 `resolveActiveLayer` 同义） */
   const active = useMemo(() => {
     const all = layers ?? [];
@@ -865,6 +925,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
   const handleDelete = () => {
     if (!active) return;
+    // 活动层是**组行** → 删组连带成员（PS 的"组和内容"）；普通层照旧单删
+    if (isGroupRow(active)) {
+      emit({ layers: deleteGroupWithMembers(layers ?? [], active.id), activeLayerId: undefined });
+      return;
+    }
     const r = removeLayer(layers ?? [], active.id, activeLayerId);
     if (r.layers === (layers ?? [])) return;
     emit(r);
@@ -995,6 +1060,36 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             onClick={() => {}}
           />
           <PanelIconButton
+            icon={FolderPlus}
+            title="编组（把选中图层打包成组）"
+            on={false}
+            disabled={!active || isGroupRow(active)}
+            onClick={() => {
+              if (!active || isGroupRow(active)) return;
+              const ids = activeLayerId
+                ? [activeLayerId]
+                : active
+                  ? [active.id]
+                  : [];
+              emit({ layers: createGroup(layers ?? [], ids), activeLayerId: undefined });
+            }}
+          />
+          <PanelIconButton
+            icon={FolderMinus}
+            title={active && isGroupRow(active) ? '取消编组（保留成员）' : '取消编组（选中组或组内图层）'}
+            on={false}
+            disabled={!active || (!isGroupRow(active) && !active.groupId)}
+            onClick={() => {
+              if (!active) return;
+              const gid = isGroupRow(active) ? active.id : active.groupId;
+              if (!gid) return;
+              emit({
+                layers: ungroup(layers ?? [], gid),
+                activeLayerId: undefined,
+              });
+            }}
+          />
+          <PanelIconButton
             icon={Brush}
             title="锁定像素（禁自由变换；等画笔接入后也归这格管）"
             on={!!active && layerLocks(active).pixel}
@@ -1029,10 +1124,16 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         ) : (
           // 列表自己滚：十个图层不该把整个面板撑到看不见全览图
           <div className="max-h-56 overflow-y-auto space-y-0.5 -mx-1 px-1 pb-1">
-            {list.map(layer => (
+            {list.map(({ layer, indent, isGroup: isGrp }) => (
               <LayerRow
                 key={layer.id}
                 layer={layer}
+                indent={indent}
+                isGroup={isGrp}
+                collapsed={layer.collapsed === true}
+                onToggleCollapse={() =>
+                  setGroupCollapsed(layers ?? [], layer.id, layer.collapsed !== true)
+                }
                 active={active?.id === layer.id}
                 adjustFilter={adjustFilter}
                 dragging={draggingId === layer.id}
@@ -1050,6 +1151,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 onDragStart={e => {
                   // 眼睛 / 不透明度数值 / 改名输入框都不该拖整行
                   if ((e.target as HTMLElement).closest('[data-no-drag]')) {
+                    e.preventDefault();
+                    return;
+                  }
+                  // 组行 / 组成员禁拖：跨组拖拽会破坏连续段（v1 待办，见进度文档），
+                  // 折叠状态下拖动更会把"看不见的成员"甩出组外
+                  if (isGrp || layer.groupId) {
                     e.preventDefault();
                     return;
                   }

@@ -201,6 +201,13 @@ pub struct ProjectLayer {
     pub lock_pixel: bool,
     #[serde(default)]
     pub lock_position: bool,
+    /// 条目类型：`"layer"`（普通，缺省）/ `"group"`（**组行**——不是像素，没有 source）。
+    /// 老工程缺字段按 layer 读。
+    #[serde(default)]
+    pub layer_kind: String,
+    /// 成员层的组行 id（组行自身为 None）
+    #[serde(default)]
+    pub group_id: Option<String>,
     /// 不透明度百分比（0..=100）。**缺省 100**：昨天的工程文件里没有这个字段，
     /// 读出来必须是"完全不透明"，不能把老文档读成透明的。
     #[serde(default = "default_opacity")]
@@ -281,6 +288,8 @@ pub struct SaveLayer {
     pub blend: BlendMode,
     pub lock_pixel: bool,
     pub lock_position: bool,
+    pub layer_kind: String,
+    pub group_id: Option<String>,
     pub frame: ProjectBox,
     pub adjust: Option<ProjectAdjust>,
 }
@@ -431,6 +440,8 @@ pub fn save_project(
             blend: l.blend,
             lock_pixel: l.lock_pixel,
             lock_position: l.lock_position,
+            layer_kind: l.layer_kind.clone(),
+            group_id: l.group_id.clone(),
             frame: l.frame,
             adjust: l.adjust,
             source_path: if l.source.is_empty() { None } else { Some(l.source.clone()) },
@@ -560,6 +571,9 @@ pub struct OpenedLayer {
     /// 锁像素 / 锁位置（老工程缺字段时按 false 返回）
     pub lock_pixel: bool,
     pub lock_position: bool,
+    /// 条目类型（"layer" / "group"），老工程缺字段按 layer
+    pub layer_kind: String,
+    pub group_id: Option<String>,
     /// JSON 键名同样是 `box`（前端读 `EditorLayer.box`）；Rust 里 `box` 是保留字
     #[serde(rename = "box")]
     pub frame: ProjectBox,
@@ -629,6 +643,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 blend: BlendMode::Normal,
                 lock_pixel: false,
                 lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
                 frame: ProjectBox {
                     x: item.x,
                     y: item.y,
@@ -655,6 +671,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 blend: l.blend,
                 lock_pixel: l.lock_pixel,
                 lock_position: l.lock_position,
+                layer_kind: l.layer_kind.clone(),
+                group_id: l.group_id.clone(),
                 frame: l.frame,
                 adjust: l.adjust,
             })
@@ -716,6 +734,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
             blend: planned.blend,
             lock_pixel: planned.lock_pixel,
             lock_position: planned.lock_position,
+            layer_kind: planned.layer_kind,
+            group_id: planned.group_id,
             frame: planned.frame,
             adjust: planned.adjust,
         });
@@ -752,6 +772,8 @@ struct PlannedLayer {
     blend: BlendMode,
     lock_pixel: bool,
     lock_position: bool,
+    layer_kind: String,
+    group_id: Option<String>,
     frame: ProjectBox,
     adjust: Option<ProjectAdjust>,
 }
@@ -951,6 +973,8 @@ mod tests {
                 blend: BlendMode::Normal,
                 lock_pixel: false,
                 lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
                 frame: box_of(1.5, 2.25, 40.0, 20.0),
                 adjust: Some(ProjectAdjust { brightness: 12.0, contrast: -8.0, saturation: 30.0, temperature: 5.0 }),
             },
@@ -965,6 +989,8 @@ mod tests {
                 blend: BlendMode::Normal,
                 lock_pixel: false,
                 lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
                 frame: ProjectBox::default(),
                 adjust: None,
             },
@@ -1021,6 +1047,8 @@ mod tests {
             blend: BlendMode::Normal,
             lock_pixel: false,
             lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
             frame: ProjectBox::default(),
             adjust: None,
         };
@@ -1145,6 +1173,8 @@ mod tests {
             blend: BlendMode::Normal,
             lock_pixel: false,
             lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
             frame: ProjectBox::default(),
             adjust: None,
         }];
@@ -1185,6 +1215,8 @@ mod tests {
                 blend: BlendMode::Normal,
                 lock_pixel: false,
                 lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
                 frame: box_of(0.0, 0.0, w, w),
                 adjust: None,
             }]
@@ -1221,6 +1253,8 @@ mod tests {
             blend: BlendMode::Normal,
             lock_pixel: false,
             lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
             frame: box_of(1.0, 2.0, 4.0, 4.0),
             adjust: None,
         }];

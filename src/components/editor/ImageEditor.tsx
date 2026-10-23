@@ -96,6 +96,8 @@ import {
 } from './layerModel';
 import { loadLayerProxy } from './layerProxy';
 import { composeMatrix, flipDocumentCanvas, pointInBox, rotateDocumentCanvas } from './layerTransform';
+import { deleteGroupWithMembers } from './layerGroups';
+import { splitSegments } from './EditorCanvasLayers';
 import { AutoSelectMode } from './editorTools';
 import { CLICK_ZOOM_STEP } from './useEditorViewport';
 import { formatBytes, isProjectPath } from './projectFile';
@@ -596,19 +598,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               height: canvas.height,
               background: canvas.background,
             },
-            layers: (doc.layers ?? [])
-              // 关掉的眼睛在成品里必须也是关的：Rust 的合成只按数组逐层画，
-              // 它不知道"可见性"这件事（`DocumentRequest` 里根本没有这个字段）。
-              .filter(l => l.source && l.visible)
-              .map(l => ({
-                path: l.source,
-                matrix: composeMatrix(l.box, { width: l.naturalWidth, height: l.naturalHeight }),
-                adjust: l.adjust ?? null,
-                // 百分比原样给 Rust（它按 alpha 缩放落地，见 imaging::opacity）
-                opacity: layerOpacity(l),
-                // 混合模式原样给 Rust（名字与 CSS 同名，见 blendModes.ts）
-                blend: layerBlend(l),
-              })),
+            // **分段**（与渲染共用 `splitSegments`）：平层 = 单成员组，组 = 成员段 +
+            // 组行。组行被眼睛关掉 = 整组不导出（Rust 的合成分不清"可见性"）。
+            groups: splitSegments(doc.layers ?? [])
+              .map(seg => {
+                const row = seg.type === 'group' ? seg.row : seg.layer;
+                const members = seg.type === 'group' ? seg.members : [seg.layer];
+                return {
+                  opacity: layerOpacity(row),
+                  blend: layerBlend(row),
+                  layers: members
+                    .filter(m => m.source && m.visible)
+                    .map(m => ({
+                      path: m.source,
+                      matrix: composeMatrix(m.box, {
+                        width: m.naturalWidth,
+                        height: m.naturalHeight,
+                      }),
+                      adjust: m.adjust ?? null,
+                      opacity: layerOpacity(m),
+                      blend: layerBlend(m),
+                    })),
+                };
+              })
+              .filter(g => g.layers.length > 0),
           },
           targetPath: target,
         },
@@ -717,6 +730,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     if (!doc) return;
     const active = resolveActiveLayer(doc);
     if (!active) return;
+    // 活动层是**组行** → 删组连带成员（与面板删除按钮同一口径）
+    if (active.kind === 'group') {
+      onDocumentChange({
+        ...doc,
+        layers: deleteGroupWithMembers(doc.layers ?? [], active.id),
+        activeLayerId: undefined,
+        dirty: true,
+      });
+      return;
+    }
     const r = removeLayer(doc.layers ?? [], active.id, doc.activeLayerId);
     if (r.layers === (doc.layers ?? [])) return;
     onDocumentChange({ ...doc, layers: r.layers, activeLayerId: r.activeLayerId, dirty: true });

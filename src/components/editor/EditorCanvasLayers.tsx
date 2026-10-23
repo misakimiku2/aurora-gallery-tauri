@@ -16,6 +16,37 @@ import { composeMatrix, toCssMatrix } from './layerTransform';
 import { buildAdjustMatrix, isZeroAdjustments } from './colorMatrix';
 import { layerBlend, layerOpacity } from './layerModel';
 
+/**
+ * 把扁平的 layers 数组切成渲染/导出用的分段：组成员段 + 组行 = 一个 group 段，
+ * 其余是 flat 段。**渲染与导出共用这一份**——两边看到的结构必须完全一致，
+ * 不然就是"预览一种样、导出另一种样"。
+ */
+export type LayerSegment =
+  | { type: 'flat'; layer: EditorLayer }
+  | { type: 'group'; members: EditorLayer[]; row: EditorLayer };
+
+export function splitSegments(layers: EditorLayer[]): LayerSegment[] {
+  const segments: LayerSegment[] = [];
+  let i = 0;
+  while (i < layers.length) {
+    const gid = layers[i].groupId;
+    if (gid) {
+      let j = i;
+      while (j < layers.length && layers[j].groupId === gid) j += 1;
+      const row = layers[j];
+      if (row && row.kind === 'group' && row.id === gid) {
+        segments.push({ type: 'group', members: layers.slice(i, j), row });
+        i = j + 1;
+        continue;
+      }
+      // 数据损坏：成员段找不到组行——按平层渲染（导出同样处理，见 editor_commands）
+    }
+    segments.push({ type: 'flat', layer: layers[i] });
+    i += 1;
+  }
+  return segments;
+}
+
 export const EditorCanvasLayers: React.FC<{
   tabId: string;
   canvas: EditorCanvas;
@@ -105,16 +136,44 @@ export const EditorCanvasLayers: React.FC<{
             }}
           />
         )}
-        {/* 自底向上渲染；多图层是"白送的"——Rust 合成早就按数组写了 */}
-        {layers.map(l =>
-          l.source ? (
+        {/* 自底向上按**分段**渲染：组成员包进组 div（组的 opacity/blend/visible 作用
+            整组，组内成员的互相合成走浏览器原生嵌套语义，与 Rust 的分段合成一致）。
+            分段算法与导出 payload 同一份（见 `splitSegments`）。 */}
+        {splitSegments(layers).map(seg =>
+          seg.type === 'group' ? (
+            /* 组行被眼睛关掉 = 整组隐藏（PS 同款） */
+            seg.row.visible === false ? null : (
+              <div
+                key={seg.row.id}
+                className="absolute inset-0"
+                style={{
+                  mixBlendMode: layerBlend(seg.row),
+                  opacity: layerOpacity(seg.row) / 100,
+                  isolation: 'isolate',
+                }}
+              >
+                {seg.members.map(m =>
+                  m.source ? (
+                    <img
+                      key={m.id}
+                      src={convertFileSrc(m.source)}
+                      alt={m.name}
+                      draggable={false}
+                      style={buildLayerStyle(m)}
+                      onError={() => onLayerError(`无法打开图层「${m.name}」`)}
+                    />
+                  ) : null,
+                )}
+              </div>
+            )
+          ) : seg.layer.source ? (
             <img
-              key={l.id}
-              src={convertFileSrc(l.source)}
-              alt={l.name}
+              key={seg.layer.id}
+              src={convertFileSrc(seg.layer.source)}
+              alt={seg.layer.name}
               draggable={false}
-              style={buildLayerStyle(l)}
-              onError={() => onLayerError(`无法打开图层「${l.name}」`)}
+              style={buildLayerStyle(seg.layer)}
+              onError={() => onLayerError(`无法打开图层「${seg.layer.name}」`)}
             />
           ) : null,
         )}
