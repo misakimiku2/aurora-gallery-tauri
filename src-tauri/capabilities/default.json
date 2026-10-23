@@ -5,8 +5,8 @@
   "platforms": ["macOS", "windows", "linux"],
   "remote": {
     "urls": [
-      "http://localhost:14422",
-      "http://127.0.0.1:14422"
+      "http://localhost:17422",
+      "http://127.0.0.1:17422"
     ]
   },
   "windows": [

@@ -35,7 +35,7 @@
 {
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:14422",
+    "devUrl": "http://localhost:17422",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   }
@@ -80,13 +80,13 @@ strip = true
 
 ```typescript
 server: {
-  port: 14422,
+  port: 17422,
   strictPort: true,
   host: '0.0.0.0',  // 监听所有网络接口（允许 Android 设备连接）
   hmr: {
     protocol: 'ws',
     host: '0.0.0.0',  // HMR 也使用 0.0.0.0（Android 设备无法连接 localhost）
-    port: 14422,
+    port: 17422,
   },
   watch: {
     ignored: ['**/src-tauri/**'],
@@ -296,7 +296,7 @@ adb logcat -s AuroraGallery
 
 1. **首次编译时间较长** - Rust 代码需要为 Android 编译，可能需要 10-20 分钟
 
-2. **网络配置** - 确保 PC 和 Android 设备在同一网络，且防火墙允许 14422 端口
+2. **网络配置** - 确保 PC 和 Android 设备在同一网络，且防火墙允许 17422 端口
 
 3. **权限管理** - Android 需要存储权限才能访问图片
 

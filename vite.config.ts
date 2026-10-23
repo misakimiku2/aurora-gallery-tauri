@@ -32,12 +32,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 14422,
+    port: 17422,
     strictPort: true,
     host: '0.0.0.0',
     hmr: {
       host: getLocalIP(),
-      port: 14422,
+      port: 17422,
     },
     watch: {
       ignored: ['**/src-tauri/**', '**/node_modules/**', '**/target/**'],
