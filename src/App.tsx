@@ -1677,8 +1677,6 @@ export const App: React.FC = () => {
   const handleDropOnTag = (tag: string, sourceIds: string[]) => { /* ... */ };
   const startRename = (id: string) => setState(s => ({ ...s, renamingId: id }));
   const handleResolveExtensionChange = (id: string, name: string) => handleUpdateFile(id, { name });
-  const handleResolveFileCollision = (fileId: string, desiredName: string) => { /* ... */ };
-  const handleResolveFolderMerge = (sourceId: string, targetId: string) => { /* ... */ };
 
 
 
@@ -3099,8 +3097,6 @@ export const App: React.FC = () => {
         handleUpdateFile={handleUpdateFile}
         handleCopyFiles={handleCopyFiles}
         handleMoveFiles={handleMoveFiles}
-        handleResolveFileCollision={handleResolveFileCollision}
-        handleResolveFolderMerge={handleResolveFolderMerge}
         handleResolveExtensionChange={handleResolveExtensionChange}
         handleSaveAvatarCrop={handleSaveAvatarCrop}
         handleExitConfirm={handleExitConfirm}

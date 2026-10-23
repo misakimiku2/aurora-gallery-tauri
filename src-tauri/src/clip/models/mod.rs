@@ -52,7 +52,14 @@ impl ModelFile {
         self
     }
 
-    /// 设置预期文件 SHA256 哈希值（用于完整性校验）
+    /// 设置预期文件 SHA256 哈希值（用于完整性校验）。
+    ///
+    /// ⚠️ **目前没有任何模型规格调用它**。现有规格（siglip2 / siglip2_base / wd14）
+    /// 只给了 `with_expected_size`，所以 `verify_file` 的哈希分支**实际不会执行**——
+    /// 现在的"完整性校验"只有大小这一层，改坏的文件只要大小对得上就会被放过。
+    ///
+    /// 要真正启用，必须先把官方发布的 SHA256 填进对应模型规格；在那之前，别把这里的
+    /// 存在当成"已经有校验"。（2026-10-23 核查登记，未删除：接口本身是对的，缺的是数据。）
     pub fn with_expected_hash(mut self, hash: impl Into<String>) -> Self {
         self.expected_hash = Some(hash.into());
         self

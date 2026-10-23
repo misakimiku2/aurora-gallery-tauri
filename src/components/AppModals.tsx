@@ -10,7 +10,7 @@ import {
   DownloadProgress,
   SettingsCategory
 } from '../types';
-import { Trash2, FilePlus, Merge, AlertTriangle } from 'lucide-react';
+import { Trash2, AlertTriangle } from 'lucide-react';
 import { setAndroidStatusBar, isAndroidPlatformCached } from '../api/tauri-bridge';
 
 // Import from their original locations
@@ -58,8 +58,6 @@ interface AppModalsProps {
   handleUpdateFile: (fileId: string, updates: Partial<FileNode>) => void;
   handleCopyFiles: (fileIds: string[], targetFolderId: string) => void | Promise<void>;
   handleMoveFiles: (fileIds: string[], targetFolderId: string) => void | Promise<void>;
-  handleResolveFileCollision: (sourceId: string, desiredName: string) => void | Promise<void>;
-  handleResolveFolderMerge: (sourceId: string, targetId: string) => void | Promise<void>;
   handleResolveExtensionChange: (sourceId: string, desiredName: string) => void | Promise<void>;
   handleSaveAvatarCrop: (personId: string, box: any) => void | Promise<void>;
   handleExitConfirm: (action: 'minimize' | 'exit') => void | Promise<void>;
@@ -134,8 +132,6 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleUpdateFile,
   handleCopyFiles,
   handleMoveFiles,
-  handleResolveFileCollision,
-  handleResolveFolderMerge,
   handleResolveExtensionChange,
   handleSaveAvatarCrop,
   handleExitConfirm,
@@ -392,38 +388,6 @@ export const AppModals: React.FC<AppModalsProps> = ({
                 const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds;
                 if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId);
                 else handleMoveFiles(fileIds, targetId);
-                closeModals();
-              }}
-              t={t}
-            />
-          )}
-
-          {state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && (
-            <ConfirmModalComp
-              title={t('settings.collisionTitle')}
-              message={t('settings.fileCollisionMsg')}
-              subMessage={`"${state.activeModal.data.desiredName}"`}
-              confirmText={t('settings.renameAuto')}
-              confirmIcon={FilePlus}
-              onClose={closeModals}
-              onConfirm={() => {
-                handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName);
-                closeModals();
-              }}
-              t={t}
-            />
-          )}
-
-          {state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && (
-            <ConfirmModalComp
-              title={t('settings.collisionTitle')}
-              message={t('settings.folderCollisionMsg')}
-              subMessage={t('settings.mergeDesc')}
-              confirmText={t('settings.mergeFolder')}
-              confirmIcon={Merge}
-              onClose={closeModals}
-              onConfirm={() => {
-                handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId);
                 closeModals();
               }}
               t={t}

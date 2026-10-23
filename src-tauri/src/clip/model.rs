@@ -376,11 +376,16 @@ impl ClipModel {
     }
 
     /// 验证文件完整性
-    /// 
+    ///
+    /// ⚠️ **当前实际只校验大小**：`expected_hash` 参数是通的，但没有任何模型规格提供
+    /// SHA256（见 `ModelFile::with_expected_hash` 的说明），所以哈希分支不会执行。
+    /// 这里的语义是"大小对得上就当完整"——改坏的字节它抓不出来。要真正校验必须先有
+    /// 官方 hash。
+    ///
     /// # 参数
     /// * `file_path` - 文件路径
     /// * `expected_size` - 预期文件大小（可选）
-    /// * `expected_hash` - 预期 SHA256 哈希值（可选）
+    /// * `expected_hash` - 预期 SHA256 哈希值（可选；目前恒为 None）
     ///
     /// # 返回
     /// 如果文件有效返回 `Ok(())`，否则返回错误信息
@@ -414,6 +419,13 @@ impl ClipModel {
         }
 
         // 验证文件哈希
+        //
+        // 现实提醒：目前没有模型规格提供 hash，这条分支不会执行。留一行 debug，让
+        // "只有大小校验"这件事在日志里可见——否则排查"文件坏了却仍被判为完整"时，
+        // 看代码会以为这里在算 SHA256。
+        if expected_hash.is_none() {
+            log::debug!("未提供 SHA256，仅按大小校验: {:?}", file_path);
+        }
         if let Some(expected) = expected_hash {
             let mut file = std::fs::File::open(file_path)
                 .map_err(|e| format!("Failed to open file for hashing: {}", e))?;
