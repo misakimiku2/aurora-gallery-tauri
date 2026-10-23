@@ -569,6 +569,16 @@ export interface EditorLayer {
   adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
   visible: boolean;
   /**
+   * 锁像素：禁一切**修改像素内容**的操作——现阶段 = 禁自由变换（Ctrl+T），
+   * 等画笔/橡皮/填充进来后它们也归这格管。移动仍允许（PS 的"锁像素"画笔格口径）。
+   */
+  lockPixel?: boolean;
+  /**
+   * 锁位置：禁移动与变换（PS 的"锁位置"十字格口径）。画布上拖不动，
+   * Ctrl+T 进不去；面板里的参数（不透明度/混合模式/调色）不受影响。
+   */
+  lockPosition?: boolean;
+  /**
    * 混合模式，缺省 `'normal'`（普通 src-over）。
    *
    * 取值是 **CSS `mix-blend-mode` 同名的英文串**（`multiply` / `color-dodge`…）：

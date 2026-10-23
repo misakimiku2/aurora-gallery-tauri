@@ -196,6 +196,11 @@ pub struct ProjectLayer {
     /// 混合模式。**缺省 `normal`**：老工程没有这个字段，读出来必须是"正常"。
     #[serde(default)]
     pub blend: BlendMode,
+    /// 锁像素 / 锁位置。**缺省 false**：老工程没有这两个字段，读出来必须是"未锁"。
+    #[serde(default)]
+    pub lock_pixel: bool,
+    #[serde(default)]
+    pub lock_position: bool,
     /// 不透明度百分比（0..=100）。**缺省 100**：昨天的工程文件里没有这个字段，
     /// 读出来必须是"完全不透明"，不能把老文档读成透明的。
     #[serde(default = "default_opacity")]
@@ -274,6 +279,8 @@ pub struct SaveLayer {
     pub opacity: u8,
     /// 混合模式
     pub blend: BlendMode,
+    pub lock_pixel: bool,
+    pub lock_position: bool,
     pub frame: ProjectBox,
     pub adjust: Option<ProjectAdjust>,
 }
@@ -422,6 +429,8 @@ pub fn save_project(
             visible: l.visible,
             opacity: l.opacity,
             blend: l.blend,
+            lock_pixel: l.lock_pixel,
+            lock_position: l.lock_position,
             frame: l.frame,
             adjust: l.adjust,
             source_path: if l.source.is_empty() { None } else { Some(l.source.clone()) },
@@ -548,6 +557,9 @@ pub struct OpenedLayer {
     pub opacity: u8,
     /// 混合模式（kebab-case 字符串，与 CSS `mix-blend-mode` 同名）
     pub blend: BlendMode,
+    /// 锁像素 / 锁位置（老工程缺字段时按 false 返回）
+    pub lock_pixel: bool,
+    pub lock_position: bool,
     /// JSON 键名同样是 `box`（前端读 `EditorLayer.box`）；Rust 里 `box` 是保留字
     #[serde(rename = "box")]
     pub frame: ProjectBox,
@@ -615,6 +627,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 visible: true,
                 opacity: 100,
                 blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
                 frame: ProjectBox {
                     x: item.x,
                     y: item.y,
@@ -639,6 +653,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 visible: l.visible,
                 opacity: l.opacity,
                 blend: l.blend,
+                lock_pixel: l.lock_pixel,
+                lock_position: l.lock_position,
                 frame: l.frame,
                 adjust: l.adjust,
             })
@@ -698,6 +714,8 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
             visible: planned.visible,
             opacity: planned.opacity,
             blend: planned.blend,
+            lock_pixel: planned.lock_pixel,
+            lock_position: planned.lock_position,
             frame: planned.frame,
             adjust: planned.adjust,
         });
@@ -732,6 +750,8 @@ struct PlannedLayer {
     visible: bool,
     opacity: u8,
     blend: BlendMode,
+    lock_pixel: bool,
+    lock_position: bool,
     frame: ProjectBox,
     adjust: Option<ProjectAdjust>,
 }
@@ -929,6 +949,8 @@ mod tests {
                 visible: true,
                 opacity: 55,
                 blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
                 frame: box_of(1.5, 2.25, 40.0, 20.0),
                 adjust: Some(ProjectAdjust { brightness: 12.0, contrast: -8.0, saturation: 30.0, temperature: 5.0 }),
             },
@@ -941,6 +963,8 @@ mod tests {
                 visible: false,
                 opacity: 100,
                 blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
                 frame: ProjectBox::default(),
                 adjust: None,
             },
@@ -995,6 +1019,8 @@ mod tests {
             visible: true,
             opacity: 100,
             blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
             frame: ProjectBox::default(),
             adjust: None,
         };
@@ -1117,6 +1143,8 @@ mod tests {
             visible: true,
             opacity: 100,
             blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
             frame: ProjectBox::default(),
             adjust: None,
         }];
@@ -1155,6 +1183,8 @@ mod tests {
                 visible: true,
                 opacity: 100,
                 blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
                 frame: box_of(0.0, 0.0, w, w),
                 adjust: None,
             }]
@@ -1189,6 +1219,8 @@ mod tests {
             visible: true,
             opacity: 100,
             blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
             frame: box_of(1.0, 2.0, 4.0, 4.0),
             adjust: None,
         }];

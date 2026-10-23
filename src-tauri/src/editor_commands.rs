@@ -370,6 +370,11 @@ pub struct ProjectLayerRequest {
     /// 混合模式（kebab-case）。前端老版本不带这个字段时按 `normal` 处理。
     #[serde(default)]
     pub blend: BlendMode,
+    /// 锁像素 / 锁位置。老前端不带字段时按 false（未锁）处理。
+    #[serde(default)]
+    pub lock_pixel: bool,
+    #[serde(default)]
+    pub lock_position: bool,
     #[serde(default, rename = "box")]
     pub frame: ProjectBox,
     #[serde(default)]
@@ -417,6 +422,8 @@ pub async fn editor_save_project(
                 visible: l.visible,
                 opacity: l.opacity,
                 blend: l.blend,
+                lock_pixel: l.lock_pixel,
+                lock_position: l.lock_position,
                 frame: l.frame,
                 adjust: l.adjust,
             })

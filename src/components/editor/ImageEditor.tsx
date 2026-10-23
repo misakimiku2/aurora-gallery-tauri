@@ -105,6 +105,7 @@ import {
   EDITOR_DOC_VERSION,
   isLegacyEditorDocument,
   layerBlend,
+  layerLocks,
   layerOpacity,
   orientationToBox,
   removeLayer,
@@ -211,6 +212,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const layers = useMemo(() => doc?.layers ?? [], [doc]);
   const layerCount = layers.length;
   const activeLayer = useMemo(() => (doc ? resolveActiveLayer(doc) : undefined), [doc]);
+  // 图层锁（PS 口径）：锁位置 = 禁移动+变换；锁像素 = 禁变换（现阶段），移动可。
+  // 锁**不进撤销签名**（PS 的锁定开关不占撤销步骤），拦的是交互，不改渲染/导出。
+  const activeLocks = activeLayer ? layerLocks(activeLayer) : { pixel: false, position: false };
+  const transformLocked = activeLocks.pixel || activeLocks.position;
+  const positionLocked = activeLocks.position;
 
   // ---- 调色预览 ----
   // 预览走浏览器原生 SVG feColorMatrix（GPU，拖动零延迟），导出走 Rust 逐像素。
@@ -998,6 +1004,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   openProjectRef.current = handleOpenProject;
   const deleteLayerRef = useRef(handleDeleteActiveLayer);
   deleteLayerRef.current = handleDeleteActiveLayer;
+  // 键盘 effect 只依赖 onToolChange（见上注释），锁状态走 ref 读最新值
+  const transformLockedRef = useRef(transformLocked);
+  transformLockedRef.current = transformLocked;
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -1065,9 +1074,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         void openProjectRef.current();
         return;
       }
-      // Ctrl+T：进入/退出自由变换（PS 行为）
+      // Ctrl+T：进入/退出自由变换（PS 行为）。活动层锁了像素/位置时**拒绝进入**
+      // （PS：锁像素禁变换，菜单灰掉按了没反应——这里同样静默）。
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 't') {
         e.preventDefault();
+        if (transformLockedRef.current && toolRef.current !== 'transform') return;
         onToolChange(toolRef.current === 'transform' ? 'move' : 'transform');
         return;
       }
@@ -1147,6 +1158,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       window.removeEventListener('blur', onBlur);
     };
   }, [onToolChange]);
+
+  // 变换态时给活动层上锁 → 立即退回移动工具（PS：锁像素/位置后变换不可用）。
+  // 工具栏 / Ctrl+T 的"进入"另有拦截，这里兜底"已经进去了才上锁"的路径。
+  useEffect(() => {
+    if (tool === 'transform' && transformLocked) onToolChange('move');
+  }, [tool, transformLocked, onToolChange]);
 
   // ---- 鼠标 ----
   // `null` = 没选工具：光标普通箭头、点画布什么都不发生（滚轮/空格平移仍可用）
@@ -1462,7 +1479,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       <div className="flex-1 flex min-h-0">
         <EditorToolbar
           activeTool={spaceHeld ? 'hand' : tool}
-          onSelect={t => onToolChange(t === tool ? null : t)}
+          onSelect={t => {
+            // 锁像素/锁位置时拒绝切到自由变换（与 Ctrl+T 同一条规则）
+            if (t === 'transform' && transformLocked) return;
+            onToolChange(t === tool ? null : t);
+          }}
           disabled={!doc}
         />
 
@@ -1593,10 +1614,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 containerRef={containerRef}
                 isSnappingEnabled={snapEnabled}
                 snapBounds={{ width: canvas.width, height: canvas.height }}
-                // 编辑态恒为 true：移动工具也要能拖动图层（拖动层由 canDragLayer 控制）
-                isEditMode
-                // 手柄只在自由变换时出现——移动工具只显示边界，PS 也是这样
-                showTransformHandles={tool === 'transform'}
+                // 锁位置 = 整个 overlay 不可拖（EditOverlay 内 canDragLayer = isEditMode）；
+                // 锁像素仍可拖动（PS：锁像素禁变换不禁移动）
+                isEditMode={!positionLocked}
+                // 手柄只在自由变换时出现——移动工具只显示边界，PS 也是这样；
+                // 锁像素/锁位置都不出手柄（两者都禁变换）
+                showTransformHandles={tool === 'transform' && !transformLocked}
                 // 移动工具下"点一下才算选中"：未选中不画边框
                 showChrome={tool === 'transform' || layerSelected}
                 onInteractionStart={() => setLayerSelected(true)}

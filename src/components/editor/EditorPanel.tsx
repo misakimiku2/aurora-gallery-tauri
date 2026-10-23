@@ -32,12 +32,16 @@ import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } fro
 import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import {
+  Brush,
   ChevronDown,
   ChevronRight,
   Copy,
   Eye,
   EyeOff,
+  Grid2x2,
   Image as ImageIcon,
+  Lock,
+  Move,
   Trash2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -54,9 +58,11 @@ import {
   layerOpacity,
   layersTopDown,
   layerBlend,
+  layerLocks,
   removeLayer,
   reorderLayers,
   setLayerBlend,
+  setLayerLock,
   setLayerOpacity,
   setLayerVisible,
 } from './layerModel';
@@ -162,34 +168,6 @@ const Slider: React.FC<{
   </div>
 );
 
-/** 图层面板的操作按钮（现在都在列表**上方**）。 */
-const ToolButton: React.FC<{
-  icon: LucideIcon;
-  title: string;
-  label?: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-}> = ({ icon: Icon, title, label, onClick, disabled, danger }) => (
-  <button
-    type="button"
-    title={title}
-    aria-label={title}
-    onClick={onClick}
-    disabled={disabled}
-    className={[
-      'h-7 flex-1 flex items-center justify-center gap-1 rounded border text-[11px] transition-colors',
-      disabled
-        ? 'border-neutral-200 dark:border-neutral-700 text-neutral-300 dark:text-neutral-600 cursor-not-allowed'
-        : danger
-          ? 'border-neutral-200 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400'
-          : 'border-neutral-200 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700',
-    ].join(' ')}
-  >
-    <Icon size={12} />
-    {label}
-  </button>
-);
 
 /**
  * 行内不透明度数值，两种手势：
@@ -350,6 +328,47 @@ const OpacityPopover: React.FC<{
         </button>
       )}
     </div>
+  );
+};
+
+/**
+ * 面板图标按钮：图层面板里**所有**图标按钮的统一外观（顶部四格锁、底部复制/删除
+ * 都用它，用户 2026-10-24 验收反馈"样式不协调"后统一）。
+ *
+ * - `on` = 开关已开（蓝底，锁定格用）；
+ * - `grayed` = 格子暂无意义照 PS 画出来但禁用（锁透明像素等画笔）；
+ * - `danger` = 悬停变红（删除）。
+ */
+const PanelIconButton: React.FC<{
+  icon: LucideIcon;
+  title: string;
+  on?: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+  grayed?: boolean;
+  danger?: boolean;
+}> = ({ icon: Icon, title, on, onClick, disabled, grayed, danger }) => {
+  const off = disabled || grayed;
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-pressed={on}
+      disabled={off}
+      onClick={onClick}
+      className={[
+        'h-7 flex-1 flex items-center justify-center rounded border transition-colors',
+        grayed || disabled
+          ? 'border-neutral-200 dark:border-neutral-700 text-neutral-300 dark:text-neutral-600 cursor-not-allowed'
+          : on
+            ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+            : danger
+              ? 'border-neutral-200 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400'
+              : 'border-neutral-200 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700',
+      ].join(' ')}
+    >
+      <Icon size={12} />
+    </button>
   );
 };
 
@@ -687,6 +706,14 @@ const LayerRow: React.FC<{
           {layer.name}
         </span>
       )}
+      {(layer.lockPixel || layer.lockPosition) && (
+        <span
+          title={layer.lockPosition ? '已锁定位置' : '已锁定像素'}
+          className="shrink-0 flex text-neutral-400 dark:text-neutral-500"
+        >
+          <Lock size={9} aria-hidden />
+        </span>
+      )}
 
       {/*
         混合模式（自定义下拉，见 `BlendSelect`）：名字与 CSS `mix-blend-mode` 同名，
@@ -827,6 +854,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     emit({ layers: setLayerBlend(layers ?? [], layerId, mode), activeLayerId });
   };
 
+  const setLock = (layerId: string, kind: 'pixel' | 'position', on: boolean) => {
+    emit({ layers: setLayerLock(layers ?? [], layerId, kind, on), activeLayerId });
+  };
+
   // ---- 其余图层操作（都作用于活动图层） ----
   const handleToggleVisible = (layer: EditorLayer) => {
     emit({ layers: setLayerVisible(layers ?? [], layer.id, !layer.visible), activeLayerId });
@@ -948,17 +979,46 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
       {/* 图层（用户要求沉到最下；与 PS 的默认面板栈一致） */}
       <Section title="图层" hint={`${list.length} 个`}>
-        {/* 操作条在**列表上方**（用户 2026-10-24 验收意见）。排序没有按钮了，直接拖卡片；
-            「新建空白图层」的灰按钮也撤了——空白层要等画笔，留着只是噪音。 */}
+        {/* 顶部 = 锁定四格（PS 的锁在面板顶部）；**复制/删除在面板底部右侧**（PS 同款，
+            用户 2026-10-24）。排序没有按钮了，直接拖卡片；「新建空白图层」的灰按钮也撤了
+            ——空白层要等画笔，留着只是噪音。
+            锁定四格照 PS（作用**选中层**）：锁透明像素要等画笔/填充才有意义，灰显占位。
+            锁像素/锁位置的交互拦在 ImageEditor：锁位置 = 拖不动；锁像素/锁位置 = Ctrl+T
+            进不去。锁开关不进撤销栈（PS 一致）。 */}
         <div className="flex items-center gap-1">
-          <ToolButton icon={Copy} title="复制图层" label="复制" onClick={handleDuplicate} disabled={!active} />
-          <ToolButton
-            icon={Trash2}
-            title="删除图层（Delete）"
-            label="删除"
-            onClick={handleDelete}
+          <PanelIconButton
+            icon={Grid2x2}
+            title="锁定透明像素（等画笔工具接入）"
+            on={false}
+            grayed
             disabled={!active}
-            danger
+            onClick={() => {}}
+          />
+          <PanelIconButton
+            icon={Brush}
+            title="锁定像素（禁自由变换；等画笔接入后也归这格管）"
+            on={!!active && layerLocks(active).pixel}
+            disabled={!active}
+            onClick={() => active && setLock(active.id, 'pixel', !layerLocks(active).pixel)}
+          />
+          <PanelIconButton
+            icon={Move}
+            title="锁定位置（禁移动与变换）"
+            on={!!active && layerLocks(active).position}
+            disabled={!active}
+            onClick={() => active && setLock(active.id, 'position', !layerLocks(active).position)}
+          />
+          <PanelIconButton
+            icon={Lock}
+            title={active && layerLocks(active).pixel && layerLocks(active).position ? '全部解锁' : '锁定全部'}
+            on={!!active && layerLocks(active).pixel && layerLocks(active).position}
+            disabled={!active}
+            onClick={() => {
+              if (!active) return;
+              const allOn = layerLocks(active).pixel && layerLocks(active).position;
+              setLock(active.id, 'pixel', !allOn);
+              setLock(active.id, 'position', !allOn);
+            }}
           />
         </div>
 
@@ -1017,6 +1077,23 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             ))}
           </div>
         )}
+
+        {/* 复制/删除在面板**右下方**（PS 的图层面板底部同款，用户 2026-10-24）。
+            w-8 容器约束 PanelIconButton 的 flex-1——按钮固定 32px 宽，靠右排。 */}
+        <div className="flex justify-end gap-1 mt-2">
+          <div className="w-8 flex">
+            <PanelIconButton icon={Copy} title="复制图层" onClick={handleDuplicate} disabled={!active} />
+          </div>
+          <div className="w-8 flex">
+            <PanelIconButton
+              icon={Trash2}
+              title="删除图层（Delete）"
+              onClick={handleDelete}
+              disabled={!active}
+              danger
+            />
+          </div>
+        </div>
 
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
           拖拽卡片可调整上下顺序；点右侧百分比可输入数值，按住左右拖可快速调节；选中图层后按{' '}

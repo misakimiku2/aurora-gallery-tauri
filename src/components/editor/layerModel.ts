@@ -377,6 +377,44 @@ export function setLayerBlend(
  * 统一走这里，别处不要自己写 `layer.opacity ?? 100`：Rust 侧对应 `unwrap_or(100).min(100)`，
  * 两边口径必须一致，否则 `.aurora` 往返一次数值就漂了。
  */
+/**
+ * 读图层锁定状态。**别处不要自己写 `layer.lockPixel ?? false`**——统一走这里，
+ * 与 `layerOpacity()` / `layerBlend()` 同一个理由：undefined 的缺省口径只写一遍。
+ */
+export function layerLocks(layer: EditorLayer): { pixel: boolean; position: boolean } {
+  return { pixel: layer.lockPixel === true, position: layer.lockPosition === true };
+}
+
+/**
+ * 开关锁。`kind = 'pixel' | 'position'`；回到关时**删字段**（文档保持干净，
+ * 与不透明度回 100 / 混合模式回 normal 同一口径）。
+ *
+ * 锁**不进** `layerStateSignature`（PS 的锁定开关不占撤销步骤），但会随 layers
+ * 一起 emit（面板要重渲染，保存时也要落盘）。
+ */
+export function setLayerLock(
+  layers: EditorLayer[],
+  id: string,
+  kind: 'pixel' | 'position',
+  on: boolean,
+): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return layers;
+  const cur = layerLocks(layers[i]);
+  if ((kind === 'pixel' ? cur.pixel : cur.position) === on) return layers;
+  const next = layers.slice();
+  const target: EditorLayer = { ...next[i] };
+  if (kind === 'pixel') {
+    if (on) target.lockPixel = true;
+    else delete target.lockPixel;
+  } else {
+    if (on) target.lockPosition = true;
+    else delete target.lockPosition;
+  }
+  next[i] = target;
+  return next;
+}
+
 export function layerOpacity(layer: EditorLayer): number {
   const raw = layer.opacity;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return 100;

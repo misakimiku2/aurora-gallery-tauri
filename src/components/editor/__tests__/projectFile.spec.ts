@@ -221,6 +221,27 @@ describe('路径小工具', () => {
     expect(projectPayloadToDocument(legacy, 'x.aurora').layers?.[0].blend).toBeUndefined();
   });
 
+  it('锁状态往返；未锁不落字段', () => {
+    const locked = roundTrip(doc({ layers: [layer({ lockPixel: true, lockPosition: true })] }));
+    const opened = projectPayloadToDocument(locked, 'x.aurora').layers?.[0];
+    expect(opened?.lockPixel).toBe(true);
+    expect(opened?.lockPosition).toBe(true);
+
+    // 未锁：保存时显式写 false，读回来折成 undefined（文档保持干净）
+    const payload = buildSavePayload(doc({ layers: [layer()] }));
+    expect(payload.layers[0].lock_pixel).toBe(false);
+    expect(projectPayloadToDocument(roundTrip(doc()), 'x.aurora').layers?.[0].lockPixel).toBeUndefined();
+  });
+
+  it('老工程没有锁字段时按未锁读', () => {
+    const legacy = roundTrip(doc({ layers: [layer()] }));
+    delete (legacy.layers[0] as { lock_pixel?: boolean }).lock_pixel;
+    delete (legacy.layers[0] as { lock_position?: boolean }).lock_position;
+    const opened = projectPayloadToDocument(legacy, 'x.aurora').layers?.[0];
+    expect(opened?.lockPixel).toBeUndefined();
+    expect(opened?.lockPosition).toBeUndefined();
+  });
+
   it('字节格式化', () => {
     expect(formatBytes(0)).toBe('0 B');
     expect(formatBytes(999)).toBe('999 B');

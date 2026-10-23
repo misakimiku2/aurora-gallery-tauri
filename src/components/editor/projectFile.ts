@@ -13,7 +13,7 @@
  */
 import type { EditorCanvas, EditorDocument, EditorLayer, LayerBox } from '../../types';
 import { normalizeBlendMode } from './blendModes';
-import { EDITOR_DOC_VERSION, layerBlend, layerOpacity } from './layerModel';
+import { EDITOR_DOC_VERSION, layerBlend, layerLocks, layerOpacity } from './layerModel';
 
 export type EditorAdjust = NonNullable<EditorLayer['adjust']>;
 
@@ -36,6 +36,9 @@ export interface ProjectLayerPayload {
   opacity: number;
   /** 混合模式（kebab-case，与 CSS `mix-blend-mode` 同名） */
   blend: string;
+  /** 锁像素 / 锁位置（false = 未锁；显式写出，读工程时一眼能看懂） */
+  lock_pixel: boolean;
+  lock_position: boolean;
   /** Rust 侧字段叫 `frame`，JSON 键是 `box`（`box` 在 Rust 里是保留字） */
   box: LayerBox;
   adjust: EditorAdjust | null;
@@ -56,6 +59,9 @@ export interface OpenedProjectPayload {
     opacity?: number;
     /** 老工程没有这个字段时会缺省（Rust 侧 serde default = normal） */
     blend?: string;
+    /** 老工程缺这两字段时按 false（未锁） */
+    lock_pixel?: boolean;
+    lock_position?: boolean;
     box: LayerBox;
     adjust: EditorAdjust | null;
   }>;
@@ -146,6 +152,8 @@ export function buildSavePayload(doc: EditorDocument): ProjectSavePayload {
       // 显式写出来（而不是省掉）：Rust 侧缺省虽然也是 100/normal，但存进去的数要能一眼看懂
       opacity: layerOpacity(l),
       blend: layerBlend(l),
+      lock_pixel: layerLocks(l).pixel,
+      lock_position: layerLocks(l).position,
       box: l.box,
       adjust: l.adjust ?? null,
     })),
@@ -230,6 +238,10 @@ export function projectPayloadToDocument(
       opacity: normalizeOpacity(l.opacity),
       // 正常模式不落字段（与 `setLayerBlend` 回到 normal 时删字段同一口径）
       blend: normalizeBlendMode(l.blend) === 'normal' ? undefined : normalizeBlendMode(l.blend),
+      // 锁只在 true 时落字段（文档保持干净；undefined 经 layerLocks() 读回 false）
+      // 注意：EditorLayer 的字段是 camelCase，payload 侧才是 snake_case
+      lockPixel: l.lock_pixel === true ? true : undefined,
+      lockPosition: l.lock_position === true ? true : undefined,
       name: l.name || `图层 ${index + 1}`,
     }));
 

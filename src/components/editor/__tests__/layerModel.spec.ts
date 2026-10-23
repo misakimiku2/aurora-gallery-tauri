@@ -21,6 +21,7 @@ import {
   isLegacyEditorDocument,
   layerBlend,
   layerGeometrySignature,
+  layerLocks,
   layerOpacity,
   layersTopDown,
   layerStateSignature,
@@ -29,6 +30,7 @@ import {
   reorderLayers,
   resolveActiveLayer,
   setLayerBlend,
+  setLayerLock,
   setLayerOpacity,
   setLayerVisible,
 } from '../layerModel';
@@ -626,3 +628,42 @@ describe('图层混合模式', () => {
   });
 });
 
+/**
+ * 图层锁定（2026-10-24 加）。
+ *
+ * 口径照 PS：锁像素 = 禁修改像素内容（现阶段 = 禁变换）；锁位置 = 禁移动+变换。
+ * 锁开关**不进撤销签名**（PS 的锁定不占撤销步骤），但要能落盘、复制要带上。
+ */
+describe('图层锁定', () => {
+  it('layerLocks 缺省 / 脏数据一律为关', () => {
+    expect(layerLocks(layer())).toEqual({ pixel: false, position: false });
+    expect(layerLocks(layer({ lockPixel: true }))).toEqual({ pixel: true, position: false });
+    expect(layerLocks(layer({ lockPosition: true }))).toEqual({ pixel: false, position: true });
+  });
+
+  it('setLayerLock 开关；回关时删字段；无变化返回原引用', () => {
+    const all = [layer({ id: 'A' })];
+
+    const on = setLayerLock(all, 'A', 'position', true);
+    expect(layerLocks(on[0]).position).toBe(true);
+    expect(all[0].lockPosition).toBeUndefined(); // 入参没被改
+
+    const back = setLayerLock(on, 'A', 'position', false);
+    expect('lockPosition' in back[0]).toBe(false);
+    expect(setLayerLock(back, 'A', 'position', false)).toBe(back); // 幂等
+    expect(setLayerLock(all, 'zzz', 'pixel', true)).toBe(all);
+  });
+
+  it('锁不进撤销签名（PS：锁定开关不占撤销步骤）', () => {
+    const a = layer();
+    const b = setLayerLock([layer()], a.id, 'pixel', true)[0];
+    expect(layerStateSignature(a)).toBe(layerStateSignature(b));
+    expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
+  });
+
+  it('复制图层带上锁状态', () => {
+    const r = duplicateLayer([layer({ id: 'B', lockPixel: true, lockPosition: true })], 'B', 'B2');
+    expect(r.layers[1].lockPixel).toBe(true);
+    expect(r.layers[1].lockPosition).toBe(true);
+  });
+});
