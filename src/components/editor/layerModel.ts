@@ -11,7 +11,8 @@
  * 存在（新建空白文档），图层也可以脱离画布（自由变形）。
  *
  * 拆开之后"一步操作改了哪些数"变多了，所以**所有会列举字段的地方都必须从这里取**——
- * 撤销快照签名、代理图缓存键、导出参数，三处共用同一个序列化，而不是各写一遍。
+ * 撤销签名与代理图键都从这里取（各自只写一遍）；导出参数在调用处用
+ * `composeMatrix(box, natural)` + `adjust` 拼装，矩阵不在这里重新推导。
  * 这是架构事实第 7 条（"字段逐处列举必漏"，已栽两次）的直接对策。
  */
 import type { EditorCanvas, EditorDocument, EditorLayer, LayerBox } from '../../types';
@@ -213,7 +214,8 @@ export function createImageLayer(opts: {
 }
 
 /**
- * 图层状态签名——**撤销栈的"这一步和上一步是否不同"、以及"要不要重跑 Rust"的唯一判据**。
+ * 图层状态签名——**撤销栈的"这一步和上一步是否不同"的唯一判据**。
+ * 要不要重跑 Rust 由 `buildLayerPreviewKey` 决定（那个键里既没有变换也没有 adjust）。
  *
  * 只含**会改变画面**的字段。`id` 与 `name` 不在里面：改名字不该产生一步撤销，
  * 也不该触发重新解码。
@@ -285,7 +287,7 @@ export function documentGeometrySignature(doc: EditorDocument): string {
 /**
  * 图层图的缓存键（代理图 / 原图 URL 都用它）。
  *
- * **故意只含 `source`，不含任何变换**——这是 v2 相对 v1 最大的一处简化：
+ * **故意只含 `source` 与自然尺寸，不含任何变换**——这是 v2 相对 v1 最大的一处简化：
  * 变换全部交给 CSS（预览）与 Rust 仿射（导出），图层图本身是一张"没变换过"的图，
  * 所以移动/缩放/旋转都不必重跑解码。v1 的键要含 crop/rotation/flip，命中率极低。
  *

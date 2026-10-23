@@ -1,8 +1,8 @@
 /**
  * 全览图（PS 的 Navigator 面板，UI 设计 §4 的面板组之首）。
  *
- * 显示整张图的缩略，并把**当前视口**画成一个框 —— 缩放到 400% 之后，这是唯一能让
- * 用户知道「我在图的哪个位置」的东西。点击/拖动可以导航。
+ * 显示**活动图层**的缩略（单图层时即整张文档），并把**当前视口**画成一个框 —— 缩放到
+ * 400% 之后，这是唯一能让用户知道「我在图的哪个位置」的东西。点击/拖动可以导航。
  *
  * 布局用**缩略图自己的宽高**（`thumb.width/height`），不是"当前文档尺寸"：
  * 旋转 90° 时新尺寸先到、新缩略图后到（Image 解码异步），中间那一帧若用新尺寸撑
@@ -66,7 +66,8 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
   /** 文档坐标 → 全览显示坐标的比例 */
   const docToDisp = imgWidth > 0 ? dispW / imgWidth : 0;
 
-  // 缩略图与当前文档比例对不上 = 新图还没解码完（旋转后那一瞬）
+  // 缩略图与画布比例对不上：可能是新图还没解码完（旋转后那一瞬），
+  // 也可能是多图层 / 图层比例≠画布——后者是常态，不是延迟
   const aspectMatches =
     ready && imgWidth > 0 && imgHeight > 0
       ? Math.abs(thumbW / thumbH - imgWidth / imgHeight) < 0.02

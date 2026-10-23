@@ -355,7 +355,7 @@ export const App: React.FC = () => {
    * 原地，关掉编辑器标签就回到它。这与 `useNavigation.handleOpenCompareInNewTab`
    * 的建 Tab 方式一致（同一个 `DUMMY_TAB` 底，同样的 history 初值）。
    *
-   * 单点定义、两处入口共用（网格右键 + 查看器右键），避免互斥规则两份实现漂移。
+   * 单点定义、两处入口共用（网格右键 + 查看器右键），避免「建编辑器 Tab」的逻辑两份实现漂移。
    */
   const openInEditor = useCallback((fileId: string) => {
     setState(prev => {

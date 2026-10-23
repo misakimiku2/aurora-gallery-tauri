@@ -272,7 +272,7 @@ fn blend_over(dst: &mut RgbaImage, x: u32, y: u32, src_premul: [f32; 4]) {
 
 /// 建画布并自底向上合成各层。
 ///
-/// 最小模型只有一层、`Normal` 混合、不透明度 1，所以循环体很薄；**签名按多层写的**，
+/// 多层已按数组支持（前端可导入多张），当前固定 `Normal` 混合、不透明度 1，循环体很薄；
 /// Phase 2 加混合模式与不透明度时只改循环体，调用方不用动。
 pub fn composite(
     width: u32,

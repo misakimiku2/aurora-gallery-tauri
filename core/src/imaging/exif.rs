@@ -157,7 +157,7 @@ fn parse_tiff(b: &[u8], base: usize) -> Option<u8> {
         if tag != 0x0112 {
             continue;
         }
-        // 类型必须是 SHORT(3)、数量 1；值就放在后面 4 字节字段的前 2 字节里
+        // 未校验 type/count，直接取 4 字节值字段的前 2 字节（规范里方向是 SHORT(3) × 1）
         let value = u16_at(entry + 8)?;
         return if (1..=8).contains(&value) { Some(value as u8) } else { None };
     }

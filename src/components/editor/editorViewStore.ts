@@ -30,7 +30,7 @@ let flushScheduled = false;
  * 只比较坐标会让"拖回原位"被判定为没变化。
  */
 export interface PanRequest {
-  /** 代理图像素坐标 */
+  /** 画布像素坐标 */
   imgX: number;
   imgY: number;
   nonce: number;
@@ -39,7 +39,7 @@ export interface PanRequest {
 const panRequests = new Map<string, PanRequest>();
 let panNonce = 0;
 
-/** 请画布把 (imgX, imgY)（代理图像素）移到视口中央。 */
+/** 请画布把 (imgX, imgY)（画布像素）移到视口中央。 */
 export function requestPanTo(tabId: string, imgX: number, imgY: number): void {
   panRequests.set(tabId, { imgX, imgY, nonce: ++panNonce });
   scheduleNotify();

@@ -79,8 +79,6 @@ const SnapToggle: React.FC<{ enabled: boolean; onChange?: (v: boolean) => void }
   </label>
 );
 
-/** 裁剪比例预设（UI 设计 §7.1 的平台封面清单，待拍板项第 1 条）。 */
-
 export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   tool,
   scale,

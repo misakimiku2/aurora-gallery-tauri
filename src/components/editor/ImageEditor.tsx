@@ -418,8 +418,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   // ---- 缩略图用的 Rust 代理 ----
   //
-  // 画布主显示走原文件，但右侧面板的图层行 / 全览图需要一张**小图**：直接从 3440px 缩到
-  // 40px 是浏览器做不好的 64 倍降采样（会满屏锯齿），所以用 Rust 那张 ≤2048 的代理。
+  // 画布主显示走原文件，但右侧面板的图层行 / 全览图需要一张**小图**：从原图直接缩到
+  // 96/320px 是一次几十倍的低质降采样（满屏锯齿），所以用 Rust 那张 ≤2048 的代理。
   // 这也是 §4.4 给代理分配的新角色（缩略图 + 超大图打底）。
   const proxyKey = activeLayer ? buildLayerPreviewKey(activeLayer) : null;
   useEffect(() => {
@@ -739,8 +739,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   // ---- 导入图层 ----
   //
-  // 从任意文件系统路径导入（不受资源根限制，设计方案 §6.2）。自然尺寸由浏览器读，
-  // 不必为此跑一趟 Rust。默认按 contain 居中落位（§10 第 5 条已拍板）。
+  // 从任意文件系统路径导入（不受资源根限制）。自然尺寸与 EXIF 方向都问 Rust
+  // （与开文档同一条路），浏览器只负责画像素。默认按 contain 居中落位（§10 第 5 条已拍板）。
   const handleImportLayer = useCallback(async () => {
     if (!doc || !canvas) return;
     try {
@@ -1070,7 +1070,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         /**
          * **必须关掉浏览器的 EXIF 自动转正**。
          *
-         * 图层方向已经由 `defineBoxFromOrientation` 折进 rotation/flip 了；如果这里
+         * 图层方向已经由 `orientationToBox` 折进 rotation/flip 了；如果这里
          * 让浏览器再转一次，就变成"转两遍"，而且 Rust 导出只按我们的变换算 ——
          * 结果是屏幕和导出对不上。这是 S8 的核心那一行。
          */

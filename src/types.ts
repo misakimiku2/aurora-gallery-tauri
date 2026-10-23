@@ -533,9 +533,9 @@ export interface EditorCanvas {
 /**
  * 图层定界框（PS 口径：屏幕上拖的那个框）。
  *
- * `w/h` 是**未旋转**的内容尺寸，旋转后的包围盒由它派生。这与 `ComparisonItem`
- * （`src/components/comparer/types.ts`）逐项同构——不是巧合：自由变形要直接复用
- * comparer 的 `EditOverlay`，模型不同构就得重写那 693 行（设计稿 §3.3）。
+ * `w/h` 是**未旋转**的内容尺寸，旋转后的包围盒由它派生。几何部分与 `ComparisonItem`
+ * 的 `x/y/width/height/rotation` 同构，所以自由变换能直接复用 comparer 的 `EditOverlay`
+ * （只做一次字段改名）。`flipH/flipV/skewX/skewY` 是 `LayerBox` 独有的，它表达不了。
  */
 export interface LayerBox {
   /** 定界框左上在**画布坐标系**中的位置 */
@@ -548,8 +548,8 @@ export interface LayerBox {
   flipH: boolean;
   flipV: boolean;
   /**
-   * 倾斜。**最小模型只存不接 UI**（已拍板）：skew ≠ 0 时画布旋转 90° 会把倾斜框
-   * 压成包围盒、丢精度，所以自由变形先只做 移动 / 缩放 / 旋转 / 翻转 四项。
+   * 倾斜。**最小模型只存不接 UI**（已拍板）：`EditOverlay` 只用 CSS `rotate` 画框，
+   * 表达不了 skew，所以自由变形先只做 移动 / 缩放 / 旋转 / 翻转 四项（画布旋转 90° 对 skew 本身是精确的）。
    */
   skewX: number;
   skewY: number;
@@ -587,7 +587,8 @@ export interface EditorDocument {
 
   // ---- v2：最小图层模型 ----
   /**
-   * 模型版本。**不存在或不是 2 ⇒ v1 遗留数据**，按设计稿 §7 处理（不迁移，Tab 回退浏览态）。
+   * 模型版本。**不存在或不是 2、且带着 v1 平铺字段** ⇒ v1 遗留数据（判据见
+   * `isLegacyEditorDocument`：只看 version 会把「刚打开、画布还没建」的文档误判成旧文档）。
    *
    * 注：Tab 目前**并未持久化**（每次启动由 `useAppInit` 重建 `tabs: [defaultTab]`），
    * 所以这条今天是防御性设计——将来若给 Tab 加持久化，它就是迁移判据。
@@ -600,7 +601,8 @@ export interface EditorDocument {
 
   // ---- v1 遗留（v2 切换后已无人读取，待删）：crop / rotation / flipH / flipV / adjust ----
   /**
-   * **v1 遗留字段**，v2 一律用 `canvas` + `layers`，没有任何代码读它。
+   * **v1 遗留字段**：v2 的画布/图层一律用 `canvas` + `layers`，全仓只有
+   * `isLegacyEditorDocument` 读它做旧文档判定。
    * 保留只是为了让旧会话对象仍能通过类型检查（见 `isLegacyEditorDocument`）。
    *
    * 累积裁剪（v1 的"当前可见坐标系"像素坐标，左上原点）。undefined = 未裁剪。

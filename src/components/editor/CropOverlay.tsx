@@ -32,7 +32,7 @@ import {
 export type { CropArea };
 
 interface CropOverlayProps {
-  /** 文档（源图）尺寸 —— 坐标基准 */
+  /** 画布尺寸 —— 坐标基准（v2 裁剪/旋转后与源图自然尺寸已无关） */
   docWidth: number;
   docHeight: number;
   /** v1 的"代理图 / 源图"比例（≤ 1）。v2 恒为 1：画布直接显示原文件 */

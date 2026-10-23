@@ -31,7 +31,7 @@ export interface EditorToolDef {
   /** PS 默认快捷键（UI 设计 §8.3 是待核清单，实施时以实测为准） */
   shortcut: string;
   icon: LucideIcon;
-  /** 是否已接真实行为。false = 骨架占位（可选中，但只改光标与选项条文案） */
+  /** 是否已接真实行为。false = 骨架占位（可选中，但只有选项条文案会变） */
   available: boolean;
   /** 在这枚工具之前画一条分隔线（PS 工具箱的语义分组） */
   dividerBefore?: boolean;
@@ -56,21 +56,9 @@ export const EDITOR_TOOLS: EditorToolDef[] = [
 export const getEditorTool = (id?: EditorToolId | null): EditorToolDef =>
   EDITOR_TOOLS.find(t => t.id === (id ?? 'move')) ?? EDITOR_TOOLS[0];
 
-/**
- * 工具光标（PS 口径）。
- *
- * 注意 `zoom` 用 `zoom-in`：PS 里点击放大、按住 Alt 点击缩小，所以基础态是放大镜，
- * Alt 键在画布事件里临时切成 `zoom-out`。
- */
-export const EDITOR_TOOL_CURSORS: Partial<Record<EditorToolId, string>> = {
-  move: 'default',
-  transform: 'move',
-  crop: 'crosshair',
-  hand: 'grab',
-  zoom: 'zoom-in',
-  eyedropper: 'crosshair',
-  text: 'text',
-};
+// 工具光标表（EDITOR_TOOL_CURSORS）已删除：全仓从未引用过它，而光标实际由
+// ImageEditor 里那段 cursor 计算按 hand / zoom / crop 现算。留着只会让人以为改这里
+// 能改光标。要统一光标，改 ImageEditor。
 
 /** 快捷键 → 工具（UI 设计 §8.3 的键位表）。 */
 export const EDITOR_SHORTCUT_KEYS: Record<string, EditorToolId> = {

@@ -121,8 +121,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
   // 全览图用较长边的缩略（320 足够 20rem 面板宽度）
   const navigatorThumb = useEditorThumbnail(previewDataUrl, 320);
-  // 图层行按 40px 显示，给 96px 源（2x 屏也清晰）；两个尺寸各算一次，
-  // 都是逐级减半的高质量降采样，避免用户看到的 64 倍缩小锯齿
+  // 图层行按 40px 显示，给 96px 源（40px 的 2.4 倍，2x 屏也清晰）；两个尺寸各算一次，
+  // 都是逐级减半的高质量降采样，避免一次几十倍缩小带来的锯齿
   const layerThumb = useEditorThumbnail(previewDataUrl, 96);
 
   return (
@@ -181,7 +181,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           </button>
         )}
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          实时预览由显卡完成（拖动零延迟）；导出时 Rust 按**同一套颜色矩阵**重算，
+          实时预览由显卡完成（拖动零延迟）；导出时 Rust 按同一套颜色矩阵重算，
           所见即所得。双击滑杆标签可单项归零。
         </p>
       </Section>
@@ -248,7 +248,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           <Plus size={11} /> 新建图层
         </button>
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          导入图层请用文档栏的「导入图层」。图层树、混合模式、不透明度在 Phase 2 接入。
+          导入图层请点文档栏那个「图片 +」图标（悬停提示「导入图层」）。图层树、混合模式、不透明度在 Phase 2 接入。
         </p>
       </Section>
     </div>

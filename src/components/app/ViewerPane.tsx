@@ -127,7 +127,8 @@ export const ViewerPane = ({
         />
       )}
       {/* 图片编辑器（C11）：与参考模式互斥——`viewMode === 'editor'` 与 `isCompareMode`
-          不会同时成立（入口处强制清掉另一个），所以这里不需要额外的互斥门控。 */}
+          不会同时成立（编辑器一律开在**新 Tab** 里，openInEditor 建的 Tab 其
+          isCompareMode 恒为 false），所以这里不需要额外的互斥门控。 */}
       {state.tabs.map(tab => tab.viewMode === 'editor' && (
         <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
           <ImageEditor

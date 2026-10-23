@@ -24,7 +24,7 @@ interface RightPanelProps {
   onPerformSearch: (query: string) => void;
   handlePerformSearch: (query: string) => void;
   toggleColorPicker: () => void;
-  /** 编辑器调色参数变化（写回 editorDocument.adjust） */
+  /** 编辑器调色参数变化（写回**活动图层**的 adjust；v2 起调色是图层属性，不是文档级字段） */
   onEditorAdjustChange?: (adjust: {
     brightness: number;
     contrast: number;
@@ -57,7 +57,7 @@ export const RightPanel = ({
   // 缩略图从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用把 data URL
   // 提升到 React state。
   //
-  // **键必须与画布同源**：v2 里图层图是"没变换过"的那张，所以键只含 source
+  // **键必须与画布同源**：v2 里图层图是"没变换过"的那张，所以键只含 source 与自然尺寸
   // （含变换的话拖一下就要重跑 Rust）。画布尺寸直接读文档，不再从代理图反推。
   const editorDoc = activeTab.editorDocument;
   const editorLayer = useMemo(() => (editorDoc ? resolveActiveLayer(editorDoc) : undefined), [editorDoc]);

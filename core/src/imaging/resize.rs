@@ -15,8 +15,8 @@ use super::ImageError;
 
 /// 缩放算法取 Lanczos3。
 ///
-/// `src-tauri` 的缩略图用 Hamming（快、略糊，256px 看不出差别）。编辑器不同：用户会
-/// 放大到 100% 检查锐度，且缩放结果可能落进文档成为永久字节，质量优先。
+/// `src-tauri` 的缩略图用 Hamming（快、略糊，256px 看不出差别）。编辑器不同：代理图要
+/// 喂缩略图与超大图打底，降采样质量直接影响观感，质量优先。
 const FILTER: FilterType = FilterType::Lanczos3;
 
 /// 等比缩放到最长边 = `max_edge`，不放大。
@@ -46,7 +46,8 @@ pub fn resize_to_max_edge(src: &RgbaImage, max_edge: u32) -> Result<RgbaImage, I
     resize_exact(src, dst_w, dst_h)
 }
 
-/// 缩放到精确尺寸（调用方自己保证宽高比，Phase 1 的自由变换会用）。
+/// 缩放到精确尺寸（调用方自己保证宽高比）；只被 `resize_to_max_edge` 用，
+/// 自由变换走 `affine::warp_affine`。
 fn resize_exact(src: &RgbaImage, dst_w: u32, dst_h: u32) -> Result<RgbaImage, ImageError> {
     let fail = || ImageError::InvalidDimensions(dst_w, dst_h);
 
