@@ -29,7 +29,7 @@ M7 验收清单里明确登记（`docs/Android/Kotlin版/M7对齐验收任务清
 | --- | --- | --- |
 | `src/components/android-server/AndroidLanServerPanel.tsx` 全文 | grep 除自身外零引用 | 目录与文件名含 `android`；面板监听 `lan-share-android-status-changed`，服务已停发的安卓壳 |
 | `src/components/android-client/AndroidClientPanel.tsx` 全文 | 零引用。**同目录 `androidClientApi.ts` 是活的，别一起删**（见 §3） | 文件名含 `android`，同为安卓壳面板 |
-| `src/hooks/useLongPress.ts` | 零引用 | **存疑**：全文无安卓字样，是通用 `TouchEvent` 长按 hook（桌面触屏亦可复用）。零引用只证明"可删"，不证明"归属安卓"，见注 ① |
+| `src/hooks/useLongPress.ts` | 零引用（2026-10-23 复核仍为零，**已决定保留**） | **存疑**：全文无安卓字样，是通用 `TouchEvent` 长按 hook（桌面触屏亦可复用）。零引用只证明"可删"，不证明"归属安卓"，见注 ① |
 | `src-tauri/Cargo.toml:111-121` 四条 `[target.*-linux-android] linker` | Tauri 安卓构建链已删；Kotlin 的 `.so` 走 `core/` + cargo-ndk，`core/Cargo.toml` 无此段照样构建成功 | 目标三元组 `*-linux-android` 即安卓专属 |
 | `tauri.conf.json` 的 `plugins.android`、`bundle.android{minSdkVersion,versionCode}` | `plugins.android` 不是 Tauri 2 合法插件键（Tauri 2 无此插件标识符），已 inert；`bundle.android` 只服务已停发的安卓壳（versionCode 2 是发布时"纯对齐"改的，见提交 `6f3ec29f2` ①） | 键名即安卓；`bundle.android` 对应已停发的 `com.aurora.gallery` 壳 |
 

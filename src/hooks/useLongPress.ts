@@ -1,3 +1,13 @@
+/**
+ * 通用触屏长按 hook。
+ *
+ * ⚠️ **当前零引用**（2026-10-23 复核仍未接线），但**刻意保留**：
+ * - 它是通用 `TouchEvent` 实现，桌面触屏手势也能用，不专属于已退役的安卓壳；
+ * - `docs/Android/React安卓版退役残留清单.md` §2 注 ① 明确写它是"本表唯一归属存疑项、
+ *   唯一有将来复用价值"，建议最后再决定。
+ *
+ * 要删就先确认放弃 Windows 触屏长按；否则留着它比将来重写划算。
+ */
 import { useRef, useCallback } from 'react';
 
 interface UseLongPressOptions {
