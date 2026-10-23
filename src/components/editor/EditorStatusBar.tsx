@@ -18,7 +18,8 @@ import type { EditorToolId } from '../../types';
 import { getEditorTool } from './editorTools';
 
 interface EditorStatusBarProps {
-  tool: EditorToolId;
+  /** `null` = 没有选中工具 */
+  tool: EditorToolId | null;
   scale: number;
   /** 画布尺寸（导出即按这个尺寸合成） */
   width: number;
@@ -42,7 +43,9 @@ export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
   // （曾经它确实无事可做，被当成抓手的孪生兄弟）
   const hint = spaceHeld
     ? '空格 = 抓手（松开回到原工具）'
-    : tool === 'move'
+    : tool === null
+      ? '点左侧工具箱选择工具 · 滚轮缩放 / 空格平移始终可用'
+      : tool === 'move'
       ? '拖动图层移动 · Ctrl+T 进入自由变换 · 按 H 或按住空格平移画布'
       : tool === 'transform'
         ? '拖角缩放 · 四角外侧旋转 · Enter 提交 · Esc 取消'
@@ -53,7 +56,7 @@ export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
   return (
     <div className="h-6 shrink-0 flex items-center gap-3 px-3 border-t border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-[11px] text-neutral-500 dark:text-neutral-400 select-none">
       <span className="font-medium text-neutral-700 dark:text-neutral-200">
-        {spaceHeld ? '抓手（临时）' : def.label}
+        {spaceHeld ? '抓手（临时）' : tool === null ? '未选择工具' : def.label}
       </span>
       <span className="truncate">{hint}</span>
 

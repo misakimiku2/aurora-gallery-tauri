@@ -73,6 +73,13 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
       ? Math.abs(thumbW / thumbH - imgWidth / imgHeight) < 0.02
       : false;
 
+  /**
+   * 视口框。只有「视口确实没有盖住整份文档」时才画框并压暗框外。
+   *
+   * ⚠️ 缩小到「整份文档都装进了视口」（适应窗口）时，交出来的视口就是全图——
+   * 这时**没有任何框外区域**，既不画框也不压暗（用户实测：缩小后全览图全暗了，
+   * 就是这里把"盖满全图"误当成"没有框"退回了整块压暗）。
+   */
   let frame: { left: number; top: number; width: number; height: number } | null = null;
   if (aspectMatches && docToDisp > 0 && view && view.scale > 0) {
     const { scale: vs, x, y, containerWidth: cw, containerHeight: ch } = view;
@@ -132,6 +139,41 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
             className="absolute select-none"
             style={{ left: offX, top: offY, width: dispW, height: dispH, filter: imgFilter }}
           />
+          {/*
+            只压暗**视口框以外**的部分（用户明确要的效果）：四条矩形把框外的
+            上/下/左/右盖住，框内保持原样——PS 的 Navigator 也是这个做法。
+            框不存在 = 视口盖住了整份文档（适应窗口）或比例还没对上，
+            此时**没有框外区域，什么都不压暗**——退回整块压暗就是"缩小后全暗"那个 bug。
+          */}
+          {frame && (
+            <>
+              <div
+                className="pointer-events-none absolute inset-x-0 top-0 bg-black/35"
+                style={{ height: Math.max(0, frame.top) }}
+              />
+              <div
+                className="pointer-events-none absolute inset-x-0 bg-black/35"
+                style={{
+                  top: frame.top + frame.height,
+                  height: Math.max(0, BOX_HEIGHT - frame.top - frame.height),
+                }}
+              />
+              <div
+                className="pointer-events-none absolute bg-black/35"
+                style={{ left: 0, top: frame.top, width: Math.max(0, frame.left), height: frame.height }}
+              />
+              <div
+                className="pointer-events-none absolute bg-black/35"
+                style={{
+                  left: frame.left + frame.width,
+                  top: frame.top,
+                  width: Math.max(0, boxW - frame.left - frame.width),
+                  height: frame.height,
+                }}
+              />
+            </>
+          )}
+
           {frame && (
             <div
               className="absolute pointer-events-none border border-blue-500 dark:border-blue-400"

@@ -60,6 +60,17 @@ export const getEditorTool = (id?: EditorToolId | null): EditorToolDef =>
 // ImageEditor 里那段 cursor 计算按 hand / zoom / crop 现算。留着只会让人以为改这里
 // 能改光标。要统一光标，改 ImageEditor。
 
+/**
+ * 移动工具的「自动选择」（PS 选项条上那个下拉）。
+ *
+ * - `none`：**不改**选中层，只能拖当前选中的那层，换层走图层面板。
+ *   PS 出厂默认是这一档——图层多了之后，自动选择会让人"点一下就换了层"。
+ * - `layer`：点谁选谁（顶层优先）。
+ *
+ * PS 还有一档 `组`，但我们还没有编组，所以类型里也不留这个枚举值。
+ */
+export type AutoSelectMode = 'none' | 'layer';
+
 /** 快捷键 → 工具（UI 设计 §8.3 的键位表）。 */
 export const EDITOR_SHORTCUT_KEYS: Record<string, EditorToolId> = {
   v: 'move',

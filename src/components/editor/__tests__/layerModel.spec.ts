@@ -11,16 +11,26 @@ import {
   createCanvas,
   createIdentityBox,
   createImageLayer,
+  createLayerId,
   createOrientedImageLayer,
   documentGeometrySignature,
   documentStateSignature,
+  duplicateLayer,
   EDITOR_DOC_VERSION,
   fitLayerToCanvas,
   isLegacyEditorDocument,
+  layerBlend,
   layerGeometrySignature,
+  layerOpacity,
+  layersTopDown,
   layerStateSignature,
   orientationToBox,
+  removeLayer,
+  reorderLayers,
   resolveActiveLayer,
+  setLayerBlend,
+  setLayerOpacity,
+  setLayerVisible,
 } from '../layerModel';
 import { layerAABB } from '../layerTransform';
 
@@ -194,10 +204,13 @@ describe('layerStateSignature', () => {
     }
   });
 
-  it('改 id / name 不产生新签名（不该进撤销栈）', () => {
+  it('改名不产生新签名（不该进撤销栈）；改 id 要产生新签名', () => {
     const sig = layerStateSignature(layer());
-    expect(layerStateSignature(layer({ id: 'L2' }))).toBe(sig);
+    // 改名字只是标签，画面没变 ⇒ 不该灌一条撤销
     expect(layerStateSignature(layer({ name: 'renamed' }))).toBe(sig);
+    // **id 必须进签名**：两张同源同尺寸的图层（复制出来的）只有 id 能区分，
+    // 否则"把副本挪到另一层上下"会被判成"没变"，这一步就撤销不回来
+    expect(layerStateSignature(layer({ id: 'L2' }))).not.toBe(sig);
   });
 });
 
@@ -390,3 +403,226 @@ describe('resolveActiveLayer', () => {
     expect(resolveActiveLayer(doc({ layers }))?.id).toBe('B');
   });
 });
+
+/**
+ * 图层面板的列表操作。
+ *
+ * 这一组盯的是**顺序**与**活动层落点**——两者错了都不会报错，只会表现为
+ * "点了删除结果选中了别的层""上移变成了下移"这类只能靠人肉发现的怪行为。
+ */
+describe('图层面板的列表操作', () => {
+  const ids = (ls: EditorLayer[]) => ls.map(l => l.id);
+  const three = () => [layer({ id: 'A' }), layer({ id: 'B' }), layer({ id: 'C' })];
+
+  it('layersTopDown 自顶向下，且不改入参', () => {
+    const all = three();
+    expect(ids(layersTopDown(all))).toEqual(['C', 'B', 'A']);
+    expect(ids(all)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('setLayerVisible 切可见性；值没变时返回原引用', () => {
+    const all = three();
+    const next = setLayerVisible(all, 'B', false);
+    expect(next[1].visible).toBe(false);
+    expect(all[1].visible).toBe(true); // 入参没被改
+    expect(setLayerVisible(next, 'B', false)).toBe(next); // 无变化 ⇒ 同引用（不置 dirty）
+    expect(setLayerVisible(all, 'zzz', false)).toBe(all);
+  });
+
+  it('removeLayer 删非活动层，活动层不变', () => {
+    const r = removeLayer(three(), 'A', 'C');
+    expect(ids(r.layers)).toEqual(['B', 'C']);
+    expect(r.activeLayerId).toBe('C');
+  });
+
+  it('removeLayer 删的正是活动层时，落到它下面那层', () => {
+    // PS 的口径：删掉 C 之后选中 B（原来被 C 挡着的那层），而不是 A
+    const r = removeLayer(three(), 'C', 'C');
+    expect(ids(r.layers)).toEqual(['A', 'B']);
+    expect(r.activeLayerId).toBe('B');
+  });
+
+  it('removeLayer 删最底层的活动层时往上找', () => {
+    expect(removeLayer(three(), 'A', 'A').activeLayerId).toBe('B');
+  });
+
+  it('removeLayer 删空后活动层为 undefined', () => {
+    const r = removeLayer([layer({ id: 'A' })], 'A', 'A');
+    expect(r.layers).toEqual([]);
+    expect(r.activeLayerId).toBeUndefined();
+  });
+
+  it('removeLayer 找不到时原样返回', () => {
+    const all = three();
+    const r = removeLayer(all, 'zzz', 'A');
+    expect(r.layers).toBe(all);
+    expect(r.activeLayerId).toBe('A');
+  });
+
+  it('duplicateLayer 插在原层上方，并深拷贝 box', () => {
+    const all = three();
+    const r = duplicateLayer(all, 'B', 'B2');
+    expect(ids(r.layers)).toEqual(['A', 'B', 'B2', 'C']);
+    expect(r.newLayerId).toBe('B2');
+    expect(r.layers[1].name).toBe('photo');
+    expect(r.layers[2].name).toBe('photo 副本');
+    // 浅拷贝会让拖动副本时把原件一起拖走
+    expect(r.layers[2].box).not.toBe(r.layers[1].box);
+    // 不透明度也跟着复制（`...src` 浅拷贝会带上，这条是防止有人改成逐字段重建时漏掉）
+    expect(duplicateLayer([layer({ id: 'B', opacity: 40 })], 'B', 'B2').layers[1].opacity).toBe(40);
+  });
+
+  it('duplicateLayer 找不到原层时什么也不做', () => {
+    const all = three();
+    const r = duplicateLayer(all, 'zzz', 'X');
+    expect(r.layers).toBe(all);
+    expect(r.newLayerId).toBeUndefined();
+  });
+
+  /**
+   * 拖拽排序。`position` 是**显示口径**（above = 盖住目标），而数组是自底向上，
+   * 所以这里每一条都在验"显示上看到的结果"和"数组里真正落的位置"是否一致：
+   * 数组 [A,B,C] 显示出来是 C / B / A。
+   */
+  it('reorderLayers 把底层拖到顶上 = 数组末尾', () => {
+    const next = reorderLayers(three(), 'A', 'C', 'above');
+    expect(ids(next)).toEqual(['B', 'C', 'A']);
+    expect(ids(layersTopDown(next))).toEqual(['A', 'C', 'B']); // 显示：A 在最上
+  });
+
+  it('reorderLayers 把顶层拖到底下 = 数组开头', () => {
+    const next = reorderLayers(three(), 'C', 'A', 'below');
+    expect(ids(next)).toEqual(['C', 'A', 'B']);
+    expect(ids(layersTopDown(next))).toEqual(['B', 'A', 'C']); // 显示：C 在最下
+  });
+
+  it('reorderLayers 中间层插到目标上方/下方', () => {
+    expect(ids(reorderLayers(three(), 'B', 'C', 'above'))).toEqual(['A', 'C', 'B']);
+    expect(ids(reorderLayers(three(), 'B', 'A', 'below'))).toEqual(['B', 'A', 'C']);
+  });
+
+  it('reorderLayers 放回原位 / 拖到自己身上时返回原引用（不置 dirty）', () => {
+    const all = three();
+    // C 本来就在 B 上方，再拖到 B 上方 = 没动
+    expect(reorderLayers(all, 'C', 'B', 'above')).toBe(all);
+    expect(reorderLayers(all, 'B', 'B', 'above')).toBe(all);
+    expect(reorderLayers(all, 'zzz', 'A', 'above')).toBe(all);
+    expect(reorderLayers(all, 'A', 'zzz', 'below')).toBe(all);
+  });
+
+  it('reorderLayers 不改入参', () => {
+    const all = three();
+    reorderLayers(all, 'A', 'C', 'above');
+    expect(ids(all)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('createLayerId 同毫秒内也不会撞（连点两次复制不会串层）', () => {
+    expect(createLayerId()).not.toBe(createLayerId());
+  });
+
+  /**
+   * 图层操作要能被撤销：`visible`、`opacity` 与数组顺序都必须进签名。
+   * 反过来，**只换选中层不进签名**——否则"点一下图层"就会灌一条撤销历史。
+   */
+  it('可见性/顺序进撤销签名，选区不进', () => {
+    const base = {
+      name: 'd',
+      dirty: false,
+      version: 2 as const,
+      canvas: createCanvas(100, 100),
+      layers: three(),
+    } as EditorDocument;
+
+    expect(documentStateSignature({ ...base, layers: setLayerVisible(three(), 'B', false) })).not.toBe(
+      documentStateSignature(base),
+    );
+    expect(
+      documentStateSignature({ ...base, layers: reorderLayers(three(), 'A', 'C', 'above') }),
+    ).not.toBe(documentStateSignature(base));
+    expect(documentStateSignature({ ...base, activeLayerId: 'A' })).toBe(
+      documentStateSignature(base),
+    );
+  });
+});
+
+/**
+ * 不透明度（2026-10-24 加）。
+ *
+ * 这一组盯的是**两个签名各收什么**：状态签名要能看见它（改了就进撤销栈），
+ * 几何签名要看不见它（只拖滑杆要合并成一步，否则拖一次灌上百条历史）。
+ */
+describe('图层不透明度', () => {
+  it('layerOpacity 缺省 100，脏数据一律落回 100', () => {
+    expect(layerOpacity(layer())).toBe(100);
+    expect(layerOpacity(layer({ opacity: 40 }))).toBe(40);
+    expect(layerOpacity(layer({ opacity: -5 }))).toBe(0);
+    expect(layerOpacity(layer({ opacity: 250 }))).toBe(100);
+    expect(layerOpacity(layer({ opacity: Number.NaN }))).toBe(100);
+    expect(layerOpacity(layer({ opacity: 39.6 }))).toBe(40); // 取整
+  });
+
+  it('setLayerOpacity 钳位、无变化返回原引用、回到 100 时删字段', () => {
+    const all = [layer({ id: 'A' }), layer({ id: 'B' })];
+
+    const half = setLayerOpacity(all, 'A', 50);
+    expect(half[0].opacity).toBe(50);
+    expect(all[0].opacity).toBeUndefined(); // 入参没被改
+    expect(setLayerOpacity(half, 'A', 50)).toBe(half); // 无变化 ⇒ 同引用（不置 dirty）
+
+    const back = setLayerOpacity(half, 'A', 100);
+    expect('opacity' in back[0]).toBe(false); // 文档保持干净
+    expect(setLayerOpacity(all, 'zzz', 30)).toBe(all);
+  });
+
+  it('进状态签名（能撤销），不进几何签名（拖滑杆合并一步）', () => {
+    const a = layer();
+    const b = layer({ opacity: 50 });
+    expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
+    expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
+
+    const base = { name: 'd', dirty: false, version: 2 as const, canvas: createCanvas(100, 100) };
+    expect(documentStateSignature({ ...base, layers: [a] } as EditorDocument)).not.toBe(
+      documentStateSignature({ ...base, layers: [b] } as EditorDocument),
+    );
+  });
+});
+
+/**
+ * 混合模式（2026-10-24 加）。
+ *
+ * 名字是**两端共用的一份字符串**（CSS `mix-blend-mode` 同名），所以这里的重点不是公式，
+ * 而是"读/写/签名"：脏数据落 normal、回 normal 删字段、改了要能撤销。
+ */
+describe('图层混合模式', () => {
+  it('layerBlend 缺省与脏数据一律落 normal', () => {
+    expect(layerBlend(layer())).toBe('normal');
+    expect(layerBlend(layer({ blend: 'multiply' }))).toBe('multiply');
+    expect(layerBlend(layer({ blend: 'hue' }))).toBe('normal'); // 非可分离，这轮不做
+    expect(layerBlend(layer({ blend: 42 as unknown as string }))).toBe('normal');
+  });
+
+  it('setLayerBlend 切模式；回 normal 时删字段；无变化返回原引用', () => {
+    const all = [layer({ id: 'A' }), layer({ id: 'B' })];
+
+    const next = setLayerBlend(all, 'A', 'multiply');
+    expect(next[0].blend).toBe('multiply');
+    expect(all[0].blend).toBeUndefined(); // 入参没被改
+    expect(setLayerBlend(next, 'A', 'multiply')).toBe(next);
+
+    const back = setLayerBlend(next, 'A', 'normal');
+    expect('blend' in back[0]).toBe(false); // 文档保持干净
+    expect(setLayerBlend(all, 'zzz', 'screen')).toBe(all);
+  });
+
+  it('进状态签名（改混合模式能撤销）', () => {
+    const a = layer();
+    const b = layer({ blend: 'multiply' });
+    expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
+  });
+
+  it('复制图层会带上混合模式', () => {
+    const r = duplicateLayer([layer({ id: 'B', blend: 'screen' })], 'B', 'B2');
+    expect(r.layers[1].blend).toBe('screen');
+  });
+});
+

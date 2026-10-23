@@ -69,11 +69,14 @@ import {
   FilePlus,
   FlipHorizontal2,
   FlipVertical2,
+  FolderOpen,
   ImagePlus,
   Loader2,
   RotateCcw,
   RotateCw,
   Redo2,
+  Save,
+  SaveAll,
   Scan,
   Undo2,
   ZoomIn,
@@ -95,14 +98,19 @@ import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './c
 import {
   buildLayerPreviewKey,
   createCanvas,
+  createLayerId,
   createOrientedImageLayer,
   documentGeometrySignature,
   documentStateSignature,
   EDITOR_DOC_VERSION,
   isLegacyEditorDocument,
+  layerBlend,
+  layerOpacity,
   orientationToBox,
+  removeLayer,
   resolveActiveLayer,
 } from './layerModel';
+import { loadLayerProxy } from './layerProxy';
 import {
   composeMatrix,
   flipDocumentCanvas,
@@ -110,7 +118,9 @@ import {
   rotateDocumentCanvas,
   toCssMatrix,
 } from './layerTransform';
-import { EDITOR_SHORTCUT_KEYS } from './editorTools';
+import { AutoSelectMode, EDITOR_SHORTCUT_KEYS } from './editorTools';
+import { formatBytes, isProjectPath } from './projectFile';
+import { openProjectDialog, saveProject } from './projectIo';
 import {
   clearEditorView,
   peekPanRequest,
@@ -130,8 +140,9 @@ interface ImageEditorProps {
   tabId: string;
   /** 文档句柄。canvas/layers 未初始化时编辑器会自己补（从图层图读自然尺寸） */
   document?: EditorDocument;
-  tool: EditorToolId;
-  onToolChange: (tool: EditorToolId) => void;
+  /** `null` = 没有选中工具（同一个快捷键/按钮再按一次就取消，用户 2026-10-24 的意见） */
+  tool: EditorToolId | null;
+  onToolChange: (tool: EditorToolId | null) => void;
   /**
    * 是否为当前激活的 Tab。
    *
@@ -150,6 +161,13 @@ interface ImageEditorProps {
   onFileCreated?: (targetPath: string) => void | Promise<void>;
   /** 新建空白文档（由上层开一个新标签页——一个 Tab 一个文档） */
   onNewDocument?: (canvas: EditorCanvas) => void;
+  /**
+   * 打开 `.aurora` 工程（同样由上层开一个新标签页）。
+   *
+   * 传进来的是**已就绪**的文档：画布与图层都由 Rust 读好了，编辑器不会再走
+   * "问代理要尺寸、建画布"的初始化路径。
+   */
+  onOpenProject?: (doc: EditorDocument) => void;
   /** 切换左侧面板（与应用 TopBar 同一套开关，含安卓端互斥逻辑） */
   onToggleSidebar: () => void;
   isSidebarVisible: boolean;
@@ -164,38 +182,7 @@ interface DocSnapshot {
   layers?: EditorLayer[];
 }
 
-/** `editor_load_layer_proxy` 的返回（camelCase 由 Rust 侧 serde 重命名） */
-interface LayerProxyResponse {
-  naturalWidth: number;
-  naturalHeight: number;
-  /** EXIF 方向 1..8；1 = 不用转 */
-  orientation: number;
-  previewWidth: number;
-  previewHeight: number;
-  dataUrl: string;
-}
-
-/**
- * 按路径合并同一张图的代理请求。
- *
- * 两处需要它：
- * 1. **StrictMode**——dev 下 effect 会跑两遍，不合并就会把同一张图解码两次；
- * 2. 初始化与缩略图/导入可能同时要同一张图。
- *
- * 失败不缓存（`delete` 后重新抛），否则一次偶发失败会把这路径永久钉死。
- */
-const proxyPromises = new Map<string, Promise<LayerProxyResponse>>();
-
-function loadLayerProxy(path: string): Promise<LayerProxyResponse> {
-  const hit = proxyPromises.get(path);
-  if (hit) return hit;
-  const p = invoke<LayerProxyResponse>('editor_load_layer_proxy', { path }).catch(e => {
-    proxyPromises.delete(path);
-    throw e;
-  });
-  proxyPromises.set(path, p);
-  return p;
-}
+/** `editor_load_layer_proxy` 的返回与请求去重都在 `layerProxy.ts`（面板也要用同一张表）。 */
 
 const FIT_PADDING = 60;
 const MIN_SCALE = 0.02;
@@ -214,6 +201,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   onDocumentChange,
   onFileCreated,
   onNewDocument,
+  onOpenProject,
   onToggleSidebar,
   isSidebarVisible,
   onToggleMetadata,
@@ -262,8 +250,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const applyingHistoryRef = useRef(false);
   const lastSignatureRef = useRef<string | null>(null);
 
-  // 文档身份（路径 + 是否已建画布）变化时以当前状态作为历史起点
-  const docIdentity = doc ? `${doc.path ?? 'blank'}#${canvas ? 'ready' : 'new'}` : null;
+  // 文档身份（是否已建画布）变化时以当前状态作为历史起点。
+  //
+  // **刻意不含 `doc.path`**：保存工程会把路径从 `photo.jpg` 换成 `photo.aurora`，
+  // 若路径算进身份，"存一次"就等价于"换了一份文档"，撤销栈当场清空——用户刚存完
+  // 想再撤销一步就发现没了。一个 Tab 恒等于一个文档（`openInEditor` / `openBlankDocument`
+  // / `openProjectInEditor` 都是开新 Tab），所以"画布是否就绪"足以分段。
+  const docIdentity = doc ? (canvas ? 'ready' : 'new') : null;
+  /**
+   * 上一次的活动图层 id——用来识别「用户在图层面板里换了一层」。
+   *
+   * `layerSelected` 原本只由画布上的点击置 true。面板里点一行若什么都不发生，
+   * 用户会以为没生效（行高亮了、画布上却没有框）。所以选区变化时把框亮出来，
+   * 但**只认「从 id 变到另一个 id」**：首次建栈（undefined → id）不算，
+   * 那时用户什么都没点，PS 打开文件也不会先画一个框。
+   */
+  const prevActiveLayerIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!docIdentity || !doc) return;
     if (historyInitRef.current === docIdentity) return;
@@ -271,7 +273,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     lastSignatureRef.current = documentStateSignature(doc);
     setHistory({ stack: [{ canvas: doc.canvas, layers: doc.layers }], index: 0, lastAt: 0 });
     setLayerSelected(false); // 新文档/刚打开：什么都没点，不该有选中框
+    prevActiveLayerIdRef.current = doc.activeLayerId;
   }, [docIdentity, doc]);
+
+  // 面板里换了一层 ⇒ 直接把变换框亮出来（见 prevActiveLayerIdRef 的说明）
+  useEffect(() => {
+    const id = doc?.activeLayerId;
+    const prev = prevActiveLayerIdRef.current;
+    prevActiveLayerIdRef.current = id;
+    if (id && prev && id !== prev) setLayerSelected(true);
+  }, [doc?.activeLayerId]);
 
   // 所有变更（裁剪 / 旋转 / 翻转 / 调色）最终都落到文档上，所以统一在这里入栈——
   // 一处收口，不用在每个 handler 里各记一次。
@@ -332,31 +343,59 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const [altHeld, setAltHeld] = useState(false);
   /** 裁剪框（**画布坐标系**）。null = 不在裁剪态 */
   const [cropRect, setCropRect] = useState<CropArea | null>(null);
+  /**
+   * 移动工具的「自动选择」：
+   * - `layer`（默认）：点画布时按顶层优先选中被点中的图层，再拖动它 —— 这就是 PS 那档；
+   * - `none`：点画布**不换**选中层，只能拖当前选中的那层（换层走图层面板），
+   *   也是 PS 的出厂默认值。图层多了之后自动选择容易"点一下就换了层"。
+   */
+  const [autoSelect, setAutoSelect] = useState<AutoSelectMode>('layer');
   const hasFittedRef = useRef(false);
   const draggingRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null);
 
   const spaceHeldRef = useRef(false);
   const altHeldRef = useRef(false);
-  const toolRef = useRef(tool);
+  const toolRef = useRef<EditorToolId | null>(tool);
   toolRef.current = tool;
   const isActiveRef = useRef(isActive);
   isActiveRef.current = isActive;
 
   const [error, setError] = useState<string | null>(null);
   const [showNewDoc, setShowNewDoc] = useState(false);
+  // 键盘 effect 只挂一次，弹窗开关要走 ref（与 toolRef 同一个理由）
+  const showNewDocRef = useRef(false);
+  showNewDocRef.current = showNewDoc;
 
   // ---- 文档初始化 ----
   //
   // 从画廊进来时只有 `{path, name}`（App 建 Tab 时不知道图多大）。这里问 Rust 要
   // **存储尺寸 + EXIF 方向**，而不是读浏览器 `<img>.naturalWidth`：浏览器对 `<img>`
   // 默认按 EXIF 自动转正，给出的宽高是"转正后"的，而导出走的是存储方向的像素
-  // ——用它建画布会让显示与导出错位（S8 修的就是这个）。
-  const needsInit = !!doc?.path && (!canvas || layerCount === 0);
+  // ——用它建画布会让显示与导出错位（S8 修的就是这张图）。
+  //
+  // `.aurora` 工程不算"待初始化的图"：它的画布与图层都从文档里读出来，空工程
+  // （有画布、零图层）同样如此。少了这个判断，把新建的空白文档存成工程之后，
+  // `path` 一换成 `.aurora` 就会触发这条分支去解码一个 ZIP。
+  const needsInit =
+    !!doc?.path && !isProjectPath(doc.path) && (!canvas || layerCount === 0);
   const initStartedRef = useRef<string | null>(null);
+  /**
+   * 已经**初始化成功**过的路径。
+   *
+   * 为什么不能只靠 `needsInit`：它的判据里有 `layerCount === 0`（刚打开时图层还没建），
+   * 而「删掉最后一个图层」也会让图层数变成 0 —— 没有这个 ref，删空图层等于
+   * **立刻把刚删的那张图原样建回来**（图层面板一上线就会撞到）。
+   *
+   * 只在成功后写，且清理时不复位（复位就退化成 `initStartedRef`，又会重新初始化）；
+   * 一个 Tab 恒等于一个文档，同一实例内路径不变，所以它不会挡住本该重来的初始化。
+   */
+  const initDoneRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!doc?.path || !needsInit) return;
     if (initStartedRef.current === doc.path) return;
+    // 已成功建过图层：图层数变 0 是用户删的，不是"还没初始化"
+    if (initDoneRef.current === doc.path) return;
     initStartedRef.current = doc.path;
 
     let cancelled = false;
@@ -370,7 +409,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         // 画布 = **转正后**的显示尺寸；图层自己带 rotation/flip 去对齐
         const nextCanvas = createCanvas(m.displayWidth, m.displayHeight, 'transparent');
         const layer = createOrientedImageLayer({
-          id: `layer-${Date.now().toString(36)}`,
+          id: createLayerId(),
           source: doc.path,
           naturalWidth: res.naturalWidth,
           naturalHeight: res.naturalHeight,
@@ -387,6 +426,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
           dataUrl: res.dataUrl,
         });
         setError(null);
+        initDoneRef.current = doc.path ?? null; // 建过一次就不再自动重建（见 initDoneRef 说明）
         onDocumentChange({
           ...doc,
           version: EDITOR_DOC_VERSION,
@@ -759,7 +799,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       // 与开文档同一条路：尺寸与 EXIF 方向都问 Rust，浏览器只负责画像素
       const res = await loadLayerProxy(picked);
       const layer = createOrientedImageLayer({
-        id: `layer-${Date.now().toString(36)}`,
+        id: createLayerId(),
         source: picked,
         naturalWidth: res.naturalWidth,
         naturalHeight: res.naturalHeight,
@@ -825,11 +865,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               background: canvas.background,
             },
             layers: (doc.layers ?? [])
-              .filter(l => l.source)
+              // 关掉的眼睛在成品里必须也是关的：Rust 的合成只按数组逐层画，
+              // 它不知道"可见性"这件事（`DocumentRequest` 里根本没有这个字段）。
+              .filter(l => l.source && l.visible)
               .map(l => ({
                 path: l.source,
                 matrix: composeMatrix(l.box, { width: l.naturalWidth, height: l.naturalHeight }),
                 adjust: l.adjust ?? null,
+                // 百分比原样给 Rust（它按 alpha 缩放落地，见 imaging::opacity）
+                opacity: layerOpacity(l),
+                // 混合模式原样给 Rust（名字与 CSS 同名，见 blendModes.ts）
+                blend: layerBlend(l),
               })),
           },
           targetPath: target,
@@ -854,6 +900,104 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setTimeout(() => setExportState({ status: 'idle' }), 6000);
     }
   }, [doc, canvas, onFileCreated]);
+
+  // ---- 工程文件（.aurora）：保存 / 另存为 / 打开 ----
+  //
+  // 读写全在 Rust（`core/src/editor_project.rs`）：前端只传**语义参数**（定界框 +
+  // 调色）和目标路径，图片字节不进 WebView。打开时 Rust 把图层图解到系统临时目录，
+  // 回传路径，画布照旧走 `convertFileSrc` 显示原文件。
+  const [notice, setNotice] = useState<{
+    status: 'idle' | 'working' | 'done' | 'error';
+    text?: string;
+  }>({ status: 'idle' });
+  const noticeTimerRef = useRef<number | null>(null);
+
+  /** 短暂提示条：5 秒后自动收（保存结果、打开时的警告都走它）。 */
+  const flashNotice = useCallback(
+    (next: { status: 'done' | 'error'; text: string }, ttl = 5000) => {
+      setNotice(next);
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = window.setTimeout(() => setNotice({ status: 'idle' }), ttl);
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
+
+  /** 保存工程（对话框 + IPC 在 `projectIo.ts`，与顶栏入口共用同一套流程）。 */
+  const handleSaveProject = useCallback(
+    async (saveAs: boolean) => {
+      if (!doc || !canvas || notice.status === 'working') return;
+      try {
+        setNotice({ status: 'working' });
+        const outcome = await saveProject(doc, saveAs);
+        if (!outcome) {
+          setNotice({ status: 'idle' }); // 用户取消：不要把"正在保存"留在条上
+          return;
+        }
+        onDocumentChange(outcome.document);
+        const { report } = outcome;
+        const dedup =
+          report.dedupedBytes > 0 ? ` · 去重省 ${formatBytes(report.dedupedBytes)}` : '';
+        flashNotice({
+          status: 'done',
+          text: `已保存 ${formatBytes(report.bytes)} · ${report.layerCount} 图层 / ${report.imageCount} 图${dedup}`,
+        });
+      } catch (e) {
+        flashNotice({ status: 'error', text: String(e) }, 8000);
+      }
+    },
+    [doc, canvas, notice.status, onDocumentChange, flashNotice],
+  );
+
+  const handleOpenProject = useCallback(async () => {
+    try {
+      const outcome = await openProjectDialog();
+      if (!outcome) return;
+      onOpenProject?.(outcome.document);
+      if (outcome.warnings.length) {
+        flashNotice(
+          {
+            status: 'done',
+            text: `已打开 · ${outcome.warnings.length} 处提示：${outcome.warnings.join('；')}`,
+          },
+          9000,
+        );
+      }
+    } catch (e) {
+      // 打开失败不该占用当前文档的任何状态，用提示条报，不写进画布的错误浮层
+      flashNotice({ status: 'error', text: String(e) }, 8000);
+    }
+  }, [onOpenProject, flashNotice]);
+
+  /**
+   * 删除活动图层（Del 键与面板上的删除按钮走同一条路）。
+   *
+   * 面板里的删除按钮在另一棵子树（`RightPanel`），那边自己算好新数组交给 App；
+   * 这里给键盘用，语义与 `layerModel.removeLayer` 完全一致（删完活动层落到下面那层）。
+   */
+  const handleDeleteActiveLayer = useCallback(() => {
+    if (!doc) return;
+    const active = resolveActiveLayer(doc);
+    if (!active) return;
+    const r = removeLayer(doc.layers ?? [], active.id, doc.activeLayerId);
+    if (r.layers === (doc.layers ?? [])) return;
+    onDocumentChange({ ...doc, layers: r.layers, activeLayerId: r.activeLayerId, dirty: true });
+  }, [doc, onDocumentChange]);
+
+  // 快捷键要能读到最新的 handler，而键盘 effect 只依赖 `onToolChange`（重挂监听会让
+  // 拖拽中的按键状态错乱），所以走 ref
+  const saveProjectRef = useRef(handleSaveProject);
+  saveProjectRef.current = handleSaveProject;
+  const openProjectRef = useRef(handleOpenProject);
+  openProjectRef.current = handleOpenProject;
+  const deleteLayerRef = useRef(handleDeleteActiveLayer);
+  deleteLayerRef.current = handleDeleteActiveLayer;
 
   // ---- 滚轮：PS 口径（滚轮平移，带修饰键才缩放）----
   useEffect(() => {
@@ -884,6 +1028,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     const onKeyDown = (e: KeyboardEvent) => {
       if (!isActiveRef.current) return;
       if (isTextEditingTarget(e.target)) return;
+      // 新建文档弹窗开着时，按键只归弹窗（Esc 它自己 capture 处理）——
+      // 不挡的话 V/C 这些快捷键会"穿透"弹窗改掉背后的工具（用户实测踩到）
+      if (showNewDocRef.current) return;
 
       if (e.code === 'Space') {
         spaceHeldRef.current = true;
@@ -905,6 +1052,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
         e.preventDefault();
         redoRef.current();
+        return;
+      }
+      // Ctrl+S / Ctrl+Shift+S / Ctrl+O：存工程与开工程（PS 的键位口径）
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void saveProjectRef.current(e.shiftKey);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        void openProjectRef.current();
         return;
       }
       // Ctrl+T：进入/退出自由变换（PS 行为）
@@ -942,9 +1100,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         }
       }
 
+      /**
+       * Delete = 删除活动图层（PS 行为）。只认 `Delete`，不认 `Backspace`：
+       * 后者在阅读/编辑时太容易误触，而 `isTextEditingTarget` 只能挡住输入框里的按键。
+       *
+       * 裁剪与自由变换状态下不抢这个键——那两个状态里没有"删图层"的语义，
+       * 抢了反而会让人在调整构图时把图层删掉。
+       */
+      if (e.key === 'Delete' && toolRef.current !== 'crop' && toolRef.current !== 'transform') {
+        e.preventDefault();
+        deleteLayerRef.current();
+        return;
+      }
+
       const next = EDITOR_SHORTCUT_KEYS[e.key.toLowerCase()];
       if (next) {
-        onToolChange(next);
+        // 同一个工具的快捷键再按一次 = 取消选择（不选任何工具）
+        onToolChange(toolRef.current === next ? null : next);
         e.preventDefault();
       }
     };
@@ -977,7 +1149,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   }, [onToolChange]);
 
   // ---- 鼠标 ----
-  const effectiveTool: EditorToolId = spaceHeld ? 'hand' : tool;
+  // `null` = 没选工具：光标普通箭头、点画布什么都不发生（滚轮/空格平移仍可用）
+  const effectiveTool: EditorToolId | null = spaceHeld ? 'hand' : tool;
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -993,16 +1166,41 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       return;
     }
 
-    // 移动工具：点画布空白处取消选中（边框随之消失）。
-    // 点在图层上时更深的层（EditOverlay 的拖动层）会先触发 onInteractionStart 把它置为选中，
-    // 这里只处理"没点到"的那一半。
+    // 移动工具：点空白处取消选中；点在**别的图层**上就换成那一层（PS 的"点哪层选哪层"）。
+    //
+    // 只在"没点中活动层"时才做命中测试：点中活动层时 `EditOverlay` 的拖动层已经在拖它了，
+    // 这时候再改选区就会变成"拖的是 A、选中的是 B"。
     if (effectiveTool === 'move') {
       const el = containerRef.current;
       if (el && activeLayer) {
         const rect = el.getBoundingClientRect();
         const cx = (e.clientX - rect.left - transform.x) / transform.scale;
         const cy = (e.clientY - rect.top - transform.y) / transform.scale;
-        if (!pointInBox(activeLayer.box, cx, cy)) setLayerSelected(false);
+        if (!pointInBox(activeLayer.box, cx, cy)) {
+          // 自顶向下取第一个命中的**可见**图层（数组自底向上，所以倒着扫）。
+          // 自动选择 = 无 时不做这一步：点别的层不换选中层，换层只走图层面板。
+          let hit: EditorLayer | undefined;
+          if (autoSelect === 'layer') {
+            for (let i = layers.length - 1; i >= 0; i -= 1) {
+              const l = layers[i];
+              if (l.source && l.visible && pointInBox(l.box, cx, cy)) {
+                hit = l;
+                break;
+              }
+            }
+          }
+          if (hit) {
+            setLayerSelected(true);
+            // 只换选区：不置 dirty、不进撤销栈（签名里没有 activeLayerId）。
+            // 这一下**不开始拖动**——`EditOverlay` 只在按到活动层框内时才捕获拖动，
+            // 所以点别的层就是纯粹的"选中"，要拖它得再按一次（与 PS 一致）。
+            if (doc && hit.id !== activeLayer.id) {
+              onDocumentChange({ ...doc, activeLayerId: hit.id });
+            }
+          } else {
+            setLayerSelected(false);
+          }
+        }
       }
       return;
     }
@@ -1066,7 +1264,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         transformOrigin: '0 0',
         transform: toCssMatrix(m),
         filter: filterOn ? `url(#${layerFilterId(layer.id)})` : undefined,
-        opacity: layer.visible ? 1 : 0,
+        // 预览直接吃 CSS 的 `mix-blend-mode`：名字与 Rust 侧同一套字符串，
+        // 所以这一行同时就是"导出会怎么混"的承诺（画布容器已 isolation，见渲染处注释）
+        mixBlendMode: layerBlend(layer),
+        // 可见性与不透明度合成同一个 CSS 值：隐藏 = 0，其余按百分比。
+        // （隐藏用 opacity 而不是 display:none，是为了保留 <img> 的解码结果，切回来不闪）
+        opacity: layer.visible ? layerOpacity(layer) / 100 : 0,
         /**
          * **必须关掉浏览器的 EXIF 自动转正**。
          *
@@ -1143,6 +1346,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         </button>
         <button
           type="button"
+          onClick={handleOpenProject}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700"
+          title="打开工程 (.aurora) — Ctrl+O"
+        >
+          <FolderOpen size={15} />
+        </button>
+        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
+        <button
+          type="button"
           onClick={handleImportLayer}
           disabled={!canvas}
           className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
@@ -1150,13 +1362,48 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         >
           <ImagePlus size={15} />
         </button>
+        <button
+          type="button"
+          onClick={() => handleSaveProject(false)}
+          disabled={!canvas || notice.status === 'working'}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="保存工程 (Ctrl+S)"
+        >
+          {notice.status === 'working' ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSaveProject(true)}
+          disabled={!canvas || notice.status === 'working'}
+          className="p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+          title="另存为工程 (Ctrl+Shift+S)"
+        >
+          <SaveAll size={15} />
+        </button>
         <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700" />
-        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[34%]">
+        {/* 未保存圆点：标签栏没有这个标记，文档栏得自己说清楚 */}
+        {doc?.dirty && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+            title="有未保存的改动"
+          />
+        )}
+        <span className="text-sm font-medium text-neutral-800 dark:text-neutral-100 truncate max-w-[30%]">
           {docName}
         </span>
         {canvas && (
           <span className="text-[11px] text-neutral-500 dark:text-neutral-400 shrink-0 tabular-nums">
             画布 {canvas.width}×{canvas.height}
+          </span>
+        )}
+        {notice.status === 'done' && (
+          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 truncate max-w-[24rem]" title={notice.text}>
+            {notice.text}
+          </span>
+        )}
+        {notice.status === 'error' && (
+          <span className="text-[11px] text-red-500 shrink-0 max-w-[20rem] truncate" title={notice.text}>
+            {notice.text}
           </span>
         )}
         {exportState.status === 'done' && (
@@ -1213,7 +1460,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       </div>
 
       <div className="flex-1 flex min-h-0">
-        <EditorToolbar activeTool={spaceHeld ? 'hand' : tool} onSelect={onToolChange} disabled={!doc} />
+        <EditorToolbar
+          activeTool={spaceHeld ? 'hand' : tool}
+          onSelect={t => onToolChange(t === tool ? null : t)}
+          disabled={!doc}
+        />
 
         <div className="flex-1 flex flex-col min-w-0">
           <EditorOptionsBar
@@ -1230,6 +1481,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             layerBox={activeLayer?.box}
             snapEnabled={snapEnabled}
             onSnapToggle={setSnapEnabled}
+            autoSelect={autoSelect}
+            onAutoSelectChange={setAutoSelect}
             onLayerBoxChange={patch => {
               if (!doc || !activeLayer) return;
               onDocumentChange({
@@ -1283,19 +1536,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                   boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
                 }}
               >
-                {/* 自底向上渲染；多图层是"白送的"——Rust 合成早就按数组写了 */}
-                {layers.map(l =>
-                  l.source ? (
-                    <img
-                      key={l.id}
-                      src={convertFileSrc(l.source)}
-                      alt={l.name}
-                      draggable={false}
-                      style={buildLayerStyle(l)}
-                      onError={() => setError(`无法打开图层「${l.name}」`)}
+                {/*
+                  图层**混合组**：`isolation: isolate` 把 `mix-blend-mode` 的作用范围
+                  锁在组内——否则最底下那层会跟画布外的棋盘格/应用背景混在一起。
+
+                  白/黑底**画在组内**（它参与混合，与 Rust 先铺背景再叠层的顺序一致）；
+                  透明底的棋盘格留在组外——它只是"这里没东西"的装饰，不该被混。
+                */}
+                <div className="absolute inset-0" style={{ isolation: 'isolate' }}>
+                  {!isTransparentBg && (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        backgroundColor: canvas.background === 'black' ? '#000000' : '#ffffff',
+                      }}
                     />
-                  ) : null,
-                )}
+                  )}
+                  {/* 自底向上渲染；多图层是"白送的"——Rust 合成早就按数组写了 */}
+                  {layers.map(l =>
+                    l.source ? (
+                      <img
+                        key={l.id}
+                        src={convertFileSrc(l.source)}
+                        alt={l.name}
+                        draggable={false}
+                        style={buildLayerStyle(l)}
+                        onError={() => setError(`无法打开图层「${l.name}」`)}
+                      />
+                    ) : null,
+                  )}
+                </div>
               </div>
             )}
 
@@ -1309,7 +1579,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
             {/* 自由变换 / 移动：直接复用参考模式的 EditOverlay。
                 移动工具也能拖图层（v1 里它无事可做，只能伪装成抓手）。 */}
-            {(tool === 'move' || tool === 'transform') && overlayItem && canvas && !error && (
+            {/* 用 effectiveTool 而不是 tool：按住空格时这里是 'hand'，overlay 必须**卸载**——
+                它盖在画布上自己的指针逻辑会拖图层，抢在容器平移之前（用户实测：
+                鼠标在图上按空格，出来的不是抓手而是图层被拖走） */}
+            {(effectiveTool === 'move' || effectiveTool === 'transform') && overlayItem && canvas && !error && (
               <EditOverlay
                 activeItem={overlayItem}
                 selectedItems={[overlayItem]}
@@ -1331,7 +1604,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               />
             )}
 
-            {canvas && !error && tool === 'crop' && (
+            {canvas && !error && effectiveTool === 'crop' && (
               <CropOverlay
                 docWidth={canvas.width}
                 docHeight={canvas.height}

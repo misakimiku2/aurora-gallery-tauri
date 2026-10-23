@@ -158,6 +158,19 @@ export const useNavigation = (
 
   const handleCloseTab = useCallback((e: any, id: string) => {
     e?.stopPropagation && e.stopPropagation();
+    /**
+     * 编辑器里有未保存的改动 → 先问一句。
+     *
+     * `confirm` 必须放在 `setState` **更新器之外**：`main.tsx` 开着 StrictMode，
+     * 更新器会被跑两遍，弹两次确认框（第二遍还会把第一遍的答案当成"取消"）。
+     */
+    const target = state.tabs.find(t => t.id === id);
+    if (target?.viewMode === 'editor' && target.editorDocument?.dirty) {
+      const ok = window.confirm(
+        `「${target.editorDocument.name || '未命名'}」还有未保存的改动，关闭后会丢失。确定关闭吗？`,
+      );
+      if (!ok) return;
+    }
     setState(prev => {
       const newTabs = prev.tabs.filter(t => t.id !== id);
       if (newTabs.length === 0) return prev;
@@ -168,7 +181,7 @@ export const useNavigation = (
       }
       return { ...prev, tabs: newTabs, activeTabId: newActiveId };
     });
-  }, [setState]);
+  }, [setState, state.tabs]);
 
   const handleNewTab = useCallback(() => {
     const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';

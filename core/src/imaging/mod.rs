@@ -43,10 +43,12 @@
 
 mod adjust;
 mod affine;
+mod blend;
 mod crop;
 mod decode;
 mod encode;
 mod exif;
+mod opacity;
 mod resize;
 mod transform;
 
@@ -56,6 +58,7 @@ pub use adjust::{
 pub use affine::{
     composite, warp_affine, warp_into, AffineMatrix, CanvasBackground, CompositeLayer, Sampling,
 };
+pub use blend::{blend_channel, BlendMode};
 pub use crop::{crop_image, CropRect};
 pub use decode::{
     decode_bytes, decode_file, is_excluded_extension, EDITOR_DECODABLE_EXTENSIONS,
@@ -63,6 +66,7 @@ pub use decode::{
 };
 pub use encode::{encode, EncodeFormat};
 pub use exif::read_orientation;
+pub use opacity::apply_opacity;
 pub use resize::resize_to_max_edge;
 pub use transform::{flip_image, rotate_image, Rotation};
 
@@ -478,7 +482,7 @@ mod tests {
         // 图层整体落在画布外 → 画布一个像素都不该被改
         let mut canvas = filled(4, 4, [255, 255, 255, 255]);
         let red = filled(2, 2, [255, 0, 0, 255]);
-        warp_into(&mut canvas, &red, AffineMatrix::translation(10.0, 10.0), Sampling::Bilinear)
+        warp_into(&mut canvas, &red, AffineMatrix::translation(10.0, 10.0), Sampling::Bilinear, BlendMode::Normal)
             .unwrap();
         assert!(canvas.pixels().all(|p| *p == image::Rgba([255, 255, 255, 255])));
     }
@@ -509,6 +513,63 @@ mod tests {
         assert!(clear.pixels().all(|p| p.0[3] == 0));
     }
 
+    /// 混合模式在**合成这一层**的验证：通道公式已经单独测过，这里盯的是
+    /// "有没有 backdrop" 这个分支——下方透明时任何模式都必须退化成直接放源。
+    #[test]
+    fn blend_modes_apply_to_the_backdrop() {
+        let grey = filled(1, 1, [128, 128, 128, 255]);
+        let black = filled(1, 1, [0, 0, 0, 255]);
+
+        let out = composite(
+            1,
+            1,
+            CanvasBackground::Transparent,
+            &[
+                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal },
+                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Multiply },
+            ],
+        )
+        .unwrap();
+        // 128 × 0 = 0：正片叠底把上方那层压到底板上
+        assert_eq!(*out.get_pixel(0, 0), image::Rgba([0, 0, 0, 255]));
+
+        // 换成 screen：0.502 + 0 - 0 = 0.502 → 128（底板自己）
+        let out = composite(
+            1,
+            1,
+            CanvasBackground::Transparent,
+            &[
+                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal },
+                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Screen },
+            ],
+        )
+        .unwrap();
+        assert_eq!(*out.get_pixel(0, 0), image::Rgba([128, 128, 128, 255]));
+    }
+
+    #[test]
+    fn blend_degenerates_to_source_when_backdrop_is_transparent() {
+        // αb = 0 时 W3C 那组公式恒等于"直接把源放上去"。
+        // 这条是防止有人在预乘空间里直接混，把半透明层压成 0。
+        let red = filled(1, 1, [255, 0, 0, 255]);
+        for mode in [
+            BlendMode::Multiply,
+            BlendMode::Screen,
+            BlendMode::ColorBurn,
+            BlendMode::SoftLight,
+            BlendMode::Difference,
+        ] {
+            let out = composite(
+                1,
+                1,
+                CanvasBackground::Transparent,
+                &[CompositeLayer { src: &red, matrix: AffineMatrix::IDENTITY, blend: mode }],
+            )
+            .unwrap();
+            assert_eq!(*out.get_pixel(0, 0), image::Rgba([255, 0, 0, 255]), "{mode:?}");
+        }
+    }
+
     #[test]
     fn composite_clips_layer_at_canvas_edge() {
         let red = filled(2, 2, [255, 0, 0, 255]);
@@ -516,7 +577,7 @@ mod tests {
             4,
             4,
             CanvasBackground::White,
-            &[CompositeLayer { src: &red, matrix: AffineMatrix::translation(3.0, 3.0) }],
+            &[CompositeLayer { src: &red, matrix: AffineMatrix::translation(3.0, 3.0), blend: BlendMode::Normal }],
         )
         .unwrap();
 
@@ -538,7 +599,7 @@ mod tests {
             1,
             1,
             CanvasBackground::White,
-            &[CompositeLayer { src: &half_red, matrix: AffineMatrix::IDENTITY }],
+            &[CompositeLayer { src: &half_red, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal }],
         )
         .unwrap();
 

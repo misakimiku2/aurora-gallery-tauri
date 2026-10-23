@@ -6,10 +6,11 @@
  */
 import React from 'react';
 import type { EditorToolId, LayerBox } from '../../types';
-import { getEditorTool } from './editorTools';
+import { getEditorTool, AutoSelectMode } from './editorTools';
 
 interface EditorOptionsBarProps {
-  tool: EditorToolId;
+  /** `null` = 没有选中工具：这条横栏只留提示，不给任何工具控件 */
+  tool: EditorToolId | null;
   scale: number;
   onZoomTo: (scale: number) => void;
   onFit: () => void;
@@ -31,6 +32,13 @@ interface EditorOptionsBarProps {
   /** 吸附开关（拖动/缩放时贴画布边与中心） */
   snapEnabled?: boolean;
   onSnapToggle?: (enabled: boolean) => void;
+  /**
+   * 移动工具的「自动选择」（PS 选项条上的下拉）。
+   * `layer` = 点谁选谁；`none` = 点画布不改选中层，换层只走图层面板。
+   * 缺省按 `layer`——这是编辑器已经硬编码了很久的行为，UI 只是把它接上。
+   */
+  autoSelect?: AutoSelectMode;
+  onAutoSelectChange?: (mode: AutoSelectMode) => void;
 }
 
 /** 裁剪比例预设（UI 设计 §7.1 的平台封面清单）。`'doc'` = 跟随当前文档比例。 */
@@ -94,20 +102,36 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   onLayerBoxChange,
   snapEnabled = true,
   onSnapToggle,
+  autoSelect = 'layer',
+  onAutoSelectChange,
 }) => {
   const def = getEditorTool(tool);
 
   return (
     <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 select-none overflow-x-auto">
       <span className="text-[11px] font-medium text-neutral-800 dark:text-neutral-100 shrink-0">
-        {def.label}
+        {tool === null ? '未选择工具' : def.label}
       </span>
       <span className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 shrink-0" />
+
+      {tool === null && (
+        <span className="text-[11px] text-neutral-400 dark:text-neutral-500">
+          点左侧工具箱或按快捷键选择工具；滚轮缩放 / 空格平移始终可用
+        </span>
+      )}
 
       {tool === 'move' && (
         <>
           <span className={label}>自动选择</span>
-          <span className={chip}>无</span>
+          <select
+            value={autoSelect}
+            onChange={e => onAutoSelectChange?.(e.target.value as AutoSelectMode)}
+            title="点画布时是否自动切到被点中的那一层"
+            className="h-6 px-1 rounded text-[11px] border border-neutral-200 dark:border-neutral-600 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 outline-none cursor-pointer"
+          >
+            <option value="none">无</option>
+            <option value="layer">图层</option>
+          </select>
           <SnapToggle enabled={snapEnabled} onChange={onSnapToggle} />
           <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500">
             拖动图层移动位置 · Ctrl+T 进入自由变换
@@ -266,7 +290,7 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
         </>
       )}
 
-      {!['move', 'crop', 'hand', 'zoom', 'transform'].includes(tool) && (
+      {tool !== null && !['move', 'crop', 'hand', 'zoom', 'transform'].includes(tool) && (
         <span className="text-[11px] text-amber-600 dark:text-amber-400">
           「{def.label}」尚未接入（快捷键 {def.shortcut}）—— 先摆在这儿占位
         </span>

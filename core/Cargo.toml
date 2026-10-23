@@ -27,6 +27,9 @@ color-thief = "0.2.2"
 # 解码与 **VP8L 无损编码**（见 image/src/io/free_functions.rs 的 WebP 分支），
 # 所以文档存储的 WebP lossless 不需要额外引入 `webp` crate。
 image = { version = "0.24", features = ["jpeg", "png", "gif", "webp"] }
+# `.aurora` 编辑文档容器（§4.4 写侧定死在 Rust）。与 src-tauri 同一份声明：
+# 只开 deflate（纯 Rust 后端），不引 bzip2/zstd 这些要编 C 的可选压缩器。
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # 编辑器像素通道（Phase 0）。与 src-tauri 保持同一大版本，避免两端缩放算法/精度分叉。
 fast_image_resize = "3.0"
 palette = { version = "0.7", features = ["std"] }

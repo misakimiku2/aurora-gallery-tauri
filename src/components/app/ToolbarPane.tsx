@@ -29,6 +29,8 @@ interface ToolbarPaneProps {
   handleNavigateUp: () => void;
   handleTagClick: (tag: string, e: React.MouseEvent) => void;
   handleRefresh: () => void;
+  /** 打开 `.aurora` 工程（顶栏入口，转发给 TopBar） */
+  handleOpenProjectFile?: () => void;
   handlePerformSearch: (query: string) => void;
   setToolbarQuery: (q: string) => void;
   setPersonSearchQuery: (q: string) => void;
@@ -86,6 +88,7 @@ export const ToolbarPane = ({
   handleNavigateUp,
   handleTagClick,
   handleRefresh,
+  handleOpenProjectFile,
   handlePerformSearch,
   setToolbarQuery,
   setPersonSearchQuery,
@@ -174,6 +177,7 @@ export const ToolbarPane = ({
           onSetTagSearchQuery={setTagSearchQuery}
           onTagClick={handleTagClick}
           onRefresh={handleRefresh}
+          onOpenProjectFile={handleOpenProjectFile}
           onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
           onPerformSearch={handlePerformSearch}
           onSetToolbarQuery={setToolbarQuery}

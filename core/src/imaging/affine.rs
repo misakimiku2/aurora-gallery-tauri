@@ -28,6 +28,7 @@
 
 use image::RgbaImage;
 
+use super::blend::{blend_over, to_premultiplied, BlendMode};
 use super::ImageError;
 
 /// 采样落点判定为"整数"的容差。
@@ -115,6 +116,8 @@ pub enum CanvasBackground {
 pub struct CompositeLayer<'a> {
     pub src: &'a RgbaImage,
     pub matrix: AffineMatrix,
+    /// 混合模式。`Normal` 即普通的 src-over（默认）。
+    pub blend: BlendMode,
 }
 
 /// 仿射重采样成一张新图（尺寸由调用方给定，落在外面的部分丢弃）。
@@ -129,7 +132,8 @@ pub fn warp_affine(
         return Err(ImageError::InvalidDimensions(dst_w, dst_h));
     }
     let mut dst = RgbaImage::new(dst_w, dst_h);
-    warp_into(&mut dst, src, matrix, sampling)?;
+    // 单层仿射没有"下方"可混，恒为 Normal
+    warp_into(&mut dst, src, matrix, sampling, BlendMode::Normal)?;
     Ok(dst)
 }
 
@@ -142,6 +146,7 @@ pub fn warp_into(
     src: &RgbaImage,
     matrix: AffineMatrix,
     sampling: Sampling,
+    blend: BlendMode,
 ) -> Result<(), ImageError> {
     if src.width() == 0 || src.height() == 0 {
         return Err(ImageError::InvalidDimensions(src.width(), src.height()));
@@ -181,7 +186,7 @@ pub fn warp_into(
             };
             let Some(sample) = sample else { continue };
 
-            blend_over(dst, dx as u32, dy as u32, sample);
+            blend_over(dst, dx as u32, dy as u32, sample, blend);
         }
     }
     Ok(())
@@ -237,43 +242,10 @@ fn sample_bilinear(src: &RgbaImage, u: f64, v: f64) -> Option<[f32; 4]> {
     Some([acc[0] / wsum, acc[1] / wsum, acc[2] / wsum, acc[3] / wsum])
 }
 
-/// 直通 alpha → 预乘 alpha（各通道 × alpha）。
-fn to_premultiplied(p: [u8; 4]) -> [f32; 4] {
-    let a = p[3] as f32 / 255.0;
-    [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, a]
-}
-
-/// src-over 合成：**在预乘空间做**，避免半透明边缘出现暗边。
-fn blend_over(dst: &mut RgbaImage, x: u32, y: u32, src_premul: [f32; 4]) {
-    let d = dst.get_pixel(x, y).0;
-    let dst_premul = to_premultiplied(d);
-    let a_s = src_premul[3];
-    let inv = 1.0 - a_s;
-
-    let out_a = a_s + dst_premul[3] * inv;
-    let mut out = [0f32; 4];
-    for i in 0..3 {
-        out[i] = src_premul[i] + dst_premul[i] * inv;
-    }
-    out[3] = out_a;
-
-    // 预乘 → 直通。
-    //
-    // ⚠️ 量纲别混：前三个通道是**预乘后的 0..255**，alpha 是 **0..1**（`to_premultiplied`
-    // 的约定）。除回直通色之后，alpha 必须自己 ×255，否则写出去的 alpha 恒为 1。
-    let px = if out_a > 1e-6 {
-        [out[0] / out_a, out[1] / out_a, out[2] / out_a, out_a * 255.0]
-    } else {
-        [0.0, 0.0, 0.0, 0.0]
-    };
-    let to_u8 = |v: f32| v.round().clamp(0.0, 255.0) as u8;
-    dst.put_pixel(x, y, image::Rgba([to_u8(px[0]), to_u8(px[1]), to_u8(px[2]), to_u8(px[3])]));
-}
-
 /// 建画布并自底向上合成各层。
 ///
-/// 多层已按数组支持（前端可导入多张），当前固定 `Normal` 混合、不透明度 1，循环体很薄；
-/// Phase 2 加混合模式与不透明度时只改循环体，调用方不用动。
+/// 多层已按数组支持（前端可导入多张），每层带自己的混合模式（默认 `Normal`）；
+/// 不透明度由调用方在合成前按 alpha 缩放（`imaging::opacity`）落地，不在这里做。
 pub fn composite(
     width: u32,
     height: u32,
@@ -295,7 +267,7 @@ pub fn composite(
     }
 
     for layer in layers {
-        warp_into(&mut canvas, layer.src, layer.matrix, Sampling::Bilinear)?;
+        warp_into(&mut canvas, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
     }
     Ok(canvas)
 }

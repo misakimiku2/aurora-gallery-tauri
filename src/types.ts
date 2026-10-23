@@ -568,6 +568,21 @@ export interface EditorLayer {
   /** 调色：v1 挂在文档上，v2 下沉到图层（设计稿 §4.1 本就说它是图层属性） */
   adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
   visible: boolean;
+  /**
+   * 混合模式，缺省 `'normal'`（普通 src-over）。
+   *
+   * 取值是 **CSS `mix-blend-mode` 同名的英文串**（`multiply` / `color-dodge`…）：
+   * 预览直接交给 CSS、导出原样交给 Rust，两端不再各翻译一次。
+   * 未知值一律落 `normal`（`normalizeBlendMode`）。
+   */
+  blend?: string;
+  /**
+   * 不透明度**百分比**（0–100，缺省 100 = 完全不透明）。
+   *
+   * 用百分比而不是 0–1 的浮点：与 PS 的滑杆同口径，`.aurora` 里也是人能读的整数。
+   * 读的时候一律走 `layerOpacity()` / Rust 的 `unwrap_or(100)`，不要各处自己 `?? 100`。
+   */
+  opacity?: number;
   name: string;
 }
 
@@ -681,8 +696,18 @@ export interface TabState {
   sessionName?: string;
   /** 图片编辑文档句柄；仅 `viewMode === 'editor'` 时有值，与 `isCompareMode` 互斥 */
   editorDocument?: EditorDocument;
-  /** 图片编辑：当前选中的工具。未设 = `move`（PS 默认工具） */
-  editorTool?: EditorToolId;
+  /**
+   * 图片编辑：当前选中的工具。未设 = `move`（PS 默认工具）；**`null` = 不选任何工具**。
+   *
+   * 为什么允许"没有工具"：同一个快捷键再按一次就取消（用户 2026-10-24 的意见）——
+   * 连续按 V 不该把人锁死在移动工具上。没有工具时画布只响应滚轮/空格平移，
+   * 点图层什么都不发生（光标是普通箭头）。
+   *
+   * **进入编辑器一律不激活工具**（用户 2026-10-24 再确认）：新建空白文档、
+   * 从画廊打开图片、打开 `.aurora` 工程三个入口都把这里置 `null`，
+   * 不像 PS 那样默认落在移动工具上。
+   */
+  editorTool?: EditorToolId | null;
   scrollToItemId?: string;
   history: {
     stack: HistoryItem[];

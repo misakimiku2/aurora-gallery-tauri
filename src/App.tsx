@@ -9,7 +9,7 @@ import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, getVideoCover, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection, SettingsCategory } from './types';
+import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection, SettingsCategory, EditorDocument } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
 import { generateId } from './utils/pathUtils';
@@ -21,6 +21,7 @@ import { useAIAnalysis } from './hooks/useAIAnalysis';
 import { useContextMenu } from './hooks/useContextMenu';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useToasts } from './hooks/useToasts';
+import { openProjectDialog } from './components/editor/projectIo';
 import { useNavigation } from './hooks/useNavigation';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { useAppInit } from './hooks/useAppInit';
@@ -368,8 +369,8 @@ export const App: React.FC = () => {
         folderId: current.folderId,
         viewMode: 'editor',
         editorDocument: { path: target.path, name: target.name, dirty: false },
-        // PS 默认工具；新文档一律复位，避免继承上次的工具
-        editorTool: 'move',
+        // 进入编辑器**不选任何工具**（用户 2026-10-24 的意见）：想要哪个工具自己按一下
+        editorTool: null,
         history: {
           stack: [{
             folderId: current.folderId,
@@ -412,7 +413,7 @@ export const App: React.FC = () => {
             canvas,
             layers: [],
           },
-          editorTool: 'move',
+          editorTool: null,
           history: {
             stack: [{
               folderId: current.folderId,
@@ -431,6 +432,62 @@ export const App: React.FC = () => {
     },
     [],
   );
+
+  /**
+   * 打开 `.aurora` 工程 = **再开一个编辑器标签页**，与「新建空白文档」同一套心智。
+   *
+   * 文档内容（画布 + 图层 + 路径）已经由 Rust 读好了，这里只负责给它一个 Tab：
+   * 编辑器自己的 `needsInit` 判据是"有 canvas 且 layers 非空"，所以这个 Tab
+   * 一挂上就是就绪状态，不会再去问一遍图层代理。
+   *
+   * 同样不替换当前标签：打开工程时手上那个文档可能还没保存。
+   */
+  const openProjectInEditor = useCallback((document: EditorDocument) => {
+    setState(prev => {
+      const current = prev.tabs.find(t => t.id === prev.activeTabId) ?? DUMMY_TAB;
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).slice(2, 11),
+        folderId: current.folderId,
+        viewMode: 'editor',
+        editorDocument: document,
+        editorTool: null,
+        history: {
+          stack: [{
+            folderId: current.folderId,
+            viewingId: null,
+            viewMode: 'browser',
+            searchQuery: '',
+            searchScope: 'all',
+            activeTags: [],
+            activePersonId: null,
+          }],
+          currentIndex: 0,
+        },
+      };
+      return { ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id };
+    });
+  }, []);
+
+  /**
+   * 顶栏的「打开工程」：**应用的第二个工程入口**。
+   *
+   * 编辑器文档栏里那个按钮只有"已经在编辑器里"时才够得着——新启动的应用没有任何
+   * 编辑器标签，先进一张图才能打开工程，等于没有入口。所以这里复用同一套流程
+   * （`projectIo.openProjectDialog`：对话框 + Rust 读取 + 形状映射）。
+   */
+  const handleOpenProjectFile = useCallback(async () => {
+    try {
+      const outcome = await openProjectDialog();
+      if (!outcome) return;
+      openProjectInEditor(outcome.document);
+      if (outcome.warnings.length) {
+        showToast(`已打开工程 · ${outcome.warnings.length} 处提示`);
+      }
+    } catch (e) {
+      showToast(`打开工程失败：${String(e)}`, 4000);
+    }
+  }, [openProjectInEditor, showToast]);
 
   const { tasks } = state;
 
@@ -2836,6 +2893,7 @@ export const App: React.FC = () => {
               await handleRefreshAnySource();
             }}
             onEditorNewDocument={openBlankDocument}
+            onEditorOpenProject={openProjectInEditor}
             setState={setState}
             enterFolder={enterFolder}
             handleViewerSearch={handleViewerSearch}
@@ -2877,6 +2935,7 @@ export const App: React.FC = () => {
               handleNavigateUp={handleNavigateUp}
               handleTagClick={handleTagClick}
               handleRefresh={handleRefreshAnySource}
+              handleOpenProjectFile={handleOpenProjectFile}
               handlePerformSearch={handlePerformSearch}
               setToolbarQuery={setToolbarQuery}
               setPersonSearchQuery={setPersonSearchQuery}
@@ -3021,6 +3080,24 @@ export const App: React.FC = () => {
                   layers: doc.layers.map(l => (l.id === targetId ? { ...l, adjust } : l)),
                   dirty: true,
                 },
+              };
+            })
+          }
+          // 选中图层只是换选区：**不置 dirty**（选中不是对文档的修改，也不该进撤销栈）
+          onEditorSelectLayer={layerId =>
+            updateTabById(activeTab.id, prev => {
+              const doc = prev.editorDocument;
+              if (!doc) return {};
+              return { editorDocument: { ...doc, activeLayerId: layerId } };
+            })
+          }
+          // 图层结构变化（可见性 / 顺序 / 复制 / 删除 / 改名）：由面板算好整个数组交上来
+          onEditorLayersChange={({ layers, activeLayerId }) =>
+            updateTabById(activeTab.id, prev => {
+              const doc = prev.editorDocument;
+              if (!doc) return {};
+              return {
+                editorDocument: { ...doc, layers, activeLayerId, dirty: true },
               };
             })
           }

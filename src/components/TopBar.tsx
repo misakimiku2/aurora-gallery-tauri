@@ -8,7 +8,7 @@ import {
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate,
   ArrowDownUp, Calendar, PanelRight, X, Tag,
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload, MoreVertical, Film
+  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload, MoreVertical, Film, FolderOpen
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -37,6 +37,8 @@ interface TopBarProps {
   onToggleColorPicker?: () => void;
   isColorPickerVisible?: boolean;
   onToggleSettings: () => void;
+  /** 打开 `.aurora` 编辑工程（顶栏入口：新启动的应用也能直接开工程，不必先进一张图） */
+  onOpenProjectFile?: () => void;
   onUpdateDateFilter: (filter: DateFilter) => void;
   /** U3 媒体类型筛选（2026-10-16） */
   onMediaTypeFilterChange: (filter: MediaTypeFilter) => void;
@@ -539,6 +541,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleColorPicker,
   isColorPickerVisible,
   onToggleSettings,
+  onOpenProjectFile,
   onUpdateDateFilter,
   onMediaTypeFilterChange,
   groupBy,
@@ -851,6 +854,15 @@ export const TopBar: React.FC<TopBarProps> = ({
             <button onClick={() => onRefresh()} className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-gray-600 dark:text-gray-300" title={t('context.refresh')}>
               <RefreshCw size={16} />
             </button>
+            {onOpenProjectFile && (
+              <button
+                onClick={onOpenProjectFile}
+                className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-gray-600 dark:text-gray-300"
+                title="打开编辑工程 (.aurora)"
+              >
+                <FolderOpen size={17} />
+              </button>
+            )}
           </>
         )}
         {isAndroid && !isCompactMode && (

@@ -2013,6 +2013,9 @@ pub fn run() {
         editor_commands::editor_load_layer_proxy,
         editor_commands::editor_render_document,
         editor_commands::editor_export_document,
+        // 工程文件（.aurora）：存与开成对存在，缺一个都等于没有
+        editor_commands::editor_save_project,
+        editor_commands::editor_open_project,
         generate_drag_preview,
         system_commands::read_file_as_base64,
         file_operations::ensure_directory,

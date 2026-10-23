@@ -3,7 +3,7 @@ import { ImageViewer } from '../ImageViewer';
 import { ImageComparer } from '../ImageComparer';
 import { ImageEditor } from '../editor/ImageEditor';
 import { isAndroidSync } from '../../utils/androidPlatform';
-import { AppState, FileNode, FileType, TabState } from '../../types';
+import { AppState, EditorDocument, FileNode, FileType, TabState } from '../../types';
 
 interface ViewerPaneProps {
   activeTab: TabState;
@@ -25,6 +25,8 @@ interface ViewerPaneProps {
   onEditorFileCreated?: (targetPath: string) => void | Promise<void>;
   /** 新建空白文档：由 App 开一个新标签页（一个 Tab 一个文档） */
   onEditorNewDocument?: (canvas: { width: number; height: number; background: 'transparent' | 'white' | 'black' }) => void;
+  /** 打开 `.aurora` 工程：同样由 App 开一个新标签页（文档内容由 Rust 读好） */
+  onEditorOpenProject?: (doc: EditorDocument) => void;
   /** 编辑器文档栏两端的面板开关（复用应用 TopBar 的同一套） */
   onToggleSidebar: () => void;
   isSidebarVisible: boolean;
@@ -64,6 +66,7 @@ export const ViewerPane = ({
   onOpenEditor,
   onEditorFileCreated,
   onEditorNewDocument,
+  onEditorOpenProject,
   onToggleSidebar,
   isSidebarVisible,
   onToggleMetadata,
@@ -136,7 +139,7 @@ export const ViewerPane = ({
             // v2：整份文档交给编辑器，不再"逐个字段喂"——
             // 那种写法每加一个字段就要补一处，已经漏过两次（面板旧尺寸、调色没反应）。
             document={tab.editorDocument}
-            tool={tab.editorTool ?? 'move'}
+            tool={tab.editorTool ?? null}
             onToolChange={t => updateTabById(tab.id, { editorTool: t })}
             isActive={tab.id === state.activeTabId}
             onToggleSidebar={onToggleSidebar}
@@ -145,6 +148,7 @@ export const ViewerPane = ({
             isMetadataVisible={isMetadataVisible}
             onFileCreated={onEditorFileCreated}
             onNewDocument={onEditorNewDocument}
+            onOpenProject={onEditorOpenProject}
             onDocumentChange={next =>
               updateTabById(tab.id, { editorDocument: next })
             }

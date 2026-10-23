@@ -35,7 +35,15 @@ export interface EditorPreviewMeta {
   dataUrl: string;
 }
 
-const CACHE_LIMIT = 6;
+/**
+ * 缓存条目上限。
+ *
+ * 2026-10-24 从 6 提到 16：图层面板上线后**每一层**都要一张缩略图（原来只有活动层），
+ * 上限 6 会让一个七层文档在滚动时反复淘汰、反复解码。16 档按每张 2048 JPEG 的
+ * data URL ≈ 0.5–1MB 估算，最坏约 16MB 字符串——相对"每次切层都重新解码一张 24MP
+ * 原图"（瞬时 96MB RGBA）划算得多。
+ */
+const CACHE_LIMIT = 16;
 const cache = new Map<string, EditorPreviewMeta>();
 const listeners = new Set<() => void>();
 

@@ -1,11 +1,10 @@
-import React, { useMemo, useSyncExternalStore } from 'react';
+import React, { useMemo } from 'react';
 import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
 import { EditorPanel } from '../editor/EditorPanel';
-import { peekPreview, subscribePreview } from '../editor/editorPreviewCache';
-import { buildLayerPreviewKey, resolveActiveLayer } from '../editor/layerModel';
+import { resolveActiveLayer } from '../editor/layerModel';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
-import { AppState, FileNode, Person, TabState, Topic } from '../../types';
+import { AppState, EditorLayer, FileNode, Person, TabState, Topic } from '../../types';
 
 interface RightPanelProps {
   state: AppState;
@@ -31,6 +30,10 @@ interface RightPanelProps {
     saturation: number;
     temperature: number;
   }) => void;
+  /** 图层面板：选中某一层（只改选区，不置 dirty） */
+  onEditorSelectLayer?: (layerId: string) => void;
+  /** 图层面板：图层数组/活动层发生变化（可见性、顺序、复制、删除、改名） */
+  onEditorLayersChange?: (next: { layers: EditorLayer[]; activeLayerId?: string }) => void;
 }
 
 // 右侧面板：元数据面板（桌面）+ 颜色选择器面板（安卓）
@@ -52,6 +55,8 @@ export const RightPanel = ({
   handlePerformSearch,
   toggleColorPicker,
   onEditorAdjustChange,
+  onEditorSelectLayer,
+  onEditorLayersChange,
 }: RightPanelProps) => {
   // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
   // 缩略图从模块级缓存订阅——它和编辑器画布不在同一棵子树里，这样不用把 data URL
@@ -61,10 +66,6 @@ export const RightPanel = ({
   // （含变换的话拖一下就要重跑 Rust）。画布尺寸直接读文档，不再从代理图反推。
   const editorDoc = activeTab.editorDocument;
   const editorLayer = useMemo(() => (editorDoc ? resolveActiveLayer(editorDoc) : undefined), [editorDoc]);
-  const editorMeta = useSyncExternalStore(
-    subscribePreview,
-    () => (editorLayer ? peekPreview(buildLayerPreviewKey(editorLayer) ?? '') : undefined),
-  );
 
   return (
     <>
@@ -77,12 +78,14 @@ export const RightPanel = ({
           {activeTab.viewMode === 'editor' ? (
             <EditorPanel
               tabId={activeTab.id}
-              previewDataUrl={editorMeta?.dataUrl}
               documentName={activeTab.editorDocument?.name || '未命名'}
               width={editorDoc?.canvas?.width ?? 0}
               height={editorDoc?.canvas?.height ?? 0}
-              layerCount={editorDoc?.layers?.length ?? 0}
-              layerName={editorLayer?.name}
+              background={editorDoc?.canvas?.background}
+              layers={editorDoc?.layers}
+              activeLayerId={editorDoc?.activeLayerId}
+              onSelectLayer={onEditorSelectLayer}
+              onLayersChange={onEditorLayersChange}
               adjust={editorLayer?.adjust}
               onAdjustChange={next => onEditorAdjustChange?.(next)}
             />

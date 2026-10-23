@@ -13,6 +13,7 @@ pub mod color_db;
 pub mod color_ffi;
 pub mod color_search;
 pub mod db;
+pub mod editor_project;
 pub mod file_types;
 pub mod ffi;
 pub mod ffi_container;

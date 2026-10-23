@@ -16,6 +16,7 @@
  * 这是架构事实第 7 条（"字段逐处列举必漏"，已栽两次）的直接对策。
  */
 import type { EditorCanvas, EditorDocument, EditorLayer, LayerBox } from '../../types';
+import { BlendMode, normalizeBlendMode } from './blendModes';
 
 /**
  * 文档模型版本。与 `EditorDocument.version` 共用同一个常量，避免两处各写一个数字。
@@ -228,8 +229,12 @@ export function createImageLayer(opts: {
  * 图层状态签名——**撤销栈的"这一步和上一步是否不同"的唯一判据**。
  * 要不要重跑 Rust 由 `buildLayerPreviewKey` 决定（那个键里既没有变换也没有 adjust）。
  *
- * 只含**会改变画面**的字段。`id` 与 `name` 不在里面：改名字不该产生一步撤销，
+ * 含**会改变画面或图层栈结构的字段**。`name` 不在里面：改名字不该产生一步撤销，
  * 也不该触发重新解码。
+ *
+ * **`id` 必须在里面**：两张同源同尺寸的图层（「复制图层」出来的）在其余字段上完全一样，
+ * 只有 id 能区分。没有它，"把副本挪到另一层上下"会被判成"没变"，这一步就进不了撤销栈
+ * （2026-10-24 加图层面板时被单测抓到）。
  *
  * ⚠️ 新增任何影响画面的字段，必须同步加到这里——`layerModel.spec.ts` 里有一条
  * "改任意一个字段签名必变"的单测盯着，漏了就是红的。
@@ -239,10 +244,13 @@ export function layerStateSignature(layer: EditorLayer): string {
   const a = layer.adjust;
   const adj = a ? `${a.brightness},${a.contrast},${a.saturation},${a.temperature}` : 'none';
   return [
+    layer.id,
     layer.source ?? 'none',
     layer.naturalWidth,
     layer.naturalHeight,
     layer.visible ? 1 : 0,
+    layerOpacity(layer),
+    layerBlend(layer),
     b.x,
     b.y,
     b.w,
@@ -257,7 +265,11 @@ export function layerStateSignature(layer: EditorLayer): string {
 }
 
 /**
- * 图层**几何**签名：与 `layerStateSignature` 的差别是**不含 adjust**。
+ * 图层**几何**签名：与 `layerStateSignature` 的差别是**不含 adjust 与 opacity**。
+ *
+ * 同样含 `id`（理由见上）。不含 adjust / opacity 是为了把"只拖滑杆"（调色、不透明度）
+ * 识别出来合并成一步撤销——否则拖一次滑杆能灌进去上百条历史。
+ * 注意这两个字段**仍在** `layerStateSignature` 里：画面确实变了，必须能撤销。
  *
  * 用途：判断"用户是不是只是在拖调色滑杆"——是的话，连续的变化要合并成一步撤销，
  * 否则拖一次滑杆能灌进去上百条历史，Ctrl+Z 要按几百下才回得去（沿用 v1 的 700ms 合并）。
@@ -265,6 +277,7 @@ export function layerStateSignature(layer: EditorLayer): string {
 export function layerGeometrySignature(layer: EditorLayer): string {
   const b = layer.box;
   return [
+    layer.id,
     layer.source ?? 'none',
     layer.naturalWidth,
     layer.naturalHeight,
@@ -307,6 +320,184 @@ export function documentGeometrySignature(doc: EditorDocument): string {
 export function buildLayerPreviewKey(layer: EditorLayer): string | null {
   if (!layer.source) return null;
   return `${layer.source}#${layer.naturalWidth}x${layer.naturalHeight}`;
+}
+
+// ============================================================================
+// 图层列表操作（图层面板用）——全部是纯函数，不改入参
+//
+// **数组顺序恒定是「自底向上」**（下标 0 最靠下，最后一个是顶层的绘制顺序），
+// 而面板显示必须反过来（第一行 = 最上层）。这一层反转只在 `layersTopDown` 里做一次，
+// 别的地方都不许再自行倒序——两处各倒一次就是"上移变成了下移"这类怪 bug 的来源。
+// ============================================================================
+
+/** 新建图层 id。**带随机后缀**：连点两次「复制」可能落在同一毫秒，纯时间戳会撞 id，
+ *  React key 撞了图层的选中/渲染就会互相串。 */
+export function createLayerId(): string {
+  return `layer-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function indexOfLayer(layers: EditorLayer[], id: string): number {
+  return layers.findIndex(l => l.id === id);
+}
+
+/**
+ * 读混合模式（缺省 / 未知值都落 `normal`）。
+ *
+ * 与不透明度同理：**别处不要自己写 `layer.blend ?? 'normal'`**，Rust 侧的
+ * `BlendMode::parse` 也是"认不出来就 Normal"，两边口径必须一致。
+ */
+export function layerBlend(layer: EditorLayer): BlendMode {
+  return normalizeBlendMode(layer.blend);
+}
+
+/**
+ * 设混合模式。值没变时返回原数组引用；回到 `normal` 时**删字段**（文档保持干净，
+ * 与 `setLayerOpacity` 回到 100 时删字段同一个理由）。
+ */
+export function setLayerBlend(
+  layers: EditorLayer[],
+  id: string,
+  blend: BlendMode,
+): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return layers;
+  const next = normalizeBlendMode(blend);
+  if (layerBlend(layers[i]) === next) return layers;
+  const copy = layers.slice();
+  const target: EditorLayer = { ...copy[i] };
+  if (next === 'normal') delete target.blend;
+  else target.blend = next;
+  copy[i] = target;
+  return copy;
+}
+
+/**
+ * 读不透明度并钳到 0..100（缺省 / 脏数据都落 100）。
+ *
+ * 统一走这里，别处不要自己写 `layer.opacity ?? 100`：Rust 侧对应 `unwrap_or(100).min(100)`，
+ * 两边口径必须一致，否则 `.aurora` 往返一次数值就漂了。
+ */
+export function layerOpacity(layer: EditorLayer): number {
+  const raw = layer.opacity;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return 100;
+  return Math.min(100, Math.max(0, Math.round(raw)));
+}
+
+/**
+ * 设不透明度（0..=100）。值没变时返回原数组引用——调用方据此不置 dirty。
+ *
+ * 回到 100 时**删掉字段**而不是写 100：文档要保持干净（和 `normalizeAdjust` 把全 0
+ * 的 adjust 折成 undefined 是同一个理由），`.aurora` 里也就不会出现满屏 `opacity: 100`。
+ */
+export function setLayerOpacity(layers: EditorLayer[], id: string, opacity: number): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return layers;
+  const next = Math.min(100, Math.max(0, Math.round(opacity)));
+  if (layerOpacity(layers[i]) === next) return layers;
+  const copy = layers.slice();
+  const target: EditorLayer = { ...copy[i] };
+  if (next === 100) delete target.opacity;
+  else target.opacity = next;
+  copy[i] = target;
+  return copy;
+}
+
+/** 面板显示顺序：自顶向下（数组本身是自底向上）。 */
+export function layersTopDown(layers: EditorLayer[]): EditorLayer[] {
+  return layers.slice().reverse();
+}
+
+/**
+ * 切换某图层可见性。
+ *
+ * 「不可见」只存在于文档里：画布用 `opacity: 0` 隐藏，**导出必须跳过**（否则用户
+ * 关掉的眼睛在成品里又睁开了）——见 `ImageEditor.handleExport` 的 filter。
+ */
+export function setLayerVisible(layers: EditorLayer[], id: string, visible: boolean): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0 || layers[i].visible === visible) return layers;
+  const next = layers.slice();
+  next[i] = { ...next[i], visible };
+  return next;
+}
+
+/**
+ * 删除图层，并给出删除后的活动图层。
+ *
+ * 删掉的正是活动层时，活动层落到**它下面那层**（PS：删完选中下层，因为下层原来被它挡着）；
+ * 删的是最底层就往上找一层。删空了返回 `undefined`。
+ */
+export function removeLayer(
+  layers: EditorLayer[],
+  id: string,
+  activeLayerId?: string,
+): { layers: EditorLayer[]; activeLayerId?: string } {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return { layers, activeLayerId };
+  const next = layers.filter(l => l.id !== id);
+  const nextActive = activeLayerId === id ? next[Math.max(0, i - 1)]?.id : activeLayerId;
+  return { layers: next, activeLayerId: nextActive };
+}
+
+/**
+ * 复制图层（PS 的 Ctrl+J 语义）：插在**原图层上方**，名字加「 副本」。
+ *
+ * `box` 与 `adjust` 必须深拷贝：共享同一个对象的话，之后拖动副本会连带拖动原件
+ * （`{...layer, box}` 是浅拷贝，`box` 仍指向同一个引用）。
+ */
+export function duplicateLayer(
+  layers: EditorLayer[],
+  id: string,
+  newId: string,
+): { layers: EditorLayer[]; newLayerId?: string } {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return { layers, newLayerId: undefined };
+  const src = layers[i];
+  const copy: EditorLayer = {
+    ...src,
+    id: newId,
+    name: `${src.name} 副本`,
+    box: { ...src.box },
+    adjust: src.adjust ? { ...src.adjust } : undefined,
+  };
+  const next = layers.slice();
+  next.splice(i + 1, 0, copy);
+  return { layers: next, newLayerId: newId };
+}
+
+/**
+ * 拖拽排序：把 `draggedId` 放到 `targetId` 的**显示上方/下方**。
+ *
+ * 参数 `position` 用的是**显示口径**（用户在列表里看到的上下），不是数组下标口径：
+ * - `'above'` = 盖住目标层（数组里更靠后、更晚绘制）
+ * - `'below'` = 被目标层盖住（数组里更靠前）
+ *
+ * 这一层转换必须在这里做完——调用方（面板）只知道自己看到的是"上面/下面"，
+ * 让它去算 `+1/-1` 就是把"自底向上"这个反直觉的约定又泄漏出去一次。
+ *
+ * 位置没变化时返回**原数组引用**，调用方据此不置 dirty、不产生一步空撤销。
+ */
+export function reorderLayers(
+  layers: EditorLayer[],
+  draggedId: string,
+  targetId: string,
+  position: 'above' | 'below',
+): EditorLayer[] {
+  const from = indexOfLayer(layers, draggedId);
+  const to = indexOfLayer(layers, targetId);
+  if (from < 0 || to < 0 || from === to) return layers;
+
+  const moved = layers[from];
+  const rest = layers.filter((_, i) => i !== from);
+  const targetIdx = rest.findIndex(l => l.id === targetId);
+  if (targetIdx < 0) return layers;
+  const insertAt = position === 'above' ? targetIdx + 1 : targetIdx;
+  const next = rest.slice();
+  next.splice(insertAt, 0, moved);
+
+  // 顺序真的变了吗？（拖到自己原来的位置上下 = 没动）
+  const unchanged = next.every((l, i) => l.id === layers[i].id);
+  return unchanged ? layers : next;
 }
 
 /** 文档的当前活动图层；没有就取最上面一层。 */

@@ -10,8 +10,9 @@ import type { EditorToolId } from '../../types';
 import { EDITOR_TOOLS } from './editorTools';
 
 interface EditorToolbarProps {
-  activeTool: EditorToolId;
-  onSelect: (tool: EditorToolId) => void;
+  /** `null` = 当前没有选中工具（再按一次同一快捷键/再点一次同一按钮就到这里） */
+  activeTool: EditorToolId | null;
+  onSelect: (tool: EditorToolId | null) => void;
   /** 无文档时整条工具栏禁掉（例如新建空白画布的过渡态） */
   disabled?: boolean;
 }
