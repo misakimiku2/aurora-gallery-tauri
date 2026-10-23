@@ -81,8 +81,8 @@ export const RightPanel = ({
               documentName={activeTab.editorDocument?.name || '未命名'}
               width={editorDoc?.canvas?.width ?? 0}
               height={editorDoc?.canvas?.height ?? 0}
-              previewWidth={editorMeta?.previewWidth ?? 0}
-              previewHeight={editorMeta?.previewHeight ?? 0}
+              layerCount={editorDoc?.layers?.length ?? 0}
+              layerName={editorLayer?.name}
               adjust={editorLayer?.adjust}
               onAdjustChange={next => onEditorAdjustChange?.(next)}
             />

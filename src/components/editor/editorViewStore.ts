@@ -14,7 +14,7 @@ export interface EditorViewSnapshot {
   y: number;
   containerWidth: number;
   containerHeight: number;
-  /** 代理图尺寸（全览图按这个画） */
+  /** 画布尺寸（全览图按这个画；v2 起不再有"代理图尺寸"这一层） */
   imgWidth: number;
   imgHeight: number;
 }

@@ -47,8 +47,9 @@ interface EditOverlayProps {
     /**
      * 画布尺寸——提供后，吸附目标额外包含**画布四边与画布中心**。
      *
-     * 为什么需要：参考模式里吸附的是"其他项"，而编辑器单图层时没有第二项可对齐，
-     * 唯一有意义的参照就是画布本身。不传 = 保持参考模式原有行为（纯增量改动）。
+     * 为什么需要：参考模式里吸附的是"其他项"，而编辑器只把**活动图层**传进来
+     * （`allItems=[activeItem]`），没有第二项可对齐，唯一有意义的参照就是画布本身。
+     * 不传 = 保持参考模式原有行为（纯增量改动）。
      */
     snapBounds?: { width: number; height: number };
     /**
@@ -204,8 +205,8 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                 const selectedIds = selectedItems.map(si => si.id);
 
                 // 吸附目标 = 其他项 + （编辑器传入的）画布边/中心。
-                // 两类目标统一成同一结构，匹配逻辑只写一遍——单图层编辑器没有
-                // "其他项"可对齐，画布才是唯一有意义的参照。
+                // 两类目标统一成同一结构，匹配逻辑只写一遍——编辑器只传活动图层，
+                // 没有"其他项"可对齐，画布才是唯一有意义的参照。
                 const targets: Array<{ id: string; box: ReturnType<typeof getRotatedAABB> }> = allItems
                     .filter(item => item.id !== activeItem.id && !selectedIds.includes(item.id))
                     .map(item => ({ id: item.id, box: getRotatedAABB(item) }));

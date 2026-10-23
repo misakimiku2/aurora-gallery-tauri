@@ -594,15 +594,18 @@ export interface EditorDocument {
    */
   version?: 2;
   canvas?: EditorCanvas;
-  /** 自底向上；最小模型长度 0..1 */
+  /** 自底向上。v2 起可叠多层（导入图层、渲染、导出都支持）；面板仍只显示一行 */
   layers?: EditorLayer[];
   activeLayerId?: string;
 
-  // ---- v1 遗留（S5 切到 canvas + layers 后整体删除）：crop / rotation / flipH / flipV / adjust ----
+  // ---- v1 遗留（v2 切换后已无人读取，待删）：crop / rotation / flipH / flipV / adjust ----
   /**
-   * 累积裁剪（**当前可见坐标系**下的像素坐标，左上原点）。undefined = 未裁剪。
+   * **v1 遗留字段**，v2 一律用 `canvas` + `layers`，没有任何代码读它。
+   * 保留只是为了让旧会话对象仍能通过类型检查（见 `isLegacyEditorDocument`）。
    *
-   * 注意"当前可见坐标系"：渲染顺序是 rotate → flip → crop，所以旋转/翻转之后
+   * 累积裁剪（v1 的"当前可见坐标系"像素坐标，左上原点）。undefined = 未裁剪。
+   *
+   * 注意"当前可见坐标系"：v1 的渲染顺序是 rotate → flip → crop，所以旋转/翻转之后
    * 这个矩形必须在同一时刻被换算到新坐标系（`rotateCropRect` / `flipCropRect`）。
    * 存绝对坐标而不是"上一次的增量"，是为了让后端永远只对原图处理一次，
    * 连裁多刀不累积重编码损失。
@@ -615,28 +618,18 @@ export interface EditorDocument {
   /** 垂直镜像 */
   flipV?: boolean;
   /**
-   * 调色参数（-100..100，0 = 不变）。
+   * **v1 遗留字段**：调色参数（-100..100，0 = 不变）。
    *
-   * 语义上是**图层属性**（UI 设计 §4.1「属性·调整」作用于选中图层），现在只有一张
-   * 背景层所以等价于整画面；Phase 2 引入多图层后这个结构会下沉到 `Layer` 上，
-   * 文档级不再保留。
+   * 它已经**下沉到 `EditorLayer.adjust`**（语义上本来就是图层属性），这里不再被读取。
+   * 见 `isLegacyEditorDocument`：这几个 v1 字段只要有一个非空，就说明是旧文档。
    */
-  adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
-}
-
-/** 编辑器的几何变换集合（裁剪 + 旋转 + 翻转），与 `EditorDocument` 的对应字段同构。 */
-export interface EditorTransform {
-  crop?: { x: number; y: number; w: number; h: number };
-  rotation?: number;
-  flipH?: boolean;
-  flipV?: boolean;
   adjust?: { brightness: number; contrast: number; saturation: number; temperature: number };
 }
 
 /**
  * 编辑器工具（键位与语义照 Photoshop，UI 设计 §3）。
  *
- * Phase 1 只放行 `move` / `transform` / `crop` / `hand` / `zoom`；其余是骨架占位，
+ * 已放行 `move` / `transform` / `crop` / `hand` / `zoom`；其余是骨架占位，
  * 工具栏上灰显——**故意显示出来而不是藏起来**，因为 PS 的心智是"工具在那儿，
  * 我还没用到"，藏起来反而让人以为产品缺功能。
  */

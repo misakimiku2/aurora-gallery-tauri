@@ -5,7 +5,15 @@
  * 框还是能拖、数字还是在变，只是拖出来的比例差了零点几，或者在靠近边界时
  * 悄悄把比例拧歪。这类错误肉眼几乎看不出来，靠单测锁。
  *
- * 坐标一律是**源图像素**。
+ * 坐标一律是**画布像素**（v2 里画布坐标 = 文档坐标，不再是"源图像素 × 代理倍率"）。
+ *
+ * ## 文件里的两套函数
+ *
+ * - **在用**：`normalizeRect` / `clampNumber` / `computeRatioRect` —— 裁剪框的比例约束。
+ * - **v1 遗留**：`rotateCropRect` / `flipCropRect`。v2 的旋转/翻转走
+ *   `layerTransform.rotateDocumentCanvas`（只映射中心、不换 w/h），不再需要它们。
+ *   保留是因为它们仍是**新实现的黄金标准**：`layerTransform.spec.ts` 用
+ *   "定界框旋转后的包围盒 == v1 矩形" 做交叉验证。别删，也别在新的生产路径里用。
  */
 
 export interface CropArea {

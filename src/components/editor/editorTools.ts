@@ -1,5 +1,5 @@
 /**
- * 编辑器工具栏定义（C11 Phase 1）。
+ * 编辑器工具栏定义（C11）。
  *
  * 键位与工具集合照 Photoshop（用户 2026-10-16 拍板 D3：键位照 PS，且可自定义），
  * 分批放行见 UI 设计 §3。
@@ -72,7 +72,7 @@ export const EDITOR_TOOL_CURSORS: Partial<Record<EditorToolId, string>> = {
   text: 'text',
 };
 
-/** 快捷键 → 工具（Phase 1 键位表，UI 设计 §8.3）。 */
+/** 快捷键 → 工具（UI 设计 §8.3 的键位表）。 */
 export const EDITOR_SHORTCUT_KEYS: Record<string, EditorToolId> = {
   v: 'move',
   c: 'crop',

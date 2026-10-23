@@ -1,15 +1,24 @@
 //! 图片编辑器（C11）的 Rust 侧命令。
 //!
-//! 设计依据：`docs/图片编辑与封面合成-设计方案.md` §3.1（全分辨率像素不进 WebView）、
-//! §6.2（Phase 1 单图文档闭环）。这里只做「源文件 → 代理图」这一段：解码与缩放全部
-//! 走 `aurora_core::imaging`，前端拿到的是已经降采样的 JPEG，**永远看不到源图全分辨率
-//! 像素**。Phase 2 的图层合成会在这条链路上继续往 core 里加，而不是把像素搬进前端。
+//! 设计依据：`docs/图片编辑与封面合成-设计方案.md` §3.1、`docs/图片编辑-最小图层模型设计.md`。
 //!
-//! ## v2：最小图层模型（S4 进行中）
+//! ## 前端在"看"，Rust 在"算"
 //!
-//! 文档从"平铺的 crop/rotation/flip"改成**画布 + 图层**，图层带一组仿射六参。
-//! 因此新增 `editor_load_layer_proxy` / `editor_render_document` / `editor_export_document`
-//! 三个命令。**旧的三个命令暂时保留**——前端 S5 还没切过来，此刻删掉会让编辑器直接开天窗。
+//! - **显示**：画布直接渲染**原文件**（前端 `convertFileSrc` + 仿射矩阵），Rust 不参与。
+//!   所以"前端永远看不到全分辨率像素"这句话在 v2 已不成立——§3.1 约束的是**处理**
+//!   （不让像素进 JS 做运算、不让全分辨率字节过 IPC），不是显示。
+//! - **计算**：解码、调色、仿射重采样、合成、编码全在 `aurora_core::imaging`。
+//!   进出 WebView 的只有**图层代理图**（缩略图 / 超大图打底）与**导出产物字节**。
+//!
+//! ## 三个命令
+//!
+//! - `editor_load_layer_proxy`：一张图层的 ≤2048 JPEG + 自然尺寸 + **EXIF 方向**。
+//!   前端拿它做缩略图，并用 `orientation` 把方向折进图层变换。
+//! - `editor_render_document`：按文档状态合成一张预览（超大图打底用，尚未接线）。
+//! - `editor_export_document`：全分辨率合成并写盘。
+//!
+//! v1 的三条旧命令（`editor_load_preview` / `editor_render_preview` /
+//! `editor_export_image`）已随 S5 前端切换删除。
 //! S5 落地时旧命令一并删除（`docs/图片编辑-最小图层模型设计.md` §8）。
 
 use aurora_core::imaging::{self, AffineMatrix, CanvasBackground, CompositeLayer, EncodeFormat};

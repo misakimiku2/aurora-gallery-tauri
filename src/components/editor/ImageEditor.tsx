@@ -1,5 +1,5 @@
 /**
- * 图片编辑器（C11 Phase 1 收尾 · S5）。
+ * 图片编辑器（C11 · 最小图层模型 v2 落地后）。
  *
  * 布局照 UI 设计 §2：
  *
@@ -666,7 +666,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   // 都在里面，2.2.1 已验收）。编辑器这边只做三处适配：
   //   1. 坐标原点 = 画布左上（comparer 是无限桌面），画布容器已经 overflow:hidden；
   //   2. 选中项 = 活动图层；
-  //   3. 吸附目标额外加上画布四边与中心（`snapBounds`，单图层没有别的项可对齐）。
+  //   3. 吸附目标额外加上画布四边与中心（`snapBounds`，只传了活动图层，
+  //      没有别的项可对齐）。
   // 变换结果写回 layer.box，预览靠 CSS、导出靠同一组矩阵，不经过 Rust 往返。
   const transformStartRef = useRef<LayerBox | null>(null);
 
@@ -1341,8 +1342,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             scale={transform.scale}
             width={canvas?.width ?? 0}
             height={canvas?.height ?? 0}
-            previewWidth={canvas?.width ?? 0}
-            previewHeight={canvas?.height ?? 0}
             spaceHeld={spaceHeld}
           />
         </div>

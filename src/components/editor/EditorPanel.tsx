@@ -7,8 +7,11 @@
  * 容器复用现有右面板（`RightPanel` 的 20rem 抽屉），内容在编辑态换成这一套；
  * 浏览态仍是 `MetadataPanel`。**不做选项卡、不做拖拽重排**（UI 设计 §4.2 推荐）。
  *
- * Phase 1 是**骨架**：面板、分组、视觉层级先到位，图层模型与调色还没接引擎。
- * 每个面板都用文字说明哪些控件还没通，不装作可用。
+ * ## 现状（2026-10-23 更新，原来写的是"We're a skeleton"）
+ *
+ * 调色**已接通**：滑杆 → SVG `feColorMatrix` 预览 + Rust 逐像素导出，两端同一组矩阵。
+ * 画布也已支持多层渲染与合成，但**这个面板只显示活动图层一行**——图层列表、混合模式、
+ * 不透明度仍是 Phase 2。所以这里如实写"N 个图层"和活动图层名，而不是假装成图层树。
  */
 import React, { useState, useSyncExternalStore } from 'react';
 import { ChevronDown, ChevronRight, Eye, Image as ImageIcon, Plus } from 'lucide-react';
@@ -20,13 +23,16 @@ import { useEditorThumbnail } from './useEditorThumbnail';
 interface EditorPanelProps {
   /** 当前 Tab id：用于订阅该 Tab 的视口状态 */
   tabId: string;
-  /** 代理图 data URL */
+  /** 图层代理图 data URL —— 只用来生成面板里的小缩略图（画布本身显示原文件） */
   previewDataUrl?: string;
   documentName: string;
+  /** 画布尺寸 */
   width: number;
   height: number;
-  previewWidth: number;
-  previewHeight: number;
+  /** 图层数（面板只显示活动图层一行，见文件头说明） */
+  layerCount?: number;
+  /** 活动图层名 */
+  layerName?: string;
   /** 调色参数（-100..100） */
   adjust?: Adjustments;
   onAdjustChange: (next: Adjustments) => void;
@@ -100,12 +106,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   documentName,
   width,
   height,
-  previewWidth,
-  previewHeight,
+  layerCount,
+  layerName,
   adjust,
   onAdjustChange,
 }) => {
-  const isProxy = previewWidth !== width || previewHeight !== height;
   const adj = adjust ?? ZERO_ADJUSTMENTS;
   const hasAdjust = !isZeroAdjustments(adj);
   /** 与 ImageEditor 里定义的那个 SVG 滤镜同 id（跨子树引用同一份 filter 定义） */
@@ -126,8 +131,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       <Section title="全览">
         <EditorNavigator
           thumb={navigatorThumb}
-          imgWidth={previewWidth}
-          imgHeight={previewHeight}
+          // 用**画布**尺寸而不是缩略图尺寸：编辑器的视口状态（scale/x/y）也是按画布算的，
+          // 两边口径不一致时，全览图里的视口框会按错误比例画出来
+          imgWidth={width}
+          imgHeight={height}
           view={view}
           onNavigate={(x, y) => requestPanTo(tabId, x, y)}
           imgFilter={adjustFilter}
@@ -138,7 +145,6 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       <Section title="属性 · 调整">
         <Row label="文档" value={documentName.length > 16 ? `${documentName.slice(0, 16)}…` : documentName} />
         <Row label="画布" value={`${width} × ${height}`} />
-        {isProxy && <Row label="代理" value={`${previewWidth} × ${previewHeight}`} />}
         <div className="pt-1 space-y-2">
           <Slider
             label="亮度"
@@ -211,8 +217,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         </p>
       </Section>
 
-      {/* 图层（用户要求沉到最下；与 PS 的默认面板栈一致） */}
-      <Section title="图层" hint="1 个">
+      {/* 图层（用户要求沉到最下；与 PS 的默认面板栈一致）
+          只显示**活动图层**一行：画布已经能叠多层，但这个列表还没做成图层树（Phase 2），
+          所以数量与名字都从文档读，不写死。 */}
+      <Section title="图层" hint={`${layerCount ?? 0} 个`}>
         <div className="flex items-center gap-2 px-1.5 py-1.5 rounded bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
           <Eye size={12} className="text-neutral-500 shrink-0" />
           <div className="w-10 h-10 shrink-0 rounded-sm overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
@@ -228,7 +236,9 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               <ImageIcon size={13} className="text-neutral-400" />
             )}
           </div>
-          <span className="text-[11px] truncate text-neutral-700 dark:text-neutral-200">背景</span>
+          <span className="text-[11px] truncate text-neutral-700 dark:text-neutral-200">
+            {layerName || (layerCount ? '（未选中）' : '空图层')}
+          </span>
         </div>
         <button
           type="button"
@@ -238,7 +248,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           <Plus size={11} /> 新建图层
         </button>
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          多图层、混合模式、不透明度将在 Phase 2 接入；现在是单图文档。
+          导入图层请用文档栏的「导入图层」。图层树、混合模式、不透明度在 Phase 2 接入。
         </p>
       </Section>
     </div>

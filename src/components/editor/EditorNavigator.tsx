@@ -20,7 +20,7 @@ interface EditorNavigatorProps {
   imgWidth: number;
   imgHeight: number;
   view?: EditorViewSnapshot;
-  /** 点击/拖动全览图 → 请画布把该点移到视口中央（代理图像素坐标） */
+  /** 点击/拖动全览图 → 请画布把该点移到视口中央（画布像素坐标） */
   onNavigate?: (imgX: number, imgY: number) => void;
   /** 缩略图也要套上当前调色滤镜，否则「画布偏暖、全览正常」 */
   imgFilter?: string;
@@ -140,7 +140,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
         </>
       ) : (
         <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">
-          等待代理图…
+          等待缩略图…
         </div>
       )}
     </div>
