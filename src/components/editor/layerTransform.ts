@@ -80,6 +80,23 @@ export function applyMatrix(m: AffineMatrix, x: number, y: number): { x: number;
 }
 
 /**
+ * 点是否落在**旋转后的定界框**内（画布坐标系）。
+ *
+ * 把点反旋到框的本地坐标再比矩形——翻转不改变占位，所以不用管 flip。
+ * 用途：移动工具下判断"这一下点在图层上还是画布空白处"，前者选中、后者取消选中。
+ */
+export function pointInBox(box: LayerBox, px: number, py: number): boolean {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const rad = -box.rotation * DEG;
+  const dx = px - cx;
+  const dy = py - cy;
+  const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
+  const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
+  return Math.abs(lx) <= box.w / 2 && Math.abs(ly) <= box.h / 2;
+}
+
+/**
  * 旋转后的包围盒（供吸附与命中判定用；`w/h` 本身是**未旋转**的内容尺寸）。
  *
  * 与 comparer 的 `getRotatedAABB` 同一套算法，只是输入换成 `LayerBox`。

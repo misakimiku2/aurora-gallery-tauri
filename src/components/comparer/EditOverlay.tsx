@@ -65,6 +65,13 @@ interface EditOverlayProps {
      * 之前两者共用一个开关，结果移动工具连拖都拖不动（用户实测）。
      */
     showTransformHandles?: boolean;
+    /**
+     * 是否画那圈蓝色选中边框。缺省 `true`。
+     *
+     * 编辑器的移动工具要"点一下才选中"，未选中时不该顶着边框——否则看起来像
+     * 已经选中了图层（用户实测反馈）。手柄由 `showTransformHandles` 单独管。
+     */
+    showChrome?: boolean;
     isAndroid?: boolean;
     onLongPress?: (worldX: number, worldY: number) => void;
 }
@@ -142,6 +149,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     isDarkMode: _isDarkMode = false,
     isEditMode = true,
     showTransformHandles,
+    showChrome = true,
     isAndroid = false,
     onLongPress
 }) => {
@@ -679,7 +687,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
             })}
 
             <div ref={overlayRef} className="absolute pointer-events-none"
-                style={{ left: screenX, top: screenY, width: screenW, height: screenH, transform: `rotate(${activeItem.rotation}deg)`, transformOrigin: 'center', border: '1px solid #3b82f6', zIndex: 100 }}>
+                style={{ left: screenX, top: screenY, width: screenW, height: screenH, transform: `rotate(${activeItem.rotation}deg)`, transformOrigin: 'center', border: showChrome ? '1px solid #3b82f6' : 'none', zIndex: 100 }}>
                 {canDragLayer && (
                     <div
                         onMouseDown={(e) => handleMouseDown(e, 'move')}

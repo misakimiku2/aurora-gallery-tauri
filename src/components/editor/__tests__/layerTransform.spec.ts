@@ -14,6 +14,7 @@ import {
   flipDocumentCanvas,
   layerAABB,
   normalizeDegrees,
+  pointInBox,
   rotateDocumentCanvas,
   toCssMatrix,
 } from '../layerTransform';
@@ -181,6 +182,30 @@ describe('layerAABB', () => {
     expect(a.width).toBeCloseTo(100 * Math.SQRT2);
     expect(a.cx).toBeCloseTo(50);
     expect(a.cy).toBeCloseTo(50);
+  });
+});
+
+describe('pointInBox（移动工具选中判定）', () => {
+  it('未旋转：框内 true、框外 false', () => {
+    const b = box({ x: 0, y: 0, w: 100, h: 100 });
+    expect(pointInBox(b, 50, 50)).toBe(true);
+    expect(pointInBox(b, 0, 0)).toBe(true);
+    expect(pointInBox(b, 150, 50)).toBe(false);
+    expect(pointInBox(b, 50, 150)).toBe(false);
+  });
+
+  it('旋转 45° 后按**本地坐标**判定，不是按包围盒', () => {
+    const b = box({ x: 0, y: 0, w: 100, h: 100, rotation: 45 });
+    // 中心右侧 60px：落在旋转后的菱形里（本地坐标 ±42.4），但已在原矩形的 x 范围外
+    expect(pointInBox(b, 110, 50)).toBe(true);
+    // 再远就出去了（本地 56.6 > 50）
+    expect(pointInBox(b, 130, 50)).toBe(false);
+  });
+
+  it('落在包围盒但不在框内 → false（这正是"看起来在图上却点不中"的坑）', () => {
+    const b = box({ x: 0, y: 0, w: 100, h: 100, rotation: 45 });
+    // 左上角的外接方形顶点在旋转后是空的
+    expect(pointInBox(b, 1, 1)).toBe(false);
   });
 });
 

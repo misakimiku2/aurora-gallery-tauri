@@ -98,6 +98,7 @@ import {
 import {
   composeMatrix,
   flipDocumentCanvas,
+  pointInBox,
   rotateDocumentCanvas,
   toCssMatrix,
 } from './layerTransform';
@@ -261,6 +262,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     historyInitRef.current = docIdentity;
     lastSignatureRef.current = documentStateSignature(doc);
     setHistory({ stack: [{ canvas: doc.canvas, layers: doc.layers }], index: 0, lastAt: 0 });
+    setLayerSelected(false); // 新文档/刚打开：什么都没点，不该有选中框
   }, [docIdentity, doc]);
 
   // 所有变更（裁剪 / 旋转 / 翻转 / 调色）最终都落到文档上，所以统一在这里入栈——
@@ -540,6 +542,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
 
   /** 吸附开关（工具选项条上的那个）；默认开，与 PS 的「视图 > 对齐」同义 */
   const [snapEnabled, setSnapEnabled] = useState(true);
+
+  /**
+   * 图层是否处于"被选中"状态（只影响那圈蓝框）。
+   *
+   * 打开文档时**不选中**——什么都没点却顶着一圈边框，看起来像已经选了图层
+   * （用户实测反馈）。点图层选中、点画布空白取消；自由变换态恒为选中，
+   * 否则刚拖出来的框会在松手前消失。
+   */
+  const [layerSelected, setLayerSelected] = useState(false);
 
   const handleCropRatioChange = useCallback(
     (ratio: number | null) => {
@@ -973,7 +984,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       return;
     }
 
-    // 只有抓手平移视图。移动工具留给自由变形（S7）——它该移的是**图层**，不是视口。
+    // 移动工具：点画布空白处取消选中（边框随之消失）。
+    // 点在图层上时更深的层（EditOverlay 的拖动层）会先触发 onInteractionStart 把它置为选中，
+    // 这里只处理"没点到"的那一半。
+    if (effectiveTool === 'move') {
+      const el = containerRef.current;
+      if (el && activeLayer) {
+        const rect = el.getBoundingClientRect();
+        const cx = (e.clientX - rect.left - transform.x) / transform.scale;
+        const cy = (e.clientY - rect.top - transform.y) / transform.scale;
+        if (!pointInBox(activeLayer.box, cx, cy)) setLayerSelected(false);
+      }
+      return;
+    }
+
+    // 只有抓手平移视图。移动工具留给自由变形——它该移的是**图层**，不是视口。
     if (effectiveTool !== 'hand') return;
 
     draggingRef.current = {
@@ -1290,6 +1315,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 isEditMode
                 // 手柄只在自由变换时出现——移动工具只显示边界，PS 也是这样
                 showTransformHandles={tool === 'transform'}
+                // 移动工具下"点一下才算选中"：未选中不画边框
+                showChrome={tool === 'transform' || layerSelected}
+                onInteractionStart={() => setLayerSelected(true)}
                 isDarkMode={document.documentElement.classList.contains('dark')}
               />
             )}
