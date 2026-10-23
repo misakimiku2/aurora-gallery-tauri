@@ -12,15 +12,25 @@ import { ComparisonItem } from './types';
  */
 const makeRotateCursor = () => {
     const p = `%3Cpath d='M21.5 2v6h-6'/%3E%3Cpath d='M21.34 15.57a10 10 0 1 1-.57-8.38'/%3E`;
-    // 尺寸 24 + 细描边（白晕 3.5 / 黑本体 1.75）：Windows 没有"旋转"系统光标，
-    // 只能手绘一张；画成 32px、笔画 2 会比系统的缩放箭头明显粗一圈，看着不像同一族
-    // （用户实测："跟其他的变化鼠标指针并不一样"）。这里按系统光标的常见尺寸与笔重对齐。
+    /**
+     * 与系统光标**同族**的三个要点（用户实测反馈"旋转的是黑的、其他是白的、还更大"）：
+     *
+     * 1. **白色本体 + 黑色描边**——Windows 的缩放箭头就是这个配色；反过来（黑本体）
+     *    一眼就不是同一套。
+     * 2. **图形缩到 16px 居中**：画布取 32×32（与 Windows 标准光标同尺寸），
+     *    再用 `translate(8 8) scale(0.6667)` 把 24 单位的图形压到 16 单位。
+     *    直接画满 24/32 会比系统的箭头大一圈。
+     * 3. 热点取画布中心 `16 16`。
+     *
+     * 先画粗黑再画细白 → 得到"白心黑边"的描边效果。
+     */
     const svg =
-        `%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E` +
-        `%3Cg stroke='%23ffffff' stroke-width='3.5'%3E${p}%3C/g%3E` +
-        `%3Cg stroke='%23000000' stroke-width='1.75'%3E${p}%3C/g%3E` +
-        `%3C/svg%3E`;
-    return `url("data:image/svg+xml;charset=utf-8,${svg}") 12 12, alias`;
+        `%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E` +
+        `%3Cg transform='translate(8 8) scale(0.6667)' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E` +
+        `%3Cg stroke='%23000000' stroke-width='4.6'%3E${p}%3C/g%3E` +
+        `%3Cg stroke='%23ffffff' stroke-width='2.4'%3E${p}%3C/g%3E` +
+        `%3C/g%3E%3C/svg%3E`;
+    return `url("data:image/svg+xml;charset=utf-8,${svg}") 16 16, alias`;
 };
 
 interface EditOverlayProps {
