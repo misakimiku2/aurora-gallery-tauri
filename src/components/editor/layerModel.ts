@@ -50,7 +50,12 @@ export function createCanvas(
   return { width: Math.max(0, Math.round(width)), height: Math.max(0, Math.round(height)), background };
 }
 
-/** 未变换的定界框：内容与框 1:1。 */
+/**
+ * 未变换的定界框：内容与框 1:1。
+ *
+ * 当前只被测试与 `createImageLayer` 的默认值用到；生产路径的定界框由
+ * `createOrientedImageLayer` 直接算出（要按 EXIF 方向把框摆正）。
+ */
 export function createIdentityBox(width: number, height: number): LayerBox {
   return {
     x: 0,
@@ -199,7 +204,13 @@ export function createOrientedImageLayer(opts: {
   };
 }
 
-/** 建一个图片图层。默认适配方式 = contain 居中（已拍板）。 */
+/**
+ * 建一个图片图层（无 EXIF 方向的简写）。
+ *
+ * ⚠️ **当前只有测试在用**——生产路径（打开文档 / 导入图层）一律走
+ * `createOrientedImageLayer`，因为那张图可能带 EXIF 方向。这里保留是为了给单测提供
+ * 一个"方向 = 1"的清晰夹具，不要拿它去接线新功能。
+ */
 export function createImageLayer(opts: {
   id: string;
   source?: string;

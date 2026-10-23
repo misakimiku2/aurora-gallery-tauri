@@ -37,11 +37,8 @@ impl Rotation {
             other => Err(ImageError::InvalidRotation(other as u32)),
         }
     }
-
-    /// 旋转后宽高是否互换
-    pub fn swaps_axes(self) -> bool {
-        matches!(self, Rotation::Cw90 | Rotation::Cw270)
-    }
+    // 曾有一个 `swaps_axes()`（判断 90/270 是否交换宽高），全仓零调用连测试都不用它——
+    // `rotate_image` 是 match 分支里直接给出宽高的，不需要这个判断。已于 2026-10-23 删除。
 }
 
 /// 顺时针旋转。90°/270° 时宽高互换。

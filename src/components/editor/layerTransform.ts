@@ -74,7 +74,12 @@ export function toCssMatrix(m: AffineMatrix): string {
   return `matrix(${m[0]}, ${m[1]}, ${m[2]}, ${m[3]}, ${m[4]}, ${m[5]})`;
 }
 
-/** 用矩阵变换一个点（与 CSS 同一套语义）。 */
+/**
+ * 用矩阵变换一个点（与 CSS 同一套语义）。
+ *
+ * 当前只有单测在用（验证六参的语义正确）；生产端由浏览器 CSS 与 Rust `warp_affine`
+ * 各自执行，不需要在 JS 里逐点算。
+ */
 export function applyMatrix(m: AffineMatrix, x: number, y: number): { x: number; y: number } {
   return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
 }
@@ -97,9 +102,13 @@ export function pointInBox(box: LayerBox, px: number, py: number): boolean {
 }
 
 /**
- * 旋转后的包围盒（供吸附与命中判定用；`w/h` 本身是**未旋转**的内容尺寸）。
+ * 旋转后的包围盒。
  *
- * 与 comparer 的 `getRotatedAABB` 同一套算法，只是输入换成 `LayerBox`。
+ * ⚠️ **当前只有单测在用**（含与 v1 `rotateCropRect` 的交叉验证）。生产端的吸附走
+ * comparer 的 `getRotatedAABB`，命中判定走本文件的 `pointInBox`——不要把这里当成
+ * "已经在跑的吸附实现"。留着是因为它是那两组等价关系的对照物。
+ *
+ * `w/h` 本身是**未旋转**的内容尺寸。
  */
 export function layerAABB(box: LayerBox): {
   l: number;

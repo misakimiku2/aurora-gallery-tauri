@@ -149,7 +149,14 @@ export function computeRatioRect(
 /**
  * 把裁剪矩形换算到「顺时针旋转 90° 之后」的新坐标系。
  *
- * 为什么要转换：渲染顺序是 `rotate → flip → crop`，`crop` 是相对**当前可见坐标系**
+ * ⚠️ **v1 遗留，生产路径已不再调用**（v2 走 `layerTransform.rotateDocumentCanvas`）。
+ * 保留的唯一用途：`layerTransform.spec.ts` 用它做交叉验证——"定界框旋转后的包围盒
+ * 必须等于 v1 算出的矩形"，这是新旧两套几何之间的等价锚点。
+ *
+ * ⚠️ 注意语义差别：本函数交换 `w/h`，因为 `CropArea` 是**轴对齐矩形**；而图层的
+ * `LayerBox.w/h` 是**未旋转的内容尺寸**，照搬这个交换会让内容被拉伸（已踩过一次）。
+ *
+ * 为什么转换：v1 的渲染顺序是 `rotate → flip → crop`，`crop` 是相对**当前可见坐标系**
  * 的矩形。用户点一次旋转，画面内容转了 90°，他仍然期望"还是我裁的那块内容"，
  * 所以矩形必须跟着转，否则会变成另一块区域。
  *
@@ -180,6 +187,9 @@ export function rotateCropRect(
 
 /**
  * 镜像时换算裁剪矩形（翻转不改尺寸，只把位置映射到对称边）。
+ *
+ * ⚠️ **v1 遗留，生产路径已不再调用**——与 `rotateCropRect` 同批保留，仅作
+ * `layerTransform.spec.ts` 的交叉验证基准（新版走 `flipDocumentCanvas`）。
  *
  * 可以同时水平和垂直，等价于 180° 旋转。
  */
