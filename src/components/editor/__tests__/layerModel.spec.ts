@@ -726,9 +726,10 @@ describe('图层混合模式', () => {
  */
 describe('图层锁定', () => {
   it('layerLocks 缺省 / 脏数据一律为关', () => {
-    expect(layerLocks(layer())).toEqual({ pixel: false, position: false });
-    expect(layerLocks(layer({ lockPixel: true }))).toEqual({ pixel: true, position: false });
-    expect(layerLocks(layer({ lockPosition: true }))).toEqual({ pixel: false, position: true });
+    expect(layerLocks(layer())).toEqual({ transparent: false, pixel: false, position: false });
+    expect(layerLocks(layer({ lockPixel: true }))).toEqual({ transparent: false, pixel: true, position: false });
+    expect(layerLocks(layer({ lockPosition: true }))).toEqual({ transparent: false, pixel: false, position: true });
+    expect(layerLocks(layer({ lockTransparent: true }))).toEqual({ transparent: true, pixel: false, position: false });
   });
 
   it('setLayerLock 开关；回关时删字段；无变化返回原引用', () => {
@@ -742,6 +743,12 @@ describe('图层锁定', () => {
     expect('lockPosition' in back[0]).toBe(false);
     expect(setLayerLock(back, 'A', 'position', false)).toBe(back); // 幂等
     expect(setLayerLock(all, 'zzz', 'pixel', true)).toBe(all);
+
+    // 锁透明像素（画笔轮起生效）同一套开关语义
+    const transOn = setLayerLock(all, 'A', 'transparent', true);
+    expect(transOn[0].lockTransparent).toBe(true);
+    const transBack = setLayerLock(transOn, 'A', 'transparent', false);
+    expect('lockTransparent' in transBack[0]).toBe(false);
   });
 
   it('锁不进撤销签名（PS：锁定开关不占撤销步骤）', () => {
@@ -749,12 +756,19 @@ describe('图层锁定', () => {
     const b = setLayerLock([layer()], a.id, 'pixel', true)[0];
     expect(layerStateSignature(a)).toBe(layerStateSignature(b));
     expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
+    const t = setLayerLock([layer()], a.id, 'transparent', true)[0];
+    expect(layerStateSignature(a)).toBe(layerStateSignature(t));
   });
 
   it('复制图层带上锁状态', () => {
-    const r = duplicateLayer([layer({ id: 'B', lockPixel: true, lockPosition: true })], 'B', 'B2');
+    const r = duplicateLayer(
+      [layer({ id: 'B', lockPixel: true, lockPosition: true, lockTransparent: true })],
+      'B',
+      'B2',
+    );
     expect(r.layers[1].lockPixel).toBe(true);
     expect(r.layers[1].lockPosition).toBe(true);
+    expect(r.layers[1].lockTransparent).toBe(true);
   });
 });
 

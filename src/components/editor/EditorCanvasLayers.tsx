@@ -44,6 +44,7 @@ import {
 } from './layerTransform';
 import { isZeroAdjustments } from './colorMatrix';
 import { layerBlend, layerOpacity } from './layerModel';
+import { getPaintBuffer } from './paintBuffers';
 
 const IDENTITY: AffineMatrix = [1, 0, 0, 1, 0, 0];
 
@@ -120,6 +121,31 @@ interface LayerRenderOpts {
 }
 
 /**
+ * 图层的像素载体：source 在画笔缓冲注册表里时用 `<canvas>` **直染内存画布**
+ * （抬笔即时显示，文件由后台烘焙补上，见 useEditorBrush 性能方案），否则照旧
+ * `<img src=convertFileSrc>` 读文件。两种载体的样式/变换/混合完全一致。
+ */
+const LayerPixels: React.FC<{
+  layer: EditorLayer;
+  common: { src: string; alt: string; onError: () => void };
+  style: React.CSSProperties;
+}> = ({ layer, common, style }) => {
+  const buffer = getPaintBuffer(layer.source as string);
+  const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  React.useEffect(() => {
+    const c = canvasRef.current;
+    if (!c || !buffer) return;
+    c.width = layer.naturalWidth;
+    c.height = layer.naturalHeight;
+    const ctx = c.getContext('2d');
+    if (ctx) ctx.drawImage(buffer, 0, 0);
+    // 依赖含 layer.source：同一块缓冲对象被下一笔改写时会换 key，换 key 必须重画
+  }, [buffer, layer.source, layer.naturalWidth, layer.naturalHeight]);
+  if (buffer) return <canvas ref={canvasRef} style={style} aria-label={common.alt} />;
+  return <img {...common} style={style} />;
+};
+
+/**
  * 画一个图层元素（蒙版壳 A + 内容壳 B，或无蒙版时直接 img）。
  * `parent` = 外链（剪贴壳或恒等）的**画布空间**合成矩阵。
  *
@@ -154,9 +180,10 @@ function layerElement(
   const shell = maskShellSpec(layer);
   if (!shell) {
     return (
-      <img
+      <LayerPixels
         key={layer.id}
-        {...commonImg}
+        layer={layer}
+        common={commonImg}
         style={{
           position: 'absolute',
           left: 0,
@@ -222,8 +249,9 @@ function layerElement(
           transform: toCssMatrix(multiplyAffine(maskInv, mLayer)),
         }}
       >
-        <img
-          {...commonImg}
+        <LayerPixels
+          layer={layer}
+          common={commonImg}
           style={{
             position: 'absolute',
             left: 0,
@@ -288,7 +316,10 @@ export const EditorCanvasLayers: React.FC<{
   transform: { x: number; y: number; scale: number };
   layers: EditorLayer[];
   onLayerError: (message: string) => void;
-}> = ({ tabId, canvas, transform, layers, onLayerError }) => {
+  /** 盖在混合组之上的覆盖节点（画笔笔划预览 canvas）。不参与混合——
+   *  只是"正在画"的即时反馈，抬笔烘焙后才是精确合成（见 useEditorBrush）。 */
+  overlayNode?: React.ReactNode;
+}> = ({ tabId, canvas, transform, layers, onLayerError, overlayNode }) => {
   const opts: LayerRenderOpts = {
     // 每层各引用自己的调色滤镜 id（只有带调色的层有定义，见 ImageEditor 的 <svg> 段）
     filterFor: layer =>
@@ -378,6 +409,10 @@ export const EditorCanvasLayers: React.FC<{
             （splitSegments），剪贴簇的归并口径与 layerClipping / Rust 一致。 */}
         {units}
       </div>
+
+      {/* 画笔笔划预览：混合组之外、transform 容器之内（跟着画布缩放平移）。
+          pointer-events-none——指针事件全归视口容器（useEditorBrush 自己挂 window 监听） */}
+      {overlayNode}
     </div>
   );
 };

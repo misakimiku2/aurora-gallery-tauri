@@ -113,6 +113,13 @@ import { useEditorHistory } from './useEditorHistory';
 import { useEditorCrop } from './useEditorCrop';
 import { useEditorKeyboard } from './useEditorKeyboard';
 import { useEditorViewport } from './useEditorViewport';
+import { useEditorBrush, type BrushSettings } from './useEditorBrush';
+import { nextBrushSize } from './brushPaint';
+import { BrushCursor } from './BrushCursor';
+import {
+  getEditorColors,
+  subscribeEditorColors,
+} from './editorColorStore';
 
 interface ImageEditorProps {
   /** 当前 Tab id：用于按 Tab 缓存编辑器状态 */
@@ -591,6 +598,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const handleExport = useCallback(async () => {
     if (!doc || !canvas) return;
     try {
+      // 画笔的后台烘焙先落盘（导出在 Rust 读文件——不能读到"画面有、文件还没有"的层）
+      const { flushPaintBakes } = await import('./brushBake');
+      await flushPaintBakes();
       const { save } = await import('@tauri-apps/plugin-dialog');
       const raw = doc.path ?? '';
       const sepIdx = Math.max(raw.lastIndexOf('\\'), raw.lastIndexOf('/'));
@@ -674,12 +684,41 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     [],
   );
 
+  // ---- 画笔/橡皮（2026-10-24 画笔轮，bake-on-stroke-end 见 useEditorBrush） ----
+  // 放在 flashNotice 之后：deps 里要引用它（TDZ），而 doc/transform/tool 都在更早处。
+  /** 笔刷参数（选项条持有；落笔瞬间在 hook 里取值，笔画中途改不影响当前这一笔） */
+  const [brushSettings, setBrushSettings] = useState<BrushSettings>({
+    size: 30,
+    hardness: 80,
+    opacity: 100,
+  });
+  /** 前/背景色是会话态 store（面板颜色区与选项条共用；D/X 快捷键在键盘 hook） */
+  const editorColors = useSyncExternalStore(subscribeEditorColors, getEditorColors);
+  /** 笔划预览 canvas：挂进 EditorCanvasLayers 的 transform 容器（文档尺寸 1:1） */
+  const brushPreviewRef = useRef<HTMLCanvasElement | null>(null);
+  const { beginStroke } = useEditorBrush({
+    previewCanvasRef: brushPreviewRef,
+    deps: {
+      tool: tool === 'eraser' ? 'eraser' : 'brush',
+      settings: brushSettings,
+      foreground: editorColors.foreground,
+      background: editorColors.background,
+      doc,
+      transform,
+      onDocumentChange,
+      flashNotice,
+    },
+  });
+
   /** 保存工程（对话框 + IPC 在 `projectIo.ts`，与顶栏入口共用同一套流程）。 */
   const handleSaveProject = useCallback(
     async (saveAs: boolean) => {
       if (!doc || !canvas || notice.status === 'working') return;
       try {
         setNotice({ status: 'working' });
+        // 画笔的后台烘焙先落盘（工程保存按文件路径内嵌图片字节）
+        const { flushPaintBakes } = await import('./brushBake');
+        await flushPaintBakes();
         const outcome = await saveProject(doc, saveAs);
         if (!outcome) {
           setNotice({ status: 'idle' }); // 用户取消：不要把"正在保存"留在条上
@@ -764,6 +803,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     onDocumentChange({ ...doc, layers: next, dirty: true });
   }, [doc, onDocumentChange]);
 
+  /** 圆形光标环直径要跟着笔径走，[ / ] 调整后立即反映 */
+  const handleBrushResize = useCallback((dir: 1 | -1) => {
+    setBrushSettings(s => ({ ...s, size: nextBrushSize(s.size, dir) }));
+  }, []);
+
   // ---- 键盘（useEditorKeyboard）----
   const { spaceHeld, altHeld, altHeldRef } = useEditorKeyboard({
     isActive,
@@ -778,6 +822,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       openProject: handleOpenProject,
       deleteActiveLayer: handleDeleteActiveLayer,
       toggleActiveClip: handleToggleClip,
+      brushResize: handleBrushResize,
       commitCrop,
       cancelCrop,
       cancelTransform,
@@ -796,6 +841,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const onMouseDown = (e: React.MouseEvent) => {
     // 视口部分（缩放单击 / 抓手拖拽）先接；被消费就不用看图层了
     if (handleViewportMouseDown(e, effectiveTool, altHeldRef)) return;
+
+    // 画笔/橡皮：落笔交给 useEditorBrush（组行/锁像素/无蒙版等守卫与提示都在
+    // hook 里）。不管画没画上，这个事件都到此为止——画笔工具没有"点选图层"的语义。
+    if (effectiveTool === 'brush' || effectiveTool === 'eraser') {
+      const el = containerRef.current;
+      if (el) beginStroke(e, el);
+      return;
+    }
 
     // 移动工具：点空白处取消选中；点在**别的图层**上就换成那一层（PS 的"点哪层选哪层"）。
     //
@@ -843,9 +896,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
         : 'zoom-in'
       : effectiveTool === 'crop'
         ? 'crosshair'
-        : effectiveTool === 'hand'
-          ? 'grab'
-          : 'default';
+        : // 画笔/橡皮：系统光标整个藏掉，只留 BrushCursor 的圆环（PS 同款；
+          // 圆环有 4px 最小可见直径，笔径再小也不会"没有光标"）
+          effectiveTool === 'brush' || effectiveTool === 'eraser'
+          ? 'none'
+          : effectiveTool === 'hand'
+            ? 'grab'
+            : 'default';
 
   const docName = doc?.name || '未命名';
   const isReady = !!canvas;
@@ -1037,12 +1094,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             autoSelect={autoSelect}
             onAutoSelectChange={setAutoSelect}
             onLayerBoxChange={patch => patchTargetBox(patch)}
+            brushSettings={brushSettings}
+            onBrushSettingsChange={setBrushSettings}
+            /** 蒙版目标：选中的是蒙版缩略图且该层有蒙版——选项条要改提示口径（画的是灰度） */
+            maskTarget={doc?.activeTarget === 'mask' && !!activeLayer?.mask}
           />
 
           {/* 画布（视口） */}
           <div
             ref={containerRef}
-            className="flex-1 relative overflow-hidden"
+            className={`flex-1 relative overflow-hidden${
+              // 画笔/橡皮：系统光标整个让位给圆环（index.css 的规则连后代一起压，
+              // 光靠容器 inline 的 cursor:none 会被后代自带 cursor 顶掉）
+              effectiveTool === 'brush' || effectiveTool === 'eraser' ? ' editor-brush-viewport' : ''
+            }`}
             style={{ cursor }}
             onMouseDown={onMouseDown}
             onDoubleClick={fitToView}
@@ -1055,7 +1120,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               </div>
             )}
 
-            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers） */}
+            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers）。
+                overlayNode = 画笔笔划预览 canvas（文档尺寸 1:1，显示开关在 useEditorBrush） */}
             {canvas && !error && (
               <EditorCanvasLayers
                 tabId={tabId}
@@ -1063,6 +1129,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 transform={transform}
                 layers={layers}
                 onLayerError={setError}
+                overlayNode={
+                  <canvas
+                    ref={brushPreviewRef}
+                    className="absolute inset-0 pointer-events-none"
+                    style={{ display: 'none' }}
+                  />
+                }
               />
             )}
 
@@ -1113,6 +1186,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 rect={cropRect}
                 aspectRatio={cropRatio}
                 onChange={setCropRect}
+              />
+            )}
+
+            {/* 画笔/橡皮的圆形光标环（跟随鼠标、随缩放变径），屏幕坐标层 */}
+            {(effectiveTool === 'brush' || effectiveTool === 'eraser') && (
+              <BrushCursor
+                containerRef={containerRef}
+                size={brushSettings.size}
+                scale={transform.scale}
               />
             )}
           </div>

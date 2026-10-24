@@ -672,3 +672,10 @@ body:not(.no-grid-layer) #folders-scroll > .folders-content {
     animation: none !important;
   }
 }
+/* 画笔/橡皮的画布视口：系统光标整个隐藏（只剩 BrushCursor 的圆环）。
+   连后代一起压（!important）——视口里任何子元素自带 cursor（overlay/滑杆之类）
+   都会露出系统箭头，2026-10-24 用户实测"圆圈旁边还有默认指针"就是这么来的。 */
+.editor-brush-viewport,
+.editor-brush-viewport * {
+  cursor: none !important;
+}

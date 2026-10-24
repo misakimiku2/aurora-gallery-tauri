@@ -4,9 +4,17 @@
  * 内容随选中工具切换。**只给已经能用的工具配真实控件**；未接入的工具
  * 明说「尚未接入」，不放一堆点了没反应的假控件——那比没有更糟。
  */
-import React from 'react';
+import React, { useSyncExternalStore } from 'react';
 import type { EditorToolId, LayerBox } from '../../types';
 import { getEditorTool, AutoSelectMode } from './editorTools';
+import type { BrushSettings } from './useEditorBrush';
+import {
+  getEditorColors,
+  setForeground,
+  setBackground,
+  subscribeEditorColors,
+} from './editorColorStore';
+import { colorLuminance, luminanceToHex } from './brushPaint';
 
 interface EditorOptionsBarProps {
   /** `null` = 没有选中工具：这条横栏只留提示，不给任何工具控件 */
@@ -39,6 +47,11 @@ interface EditorOptionsBarProps {
    */
   autoSelect?: AutoSelectMode;
   onAutoSelectChange?: (mode: AutoSelectMode) => void;
+  /** 画笔/橡皮参数（大小/硬度/不透明度）；落笔瞬间取值，笔画中途改不影响当前笔 */
+  brushSettings?: BrushSettings;
+  onBrushSettingsChange?: (next: BrushSettings) => void;
+  /** 选中对象是蒙版（画的是灰度：白 = 显示 / 黑 = 隐藏），选项条换提示口径 */
+  maskTarget?: boolean;
 }
 
 /** 裁剪比例预设（UI 设计 §7.1 的平台封面清单）。`'doc'` = 跟随当前文档比例。 */
@@ -104,8 +117,14 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
   onSnapToggle,
   autoSelect = 'layer',
   onAutoSelectChange,
+  brushSettings,
+  onBrushSettingsChange,
+  maskTarget = false,
 }) => {
   const def = getEditorTool(tool);
+  const colors = useSyncExternalStore(subscribeEditorColors, getEditorColors);
+  // 画笔画前景色；橡皮在蒙版上画背景色的亮度（图层上则是擦除，颜色不参与）
+  const activeColor = tool === 'eraser' ? colors.background : colors.foreground;
 
   return (
     <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 select-none overflow-x-auto">
@@ -290,11 +309,103 @@ export const EditorOptionsBar: React.FC<EditorOptionsBarProps> = ({
         </>
       )}
 
-      {tool !== null && !['move', 'crop', 'hand', 'zoom', 'transform'].includes(tool) && (
-        <span className="text-[11px] text-amber-600 dark:text-amber-400">
-          「{def.label}」尚未接入（快捷键 {def.shortcut}）—— 先摆在这儿占位
-        </span>
+      {/* 画笔/橡皮（2026-10-24 画笔轮）：大小/硬度/不透明度 + 颜色。
+          参数改动只在**下一笔**生效（落笔瞬间取值）。 */}
+      {(tool === 'brush' || tool === 'eraser') && brushSettings && onBrushSettingsChange && (
+        <>
+          <span className={label}>大小</span>
+          <input
+            type="range"
+            min={1}
+            max={300}
+            step={1}
+            value={brushSettings.size}
+            onChange={e => onBrushSettingsChange({ ...brushSettings, size: Number(e.target.value) })}
+            className="w-24 accent-blue-600"
+            title="笔径（文档像素）"
+          />
+          <input
+            type="number"
+            min={1}
+            max={300}
+            value={brushSettings.size}
+            onChange={e =>
+              onBrushSettingsChange({
+                ...brushSettings,
+                size: Math.min(300, Math.max(1, Math.round(Number(e.target.value) || 1))),
+              })
+            }
+            className={`${numInput} w-14`}
+          />
+          <span className={label}>硬度</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={brushSettings.hardness}
+            onChange={e => onBrushSettingsChange({ ...brushSettings, hardness: Number(e.target.value) })}
+            className="w-20 accent-blue-600"
+            title="100 = 硬边，0 = 全柔边"
+          />
+          <span className="text-[11px] tabular-nums text-neutral-600 dark:text-neutral-300 w-7 text-center shrink-0">
+            {brushSettings.hardness}
+          </span>
+          <span className={label}>不透明度</span>
+          <input
+            type="range"
+            min={1}
+            max={100}
+            step={1}
+            value={brushSettings.opacity}
+            onChange={e => onBrushSettingsChange({ ...brushSettings, opacity: Number(e.target.value) })}
+            className="w-20 accent-blue-600"
+            title="笔画不透明度（一笔之内不叠深）"
+          />
+          <span className="text-[11px] tabular-nums text-neutral-600 dark:text-neutral-300 w-9 text-center shrink-0">
+            {brushSettings.opacity}%
+          </span>
+
+          {/* 颜色：画笔 = 前景；橡皮 = 背景（只在蒙版上有意义，图层上是擦除）。
+              蒙版目标下改画"颜色的亮度"，chip 直接显示将画出的灰 */}
+          <label
+            className="relative w-6 h-6 rounded border border-neutral-300 dark:border-neutral-500 shrink-0 cursor-pointer"
+            style={{ backgroundColor: maskTarget ? luminanceToHex(colorLuminance(activeColor)) : activeColor }}
+            title={
+              maskTarget
+                ? `蒙版作画：画的是颜色的亮度（白 = 显示 / 黑 = 隐藏），当前灰度 ${colorLuminance(activeColor)}`
+                : tool === 'eraser'
+                  ? '背景色（橡皮在蒙版上画它的亮度；图层上为擦除）'
+                  : '前景色（画笔画它；右侧面板 / D / X 也可换）'
+            }
+          >
+            <input
+              type="color"
+              value={activeColor}
+              onChange={e =>
+                tool === 'eraser' ? setBackground(e.target.value) : setForeground(e.target.value)
+              }
+              className="absolute inset-0 opacity-0 cursor-pointer"
+            />
+          </label>
+          {maskTarget && (
+            <span className="text-[10px] text-neutral-500 dark:text-neutral-400 shrink-0">
+              蒙版：白 = 显示 / 黑 = 隐藏（当前灰度 {colorLuminance(activeColor)}）
+            </span>
+          )}
+          <span className="ml-auto text-[11px] text-neutral-400 dark:text-neutral-500 shrink-0">
+            {tool === 'brush' ? 'B 画笔' : 'E 橡皮'} · 选蒙版缩略图后可直接画蒙版 ·
+            前景/背景色在右侧面板（D 复位 · X 交换）
+          </span>
+        </>
       )}
+
+      {tool !== null &&
+        !['move', 'crop', 'hand', 'zoom', 'transform', 'brush', 'eraser'].includes(tool) && (
+          <span className="text-[11px] text-amber-600 dark:text-amber-400">
+            「{def.label}」尚未接入（快捷键 {def.shortcut}）—— 先摆在这儿占位
+          </span>
+        )}
     </div>
   );
 };

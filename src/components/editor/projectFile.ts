@@ -37,14 +37,15 @@ export interface ProjectLayerPayload {
   /** 混合模式（kebab-case，与 CSS `mix-blend-mode` 同名） */
   blend: string;
   /**
-   * ⚠️ **键名必须是 camelCase**（`lockPixel` / `lockPosition` / `layerKind` /
-   * `groupId` / `maskSource` / `maskBox` / `maskDisabled` / `clipped`）：Rust 侧
-   * `ProjectLayerRequest` 整体挂着 `#[serde(rename_all = "camelCase")]`，
+   * ⚠️ **键名必须是 camelCase**（`lockTransparent` / `lockPixel` / `lockPosition` /
+   * `layerKind` / `groupId` / `maskSource` / `maskBox` / `maskDisabled` / `clipped`）：
+   * Rust 侧 `ProjectLayerRequest` 整体挂着 `#[serde(rename_all = "camelCase")]`，
    * snake_case 的键它**静默不认**（未知字段忽略 + 缺字段走 default）。
    * 2026-10-24 之前这里发的是 snake_case，锁定与编组存盘后再打开会无声丢掉
    * ——core 层的往返单测走 `SaveLayer` 直连、不穿 IPC，所以一直没红。
    * 打开方向同理（`OpenedLayer` 序列化出来的也是 camelCase）。
    */
+  lockTransparent: boolean;
   lockPixel: boolean;
   lockPosition: boolean;
   /** 条目类型："layer"（缺省）/ "group"（组行，source 为空串） */
@@ -82,6 +83,8 @@ export interface OpenedProjectPayload {
     /** 老工程缺这两字段时按 false（未锁）。⚠️ camelCase，见 ProjectLayerPayload 注释 */
     lockPixel?: boolean;
     lockPosition?: boolean;
+    /** 锁透明像素；缺省 false（老工程按未锁读） */
+    lockTransparent?: boolean;
     /** 老工程缺字段按 "layer" */
     layerKind?: string;
     groupId?: string | null;
@@ -190,6 +193,7 @@ export function buildSavePayload(doc: EditorDocument): ProjectSavePayload {
       opacity: layerOpacity(l),
       blend: layerBlend(l),
       // ⚠️ camelCase 键——snake_case 会被 Rust 的 rename_all 静默丢掉（见接口注释）
+      lockTransparent: layerLocks(l).transparent,
       lockPixel: layerLocks(l).pixel,
       lockPosition: layerLocks(l).position,
       layerKind: l.kind === 'group' ? 'group' : 'layer',
@@ -289,6 +293,7 @@ export function projectPayloadToDocument(
         blend: normalizeBlendMode(l.blend) === 'normal' ? undefined : normalizeBlendMode(l.blend),
         // 锁只在 true 时落字段（文档保持干净；undefined 经 layerLocks() 读回 false）
         // 注意：EditorLayer 的字段是 camelCase，与 payload 同名
+        lockTransparent: l.lockTransparent === true ? true : undefined,
         lockPixel: l.lockPixel === true ? true : undefined,
         lockPosition: l.lockPosition === true ? true : undefined,
         // 组结构：组行 kind='group'；成员层的 groupId 指回组行 id。老工程缺字段按平层

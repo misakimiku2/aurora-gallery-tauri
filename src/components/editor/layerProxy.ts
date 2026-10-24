@@ -96,7 +96,11 @@ export function ensureLayerPreview(layer: EditorLayer): void {
 
   const source = layer.source;
   acquire(() => {
-    loadLayerProxy(source)
+    // 画笔的后台烘焙先落盘：source 可能是"预分配"路径（画面走内存画布、文件
+    // 还在路上），直接读文件会 404 进 failed、缩略图永远占位
+    import('./brushBake')
+      .then(({ flushPaintBakes }) => flushPaintBakes())
+      .then(() => loadLayerProxy(source))
       .then(res => {
         putPreview(key, {
           width: res.naturalWidth,

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { EditorToolId } from '../../types';
 import { isTextEditingTarget } from '../../utils/keyboardTarget';
 import { EDITOR_SHORTCUT_KEYS } from './editorTools';
+import { resetEditorColors, swapEditorColors } from './editorColorStore';
 
 export interface EditorKeyActions {
   undo: () => void;
@@ -23,6 +24,8 @@ export interface EditorKeyActions {
   deleteActiveLayer: () => void;
   /** Ctrl+Alt+G：切换活动图层的剪贴蒙版（PS 键位） */
   toggleActiveClip: () => void;
+  /** `[` / `]`：调画笔笔径（PS 键位，分段步进见 brushPaint.brushSizeStep） */
+  brushResize: (dir: 1 | -1) => void;
   commitCrop: () => void;
   cancelCrop: () => void;
   cancelTransform: () => void;
@@ -68,6 +71,8 @@ export function useEditorKeyboard(opts: {
   deleteLayerRef.current = actions.deleteActiveLayer;
   const toggleClipRef = useRef(actions.toggleActiveClip);
   toggleClipRef.current = actions.toggleActiveClip;
+  const brushResizeRef = useRef(actions.brushResize);
+  brushResizeRef.current = actions.brushResize;
   const commitCropRef = useRef(actions.commitCrop);
   commitCropRef.current = actions.commitCrop;
   const cancelCropRef = useRef(actions.cancelCrop);
@@ -132,6 +137,28 @@ export function useEditorKeyboard(opts: {
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // D / X：前/背景色（PS 口径；画蒙版时黑白对调全靠 X）。会话态 store，
+      // 不进文档、不进撤销栈——和锁定开关同一类"不占撤销步骤"的操作。
+      if (e.key.toLowerCase() === 'd') {
+        resetEditorColors();
+        return;
+      }
+      if (e.key.toLowerCase() === 'x') {
+        swapEditorColors();
+        return;
+      }
+      // [ / ]：画笔笔径（PS 键位；任何工具下都可用——改的是设置，落笔时生效）
+      if (e.key === '[') {
+        brushResizeRef.current(-1);
+        e.preventDefault();
+        return;
+      }
+      if (e.key === ']') {
+        brushResizeRef.current(1);
+        e.preventDefault();
+        return;
+      }
 
       if (toolRef.current === 'crop') {
         if (e.key === 'Enter') {

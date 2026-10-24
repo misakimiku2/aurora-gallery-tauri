@@ -443,7 +443,9 @@ pub struct ProjectLayerRequest {
     /// 混合模式（kebab-case）。前端老版本不带这个字段时按 `normal` 处理。
     #[serde(default)]
     pub blend: BlendMode,
-    /// 锁像素 / 锁位置。老前端不带字段时按 false（未锁）处理。
+    /// 锁透明像素 / 锁像素 / 锁位置。老前端不带字段时按 false（未锁）处理。
+    #[serde(default)]
+    pub lock_transparent: bool,
     #[serde(default)]
     pub lock_pixel: bool,
     #[serde(default)]
@@ -520,6 +522,7 @@ pub async fn editor_save_project(
                 visible: l.visible,
                 opacity: l.opacity,
                 blend: l.blend,
+                lock_transparent: l.lock_transparent,
                 lock_pixel: l.lock_pixel,
                 lock_position: l.lock_position,
                 layer_kind: l.layer_kind,
@@ -550,6 +553,86 @@ fn project_cache_dir() -> PathBuf {
     std::env::temp_dir().join("aurora-editor-projects")
 }
 
+/// 画笔烘焙文件的落点：与工程缓存平级的另一个临时目录。
+///
+/// 画笔架构是 bake-on-stroke-end（见进度文档画笔轮）：每抬一次笔把整层像素烘成
+/// PNG 写进来、前端把 `layer.source` 换成新路径；**旧文件不删**——撤销栈的旧快照
+/// 还引用着它们。文件只增不改，清理交给 `prune_project_cache` 的 30 天 TTL
+/// （与工程缓存同一口径：正在被 WebView 持有的文件删不掉就留着，下轮再清）。
+fn paint_cache_dir() -> PathBuf {
+    std::env::temp_dir().join("aurora-editor-paint")
+}
+
+/// 画笔缓存目录（首次调用时创建并顺带清一次过期文件）。
+/// 前端拿绝对路径写烘焙 PNG（plugin-fs writeFile，不穿自定义 IPC 传大字节）。
+#[tauri::command]
+pub fn editor_paint_cache_dir() -> Result<String, String> {
+    let dir = paint_cache_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    prune_project_cache(&dir);
+    Ok(dir.display().to_string())
+}
+
+/// 画笔烘焙文件序号（同毫秒连抬几笔也不撞名——撤销栈靠不同路径区分每一笔）。
+static PAINT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 画笔烘焙：前端把合成完的整层 PNG 以 base64 传进来，写进画笔缓存目录，
+/// 返回**绝对路径**（前端把它变成 `layer.source` / `mask.source`）。
+///
+/// `name`（可选）= 前端**预分配**的文件名——性能方案（2026-10-25）要求抬笔瞬间
+/// 就把 source 换成新路径（显示走内存画布、文件由后台烘焙补上），路径必须先于
+/// 内容存在。不传则自动生成。名字只放行 `[A-Za-z0-9._-]`，防路径注入。
+///
+/// 走自定义 IPC 而不是 plugin-fs 的 writeFile/readFile：图层与蒙版的源图在用户
+/// 任意目录（Pictures/Videos/…），fs 插件的 scope 对绝对路径的匹配并不可靠——
+/// 2026-10-24 用户实测 `forbidden path ... allow-read-file`，画笔连原图都读不进
+/// 来。自定义命令不受 capabilities 限制，base64 字符串过 IPC 也比字节数组便宜。
+/// 顺带清一次过期烘焙文件（read_dir 一趟很便宜，每笔一次可接受）。
+#[tauri::command]
+pub fn editor_write_paint_png(base64: String, name: Option<String>) -> Result<String, String> {
+    use base64::Engine;
+    use std::sync::atomic::Ordering;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.trim())
+        .map_err(|e| {
+            log::error!("[画笔] 烘焙 base64 解码失败（长度 {}）: {e}", base64.len());
+            format!("base64 解码失败: {e}")
+        })?;
+    if bytes.is_empty() {
+        log::error!("[画笔] 烘焙数据为空");
+        return Err("烘焙数据为空".into());
+    }
+    let file_name = match name {
+        Some(n) if !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') => n,
+        Some(n) => {
+            log::error!("[画笔] 拒绝非法文件名: {n:?}");
+            return Err(format!("非法文件名: {n}"));
+        }
+        None => {
+            let seq = PAINT_SEQ.fetch_add(1, Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            format!("stroke-{now:x}-{seq}.png")
+        }
+    };
+    let dir = paint_cache_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        log::error!("[画笔] 缓存目录创建失败 {}: {e}", dir.display());
+        e.to_string()
+    })?;
+    let path = dir.join(&file_name);
+    std::fs::write(&path, &bytes).map_err(|e| {
+        log::error!("[画笔] 烘焙写盘失败 {}: {e}", path.display());
+        e.to_string()
+    })?;
+    log::info!("[画笔] 烘焙落盘 {} ({} 字节)", path.display(), bytes.len());
+    prune_project_cache(&dir);
+    Ok(path.display().to_string())
+}
+
 /// 清理 30 天没用过的解压缓存。最佳努力：任何错误都吞掉（缓存坏了最坏是重新解一次）。
 ///
 /// TTL 取 30 天而不是 1 天：命中的缓存**不会**刷新 mtime（大小一致就跳过重写），
@@ -575,6 +658,8 @@ pub async fn editor_open_project(path: String) -> Result<editor_project::OpenedP
     tokio::task::spawn_blocking(move || {
         let dir = project_cache_dir();
         prune_project_cache(&dir);
+        // 画笔烘焙文件同口径清理（只按 mtime，不动打开中的判定）
+        prune_project_cache(&paint_cache_dir());
         editor_project::open_project(std::path::Path::new(&path), &dir)
             .map_err(|e| e.to_string())
     })
@@ -609,6 +694,7 @@ mod tests {
                 "visible": true,
                 "opacity": 80,
                 "blend": "multiply",
+                "lockTransparent": true,
                 "lockPixel": true,
                 "lockPosition": false,
                 "layerKind": "layer",
@@ -625,6 +711,7 @@ mod tests {
         }"#;
         let req: ProjectSaveRequest = serde_json::from_str(json).expect("前端载荷必须可解析");
         let l = &req.layers[0];
+        assert!(l.lock_transparent, "锁透明像素必须可读（camelCase：lockTransparent）");
         assert_eq!(l.lock_pixel, true);
         assert_eq!(l.lock_position, false);
         assert_eq!(l.layer_kind, "layer");
@@ -692,5 +779,45 @@ mod tests {
             "layers": []
         }"#;
         assert!(serde_json::from_str::<DocumentRequest>(legacy).is_err());
+    }
+
+    /// 画笔缓存目录：可创建、返回绝对路径、与工程缓存平级（两个目录各管各的文件）。
+    #[test]
+    fn paint_cache_dir_creates_and_returns_absolute_path() {
+        let dir = editor_paint_cache_dir().expect("临时目录必须能创建");
+        let p = std::path::Path::new(&dir);
+        assert!(p.is_dir(), "返回的路径必须已创建：{dir}");
+        assert!(p.is_absolute(), "前端要拿绝对路径写烘焙 PNG");
+        assert!(dir.ends_with("aurora-editor-paint"));
+    }
+
+    /// base64 烘焙落盘：解码 → 唯一文件名 → 返回绝对路径（前端要变成 layer.source）。
+    #[test]
+    fn write_paint_png_decodes_and_lands_in_paint_dir() {
+        use base64::Engine;
+        // PNG 的 8 字节 magic 头就够验证链路（解码→落盘→绝对路径），不必是真图
+        let png: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let path = editor_write_paint_png(b64, None).expect("写入必须成功");
+        assert!(path.is_ascii());
+        assert!(path.ends_with(".png"), "返回的是 PNG 路径：{path}");
+        assert!(std::path::Path::new(&path).is_file(), "文件必须真的落盘：{path}");
+        // 坏 base64 要报错而不是 panic
+        assert!(editor_write_paint_png("!!!not-base64!!!".into(), None).is_err());
+    }
+
+    /// 预分配文件名（性能方案：抬笔先换 source，文件后台补）——合法名照用，
+    /// 带路径分隔符的名字必须拒绝（防注入）。
+    #[test]
+    fn write_paint_png_accepts_preallocated_name_only_when_safe() {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(vec![1u8, 2, 3]);
+        let named = editor_write_paint_png(b64.clone(), Some("stroke-pre-1.png".into()))
+            .expect("合法预分配名必须成功");
+        assert!(named.ends_with("stroke-pre-1.png"));
+        assert!(std::path::Path::new(&named).is_file());
+        // 带路径成分的名字必须拒绝（防注入）——正反斜杠都不行
+        assert!(editor_write_paint_png("AAAA".into(), Some("a/b.png".into())).is_err());
+        assert!(editor_write_paint_png("AAAA".into(), Some("..\\evil.png".into())).is_err());
     }
 }

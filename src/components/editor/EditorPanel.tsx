@@ -33,6 +33,7 @@ import { createPortal } from 'react-dom';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import {
+  ArrowLeftRight,
   Brush,
   ChevronDown,
   ChevronRight,
@@ -49,6 +50,7 @@ import {
   Link,
   Lock,
   Move,
+  Plus,
   Trash2,
   Unlink,
   X,
@@ -62,6 +64,7 @@ import { useEditorThumbnail } from './useEditorThumbnail';
 import { peekPreview, subscribePreview } from './editorPreviewCache';
 import {
   buildLayerPreviewKey,
+  createIdentityBox,
   createLayerId,
   duplicateLayer,
   layerOpacity,
@@ -88,6 +91,16 @@ import { buildRenderGroups } from './renderPayload';
 import { useEditorMask } from './useEditorMask';
 import { canClipLayer, toggleClipped } from './layerClipping';
 import { toggleMaskDisabled, toggleMaskLink } from './layerModel';
+import {
+  getEditorColors,
+  resetEditorColors,
+  setForeground,
+  setBackground,
+  subscribeEditorColors,
+  swapEditorColors,
+} from './editorColorStore';
+import { bakeCanvasToPath, allocatePaintPath, blankCanvas, enqueueBake, flushPaintBakes } from './brushBake';
+import { rememberPaintBuffer } from './paintBuffers';
 
 /** `editor_render_document` 的返回（camelCase 由 Rust 侧 serde 重命名） */
 interface DocumentRender {
@@ -924,6 +937,9 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   // 全览图的视口框需要编辑器画布的 scale/x/y —— 从共享 store 拿（rAF 节流）
   const view = useSyncExternalStore(subscribeEditorView, () => getEditorView(tabId));
 
+  // 前/背景色（会话级 store，与选项条/画笔共用；D/X 快捷键在 useEditorKeyboard）
+  const editorColors = useSyncExternalStore(subscribeEditorColors, getEditorColors);
+
   // ---- 全览图：整份文档的合成（PS 的 Navigator 语义） ----
   //
   // 走 `editor_render_document`：Rust 按**导出同一条路**（含调色/不透明度/蒙版、跳过
@@ -945,12 +961,16 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      invoke<DocumentRender>('editor_render_document', {
-        doc: {
-          canvas: { width, height, background: background ?? 'transparent' },
-          groups,
-        },
-      })
+      // 全览在 Rust 读文件合成——先等画笔的后台烘焙落盘，否则概览落后于画面
+      flushPaintBakes()
+        .then(() =>
+          invoke<DocumentRender>('editor_render_document', {
+            doc: {
+              canvas: { width, height, background: background ?? 'transparent' },
+              groups,
+            },
+          }),
+        )
         .then(res => {
           if (!cancelled) setOverviewUrl(res.dataUrl);
         })
@@ -1053,7 +1073,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     emit({ layers: setLayerBlend(layers ?? [], layerId, mode), activeLayerId });
   };
 
-  const setLock = (layerId: string, kind: 'pixel' | 'position', on: boolean) => {
+  const setLock = (
+    layerId: string,
+    kind: 'transparent' | 'pixel' | 'position',
+    on: boolean,
+  ) => {
     emit({ layers: setLayerLock(layers ?? [], layerId, kind, on), activeLayerId });
   };
 
@@ -1077,6 +1101,34 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   /** Shift+点蒙版缩略图：停用/启用蒙版（红叉；停用 = 不参与合成但数据保留）。 */
   const handleToggleMaskDisabled = (layerId: string) => {
     emit({ layers: toggleMaskDisabled(layers ?? [], layerId), activeLayerId });
+  };
+
+  /**
+   * 新建空白图层（画笔轮，2026-10-25 起即时路径）：预分配烘焙路径、把空白画布
+   * 登记进缓冲注册表（画面立刻由 canvas 直染），PNG 文件由后台烘焙补上。
+   */
+  const handleCreateBlankLayer = async () => {
+    if (!width || !height) return;
+    try {
+      const path = await allocatePaintPath();
+      const canvas = blankCanvas(width, height);
+      rememberPaintBuffer(path, canvas);
+      enqueueBake(() => bakeCanvasToPath(canvas, path));
+      const id = createLayerId();
+      const blank: EditorLayer = {
+        id,
+        name: `图层 ${(layers ?? []).length + 1}`,
+        source: path,
+        naturalWidth: width,
+        naturalHeight: height,
+        box: createIdentityBox(width, height),
+        visible: true,
+      };
+      // 自底向上数组：顶层 = 末尾（组行若在末尾也照常压在其上，平层段）
+      emit({ layers: [...(layers ?? []), blank], activeLayerId: id });
+    } catch (e) {
+      console.warn('新建空白图层失败', e);
+    }
   };
 
   /** Alt+点行：切换剪贴蒙版（不可剪贴时 toggleClipped 原样返回、不置 dirty）。 */
@@ -1203,27 +1255,55 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         </p>
       </Section>
 
-      {/* 颜色 */}
-      <Section title="颜色" defaultOpen={false}>
+      {/* 颜色（2026-10-24 画笔轮起为真控件：前/背景色是会话级 store，订阅在组件顶部） */}
+      <Section title="颜色">
         <div className="flex items-center gap-2">
-          <div className="relative w-8 h-8">
-            <div
-              className="absolute left-0 top-0 w-6 h-6 rounded-sm border border-neutral-300 dark:border-neutral-500 bg-black"
-              title="前景色"
+          {/* 前景色（画笔画它；蒙版上画它的亮度）：label 包住透明 color input */}
+          <label className="relative w-8 h-8 cursor-pointer" title="前景色（画笔画它；蒙版上画它的亮度）">
+            <span
+              className="absolute left-0 top-0 w-6 h-6 rounded-sm border border-neutral-300 dark:border-neutral-500"
+              style={{ backgroundColor: editorColors.foreground }}
             />
-            <div
-              className="absolute right-0 bottom-0 w-6 h-6 rounded-sm border border-neutral-300 dark:border-neutral-500 bg-white"
-              title="背景色"
+            <input
+              type="color"
+              value={editorColors.foreground}
+              onChange={e => setForeground(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
             />
-          </div>
-          <div className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-tight">
-            前景 #000000
-            <br />
-            背景 #FFFFFF
-          </div>
+          </label>
+          <label className="relative w-8 h-8 cursor-pointer" title="背景色（橡皮在蒙版上画它的亮度）">
+            <span
+              className="absolute right-0 bottom-0 w-6 h-6 rounded-sm border border-neutral-300 dark:border-neutral-500"
+              style={{ backgroundColor: editorColors.background }}
+            />
+            <input
+              type="color"
+              value={editorColors.background}
+              onChange={e => setBackground(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
+            />
+          </label>
+          <button
+            type="button"
+            title="交换前景/背景（X）"
+            onClick={swapEditorColors}
+            className="p-1 rounded text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+          >
+            <ArrowLeftRight size={12} />
+          </button>
+          <button
+            type="button"
+            title="复位为黑/白（D）"
+            onClick={resetEditorColors}
+            className="px-1.5 h-6 rounded text-[10px] text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+          >
+            复位
+          </button>
         </div>
-        <p className="text-[10px] text-neutral-400 dark:text-neutral-500">
-          色板与吸管结果在 Phase 2 接入。
+        <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
+          前景 {editorColors.foreground} · 背景 {editorColors.background}
+          ——画笔用前景色，橡皮在蒙版上画背景色的亮度；D 复位黑白 · X 交换。
+          色板与吸管（I）后续接入。
         </p>
       </Section>
 
@@ -1260,11 +1340,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         <div className="flex items-center gap-1">
           <PanelIconButton
             icon={Grid2x2}
-            title="锁定透明像素（等画笔工具接入）"
-            on={false}
-            grayed
+            title="锁定透明像素（画笔只画进已有像素；橡皮禁用）"
+            on={!!active && layerLocks(active).transparent}
             disabled={!active}
-            onClick={() => {}}
+            onClick={() => active && setLock(active.id, 'transparent', !layerLocks(active).transparent)}
           />
           <PanelIconButton
             icon={FolderPlus}
@@ -1406,11 +1485,19 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           </div>
         )}
 
-        {/* 底部按钮排（PS 的图层面板底部同款）：左侧添加蒙版，右侧复制/删除
-            （用户 2026-10-24）。**没有单独的"删蒙版"按钮**——删除蒙版优先走
-            右下角那个删除：有蒙版时点它先删蒙版，再点才删图层。w-8 容器约束
-            PanelIconButton 的 flex-1——按钮固定 32px 宽。 */}
+        {/* 底部按钮排（PS 的图层面板底部同款）：左侧 新建空白图层 + 添加蒙版，
+            右侧复制/删除。**没有单独的"删蒙版"按钮**——删除蒙版优先走右下角那个
+            删除：有蒙版时点它先删蒙版，再点才删图层。w-8 容器约束 PanelIconButton
+            的 flex-1——按钮固定 32px 宽。 */}
         <div className="flex items-center gap-1 mt-2">
+          <div className="w-8 flex">
+            <PanelIconButton
+              icon={Plus}
+              title="新建空白图层（画布大小，可直接作画）"
+              onClick={() => void handleCreateBlankLayer()}
+              disabled={!width || !height}
+            />
+          </div>
           <div className="w-8 flex">
             <PanelIconButton
               icon={Contrast}

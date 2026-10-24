@@ -2016,6 +2016,10 @@ pub fn run() {
         // 工程文件（.aurora）：存与开成对存在，缺一个都等于没有
         editor_commands::editor_save_project,
         editor_commands::editor_open_project,
+        // 画笔（bake-on-stroke-end）：缓存目录 + base64 烘焙落盘（读写都走自定义
+        // IPC——plugin-fs 的 scope 会拦用户任意目录的绝对路径，2026-10-24 实测）
+        editor_commands::editor_paint_cache_dir,
+        editor_commands::editor_write_paint_png,
         generate_drag_preview,
         system_commands::read_file_as_base64,
         file_operations::ensure_directory,

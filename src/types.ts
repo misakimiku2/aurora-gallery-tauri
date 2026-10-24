@@ -588,6 +588,12 @@ export interface EditorLayer {
    */
   lockPosition?: boolean;
   /**
+   * 锁透明像素（PS 的棋盘格锁，画笔轮起生效）：作画只落在**已有像素**的范围内
+   * （`source-atop` 合成），且橡皮无效（不许改 alpha）。只作用于图层本体，
+   * 蒙版作画不受影响。删除式字段：false 不落。
+   */
+  lockTransparent?: boolean;
+  /**
    * 混合模式，缺省 `'normal'`（普通 src-over）。
    *
    * 取值是 **CSS `mix-blend-mode` 同名的英文串**（`multiply` / `color-dodge`…）：

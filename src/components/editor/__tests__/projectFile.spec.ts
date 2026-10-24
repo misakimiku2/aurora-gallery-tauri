@@ -236,10 +236,14 @@ describe('路径小工具', () => {
   });
 
   it('锁状态往返；未锁不落字段', () => {
-    const locked = roundTrip(doc({ layers: [layer({ lockPixel: true, lockPosition: true })] }));
+    const locked = roundTrip(
+      doc({ layers: [layer({ lockTransparent: true, lockPixel: true, lockPosition: true })] }),
+    );
     const opened = projectPayloadToDocument(locked, 'x.aurora').layers?.[0];
+    expect(opened?.lockTransparent).toBe(true);
     expect(opened?.lockPixel).toBe(true);
     expect(opened?.lockPosition).toBe(true);
+    expect(locked.layers[0].lockTransparent).toBe(true);
 
     // 未锁：保存时显式写 false，读回来折成 undefined（文档保持干净）
     const payload = buildSavePayload(doc({ layers: [layer()] }));
@@ -267,6 +271,7 @@ describe('路径小工具', () => {
     );
     const l = payload.layers[0] as unknown as Record<string, unknown>;
     for (const key of [
+      'lockTransparent',
       'lockPixel',
       'lockPosition',
       'layerKind',
@@ -280,6 +285,7 @@ describe('路径小工具', () => {
       expect(key in l, `缺少 camelCase 键 ${key}`).toBe(true);
     }
     for (const bad of [
+      'lock_transparent',
       'lock_pixel',
       'lock_position',
       'layer_kind',
