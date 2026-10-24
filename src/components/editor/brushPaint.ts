@@ -70,6 +70,66 @@ export function strokeStamps(points: StampPoint[], size: number, final = false):
   return out;
 }
 
+/** 像素补丁的矩形（目标缓冲坐标，整数，已夹进缓冲范围）。 */
+export interface DirtyRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * 一笔的**脏矩形**（撤销补丁只存这一块，不存整层）：图章的外接框（文档坐标，
+ * 半径外扩——径向渐变的羽化也到 r）经 `transform`（文档 → 目标缓冲）映射后
+ * 取整数外接、夹进缓冲范围。整笔都画在缓冲外 → null（撤销步也不进栈）。
+ */
+export function strokeDirtyRect(
+  stamps: StampPoint[],
+  radius: number,
+  transform: AffineMatrix,
+  bufferWidth: number,
+  bufferHeight: number,
+): DirtyRect | null {
+  if (stamps.length === 0 || bufferWidth <= 0 || bufferHeight <= 0) return null;
+  const pad = radius + 1; // +1：羽化边缘的插值与半像素
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of stamps) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  // 文档空间外接框的四个角映射进目标缓冲（变换含旋转时角点法最稳）
+  const [a, b, c, d, e, f] = transform;
+  const corners: StampPoint[] = [
+    { x: minX - pad, y: minY - pad },
+    { x: maxX + pad, y: minY - pad },
+    { x: minX - pad, y: maxY + pad },
+    { x: maxX + pad, y: maxY + pad },
+  ];
+  let bx0 = Infinity;
+  let by0 = Infinity;
+  let bx1 = -Infinity;
+  let by1 = -Infinity;
+  for (const q of corners) {
+    const x = q.x * a + q.y * c + e;
+    const y = q.x * b + q.y * d + f;
+    if (x < bx0) bx0 = x;
+    if (y < by0) by0 = y;
+    if (x > bx1) bx1 = x;
+    if (y > by1) by1 = y;
+  }
+  const x = Math.max(0, Math.floor(bx0));
+  const y = Math.max(0, Math.floor(by0));
+  const x1 = Math.min(bufferWidth - 1, Math.ceil(bx1));
+  const y1 = Math.min(bufferHeight - 1, Math.ceil(by1));
+  if (x1 < x || y1 < y) return null;
+  return { x, y, w: x1 - x + 1, h: y1 - y + 1 };
+}
+
 /**
  * 颜色 → 灰度（0..255）。系数与 Rust `imaging::mask` 的 sRGB 亮度同款
  * （0.2126/0.7152/0.0722）——画蒙版时前端画的灰值与导出侧读出的亮度必须一致。

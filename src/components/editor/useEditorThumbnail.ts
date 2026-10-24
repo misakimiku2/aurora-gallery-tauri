@@ -20,6 +20,47 @@ export interface EditorThumb {
   height: number;
 }
 
+/**
+ * 从**内存画布**直出小缩略图（2026-10-26 架构轮：画过的层行缩略图走这里，
+ * 毫秒级——不再排 Rust 代理队列、不等烘焙落盘）。质量口径与 `downscale`
+ * 同一套逐级减半。
+ */
+export function thumbFromCanvas(source: HTMLCanvasElement, maxEdge: number): EditorThumb {
+  const sw = source.width;
+  const sh = source.height;
+  const ratio = Math.min(1, maxEdge / Math.max(sw, sh));
+  const tw = Math.max(1, Math.round(sw * ratio));
+  const th = Math.max(1, Math.round(sh * ratio));
+  let cur: CanvasImageSource = source;
+  let cw = sw;
+  let ch = sh;
+  while (cw > tw * 2 && ch > th * 2) {
+    const nw = Math.max(1, Math.floor(cw / 2));
+    const nh = Math.max(1, Math.floor(ch / 2));
+    const step = document.createElement('canvas');
+    step.width = nw;
+    step.height = nh;
+    const ctx = step.getContext('2d');
+    if (!ctx) break;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cur, 0, 0, nw, nh);
+    cur = step;
+    cw = nw;
+    ch = nh;
+  }
+  const out = document.createElement('canvas');
+  out.width = tw;
+  out.height = th;
+  const octx = out.getContext('2d');
+  if (octx) {
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
+    octx.drawImage(cur, 0, 0, tw, th);
+  }
+  return { src: out.toDataURL('image/jpeg', 0.92), width: tw, height: th };
+}
+
 function downscale(img: HTMLImageElement, maxEdge: number): EditorThumb {
   const sw = img.naturalWidth || img.width;
   const sh = img.naturalHeight || img.height;

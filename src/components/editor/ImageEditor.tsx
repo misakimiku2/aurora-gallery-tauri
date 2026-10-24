@@ -102,18 +102,13 @@ import { AutoSelectMode } from './editorTools';
 import { CLICK_ZOOM_STEP } from './useEditorViewport';
 import { formatBytes, isProjectPath } from './projectFile';
 import { openProjectDialog, saveProject } from './projectIo';
-import {
-  EditorPreviewMeta,
-  peekPreview,
-  putPreview,
-  subscribePreview,
-  takePreview,
-} from './editorPreviewCache';
+import { peekPreview, putPreview, subscribePreview, takePreview } from './editorPreviewCache';
 import { useEditorHistory } from './useEditorHistory';
 import { useEditorCrop } from './useEditorCrop';
 import { useEditorKeyboard } from './useEditorKeyboard';
 import { useEditorViewport } from './useEditorViewport';
 import { useEditorBrush, type BrushSettings } from './useEditorBrush';
+import { MASK_LUM_TO_ALPHA_FILTER_ID } from './EditorCanvasLayers';
 import { nextBrushSize } from './brushPaint';
 import { BrushCursor } from './BrushCursor';
 import {
@@ -215,13 +210,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     [doc?.layers, tabId],
   );
 
-  // ---- 撤销 / 重做（useEditorHistory）----
+  // ---- 撤销 / 重做（useEditorHistory：doc 快照 + 画笔像素补丁混合栈）----
   const {
     docIdentity,
     canUndo,
     canRedo,
     undo,
     redo,
+    pushPaintOp,
   } = useEditorHistory(doc, onDocumentChange);
 
   // 新文档/刚打开：什么都没点，不该有选中框（与历史建栈同刻）
@@ -598,9 +594,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const handleExport = useCallback(async () => {
     if (!doc || !canvas) return;
     try {
-      // 画笔的后台烘焙先落盘（导出在 Rust 读文件——不能读到"画面有、文件还没有"的层）
-      const { flushPaintBakes } = await import('./brushBake');
+      // 画笔的空闲烘焙先落盘，再把载荷里的 source 指到烘焙文件（导出在 Rust 读
+      // 文件——画过的层真身在位图仓，文件是它的影子）
+      const { flushPaintBakes, remapDocBitmapSources } = await import('./brushBake');
       await flushPaintBakes();
+      const exportDoc = await remapDocBitmapSources(doc);
       const { save } = await import('@tauri-apps/plugin-dialog');
       const raw = doc.path ?? '';
       const sepIdx = Math.max(raw.lastIndexOf('\\'), raw.lastIndexOf('/'));
@@ -631,7 +629,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               height: canvas.height,
               background: canvas.background,
             },
-            groups: buildRenderGroups(doc.layers ?? []),
+            groups: buildRenderGroups(exportDoc.layers ?? []),
           },
           targetPath: target,
         },
@@ -694,10 +692,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   });
   /** 前/背景色是会话态 store（面板颜色区与选项条共用；D/X 快捷键在键盘 hook） */
   const editorColors = useSyncExternalStore(subscribeEditorColors, getEditorColors);
-  /** 笔划预览 canvas：挂进 EditorCanvasLayers 的 transform 容器（文档尺寸 1:1） */
-  const brushPreviewRef = useRef<HTMLCanvasElement | null>(null);
   const { beginStroke } = useEditorBrush({
-    previewCanvasRef: brushPreviewRef,
     deps: {
       tool: tool === 'eraser' ? 'eraser' : 'brush',
       settings: brushSettings,
@@ -706,6 +701,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       doc,
       transform,
       onDocumentChange,
+      pushPaintOp,
       flashNotice,
     },
   });
@@ -716,9 +712,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       if (!doc || !canvas || notice.status === 'working') return;
       try {
         setNotice({ status: 'working' });
-        // 画笔的后台烘焙先落盘（工程保存按文件路径内嵌图片字节）
-        const { flushPaintBakes } = await import('./brushBake');
-        await flushPaintBakes();
+        // 烘焙落盘 + source 重映射都在 saveProject 里（projectIo，与所有入口共用）
         const outcome = await saveProject(doc, saveAs);
         if (!outcome) {
           setNotice({ status: 'idle' }); // 用户取消：不要把"正在保存"留在条上
@@ -923,6 +917,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               <feColorMatrix type="matrix" values={f.values} />
             </filter>
           ))}
+        {/*
+          蒙版显示用的亮度→alpha 滤镜：`MaskedPixels`（画过的蒙版 = 合成画布）的
+          `ctx.filter = url(#…)` 引用它，把"蒙版灰度"转成 alpha 再 destination-in
+          乘进图层像素——与 CSS mask luminance / Rust mask 同一套 sRGB 权重。
+          多标签会重复定义同 id（内容一致，url() 取首个，无碍）。
+        */}
+        <filter id={MASK_LUM_TO_ALPHA_FILTER_ID} colorInterpolationFilters="sRGB">
+          <feColorMatrix
+            type="matrix"
+            values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.2126 0.7152 0.0722 0 0"
+          />
+        </filter>
       </svg>
 
       {legacy && (
@@ -1120,8 +1126,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               </div>
             )}
 
-            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers）。
-                overlayNode = 画笔笔划预览 canvas（文档尺寸 1:1，显示开关在 useEditorBrush） */}
+            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers）。画过的蒙版在它内部
+                由 MaskedPixels 合成画布直出（2026-10-25 起，画笔也没有预览 overlay 了） */}
             {canvas && !error && (
               <EditorCanvasLayers
                 tabId={tabId}
@@ -1129,13 +1135,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
                 transform={transform}
                 layers={layers}
                 onLayerError={setError}
-                overlayNode={
-                  <canvas
-                    ref={brushPreviewRef}
-                    className="absolute inset-0 pointer-events-none"
-                    style={{ display: 'none' }}
-                  />
-                }
               />
             )}
 

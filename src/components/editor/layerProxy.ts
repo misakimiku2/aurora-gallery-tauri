@@ -20,6 +20,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { EditorLayer } from '../../types';
 import { peekPreview, putPreview } from './editorPreviewCache';
 import { buildLayerPreviewKey } from './layerModel';
+import { displaySourceOf, layerKey } from './layerBitmaps';
 
 /** `editor_load_layer_proxy` 的返回（camelCase 由 Rust 侧 serde 重命名） */
 export interface LayerProxyResponse {
@@ -87,34 +88,37 @@ function release(): void {
  * 结果通过 `subscribePreview` 回到面板。
  */
 export function ensureLayerPreview(layer: EditorLayer): void {
-  const key = buildLayerPreviewKey(layer);
-  if (!key || !layer.source) return;
+  const dedupKey = buildLayerPreviewKey(layer);
+  if (!dedupKey || !layer.source) return;
   // 命中、在飞、已失败都直接返回。**注意 peek 而不是 take**：这里在 effect 里，
   // take 的 LRU 副作用会让每次 re-render 都改写队列顺序。
-  if (peekPreview(key) || inflight.has(key) || failed.has(key)) return;
-  inflight.add(key);
+  if (peekPreview(dedupKey) || inflight.has(dedupKey) || failed.has(dedupKey)) return;
+  inflight.add(dedupKey);
 
-  const source = layer.source;
   acquire(() => {
-    // 画笔的后台烘焙先落盘：source 可能是"预分配"路径（画面走内存画布、文件
-    // 还在路上），直接读文件会 404 进 failed、缩略图永远占位
+    // 先等空闲烘焙（画过的层要读的是烘焙文件），**再**算 displaySource——顺序反了
+    // 会拿到还没烤好的旧源，解码出一张缺笔迹的代理（审计 P2#10）。flush 失败容忍：
+    // 缩略图落后一拍不打扰编辑（ensureLayerPreview 本就不抛错）。
     import('./brushBake')
-      .then(({ flushPaintBakes }) => flushPaintBakes())
-      .then(() => loadLayerProxy(source))
-      .then(res => {
-        putPreview(key, {
-          width: res.naturalWidth,
-          height: res.naturalHeight,
-          previewWidth: res.previewWidth,
-          previewHeight: res.previewHeight,
-          dataUrl: res.dataUrl,
+      .then(({ flushPaintBakes }) => flushPaintBakes().catch(() => undefined))
+      .then(() => {
+        const source = displaySourceOf(layerKey(layer.id), layer.source as string);
+        const key = buildLayerPreviewKey({ ...layer, source }) ?? dedupKey;
+        return loadLayerProxy(source).then(res => {
+          putPreview(key, {
+            width: res.naturalWidth,
+            height: res.naturalHeight,
+            previewWidth: res.previewWidth,
+            previewHeight: res.previewHeight,
+            dataUrl: res.dataUrl,
+          });
         });
       })
       .catch(() => {
-        failed.add(key);
+        failed.add(dedupKey);
       })
       .finally(() => {
-        inflight.delete(key);
+        inflight.delete(dedupKey);
         release();
       });
   });

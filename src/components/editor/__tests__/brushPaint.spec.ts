@@ -13,6 +13,7 @@ import {
   luminanceToHex,
   nextBrushSize,
   paintTargetOf,
+  strokeDirtyRect,
   strokeStamps,
 } from '../brushPaint';
 import { applyMatrix, composeMatrix, invertAffine } from '../layerTransform';
@@ -172,6 +173,44 @@ describe('paintTargetOf（作画目标坐标变换）', () => {
     expect(
       paintTargetOf(layerWith({ mask: { source: 'm.png', naturalWidth: 8, naturalHeight: 4, disabled: true } }), 'mask'),
     ).toBeNull();
+  });
+});
+
+describe('strokeDirtyRect（撤销补丁的脏矩形）', () => {
+  const I: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0];
+
+  it('恒等变换：外接框 = 图章范围 ± (半径+1)，整数化并含闭区间端点', () => {
+    const rect = strokeDirtyRect(
+      [{ x: 10, y: 10 }, { x: 50, y: 10 }],
+      5, // pad = 6
+      I,
+      100,
+      100,
+    );
+    expect(rect).toEqual({ x: 4, y: 4, w: 53, h: 13 }); // 4..56 → w = 56-4+1
+  });
+
+  it('贴边与越界都夹进缓冲范围（负坐标不产生负宽高）', () => {
+    const rect = strokeDirtyRect([{ x: 2, y: 2 }], 5, I, 100, 100);
+    expect(rect).toEqual({ x: 0, y: 0, w: 9, h: 9 }); // 2+6 = 8 → 0..8
+    const far = strokeDirtyRect([{ x: 300, y: 300 }], 5, I, 100, 100);
+    expect(far).toBeNull(); // 整笔都在缓冲外
+    expect(strokeDirtyRect([], 5, I, 100, 100)).toBeNull();
+  });
+
+  it('带旋转的变换：映射后的外接框包住变换后的图章区（角点法）', () => {
+    // 文档 → 缓冲：绕原点转 90°再平移 100（图层旋转 90° 时 target.transform 的形状）
+    const rot: [number, number, number, number, number, number] = [0, 1, -1, 0, 100, 0];
+    // 文档 (10,10) 半径 5 的图章 → 缓冲中心 (100-10, 10) = (90,10)，pad 6 → x∈[84,96] y∈[4,16]
+    const rect = strokeDirtyRect([{ x: 10, y: 10 }], 5, rot, 200, 200);
+    expect(rect).toEqual({ x: 84, y: 4, w: 13, h: 13 });
+  });
+
+  it('映射后只有一角擦到缓冲 → 仍给出夹过的非空矩形', () => {
+    const shift: [number, number, number, number, number, number] = [1, 0, 0, 1, 95, 0];
+    const rect = strokeDirtyRect([{ x: 0, y: 50 }], 5, shift, 100, 100);
+    // 缓冲 x ∈ [89,101] → 夹到 89..99；y ∈ [44,56]
+    expect(rect).toEqual({ x: 89, y: 44, w: 11, h: 13 });
   });
 });
 

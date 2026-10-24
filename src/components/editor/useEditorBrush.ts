@@ -1,50 +1,61 @@
 /**
- * 画笔/橡皮的**命令式流程**（2026-10-24 画笔轮）：落笔 → 笔划缓冲 → 抬笔合成换源。
+ * 画笔/橡皮的**命令式流程**（2026-10-24 画笔轮 → 26 架构轮 → 25 显示正确性轮）。
  *
- * ## 架构：bake-on-stroke-end + 显示/落盘分离（2026-10-25 性能轮）
+ * ## 架构：内存位图是真身，文件是影子
  *
- * 落笔时按目标的**当前 source** 建（或复用）内存像素缓冲（paintBuffers 注册表），
- * 笔划期间图章先画进独立**笔划缓冲**（一笔之内不叠深），抬笔时合成进像素缓冲：
+ * 落笔时按目标的位图键（`layerBitmaps`）物化像素缓冲，笔划期间图章先画进独立
+ * **笔划缓冲**（一笔之内不叠深），同时**逐帧增量合成进位图仓**：
  *
- * - **图层目标（快路径）**：预分配新路径 → 缓冲登记 → `layer.source` 立刻换过去
- *   → 画面由 EditorCanvasLayers **直接渲染内存画布**（零编码、即时）→ PNG 编码
- *   与落盘进**串行后台队列**（enqueueBake）。大层编码 + IPC 要几百毫秒到秒级，
- *   挡在抬笔路径上就是"画完等 1–2 秒才显示"的元凶。
- * - **蒙版目标（慢路径，刻意）**：CSS `mask-image` 只认 URL，文件缺失的一瞬蒙版
- *   会整个失效（图层闪烁成无蒙版）——所以蒙版**等文件真的落盘才换源**，笔划预览
- *   一直顶到换源完成（避免笔迹消失再出现）。
+ * 1. 物化就绪即建整幅**快照**（改前基准）；
+ * 2. 每帧把新图章的文档空间脏区（经 target.transform 映射 + 夹紧）在仓里
+ *    "复位 → 裁剪 → 重合整只笔划"（`compositeLayerRegion`；软边图章叠加不幂等
+ *    所以必须回基准，裁剪保证区域外旧图章不重复叠）；
+ * 3. 版本 +1 → 主画布的像素载体重画该层——**没有预览画布**（旧方案把"缓冲 +
+ *    笔划"画在盖着一切的 overlay 上，不带蒙版、不参与层级/混合、分辨率还重采样
+ *    ——"下层飞到最上/清晰度变化/蒙版消失"的元凶，已退役）；
+ * 4. 抬笔：before 取自快照、after 取自仓，两块小位图作为**像素补丁**进撤销栈
+ *    （`pushPaintOp`）——撤销就是把 before 写回仓，零文件依赖。
+ *
+ * **图层与蒙版走同一条路**（2026-10-25 统一）：蒙版位图的每次版本 +1 会让
+ * `EditorCanvasLayers.MaskedPixels` 同帧重合"图层 × 蒙版"，所以蒙版笔划的实时
+ * 显隐、撤销的原子重画天然正确——不再需要 live masking 预览引擎与 blob URL
+ * 收场（那是"抬笔刷新一下"的根源）。蒙版笔划唯一额外做的事：顺带物化图层
+ * 位图（MaskedPixels 合成需要它）。
+ *
+ * **全程不碰文件**：烘焙由 `brushBake` 的空闲调度器在停笔 800ms 后合并做（笔划
+ * 期间 `beginStrokePause` 让路，见 layerBitmaps），导出/保存入口
+ * `flushPaintBakes + remapDocBitmapSources`。
  *
  * ## 坐标（与渲染侧同一套数学，见 brushPaint.paintTargetOf）
  *
  * 图章永远画在**文档坐标**：笔划缓冲是画布尺寸、恒等变换；目标缓冲通过
  * `ctx.setTransform(target.transform)` 接收同样的图章——图层带旋转/缩放时
  * 笔触自动落成正确的形状。
- *
- * ## 预览（已知近似，进度文档 §6）
- *
- * 笔划缓冲镜像到画布上盖着的预览 canvas（文档尺寸）：图层目标每帧重画
- * "目标缓冲 + 笔划"；**蒙版目标只画笔划本体**（蒙版是亮度语义，把它的位图当
- * RGB 铺出来会被看成"蒙版原图被拉伸出现"）。
  */
 import { useCallback, useRef } from 'react';
-import type { EditorDocument, EditorLayer } from '../../types';
+import type { EditorDocument } from '../../types';
 import { layerLocks, resolveActiveLayer } from './layerModel';
 import {
-  allocatePaintPath,
-  bakeCanvasToPath,
-  blankCanvas,
-  enqueueBake,
-} from './brushBake';
-import { forgetPaintBuffer, getPaintBuffer, rememberPaintBuffer } from './paintBuffers';
+  beginStrokePause,
+  captureBitmapRect,
+  endStrokePause,
+  layerKey,
+  maskKey,
+  materializeBitmap,
+  mutatePixels,
+} from './layerBitmaps';
+import { blankCanvas } from './brushBake';
+import type { PaintPatch } from './historyStack';
 import {
   colorLuminance,
   luminanceToHex,
   paintTargetOf,
+  strokeDirtyRect,
   strokeStamps,
   type PaintTarget,
   type StampPoint,
 } from './brushPaint';
-import { invertAffine, type AffineMatrix } from './layerTransform';
+import type { AffineMatrix } from './layerTransform';
 
 /** 画笔设置（选项条_owned，ImageEditor 持有）。 */
 export interface BrushSettings {
@@ -64,68 +75,35 @@ export interface BrushSessionDeps {
   doc: EditorDocument | undefined;
   transform: { x: number; y: number; scale: number };
   onDocumentChange: (next: EditorDocument) => void;
+  /** 撤销栈的像素补丁入口（useEditorHistory.pushPaintOp） */
+  pushPaintOp: (patch: PaintPatch) => void;
   flashNotice: (next: { status: 'done' | 'error'; text: string }, ttl?: number) => void;
-}
-
-/** 按文件路径建缓冲：读原图走 `read_file_as_base64`（自定义 IPC）——plugin-fs 的
- * `readFile` 会被 capabilities 的 scope 拦掉（forbidden path，2026-10-24 实测）。
- * 返回值是**完整 dataUrl**（`data:image/xxx;base64,....`），要剥前缀再 atob。
- * 字节 → createImageBitmap，不碰 asset 协议，canvas 永不污染。 */
-async function loadBuffer(source: string, width: number, height: number): Promise<HTMLCanvasElement> {
-  const hit = getPaintBuffer(source);
-  if (hit) {
-    rememberPaintBuffer(source, hit); // 触碰 LRU
-    return hit;
-  }
-  const { invoke } = await import('@tauri-apps/api/core');
-  let b64: string | null = null;
-  try {
-    b64 = await invoke<string | null>('read_file_as_base64', { filePath: source });
-  } catch (e) {
-    (await import('../../utils/logger')).error(`[画笔] 读原图 IPC 失败（read_file_as_base64）: ${source}`, String(e));
-    throw e;
-  }
-  if (!b64) {
-    (await import('../../utils/logger')).error(`[画笔] 读原图返回空（文件不存在/不可读/超 128MiB 上限）: ${source}`);
-    throw new Error(`无法读取图层文件：${source}`);
-  }
-  const payload = b64.startsWith('data:') ? b64.slice(b64.indexOf(',') + 1) : b64;
-  const bin = atob(payload);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  const bitmap = await createImageBitmap(new Blob([bytes]));
-  const canvas = blankCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('无法创建 2D 上下文');
-  ctx.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  rememberPaintBuffer(source, canvas);
-  (await import('../../utils/logger')).info(`[画笔] 像素缓冲就绪 ${width}x${height}：${source}`);
-  return canvas;
 }
 
 interface StrokeSession {
   layerId: string;
+  /** 位图键（layerKey / maskKey）——补丁与位图仓都认它 */
+  bitmapKey: string;
   target: PaintTarget;
-  /** 缓冲坐标 → 文档坐标（= inv(target.transform)，画预览时摆目标缓冲用） */
-  bufferToDoc: AffineMatrix;
-  /** 笔画不透明度 0..1（抬笔合成时一次乘上） */
+  /** 笔画不透明度 0..1（合成时一次乘上） */
   alpha: number;
   radius: number;
   hardnessInner: number; // 0..0.98：径向渐变的实心内圈比例
   /** 笔划颜色（#rrggbb；橡皮擦图层时无意义，只用 alpha） */
   color: string;
-  /** 合成模式（抬笔时作用于目标缓冲）：普通 / 橡皮擦图层 / 锁透明像素 */
+  /** 合成模式（作用于目标缓冲）：普通 / 橡皮擦图层 / 锁透明像素 */
   composite: 'over' | 'erase' | 'atop';
   /** 笔划缓冲（画布尺寸、恒等变换，全 alpha 图章） */
   stroke: HTMLCanvasElement;
   strokeCtx: CanvasRenderingContext2D;
-  /** 目标像素缓冲（异步加载；抬笔时必须就绪） */
+  /** 目标像素缓冲（异步物化；抬笔时必须就绪） */
   buffer: HTMLCanvasElement | null;
   bufferPromise: Promise<HTMLCanvasElement>;
-  /** 预览 canvas（画布容器里挂着的那块） */
-  preview: HTMLCanvasElement;
-  previewCtx: CanvasRenderingContext2D;
+  /**
+   * 落笔瞬间目标缓冲的整幅快照：逐帧合成的复位基准 + 撤销补丁 before 的出处。
+   * null = 位图还没物化好（合成会等它——见 bufferPromise 的补建分支）。
+   */
+  snapshot: HTMLCanvasElement | null;
   /** 原始指针轨迹（文档坐标）——每帧重算图章、只画新增的尾巴 */
   points: StampPoint[];
   stampsDrawn: number;
@@ -155,44 +133,131 @@ function drawStamps(
   }
 }
 
-/** 预览重画（已知近似，见文件头"预览"）。
- *
- * **蒙版目标不画缓冲**：蒙版是亮度语义，把它的位图当 RGB 铺在画布上会被看成
- * "蒙版原图被拉伸着出现"（2026-10-24 用户实测）——蒙版笔划只预览笔划本体
- * （灰点/灰线），真实显隐效果抬笔烘焙后立刻可见。图层目标画"缓冲 + 笔划"。 */
-function repaintPreview(s: StrokeSession) {
-  const { previewCtx: p } = s;
-  p.setTransform(1, 0, 0, 1, 0, 0);
-  p.clearRect(0, 0, s.preview.width, s.preview.height);
-  if (s.buffer && s.target.kind === 'layer') {
-    // 目标缓冲按"缓冲→文档"摆进预览（bufferToDoc），笔划本身就是文档坐标
-    const m = s.bufferToDoc;
-    p.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
-    p.globalAlpha = 1;
-    p.globalCompositeOperation = 'source-over';
-    p.drawImage(s.buffer, 0, 0);
-    p.setTransform(1, 0, 0, 1, 0, 0);
-    p.globalAlpha = s.alpha;
-    p.globalCompositeOperation = s.composite === 'erase' ? 'destination-out' : 'source-over';
-    p.drawImage(s.stroke, 0, 0);
-    p.globalAlpha = 1;
-    p.globalCompositeOperation = 'source-over';
-  } else {
-    // 蒙版目标 / 缓冲还没解码：只显示笔划本体（浅反馈）
-    p.globalAlpha = s.alpha;
-    p.drawImage(s.stroke, 0, 0);
-    p.globalAlpha = 1;
+/** 缓冲的整幅快照（笔划的改前基准）。 */
+function snapshotOf(buffer: HTMLCanvasElement): HTMLCanvasElement | null {
+  const snap = blankCanvas(buffer.width, buffer.height);
+  const ctx = snap.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(buffer, 0, 0);
+  return snap;
+}
+
+/** 从快照读一块像素（撤销补丁的 before；rect 已被 strokeDirtyRect 夹进缓冲范围）。 */
+function regionImageData(
+  snapshot: HTMLCanvasElement | null,
+  rect: { x: number; y: number; w: number; h: number },
+): ImageData | null {
+  if (!snapshot || rect.w <= 0 || rect.h <= 0) return null;
+  const ctx = snapshot.getContext('2d');
+  if (!ctx) return null;
+  try {
+    return ctx.getImageData(rect.x, rect.y, rect.w, rect.h);
+  } catch {
+    return null;
   }
 }
 
-export function useEditorBrush(opts: {
-  previewCanvasRef: React.RefObject<HTMLCanvasElement | null>;
-  /** 每次渲染喂最新值（hook 内部 ref 化，不触发重挂） */
-  deps: BrushSessionDeps;
-}) {
+interface IntRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** 一批图章的文档空间外接框（± pad）。 */
+function stampsDocRect(stamps: StampPoint[], from: number, pad: number): IntRect | null {
+  if (from >= stamps.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = from; i < stamps.length; i += 1) {
+    const p = stamps[i];
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+}
+
+/** 矩形四角经仿射映射后的整数外接框（保守包络，带旋转也安全）。 */
+function mapRectBBox(m: AffineMatrix, r: IntRect): IntRect {
+  const [a, b, c, d, e, f] = m;
+  const pts: Array<[number, number]> = [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x, r.y + r.h],
+    [r.x + r.w, r.y + r.h],
+  ];
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const [px, py] of pts) {
+    const x = px * a + py * c + e;
+    const y = px * b + py * d + f;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  return { x: Math.floor(x0), y: Math.floor(y0), w: Math.ceil(x1) - Math.floor(x0), h: Math.ceil(y1) - Math.floor(y0) };
+}
+
+function clampRect(r: IntRect, w: number, h: number): IntRect | null {
+  const x = Math.max(0, r.x);
+  const y = Math.max(0, r.y);
+  const x1 = Math.min(w, r.x + r.w);
+  const y1 = Math.min(h, r.y + r.h);
+  if (x1 <= x || y1 <= y) return null;
+  return { x, y, w: x1 - x, h: y1 - y };
+}
+
+/**
+ * 笔划的**增量合成进位图仓**（图层/蒙版同一条路）：把 [from, stamps) 这段新图章
+ * 覆盖的区域重建——先从快照复位（软边图章叠加不幂等，区域重画必须回到改前基准），
+ * 再裁剪着把**整只笔划**按目标变换合成进来（与一次性合成同一口径，区域外的旧
+ * 图章不会被重复叠）。版本 +1 → 主画布重画该层（图层 = LayerPixels 直拷，
+ * 蒙版 = MaskedPixels 重合"图层 × 蒙版"）。
+ */
+function compositeLayerRegion(s: StrokeSession, stamps: StampPoint[], from: number): boolean {
+  const snap = s.snapshot;
+  if (!snap) return false;
+  const docRect = stampsDocRect(stamps, from, s.radius + 1);
+  if (!docRect) return true; // 这段没有新图章：无事可做，不是失败
+  const r = clampRect(mapRectBBox(s.target.transform, docRect), snap.width, snap.height);
+  if (!r) return true; // 区域整个落在缓冲外
+  return mutatePixels(s.bitmapKey, ctx => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(r.x, r.y, r.w, r.h);
+    ctx.drawImage(snap, r.x, r.y, r.w, r.h, r.x, r.y, r.w, r.h);
+    ctx.beginPath();
+    ctx.rect(r.x, r.y, r.w, r.h);
+    ctx.clip();
+    const m = s.target.transform;
+    ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    ctx.globalAlpha = s.alpha;
+    ctx.globalCompositeOperation =
+      s.composite === 'erase' ? 'destination-out' : s.composite === 'atop' ? 'source-atop' : 'source-over';
+    ctx.drawImage(s.stroke, 0, 0);
+  });
+}
+
+/** 半截笔迹善后：位图仓整幅回到快照（笔画中途层被删 / 合成失败，这一笔彻底没发生）。 */
+function restoreLayerFromSnapshot(s: StrokeSession): void {
+  const snap = s.snapshot;
+  if (!snap) return;
+  mutatePixels(s.bitmapKey, ctx => {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, snap.width, snap.height);
+    ctx.drawImage(snap, 0, 0);
+  });
+}
+
+export function useEditorBrush(opts: { deps: BrushSessionDeps }) {
   const depsRef = useRef(opts.deps);
   depsRef.current = opts.deps;
-  const previewCanvasRef = opts.previewCanvasRef;
   const sessionRef = useRef<StrokeSession | null>(null);
 
   const finishStroke = useCallback(async () => {
@@ -208,72 +273,47 @@ export function useEditorBrush(opts: {
       const buffer = await s.bufferPromise;
       // 补上最后一段的强制封口图章（绘制期间的前缀稳定序列见 brushPaint）
       const finalStamps = strokeStamps(s.points, s.radius * 2, true);
+      const from = s.stampsDrawn;
       drawStamps(s.strokeCtx, finalStamps, s.stampsDrawn, s.radius, s.hardnessInner, s.color);
-      // 合成：目标缓冲坐标系下吃下整块笔划（globalAlpha 一次乘 = 笔画不透明度）
-      const ctx = buffer.getContext('2d');
-      if (!ctx) throw new Error('无法创建 2D 上下文');
-      ctx.save();
-      ctx.setTransform(
-        s.target.transform[0], s.target.transform[1], s.target.transform[2],
-        s.target.transform[3], s.target.transform[4], s.target.transform[5],
-      );
-      ctx.globalAlpha = s.alpha;
-      ctx.globalCompositeOperation =
-        s.composite === 'erase' ? 'destination-out' : s.composite === 'atop' ? 'source-atop' : 'source-over';
-      ctx.drawImage(s.stroke, 0, 0);
-      ctx.restore();
-
-      const doc = d.doc;
-      const layer = doc?.layers?.find(l => l.id === s.layerId);
-      if (!doc || !layer) {
-        // 笔画期间层被删了：只丢弃，不报错
-        s.preview.style.display = 'none';
+      s.stampsDrawn = finalStamps.length;
+      // 笔画期间层被删了：只丢弃，不报错；把逐帧合进去的半截笔迹从快照抹回去
+      const gone = !(d.doc?.layers ?? []).some(l => l.id === s.layerId);
+      if (gone) {
+        restoreLayerFromSnapshot(s);
+        s.snapshot = null;
         return;
       }
-      const oldSource =
-        s.target.kind === 'mask' && layer.mask ? layer.mask.source : (layer.source as string);
-
-      if (s.target.kind === 'layer') {
-        // ---- 快路径：预分配路径，source 立刻换、画面走内存画布、文件后台补 ----
-        const newPath = await allocatePaintPath();
-        rememberPaintBuffer(newPath, buffer);
-        // 旧 key 必须删：缓冲对象已被这一笔改写，撤销回旧 source 时要靠旧文件而不是它
-        forgetPaintBuffer(oldSource);
-        const layers = (doc.layers ?? []).map(l =>
-          l.id === s.layerId ? { ...l, source: newPath } : l,
-        );
-        d.onDocumentChange({ ...doc, layers, dirty: true });
-        // 图层已由缓冲直染，预览立刻退役
-        s.preview.style.display = 'none';
-        enqueueBake(() => bakeCanvasToPath(buffer, newPath));
+      const rect = strokeDirtyRect(finalStamps, s.radius, s.target.transform, buffer.width, buffer.height);
+      if (!rect) {
+        s.snapshot = null;
         return;
       }
-
-      // ---- 慢路径（蒙版）：等文件落盘再换源 ----
-      // CSS mask-image 只认 URL，预分配的文件缺失时蒙版会闪成"无蒙版"。
-      // 换源在串行队列里做（读**当时**的最新文档），笔划预览顶到换源完成。
-      enqueueBake(async () => {
-        const path = await bakeCanvasToPath(buffer, await allocatePaintPath());
-        rememberPaintBuffer(path, buffer);
-        forgetPaintBuffer(oldSource);
-        const dd = depsRef.current;
-        const docNow = dd.doc;
-        const layerNow = docNow?.layers?.find(l => l.id === s.layerId);
-        const maskNow = layerNow?.mask;
-        if (docNow && layerNow && maskNow) {
-          const layers = (docNow.layers ?? []).map(l =>
-            l.id === s.layerId ? { ...l, mask: { ...maskNow, source: path } } : l,
-          );
-          dd.onDocumentChange({ ...docNow, layers, dirty: true });
-        }
-        s.preview.style.display = 'none';
-        return path;
-      });
+      // 位图仓在笔划期间已被逐帧写到最新，快照就是改前基准。极慢物化
+      // （pointerup 之后才就绪）= 一次都没合过 → 此刻补建快照并整笔一次合成。
+      let coverFrom = from;
+      if (!s.snapshot) {
+        s.snapshot = snapshotOf(buffer);
+        coverFrom = 0;
+      }
+      const ok = compositeLayerRegion(s, finalStamps, coverFrom);
+      const before = regionImageData(s.snapshot, rect);
+      const after = captureBitmapRect(s.bitmapKey, rect);
+      if (ok && before && after) {
+        d.pushPaintOp({ key: s.bitmapKey, x: rect.x, y: rect.y, before, after });
+        // 只置 dirty（source/几何都没变 → 签名不变，不会多出撤销步）
+        const doc = d.doc;
+        if (doc) d.onDocumentChange({ ...doc, dirty: true });
+      }
+      s.snapshot = null;
     } catch (e) {
       // 完整错误进日志（控制台 + 日志文件）——提示条只露前半句，日志里能看全链路
-      (await import('../../utils/logger')).error('[画笔] 这一笔保存失败：', String(e));
-      s.preview.style.display = 'none';
-      d.flashNotice({ status: 'error', text: `这一笔没能保存：${String(e)}` }, 8000);
+      (await import('../../utils/logger')).error('[画笔] 这一笔合成失败：', String(e));
+      // 位图仓可能留着逐帧合成的半截笔迹：回到快照 = 这一笔彻底没发生
+      restoreLayerFromSnapshot(s);
+      s.snapshot = null;
+      d.flashNotice({ status: 'error', text: `这一笔没能画上：${String(e)}` }, 8000);
+    } finally {
+      endStrokePause(); // 空闲烘焙让路的解除（最后一笔结束时 brushBake 补排）
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -294,9 +334,12 @@ export function useEditorBrush(opts: {
       cancelAnimationFrame(s.raf);
       s.raf = requestAnimationFrame(() => {
         const stamps = strokeStamps(s.points, s.radius * 2);
+        const from = s.stampsDrawn;
         drawStamps(s.strokeCtx, stamps, s.stampsDrawn, s.radius, s.hardnessInner, s.color);
         s.stampsDrawn = stamps.length;
-        repaintPreview(s);
+        // 增量合成进位图仓——主画布订阅版本自己重画（层级/蒙版/清晰度全对）；
+        // 快照未就绪（位图物化中）的帧先攒着，就绪时会一次补合
+        if (s.snapshot) compositeLayerRegion(s, stamps, from);
       });
     },
     [finishStroke],
@@ -355,29 +398,22 @@ export function useEditorBrush(opts: {
       }
 
       const size = Math.min(300, Math.max(1, Math.round(d.settings.size)));
-      const preview = previewCanvasRef.current;
-      if (!preview) return false;
-      // 预览要把目标缓冲摆回文档空间：bufferToDoc = inv(target.transform)
-      const bufferToDoc = invertAffine(target.transform);
-      if (!bufferToDoc) return false; // 理论上到不了（target.transform 来自 inv(M)）
-      preview.width = doc.canvas.width;
-      preview.height = doc.canvas.height;
-      preview.style.display = 'block';
-      const previewCtx = preview.getContext('2d');
       const stroke = blankCanvas(doc.canvas.width, doc.canvas.height);
       const strokeCtx = stroke.getContext('2d');
-      if (!previewCtx || !strokeCtx) return false;
+      if (!strokeCtx) return false;
 
+      const bitmapKey = target.kind === 'mask' ? maskKey(layer.id) : layerKey(layer.id);
       const sourcePath =
         target.kind === 'mask' && layer.mask
           ? layer.mask.source
           : (layer.source as string);
       const rect = container.getBoundingClientRect();
       const t = d.transform; // 视口变换取落笔瞬间（笔画中滚轮缩放极罕见，不追）
+
       const session: StrokeSession = {
         layerId: layer.id,
+        bitmapKey,
         target,
-        bufferToDoc,
         alpha: Math.min(1, Math.max(0.01, d.settings.opacity / 100)),
         radius: size / 2,
         hardnessInner: Math.min(0.98, Math.max(0, d.settings.hardness / 100)),
@@ -386,15 +422,22 @@ export function useEditorBrush(opts: {
         stroke,
         strokeCtx,
         buffer: null,
-        bufferPromise: loadBuffer(sourcePath, target.width, target.height).then(b => {
+        snapshot: null,
+        bufferPromise: materializeBitmap(bitmapKey, {
+          sourcePath,
+          width: target.width,
+          height: target.height,
+        }).then(b => {
           if (sessionRef.current === session) {
             session.buffer = b;
-            repaintPreview(session);
+            if (!session.snapshot) {
+              // 就绪即建快照，把落笔至今的图章一次合成进位图仓——此后逐帧增量
+              session.snapshot = snapshotOf(b);
+              compositeLayerRegion(session, strokeStamps(session.points, session.radius * 2), 0);
+            }
           }
           return b;
         }),
-        preview,
-        previewCtx,
         points: [],
         stampsDrawn: 0,
         toDoc: (clientX, clientY) => ({
@@ -404,12 +447,22 @@ export function useEditorBrush(opts: {
         raf: 0,
       };
       sessionRef.current = session;
+      beginStrokePause(); // 笔划期间空闲烘焙让路（版本逐帧 +1，别空转编码）
+      // 蒙版笔划：显示走 MaskedPixels（图层 × 蒙版合成），顺带物化图层位图——
+      // 没有它合成不出来（LayerElement 的 effect 也会兜底物化）
+      if (target.kind === 'mask' && layer.source) {
+        void materializeBitmap(layerKey(layer.id), {
+          sourcePath: layer.source as string,
+          width: layer.naturalWidth,
+          height: layer.naturalHeight,
+        }).catch(() => undefined);
+      }
       window.addEventListener('pointermove', onStrokeMove);
       window.addEventListener('pointerup', onStrokeUp);
       onStrokeMove(e.nativeEvent as PointerEvent);
       return true;
     },
-    [onStrokeMove, onStrokeUp, previewCanvasRef],
+    [onStrokeMove, onStrokeUp],
   );
 
   return { beginStroke, isPainting: () => !!sessionRef.current };

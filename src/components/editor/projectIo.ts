@@ -52,7 +52,13 @@ export async function saveProject(
   doc: EditorDocument,
   saveAs: boolean,
 ): Promise<SaveProjectOutcome | null> {
-  const payload = buildSavePayload(doc); // 画布无效会在这里抛错（先于任何对话框）
+  // 画过的层真身在位图仓（内存），文件只是影子：保存前先把脏位图全部烘焙落盘，
+  // 再把载荷里的 source 指到烘焙文件——Rust 按路径内嵌图片字节，读不到就是旧内容。
+  const { flushPaintBakes, remapDocBitmapSources } = await import('./brushBake');
+  await flushPaintBakes();
+  const bakedDoc = await remapDocBitmapSources(doc);
+
+  const payload = buildSavePayload(bakedDoc); // 画布无效会在这里抛错（先于任何对话框）
   let target = !saveAs && isProjectPath(doc.path) ? (doc.path as string) : '';
 
   if (!target) {

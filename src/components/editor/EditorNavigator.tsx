@@ -1,29 +1,26 @@
 /**
  * 全览图（PS 的 Navigator 面板，UI 设计 §4 的面板组之首）。
  *
- * 显示**活动图层**的缩略（单图层时即整张文档），并把**当前视口**画成一个框 —— 缩放到
- * 400% 之后，这是唯一能让用户知道「我在图的哪个位置」的东西。点击/拖动可以导航。
+ * 显示整份文档的缩略（2026-10-26 起内容 = `EditorMiniDocument` 的迷你渲染，
+ * 与主画布同一份合成代码），并把**当前视口**画成一个框——缩放到 400% 之后，
+ * 这是唯一能让用户知道「我在图的哪个位置」的东西。点击/拖动可以导航。
  *
- * 布局用**缩略图自己的宽高**（`thumb.width/height`），不是"当前文档尺寸"：
- * 旋转 90° 时新尺寸先到、新缩略图后到（Image 解码异步），中间那一帧若用新尺寸撑
- * 旧图，就会把图拉变形（用户实测的"全览图拉伸一下"）。同理，两者比例对不上时
- * 不画视口框——否则框会跳到错误位置。
+ * 内容以 render prop 给出（`render(w, h)`）：面板量好显示区尺寸，内容自己
+ * 按文档比例缩放塞进去——老版本用一张 Rust 合成图 + 逐级降采样，已被
+ * 前端迷你渲染取代（秒级延迟 → 百毫秒级，见 EditorMiniDocument 文件头）。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import type { EditorViewSnapshot } from './editorViewStore';
-import type { EditorThumb } from './useEditorThumbnail';
 
 interface EditorNavigatorProps {
-  /** 高质量缩略图（由 `useEditorThumbnail` 逐级降采样生成，自带宽高） */
-  thumb?: EditorThumb;
   /** 当前文档尺寸（裁剪之后），视口框按它换算 */
   imgWidth: number;
   imgHeight: number;
   view?: EditorViewSnapshot;
   /** 点击/拖动全览图 → 请画布把该点移到视口中央（画布像素坐标） */
   onNavigate?: (imgX: number, imgY: number) => void;
-  /** 缩略图也要套上当前调色滤镜，否则「画布偏暖、全览正常」 */
-  imgFilter?: string;
+  /** 迷你文档的渲染（入参 = 显示区内容尺寸，按文档比例缩放后的实际大小） */
+  render: (width: number, height: number) => React.ReactNode;
 }
 
 /** 全览区固定高度（CSS px） */
@@ -32,12 +29,11 @@ const BOX_HEIGHT = 128;
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
-  thumb,
   imgWidth,
   imgHeight,
   view,
   onNavigate,
-  imgFilter,
+  render,
 }) => {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const [boxW, setBoxW] = useState(0);
@@ -53,25 +49,16 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  const thumbW = thumb?.width ?? 0;
-  const thumbH = thumb?.height ?? 0;
-  const ready = Boolean(thumb && thumbW > 0 && thumbH > 0 && boxW > 0);
-  // 不放大缩略图：它本来就只有 320px，撑满盒子只会更糊
-  const dispScale = ready ? Math.min(boxW / thumbW, BOX_HEIGHT / thumbH, 1) : 0;
-  const dispW = thumbW * dispScale;
-  const dispH = thumbH * dispScale;
+  const ready = boxW > 0 && imgWidth > 0 && imgHeight > 0;
+  // 文档比例适配显示区（不放大迷你内容——它本来就只有 ~384px）
+  const dispScale = ready ? Math.min(boxW / imgWidth, BOX_HEIGHT / imgHeight, 1) : 0;
+  const dispW = imgWidth * dispScale;
+  const dispH = imgHeight * dispScale;
   const offX = (boxW - dispW) / 2;
   const offY = (BOX_HEIGHT - dispH) / 2;
 
   /** 文档坐标 → 全览显示坐标的比例 */
   const docToDisp = imgWidth > 0 ? dispW / imgWidth : 0;
-
-  // 缩略图与画布比例对不上：可能是新图还没解码完（旋转后那一瞬），
-  // 也可能是多图层 / 图层比例≠画布——后者是常态，不是延迟
-  const aspectMatches =
-    ready && imgWidth > 0 && imgHeight > 0
-      ? Math.abs(thumbW / thumbH - imgWidth / imgHeight) < 0.02
-      : false;
 
   /**
    * 视口框。只有「视口确实没有盖住整份文档」时才画框并压暗框外。
@@ -81,7 +68,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
    * 就是这里把"盖满全图"误当成"没有框"退回了整块压暗）。
    */
   let frame: { left: number; top: number; width: number; height: number } | null = null;
-  if (aspectMatches && docToDisp > 0 && view && view.scale > 0) {
+  if (ready && docToDisp > 0 && view && view.scale > 0) {
     const { scale: vs, x, y, containerWidth: cw, containerHeight: ch } = view;
     const left = Math.max(0, (0 - x) / vs);
     const top = Math.max(0, (0 - y) / vs);
@@ -132,17 +119,17 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
     >
       {ready ? (
         <>
-          <img
-            src={thumb!.src}
-            alt="全览"
-            draggable={false}
-            className="absolute select-none"
-            style={{ left: offX, top: offY, width: dispW, height: dispH, filter: imgFilter }}
-          />
+          {/* 迷你文档：显示区内按文档比例居中（内容自带合成语义，含透明棋盘格） */}
+          <div
+            className="absolute overflow-hidden"
+            style={{ left: offX, top: offY, width: dispW, height: dispH }}
+          >
+            {render(dispW, dispH)}
+          </div>
           {/*
             只压暗**视口框以外**的部分（用户明确要的效果）：四条矩形把框外的
             上/下/左/右盖住，框内保持原样——PS 的 Navigator 也是这个做法。
-            框不存在 = 视口盖住了整份文档（适应窗口）或比例还没对上，
+            框不存在 = 视口盖住了整份文档（适应窗口），
             此时**没有框外区域，什么都不压暗**——退回整块压暗就是"缩小后全暗"那个 bug。
           */}
           {frame && (
@@ -183,7 +170,7 @@ export const EditorNavigator: React.FC<EditorNavigatorProps> = ({
         </>
       ) : (
         <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-400">
-          等待缩略图…
+          等待文档…
         </div>
       )}
     </div>

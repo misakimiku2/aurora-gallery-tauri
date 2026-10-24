@@ -31,7 +31,6 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { invoke } from '@tauri-apps/api/core';
 import {
   ArrowLeftRight,
   Brush,
@@ -58,9 +57,10 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { EditorCanvas, EditorLayer } from '../../types';
 import { EditorNavigator } from './EditorNavigator';
+import { EditorMiniDocument } from './EditorMiniDocument';
 import { Adjustments, isZeroAdjustments, ZERO_ADJUSTMENTS } from './colorMatrix';
 import { getEditorView, requestPanTo, subscribeEditorView } from './editorViewStore';
-import { useEditorThumbnail } from './useEditorThumbnail';
+import { thumbFromCanvas, useEditorThumbnail } from './useEditorThumbnail';
 import { peekPreview, subscribePreview } from './editorPreviewCache';
 import {
   buildLayerPreviewKey,
@@ -87,7 +87,6 @@ import {
 } from './layerGroups';
 import { BLEND_MODES, BlendMode, blendModeLabel, normalizeBlendMode } from './blendModes';
 import { ensureLayerPreview } from './layerProxy';
-import { buildRenderGroups } from './renderPayload';
 import { useEditorMask } from './useEditorMask';
 import { canClipLayer, toggleClipped } from './layerClipping';
 import { toggleMaskDisabled, toggleMaskLink } from './layerModel';
@@ -99,15 +98,18 @@ import {
   subscribeEditorColors,
   swapEditorColors,
 } from './editorColorStore';
-import { bakeCanvasToPath, allocatePaintPath, blankCanvas, enqueueBake, flushPaintBakes } from './brushBake';
-import { rememberPaintBuffer } from './paintBuffers';
-
-/** `editor_render_document` 的返回（camelCase 由 Rust 侧 serde 重命名） */
-interface DocumentRender {
-  previewWidth: number;
-  previewHeight: number;
-  dataUrl: string;
-}
+import { allocatePaintName, blankCanvas, getPaintDir } from './brushBake';
+import {
+  attachClonedBitmap,
+  bitmapMeta,
+  settledBitmapVersion,
+  displaySourceOf,
+  layerKey,
+  maskKey,
+  readBitmap,
+  registerBlankBitmap,
+  subscribeBitmaps,
+} from './layerBitmaps';
 
 interface EditorPanelProps {
   /** 当前 Tab id：用于订阅该 Tab 的视口状态 */
@@ -379,7 +381,8 @@ const PanelIconButton: React.FC<{
   icon: LucideIcon;
   title: string;
   on?: boolean;
-  onClick: () => void;
+  /** 带事件：个别按钮要读 Alt 修饰键（蒙版白/黑） */
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   grayed?: boolean;
   danger?: boolean;
@@ -655,17 +658,48 @@ const LayerRow: React.FC<{
   const imageThumbSelected = active && (!mask || activeTarget === 'image');
   const maskThumbSelected = active && !!mask && activeTarget === 'mask';
 
-  const preview = useSyncExternalStore(subscribePreview, () =>
-    peekPreview(buildLayerPreviewKey(layer) ?? ''),
+  // 缩略图两级：画过的层 = 位图仓内存直出（毫秒级，订阅版本驱动重生成）；
+  // 没画过（或位图被逐出）= Rust 代理图（ensureLayerPreview 排队，键用 displaySourceOf
+  // ——逐出后的回退文件是烘焙文件，不是丢了笔迹的原始 source）。
+  // 版本订阅走 settled（滞后 ~250ms 的镜像）：图层笔划逐帧合成进位图仓，即时
+  // 版本每帧 +1，行缩略图逐帧整层重采样必卡；主画布才需要即时版本。
+  const key = layerKey(layer.id);
+  const bitmapV = useSyncExternalStore(subscribeBitmaps, () => settledBitmapVersion(key));
+  const bitmap = readBitmap(key);
+  const memoryThumb = useMemo(
+    () => (bitmap ? thumbFromCanvas(bitmap, 96) : undefined),
+    // bitmapV 进依赖：同一块画布对象被笔划/补丁改写时必须重算
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bitmap, bitmapV],
   );
-  const thumb = useEditorThumbnail(preview?.dataUrl, 96);
+  const displaySource = displaySourceOf(key, (layer.source as string) ?? '');
+  const preview = useSyncExternalStore(subscribePreview, () =>
+    peekPreview(buildLayerPreviewKey({ ...layer, source: displaySource }) ?? ''),
+  );
+  const proxyThumb = useEditorThumbnail(preview?.dataUrl, 96);
+  const thumb = memoryThumb ?? proxyThumb;
 
-  // 每层的代理图按需生成（内部有并发闸与去重，重复调用是空操作）
+  // 代理图按需生成（内部有并发闸与去重；有位图的层跳过——它根本不读文件）
   useEffect(() => {
-    ensureLayerPreview(layer);
+    if (!bitmap) ensureLayerPreview({ ...layer, source: displaySource });
     // 只关心"内容变了"：拖动/旋转/调色都不该让缩略图重新生成
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layer.source, layer.naturalWidth, layer.naturalHeight]);
+  }, [bitmap, displaySource, layer.naturalWidth, layer.naturalHeight]);
+
+  // 蒙版行缩略图：画过 = 位图仓内存直出（thumbFromCanvas，与图层缩略图同款；
+  // 版本走 settled——逐帧合成期间不逐帧重采样），没画过 = 原文件。
+  const mKey = maskKey(layer.id);
+  const maskBitmapV = useSyncExternalStore(subscribeBitmaps, () => settledBitmapVersion(mKey));
+  const maskBitmap = readBitmap(mKey);
+  const memoryMaskThumb = useMemo(
+    () => (maskBitmap ? thumbFromCanvas(maskBitmap, 96) : undefined),
+    // maskBitmapV 进依赖：同一块画布被笔划/补丁改写时必须重算
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [maskBitmap, maskBitmapV],
+  );
+  const maskThumbSrc = mask
+    ? memoryMaskThumb?.src ?? convertFileSrc(displaySourceOf(mKey, mask.source))
+    : '';
 
   const commitRename = () => {
     setEditing(false);
@@ -833,7 +867,9 @@ const LayerRow: React.FC<{
               onSelectTarget('mask');
             }}
             className={[
-              'relative w-5 h-8 shrink-0 rounded-sm overflow-hidden border border-neutral-300 dark:border-neutral-600',
+              // 正方形槽（与图层缩略图同款，2026-10-25 用户拍板）：蒙版和图层
+              // 缩略图一样大，object-contain 保比例不裁剪
+              'relative w-8 h-8 shrink-0 rounded-sm overflow-hidden border border-neutral-300 dark:border-neutral-600',
               layer.visible ? '' : 'opacity-40',
               maskThumbSelected ? 'ring-2 ring-white ring-offset-0 outline outline-1 outline-blue-500' : '',
             ].join(' ')}
@@ -843,9 +879,10 @@ const LayerRow: React.FC<{
             }}
           >
             <img
-              src={convertFileSrc(mask.source)}
+              src={maskThumbSrc}
               alt=""
-              className="w-full h-full object-cover"
+              // object-contain：蒙版和图层同比例（横图塞进竖条会像"竖版蒙版"，2026-10-25）
+              className="w-full h-full object-contain"
               style={{ filter: 'grayscale(1)' }}
               draggable={false}
             />
@@ -940,52 +977,22 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   // 前/背景色（会话级 store，与选项条/画笔共用；D/X 快捷键在 useEditorKeyboard）
   const editorColors = useSyncExternalStore(subscribeEditorColors, getEditorColors);
 
-  // ---- 全览图：整份文档的合成（PS 的 Navigator 语义） ----
+  // ---- 全览图（PS 的 Navigator 语义）----
   //
-  // 走 `editor_render_document`：Rust 按**导出同一条路**（含调色/不透明度/蒙版、跳过
-  // 隐藏层与被关掉的组）合成后降到 ≤2048。防抖 300ms——拖图层/拖滑杆时图层引用狂变，
-  // 不能每帧合成一次。
-  //
-  // 载荷与导出**同一份构造**（`buildRenderGroups`）：编组落地后 Rust 的 DocumentRequest
-  // 要的是 `groups` 分段，这里一度还在发旧的 `layers` 平铺形状——反序列化直接报
-  // "missing field groups"，又被下面的 catch 吞掉，全览图静默失效（2026-10-24 修）。
-  //
-  // 依赖里用 `layers` 的**引用**而不是内容签名：App 里换选区是 `{...doc, activeLayerId}`，
-  // layers 引用不变 ⇒ 换选区不重渲；改图层（可见性/顺序/几何/调色）才会换引用。
-  const [overviewUrl, setOverviewUrl] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    const groups = buildRenderGroups(layers ?? []);
-    if (!width || !height || groups.length === 0) {
-      setOverviewUrl(undefined);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      // 全览在 Rust 读文件合成——先等画笔的后台烘焙落盘，否则概览落后于画面
-      flushPaintBakes()
-        .then(() =>
-          invoke<DocumentRender>('editor_render_document', {
-            doc: {
-              canvas: { width, height, background: background ?? 'transparent' },
-              groups,
-            },
-          }),
-        )
-        .then(res => {
-          if (!cancelled) setOverviewUrl(res.dataUrl);
-        })
-        .catch(() => {
-          /* 概览失败不打扰编辑：保留上一张，面板行缩略图仍然可用 */
-        });
-    }, 300);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [layers, width, height, background]);
-
-  // 全览图用较长边的缩略（320 足够 20rem 面板宽度）
-  const navigatorThumb = useEditorThumbnail(overviewUrl, 320);
+  // 2026-10-26 架构轮起走**前端迷你渲染**（`EditorMiniDocument` 复用主画布的
+  // EditorCanvasLayers，像素源 = 迷你画布/代理图）：旧 Rust 合成路（防抖 300ms →
+  // flushPaintBakes → editor_render_document 全量解码合成 → JPEG base64）秒级
+  // 延迟，画一笔等几秒。迷你渲染与画布同一份合成代码，所见即所得，更新百毫秒级；
+  // Rust 命令保留给将来的超大图打底。
+  const miniDoc = (w: number, h: number) => (
+    <EditorMiniDocument
+      tabId={tabId}
+      canvas={{ width, height, background: background ?? 'transparent' }}
+      layers={layers ?? []}
+      boxWidth={w}
+      boxHeight={h}
+    />
+  );
 
   /**
    * 面板显示结构（自顶向下）：组行先出现、成员缩进随后，折叠时成员不渲染。
@@ -1081,17 +1088,17 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     emit({ layers: setLayerLock(layers ?? [], layerId, kind, on), activeLayerId });
   };
 
-  // ---- 蒙版（useEditorMask）：添加 = 选一张图片（白 = 显示 / 黑 = 隐藏），
-  //      删除 = 摘掉（可撤销）。组行不支持蒙版（组蒙版等嵌套组那批）。
-  //      添加/删除后把选中对象切到蒙版（PS：刚建的蒙版处于选中态）。 ----
-  const { addMask, removeMask, busy: maskBusy } = useEditorMask(
+  // ---- 蒙版（useEditorMask）：添加 = 空白蒙版（PS 口径：点 = 全白 reveal-all，
+  //      Alt+点 = 全黑 hide-all），删除 = 摘掉（可撤销）。组行不支持蒙版。
+  //      添加/更换后把选中对象切到蒙版（PS：刚建的蒙版处于选中态）。 ----
+  const { addBlankMask, removeMask } = useEditorMask(
     active,
     layers ?? [],
     activeLayerId,
     emit,
     (layerId, target) => onSelectTarget?.(layerId, target),
   );
-  const canAddMask = !!active && !isGroupRow(active) && !!active.source && !maskBusy;
+  const canAddMask = !!active && !isGroupRow(active) && !!active.source;
 
   /** 链接/解链蒙版（行内链条；解链给蒙版一份图层框拷贝起步）。 */
   const handleToggleMaskLink = (layerId: string) => {
@@ -1104,17 +1111,18 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   };
 
   /**
-   * 新建空白图层（画笔轮，2026-10-25 起即时路径）：预分配烘焙路径、把空白画布
-   * 登记进缓冲注册表（画面立刻由 canvas 直染），PNG 文件由后台烘焙补上。
+   * 新建空白图层（2026-10-26 架构轮）：分配**稳定**烘焙名、空白画布进位图仓
+   * （画面立刻由 canvas 直染），source 直接指向自己的烘焙文件（文件由空闲烘焙补）。
    */
   const handleCreateBlankLayer = async () => {
     if (!width || !height) return;
     try {
-      const path = await allocatePaintPath();
-      const canvas = blankCanvas(width, height);
-      rememberPaintBuffer(path, canvas);
-      enqueueBake(() => bakeCanvasToPath(canvas, path));
       const id = createLayerId();
+      const key = layerKey(id);
+      const name = allocatePaintName(key);
+      const dir = await getPaintDir();
+      const path = `${dir.replace(/[\\/]+$/, '')}/${name}`;
+      registerBlankBitmap(key, blankCanvas(width, height), name);
       const blank: EditorLayer = {
         id,
         name: `图层 ${(layers ?? []).length + 1}`,
@@ -1179,12 +1187,72 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     emit(r);
   };
 
-  const handleDuplicate = () => {
+  /**
+   * 复制图层（2026-10-26 架构轮）：源层画过（位图仓有真身）时，副本必须**克隆
+   * 位图**并指向自己的烘焙文件——只复制 source 会把未烘焙的笔迹弄丢（源层的
+   * 文件还停在旧内容）。源层位图被 LRU 逐出时克隆不了 → 副本直接共享源层的
+   * **烘焙文件**（displaySourceOf，含全部笔迹；审计 P1#5：绝不能指回原始 source，
+   * 那会丢笔迹；也不能指一个永远不会写的自定义文件名，那是 404）。源层没画过
+   * 则照旧共享原文件（保存工程时按 md5 去重）。
+   */
+  const handleDuplicate = async () => {
     if (!active) return;
-    const r = duplicateLayer(layers ?? [], active.id, createLayerId());
+    const newId = createLayerId();
+    const r = duplicateLayer(layers ?? [], active.id, newId);
     if (!r.newLayerId) return;
-    // 复制出来的层成为活动层（PS：Ctrl+J 之后编辑的是副本）
-    emit({ layers: r.layers, activeLayerId: r.newLayerId });
+    const originKey = layerKey(active.id);
+    const originMaskKey = maskKey(active.id);
+    if (bitmapMeta(originKey)) {
+      try {
+        const dir = await getPaintDir();
+        const base = dir.replace(/[\\/]+$/, '');
+        const cloneKey = layerKey(newId);
+        let layerSource: string | null = null;
+        if (attachClonedBitmap(originKey, cloneKey, allocatePaintName(cloneKey))) {
+          layerSource = `${base}/${bitmapMeta(cloneKey)?.paintName}`;
+        } else {
+          // 位图被逐出（clean 才逐得出）：共享源层烘焙文件，笔迹一页不少
+          layerSource = displaySourceOf(originKey, (active.source as string) ?? '');
+        }
+        let maskSource: string | null = null;
+        if (bitmapMeta(originMaskKey)) {
+          const cloneMaskKey = maskKey(newId);
+          if (attachClonedBitmap(originMaskKey, cloneMaskKey, allocatePaintName(cloneMaskKey))) {
+            maskSource = `${base}/${bitmapMeta(cloneMaskKey)?.paintName}`;
+          } else {
+            maskSource = active.mask
+              ? displaySourceOf(originMaskKey, active.mask.source)
+              : null;
+          }
+        }
+        const cloned = r.layers.map(l => {
+          if (l.id !== newId) return l;
+          const mask =
+            maskSource && l.mask ? { ...l.mask, source: maskSource } : l.mask;
+          return { ...l, source: layerSource, mask };
+        });
+        // 复制出来的层成为活动层（PS：Ctrl+J 之后编辑的是副本）
+        emit({ layers: cloned, activeLayerId: newId });
+        return;
+      } catch (e) {
+        console.warn('复制图层位图失败，退回共享烘焙文件', e);
+        const fallback = r.layers.map(l =>
+          l.id === newId
+            ? {
+                ...l,
+                source: displaySourceOf(originKey, (active.source as string) ?? ''),
+                mask:
+                  l.mask && bitmapMeta(originMaskKey)
+                    ? { ...l.mask, source: displaySourceOf(originMaskKey, l.mask.source) }
+                    : l.mask,
+              }
+            : l,
+        );
+        emit({ layers: fallback, activeLayerId: newId });
+        return;
+      }
+    }
+    emit({ layers: r.layers, activeLayerId: newId });
   };
 
   const handleRename = (layer: EditorLayer, name: string) => {
@@ -1199,7 +1267,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       {/* 全览（PS 的 Navigator，置顶） */}
       <Section title="全览">
         <EditorNavigator
-          thumb={navigatorThumb}
+          render={miniDoc}
           // 用**画布**尺寸而不是缩略图尺寸：编辑器的视口状态（scale/x/y）也是按画布算的，
           // 两边口径不一致时，全览图里的视口框会按错误比例画出来
           imgWidth={width}
@@ -1503,10 +1571,10 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               icon={Contrast}
               title={
                 active?.mask
-                  ? '更换图层蒙版（选另一张图片）'
-                  : '添加图层蒙版（选一张图片：白 = 显示 / 黑 = 隐藏）'
+                  ? '更换为空白蒙版（全白，全部显示）｜Alt+点 = 全黑（全部隐藏）'
+                  : '添加图层蒙版（空白全白：画黑 = 隐藏、画白 = 显示）｜Alt+点 = 全黑蒙版'
               }
-              onClick={() => void addMask()}
+              onClick={e => void addBlankMask(e.altKey ? 'black' : 'white')}
               disabled={!canAddMask}
             />
           </div>

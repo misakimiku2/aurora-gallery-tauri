@@ -1,12 +1,10 @@
 /**
  * 图层 → Rust 合成请求的**共用载荷构造**。
  *
- * `editor_export_document`（导出）与 `editor_render_document`（全览图）收的是同一个
- * `DocumentRequest` 形状（画布 + 分段）。2026-10-24 编组落地后导出侧换成了 `groups`
- * 分段，而图层面板的全览图还在发旧的 `layers` 平铺形状——Rust 侧 `DocumentRequest`
- * 根本没有那个字段，全览图从此**静默失效**（错误被 catch 吞掉，表现为面板一直显示
- * 占位图）。这层抽出来就是要让两端**只存在一份**构造逻辑：导出与全览再也不会各改
- * 各的然后漂移。
+ * `editor_export_document`（导出）收 `DocumentRequest`（画布 + 分组）。历史上全览图
+ * 也走这条路（2026-10-24 编组落地时曾因发旧的 `layers` 平铺形状而静默失效，故抽出
+ * 这层统一构造）；2026-10-26 起全览改前端迷你渲染（`EditorMiniDocument`），这里的
+ * 消费方只剩导出——`editor_render_document` 命令保留给将来的超大图打底。
  *
  * 蒙版（2026-10-24）：每层可带 `mask`（源文件路径），语义 = 蒙版亮度 × alpha 乘进
  * 图层 alpha（详见 `imaging/mask.rs` / CSS `mask-image` 两条同构实现）。
