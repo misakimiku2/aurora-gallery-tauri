@@ -184,9 +184,23 @@ pub struct ProjectLayer {
     pub id: String,
     #[serde(default)]
     pub name: String,
-    /// `images/` 下的文件名；空串 = 这一层没有源图（会被读侧跳过）。
+    /// `images/` 下的文件名；空串 = 这一层没有源图（组行，读侧按组行保留）。
     #[serde(default)]
     pub image_file_name: String,
+    /// 蒙版图在 `images/` 下的文件名（与源图同一目录、同一套 md5 去重）；
+    /// 空串 = 无蒙版。老工程缺字段按无蒙版读。
+    #[serde(default)]
+    pub mask_file_name: String,
+    /// 解链蒙版自己的定界框；None = 链接（跟图层同框）。老工程缺字段按链接读。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_box: Option<ProjectBox>,
+    /// 蒙版被停用（PS 的 Shift+点缩略图）：合成按无蒙版走，数据保留。
+    /// 缺省 false，老工程按启用读。
+    #[serde(default)]
+    pub mask_disabled: bool,
+    /// 剪贴蒙版（裁进下方最近的基础层）。缺省 false，老工程按不剪贴读。
+    #[serde(default)]
+    pub clipped: bool,
     #[serde(default)]
     pub natural_width: u32,
     #[serde(default)]
@@ -279,6 +293,14 @@ pub struct SaveLayer {
     pub name: String,
     /// 源文件绝对路径
     pub source: String,
+    /// 蒙版源文件绝对路径；空串 = 无蒙版。与 `source` 同一套 md5 去重进 `images/`
+    pub mask_source: String,
+    /// 解链蒙版自己的定界框；None = 链接（跟图层同框）
+    pub mask_box: Option<ProjectBox>,
+    /// 蒙版被停用（合成按无蒙版走，数据保留）
+    pub mask_disabled: bool,
+    /// 剪贴蒙版（裁进下方最近的基础层）
+    pub clipped: bool,
     pub natural_width: u32,
     pub natural_height: u32,
     pub visible: bool,
@@ -393,15 +415,19 @@ pub fn save_project(
     }
 
     // ---- 1. 逐个唯一源文件算内容哈希（流式，不整体读进内存）----
+    //
+    // 源图与蒙版走**同一张表**：同一份字节无论当图层还是当蒙版用，`images/` 里只存一份。
     let mut digests: HashMap<&str, Digest> = HashMap::new();
     let mut order: Vec<&str> = Vec::new();
     for layer in layers {
-        if layer.source.is_empty() || digests.contains_key(layer.source.as_str()) {
-            continue;
+        for path in [&layer.source, &layer.mask_source] {
+            if path.is_empty() || digests.contains_key(path.as_str()) {
+                continue;
+            }
+            let digest = digest_file(Path::new(path))?;
+            order.push(path.as_str());
+            digests.insert(path.as_str(), digest);
         }
-        let digest = digest_file(Path::new(&layer.source))?;
-        order.push(layer.source.as_str());
-        digests.insert(layer.source.as_str(), digest);
     }
 
     // ---- 2. 内容寻址命名 + 跨路径去重 ----
@@ -433,6 +459,13 @@ pub fn save_project(
                 .get(l.source.as_str())
                 .and_then(|d| by_digest.get(&d.md5).cloned())
                 .unwrap_or_default(),
+            mask_file_name: digests
+                .get(l.mask_source.as_str())
+                .and_then(|d| by_digest.get(&d.md5).cloned())
+                .unwrap_or_default(),
+            mask_box: l.mask_box,
+            mask_disabled: l.mask_disabled,
+            clipped: l.clipped,
             natural_width: l.natural_width,
             natural_height: l.natural_height,
             visible: l.visible,
@@ -559,8 +592,19 @@ pub enum ProjectSource {
 pub struct OpenedLayer {
     pub id: String,
     pub name: String,
-    /// 解压出的图片路径；`None` = 这一层没有源图（读侧已跳过，理论上不会出现）
+    /// 解压出的图片路径；`None` = 组行（没有像素，但**必须保留**——它是组结构的锚点）
     pub source: Option<String>,
+    /// 解压出的蒙版路径；`None` = 无蒙版 / 蒙版解压失败（失败时另有 warning）
+    pub mask_source: Option<String>,
+    /// 蒙版图自然尺寸（无蒙版 = 0,0）。前端解链后的独立变换框要按它算矩阵
+    pub mask_natural_width: u32,
+    pub mask_natural_height: u32,
+    /// 解链蒙版自己的定界框；None = 链接
+    pub mask_box: Option<ProjectBox>,
+    /// 蒙版被停用（合成按无蒙版走，数据保留）
+    pub mask_disabled: bool,
+    /// 剪贴蒙版（裁进下方最近的基础层）
+    pub clipped: bool,
     pub natural_width: u32,
     pub natural_height: u32,
     pub visible: bool,
@@ -636,6 +680,10 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 id: if item.id.is_empty() { format!("layer-ref-{i}") } else { item.id.clone() },
                 name: format!("图层 {}", i + 1),
                 image_file_name: item.image_file_name.clone(),
+                mask_file_name: String::new(),
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
                 natural_width: 0,
                 natural_height: 0,
                 visible: true,
@@ -664,6 +712,10 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 id: l.id.clone(),
                 name: l.name.clone(),
                 image_file_name: l.image_file_name.clone(),
+                mask_file_name: l.mask_file_name.clone(),
+                mask_box: l.mask_box,
+                mask_disabled: l.mask_disabled,
+                clipped: l.clipped,
                 natural_width: l.natural_width,
                 natural_height: l.natural_height,
                 visible: l.visible,
@@ -681,6 +733,34 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
 
     let mut layers = Vec::with_capacity(planned.len());
     for planned in planned {
+        // 组行没有像素、也不需要解压——但**必须保留**（source = None）：
+        // 它是组结构的锚点，2026-10-24 之前这里把空 image_file_name 一律当
+        // "坏层跳过"，编组存盘后重开就塌成平层（且每个组多一条假警告）。
+        if planned.layer_kind == "group" {
+            layers.push(OpenedLayer {
+                id: planned.id,
+                name: if planned.name.is_empty() { "组".to_string() } else { planned.name },
+                source: None,
+                mask_source: None,
+                mask_natural_width: 0,
+                mask_natural_height: 0,
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
+                natural_width: 0,
+                natural_height: 0,
+                visible: planned.visible,
+                opacity: planned.opacity,
+                blend: planned.blend,
+                lock_pixel: planned.lock_pixel,
+                lock_position: planned.lock_position,
+                layer_kind: planned.layer_kind,
+                group_id: planned.group_id,
+                frame: planned.frame,
+                adjust: planned.adjust,
+            });
+            continue;
+        }
         if planned.image_file_name.is_empty() {
             warnings.push(format!("图层「{}」没有图像文件，已跳过", planned.name));
             continue;
@@ -696,6 +776,29 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
             Err(err) => {
                 warnings.push(format!("图层「{}」解压失败（{err}），已跳过", planned.name));
                 continue;
+            }
+        };
+
+        // 蒙版解压失败**不弃层**：按无蒙版打开 + 一条警告。层上的图还在，
+        // 用户顶多重新挂一次蒙版；把整层丢掉才是灾难。
+        let mask_source = if planned.mask_file_name.is_empty() {
+            None
+        } else {
+            match extract_entry(
+                &mut zip,
+                &planned.mask_file_name,
+                extract_dir,
+                &mut extracted,
+                &mut budget,
+            ) {
+                Ok(p) => Some(p.display().to_string()),
+                Err(err) => {
+                    warnings.push(format!(
+                        "图层「{}」的蒙版解压失败（{err}），已按无蒙版打开",
+                        planned.name
+                    ));
+                    None
+                }
             }
         };
 
@@ -719,6 +822,13 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
             continue;
         }
 
+        // 蒙版自然尺寸以**解压出的文件**为准（与图层同一判据）：解链框就是针对这批
+        // 字节摆的；读不出尺寸不弃层，按 0 返回（前端会让蒙版退化成不可变换）。
+        let (mask_w, mask_h) = match &mask_source {
+            Some(path) => image::image_dimensions(path).unwrap_or((0, 0)),
+            None => (0, 0),
+        };
+
         layers.push(OpenedLayer {
             id: planned.id,
             name: if planned.name.is_empty() {
@@ -727,6 +837,12 @@ pub fn open_project(archive: &Path, extract_dir: &Path) -> Result<OpenedProject,
                 planned.name
             },
             source: Some(out_path.display().to_string()),
+            mask_source,
+            mask_natural_width: mask_w,
+            mask_natural_height: mask_h,
+            mask_box: planned.mask_box,
+            mask_disabled: planned.mask_disabled,
+            clipped: planned.clipped,
             natural_width: width,
             natural_height: height,
             visible: planned.visible,
@@ -765,6 +881,10 @@ struct PlannedLayer {
     id: String,
     name: String,
     image_file_name: String,
+    mask_file_name: String,
+    mask_box: Option<ProjectBox>,
+    mask_disabled: bool,
+    clipped: bool,
     natural_width: u32,
     natural_height: u32,
     visible: bool,
@@ -966,6 +1086,10 @@ mod tests {
                 id: "l1".into(),
                 name: "底图".into(),
                 source: a.display().to_string(),
+                mask_source: String::new(),
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
                 natural_width: 40,
                 natural_height: 20,
                 visible: true,
@@ -982,6 +1106,10 @@ mod tests {
                 id: "l2".into(),
                 name: "遮挡".into(),
                 source: b.display().to_string(),
+                mask_source: String::new(),
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
                 natural_width: 32,
                 natural_height: 32,
                 visible: false,
@@ -1040,6 +1168,10 @@ mod tests {
             id: id.into(),
             name: id.into(),
             source: path.display().to_string(),
+            mask_source: String::new(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
             natural_width: 16,
             natural_height: 16,
             visible: true,
@@ -1166,6 +1298,10 @@ mod tests {
             id: "l1".into(),
             name: "一层".into(),
             source: png.display().to_string(),
+            mask_source: String::new(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
             natural_width: 8,
             natural_height: 8,
             visible: true,
@@ -1208,6 +1344,10 @@ mod tests {
                 id: "l1".into(),
                 name: "层".into(),
                 source: png.display().to_string(),
+                mask_source: String::new(),
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
                 natural_width: 8,
                 natural_height: 8,
                 visible: true,
@@ -1246,6 +1386,10 @@ mod tests {
             id: "l1".into(),
             name: "层".into(),
             source: png.display().to_string(),
+            mask_source: String::new(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
             natural_width: 4,
             natural_height: 4,
             visible: true,
@@ -1277,5 +1421,275 @@ mod tests {
         let json = serde_json::to_string(&opened).unwrap();
         assert!(json.contains("\"box\""), "打开结果应含 box: {json}");
         assert!(!json.contains("\"frame\""), "打开结果不该含 frame: {json}");
+    }
+
+    /// 蒙版随工程往返：字节逐位相同、独立于图层图存储、`maskSource` 键名正确。
+    #[test]
+    fn mask_round_trips_byte_identical() {
+        let dir = scratch("mask");
+        let img = write_png(&dir, "img.png", 12, 6, 90);
+        let mask = write_png(&dir, "mask.png", 12, 6, 255);
+        let canvas = ProjectCanvas::new(12, 6, "transparent");
+        let layers = vec![SaveLayer {
+            id: "l1".into(),
+            name: "带蒙版".into(),
+            source: img.display().to_string(),
+            mask_source: mask.display().to_string(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
+            natural_width: 12,
+            natural_height: 6,
+            visible: true,
+            opacity: 100,
+            blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
+            frame: ProjectBox::default(),
+            adjust: None,
+        }];
+        let target = dir.join("m.aurora");
+        let report = save_project(&target, "m", &canvas, &layers, None).unwrap();
+        assert_eq!(report.image_count, 2, "图层图与蒙版各一份");
+
+        let opened = open_project(&target, &dir.join("out")).unwrap();
+        let layer = &opened.layers[0];
+        let mask_path = layer.mask_source.as_ref().expect("蒙版必须解出来");
+        assert_eq!(fs::read(mask).unwrap(), fs::read(mask_path).unwrap(), "蒙版字节逐位相同");
+        // 键名契约：前端读 `maskSource`（camelCase），同 box/frame 那条一个性质
+        let json = serde_json::to_string(&opened).unwrap();
+        assert!(json.contains("\"maskSource\""));
+    }
+
+    /// 蒙版与图层图是同一份字节时只存一份（同一张 md5 去重表）。
+    #[test]
+    fn mask_shares_dedupe_table_with_layer_images() {
+        let dir = scratch("maskdedupe");
+        let img = write_png(&dir, "a.png", 8, 8, 3);
+        let canvas = ProjectCanvas::new(8, 8, "transparent");
+        let layers = vec![SaveLayer {
+            id: "l1".into(),
+            name: "自蒙版".into(),
+            source: img.display().to_string(),
+            mask_source: img.display().to_string(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
+            natural_width: 8,
+            natural_height: 8,
+            visible: true,
+            opacity: 100,
+            blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
+            frame: ProjectBox::default(),
+            adjust: None,
+        }];
+        let report = save_project(&dir.join("d.aurora"), "d", &canvas, &layers, None).unwrap();
+        assert_eq!(report.image_count, 1, "同一份字节当图层又当蒙版，只存一份");
+    }
+
+    /// 组行（无像素条目）必须原样往返：kind = group、source = None、成员的
+    /// groupId 不丢。2026-10-24 前读侧把空 image_file_name 一律跳过，编组
+    /// 重开即塌（且这条链路当时还被 IPC 键名 bug 挡在存侧，两边一起修的）。
+    #[test]
+    fn group_rows_round_trip_without_pixels() {
+        let dir = scratch("group");
+        let img = write_png(&dir, "a.png", 8, 8, 9);
+        let canvas = ProjectCanvas::new(8, 8, "transparent");
+        let member = SaveLayer {
+            id: "m1".into(),
+            name: "成员".into(),
+            source: img.display().to_string(),
+            mask_source: String::new(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
+            natural_width: 8,
+            natural_height: 8,
+            visible: true,
+            opacity: 100,
+            blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: Some("g1".into()),
+            frame: ProjectBox::default(),
+            adjust: None,
+        };
+        let row = SaveLayer {
+            id: "g1".into(),
+            name: "我的组".into(),
+            source: String::new(),
+            mask_source: String::new(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
+            natural_width: 0,
+            natural_height: 0,
+            visible: true,
+            opacity: 100,
+            blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
+            layer_kind: "group".to_string(),
+            group_id: None,
+            frame: ProjectBox::default(),
+            adjust: None,
+        };
+        let target = dir.join("g.aurora");
+        save_project(&target, "g", &canvas, &[member, row], Some("m1")).unwrap();
+
+        let opened = open_project(&target, &dir.join("out")).unwrap();
+        assert!(opened.warnings.is_empty(), "组行不该再报「没有图像文件」: {:?}", opened.warnings);
+        assert_eq!(opened.layers.len(), 2);
+        assert_eq!(opened.layers[0].group_id.as_deref(), Some("g1"));
+        let row = &opened.layers[1];
+        assert_eq!(row.layer_kind, "group");
+        assert_eq!(row.id, "g1");
+        assert!(row.source.is_none(), "组行没有像素，source 必须是 None 而不是被丢弃");
+        assert_eq!(row.name, "我的组");
+    }
+
+    /// 蒙版条目缺失/损坏：**不弃层**——按无蒙版打开并给一条警告。
+    #[test]
+    fn broken_mask_entry_keeps_the_layer_with_warning() {
+        let dir = scratch("badmask");
+        let img = write_png(&dir, "a.png", 8, 8, 4);
+        let mask = write_png(&dir, "m.png", 8, 8, 5);
+        let canvas = ProjectCanvas::new(8, 8, "transparent");
+        let layers = vec![SaveLayer {
+            id: "l1".into(),
+            name: "层".into(),
+            source: img.display().to_string(),
+            mask_source: mask.display().to_string(),
+            mask_box: None,
+            mask_disabled: false,
+            clipped: false,
+            natural_width: 8,
+            natural_height: 8,
+            visible: true,
+            opacity: 100,
+            blend: BlendMode::Normal,
+            lock_pixel: false,
+            lock_position: false,
+            layer_kind: "layer".to_string(),
+            group_id: None,
+            frame: ProjectBox::default(),
+            adjust: None,
+        }];
+        let target = dir.join("b.aurora");
+        save_project(&target, "b", &canvas, &layers, None).unwrap();
+
+        // 从 ZIP 里删掉蒙版条目，模拟损坏/缺文件的工程。
+        // `images/` 里的名字是内容 md5——先算出蒙版那份字节的名字再精确剔除。
+        {
+            let bytes = fs::read(&target).unwrap();
+            let mask_name = format!("images/{:x}.png", md5::compute(&fs::read(&mask).unwrap()));
+            let mut src = ZipArchive::new(std::io::Cursor::new(&bytes[..])).unwrap();
+            let mut keep: Vec<(String, Vec<u8>)> = Vec::new();
+            for i in 0..src.len() {
+                let mut entry = src.by_index(i).unwrap();
+                let name = entry.name().to_string();
+                let mut data = Vec::new();
+                entry.read_to_end(&mut data).unwrap();
+                if name != mask_name {
+                    keep.push((name, data));
+                }
+            }
+            let file = File::create(&target).unwrap();
+            let mut zip = ZipWriter::new(BufWriter::new(file));
+            for (name, data) in keep {
+                zip.start_file(name, SimpleFileOptions::default()).unwrap();
+                zip.write_all(&data).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        let opened = open_project(&target, &dir.join("out")).unwrap();
+        assert_eq!(opened.layers.len(), 1, "图层本身必须还在");
+        assert!(opened.layers[0].source.is_some());
+        assert!(opened.layers[0].mask_source.is_none(), "蒙版读不到 = 无蒙版");
+        assert!(
+            opened.warnings.iter().any(|w| w.contains("蒙版")),
+            "必须给蒙版相关的警告: {:?}",
+            opened.warnings
+        );
+    }
+
+    /// 解链蒙版框、剪贴标志与蒙版自然尺寸的往返（2026-10-24 第二轮）。
+    #[test]
+    fn unlinked_mask_box_and_clip_flag_round_trip() {
+        let dir = scratch("round2");
+        let img = write_png(&dir, "img.png", 10, 8, 30);
+        let mask = write_png(&dir, "mask.png", 6, 4, 200);
+        let canvas = ProjectCanvas::new(10, 8, "transparent");
+        let mask_box = ProjectBox {
+            x: 2.0,
+            y: 1.0,
+            w: 6.0,
+            h: 4.0,
+            ..ProjectBox::default()
+        };
+        let layers = vec![
+            // 基础层
+            SaveLayer {
+                id: "base".into(),
+                name: "基础".into(),
+                source: img.display().to_string(),
+                mask_source: String::new(),
+                mask_box: None,
+                mask_disabled: false,
+                clipped: false,
+                natural_width: 10,
+                natural_height: 8,
+                visible: true,
+                opacity: 100,
+                blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
+                frame: ProjectBox::default(),
+                adjust: None,
+            },
+            // 剪贴进基础层 + 带解链蒙版
+            SaveLayer {
+                id: "top".into(),
+                name: "剪贴层".into(),
+                source: img.display().to_string(),
+                mask_source: mask.display().to_string(),
+                mask_box: Some(mask_box),
+                mask_disabled: true,
+                clipped: true,
+                natural_width: 10,
+                natural_height: 8,
+                visible: true,
+                opacity: 100,
+                blend: BlendMode::Normal,
+                lock_pixel: false,
+                lock_position: false,
+                layer_kind: "layer".to_string(),
+                group_id: None,
+                frame: ProjectBox::default(),
+                adjust: None,
+            },
+        ];
+        let target = dir.join("r2.aurora");
+        save_project(&target, "r2", &canvas, &layers, None).unwrap();
+
+        let opened = open_project(&target, &dir.join("out")).unwrap();
+        assert_eq!(opened.layers.len(), 2);
+        let top = &opened.layers[1];
+        assert!(top.clipped, "剪贴标志必须往返");
+        assert_eq!(top.mask_box, Some(mask_box), "解链蒙版框必须往返");
+        assert!(top.mask_disabled, "停用标志必须往返（停用的蒙版重开仍是停用）");
+        // 蒙版自然尺寸按解压出的文件读（前端独立变换框的矩阵要用它）
+        assert_eq!((top.mask_natural_width, top.mask_natural_height), (6, 4));
+        assert_eq!((opened.layers[0].mask_natural_width, opened.layers[0].mask_natural_height), (0, 0));
     }
 }

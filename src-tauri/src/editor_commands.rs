@@ -137,6 +137,15 @@ pub struct CanvasRequest {
     pub background: Option<String>,
 }
 
+/// 图层蒙版请求。`matrix` 有值 = **解链**（蒙版自己的画布空间矩阵）；
+/// 缺省 / null = **链接**（蒙版拉伸铺满图层内容，与 CSS `mask-size: 100% 100%` 同口径）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct MaskRequest {
+    pub path: String,
+    #[serde(default)]
+    pub matrix: Option<[f64; 6]>,
+}
+
 /// 单个图层请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct LayerRequest {
@@ -157,6 +166,12 @@ pub struct LayerRequest {
     /// 前端 `layerOpacity()` 出口径，两端的钳位规则一致。
     #[serde(default)]
     pub opacity: Option<u8>,
+    /// 图层蒙版（null = 无）。语义见 `imaging::mask`（蒙版值 = 亮度 × alpha）。
+    #[serde(default)]
+    pub mask: Option<MaskRequest>,
+    /// 剪贴蒙版：只显示在同分段内下方基础层有像素处（吃基础层 alpha）。
+    #[serde(default)]
+    pub clipped: bool,
 }
 
 /// 一个**组**的分段（PS 的组语义）：成员先互相合成，组画布按组的 opacity/blend
@@ -189,25 +204,60 @@ fn parse_background(raw: Option<&str>) -> CanvasBackground {
 
 /// 按文档状态合成出全分辨率 RGBA。
 ///
-/// 顺序：**解码 → 调色 → 不透明度 → 仿射重采样 → 合成到画布**。调色与不透明度都与位置
-/// 无关，先做能让后续重采样拿到最终像素（顺序反过来在本项目里结果一致，但定死一处才不会
-/// 有人"顺手优化"）。不透明度落成 alpha 缩放，理由见 `imaging::opacity` 的文件头。
+/// 顺序：**解码 → 调色 → 不透明度 → 蒙版 → 仿射重采样 → 合成到画布**。调色、不透明度、
+/// 蒙版都与位置无关（前两个动 RGB/alpha、蒙版动 alpha），先做完再重采样，让后续步骤
+/// 拿到最终像素（顺序反过来在本项目里结果一致，但定死一处才不会有人"顺手优化"）。
+/// 不透明度落成 alpha 缩放、蒙版落成 alpha 乘蒙版值，理由分别见 `imaging::opacity`
+/// 与 `imaging::mask` 的文件头。
+///
+/// 蒙版解链（`mask.matrix` 有值）：把蒙版 warp 到**图层内容空间**
+/// （`inv(M_layer)·M_mask`）后仍走同一条 `apply_mask_image` 乘法——与 CSS 包裹
+/// 渲染（A 壳 + B 壳的逆矩阵换算）数学同构，两端不各推一次。
 fn composite_document(doc: &DocumentRequest) -> Result<RgbaImage, String> {
     // 组员的解码图必须活到合成结束：先收进本层 Vec，再组装带生命周期的 CompositeGroup
     let mut decoded: Vec<RgbaImage> = Vec::new();
-    let mut group_specs: Vec<(u8, BlendMode, Vec<(usize, AffineMatrix, BlendMode)>)> = Vec::new();
+    let mut group_specs: Vec<(u8, BlendMode, Vec<(usize, AffineMatrix, BlendMode, bool)>)> =
+        Vec::new();
     for g in &doc.groups {
         let mut members = Vec::new();
         for l in &g.layers {
             let mut img =
                 apply_adjustments(imaging::decode_file(&l.path).map_err(|e| e.to_string())?, l.adjust);
             imaging::apply_opacity(&mut img, l.opacity.unwrap_or(100).min(100));
+            // 蒙版失败让整份导出失败（而不是静默丢蒙版）：用户屏幕上看着有渐隐边缘，
+            // 成品里却是硬边——那比报错糟糕得多
+            if let Some(mask_req) = &l.mask {
+                if !mask_req.path.is_empty() {
+                    match mask_req.matrix {
+                        None => imaging::apply_mask(&mut img, &mask_req.path).map_err(|e| e.to_string())?,
+                        Some(mask_matrix) => {
+                            let layer_matrix = AffineMatrix::from_array(l.matrix);
+                            // 蒙版源 → 内容空间：inv(M_layer)·M_mask（CSS 的 B 壳换算）
+                            let to_local = AffineMatrix::concat(
+                                layer_matrix.invert().map_err(|e| e.to_string())?,
+                                AffineMatrix::from_array(mask_matrix),
+                            );
+                            let mask_img = imaging::decode_file(&mask_req.path).map_err(|e| e.to_string())?;
+                            let warped = imaging::warp_affine(
+                                &mask_img,
+                                img.width(),
+                                img.height(),
+                                to_local,
+                                imaging::Sampling::Bilinear,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            imaging::apply_mask_image(&mut img, &warped);
+                        }
+                    }
+                }
+            }
             let idx = decoded.len();
             decoded.push(img);
             members.push((
                 idx,
                 AffineMatrix::from_array(l.matrix),
                 l.blend.as_deref().map(BlendMode::parse).unwrap_or_default(),
+                l.clipped,
             ));
         }
         group_specs.push((g.opacity.min(100), g.blend.as_deref().map(BlendMode::parse).unwrap_or_default(), members));
@@ -220,10 +270,11 @@ fn composite_document(doc: &DocumentRequest) -> Result<RgbaImage, String> {
             blend: *blend,
             layers: members
                 .iter()
-                .map(|(idx, matrix, blend)| CompositeLayer {
+                .map(|(idx, matrix, blend, clipped)| CompositeLayer {
                     src: &decoded[*idx],
                     matrix: *matrix,
                     blend: *blend,
+                    clipped: *clipped,
                 })
                 .collect(),
         })
@@ -402,6 +453,22 @@ pub struct ProjectLayerRequest {
     pub layer_kind: String,
     #[serde(default)]
     pub group_id: Option<String>,
+    /// 图层蒙版的源文件路径。空串 / 缺省 = 无蒙版（`images/` 里也就不存它的字节）。
+    /// ⚠️ camelCase 键（`maskSource`）——本结构整体 `rename_all = "camelCase"`，
+    /// 前端发 snake_case 会被静默丢掉（2026-10-24 前的 lock/group 字段就丢过，
+    /// 见文件尾的 IPC 契约测试）。
+    #[serde(default)]
+    pub mask_source: String,
+    /// 解链蒙版自己的定界框；缺省 / null = 链接（跟图层同框）
+    #[serde(default)]
+    pub mask_box: Option<ProjectBox>,
+    /// 蒙版被停用（PS 的 Shift+点缩略图）：合成按无蒙版走，数据保留。缺省 false。
+    /// ⚠️ camelCase 键（`maskDisabled`），与 maskSource 同一教训
+    #[serde(default)]
+    pub mask_disabled: bool,
+    /// 剪贴蒙版（裁进下方最近的基础层）。缺省 false。
+    #[serde(default)]
+    pub clipped: bool,
     #[serde(default, rename = "box")]
     pub frame: ProjectBox,
     #[serde(default)]
@@ -444,6 +511,10 @@ pub async fn editor_save_project(
                 id: l.id,
                 name: l.name,
                 source: l.source,
+                mask_source: l.mask_source,
+                mask_box: l.mask_box,
+                mask_disabled: l.mask_disabled,
+                clipped: l.clipped,
                 natural_width: l.natural_width,
                 natural_height: l.natural_height,
                 visible: l.visible,
@@ -509,4 +580,117 @@ pub async fn editor_open_project(path: String) -> Result<editor_project::OpenedP
     })
     .await
     .map_err(|e| format!("打开任务失败: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **IPC 键名契约**：前端 `buildSavePayload` 发什么键，这里就必须能读回什么。
+    ///
+    /// 背景（2026-10-24 修的存量 bug）：`ProjectLayerRequest` 整体挂着
+    /// `rename_all = "camelCase"`，而前端曾按 snake_case 发 `lock_pixel` /
+    /// `layer_kind` / `group_id`——serde 对未知键不报错、缺字段走 default，
+    /// 锁定与编组**存盘后再打开无声丢失**。core 层的往返单测直接构造
+    /// `SaveLayer`、不穿这层 IPC，所以一直是绿的。这条测试把前端实际发出的
+    /// JSON 形状钉死在这里，两边谁改了键名当场红。
+    #[test]
+    fn project_save_request_reads_frontend_camel_case_keys() {
+        let json = r#"{
+            "name": "文档",
+            "canvas": {"width": 100, "height": 80, "background": "white"},
+            "activeLayerId": "l1",
+            "layers": [{
+                "id": "l1",
+                "name": "底图",
+                "source": "C:/pics/a.png",
+                "naturalWidth": 100,
+                "naturalHeight": 50,
+                "visible": true,
+                "opacity": 80,
+                "blend": "multiply",
+                "lockPixel": true,
+                "lockPosition": false,
+                "layerKind": "layer",
+                "groupId": "g1",
+                "maskSource": "C:/pics/mask.png",
+                "maskBox": {"x": 1, "y": 1, "w": 60, "h": 30, "rotation": 0,
+                             "flipH": false, "flipV": false, "skewX": 0, "skewY": 0},
+                "maskDisabled": true,
+                "clipped": true,
+                "box": {"x": 1, "y": 2, "w": 100, "h": 50, "rotation": 0,
+                         "flipH": false, "flipV": false, "skewX": 0, "skewY": 0},
+                "adjust": {"brightness": 5, "contrast": 0, "saturation": 0, "temperature": 0}
+            }]
+        }"#;
+        let req: ProjectSaveRequest = serde_json::from_str(json).expect("前端载荷必须可解析");
+        let l = &req.layers[0];
+        assert_eq!(l.lock_pixel, true);
+        assert_eq!(l.lock_position, false);
+        assert_eq!(l.layer_kind, "layer");
+        assert_eq!(l.group_id.as_deref(), Some("g1"));
+        assert_eq!(l.mask_source, "C:/pics/mask.png");
+        assert_eq!(l.mask_box.as_ref().expect("解链框必须可读").w, 60.0);
+        assert!(l.mask_disabled, "停用标志必须可读（camelCase：maskDisabled）");
+        assert!(l.clipped, "剪贴标志必须可读");
+        assert_eq!(l.blend, BlendMode::Multiply);
+        assert_eq!(l.opacity, 80);
+        // box → frame 的 rename 也在这一条里顺带锁住（§6 第 8 条的坑）
+        assert_eq!(l.frame.w, 100.0);
+    }
+
+    /// 合成请求（导出 / 全览）的形状契约：前端 `buildRenderGroups` 发的是
+    /// `groups` 分段（编组落地后的形状）。全览图一度还在发旧的 `layers` 平铺
+    /// 形状，Rust 侧 `groups` 缺字段直接反序列化失败、错误又被前端 catch
+    /// 吞掉——全览静默失效。这条把两端的形状钉在一起。
+    #[test]
+    fn document_request_reads_frontend_group_segments() {
+        let json = r#"{
+            "canvas": {"width": 10, "height": 10, "background": "transparent"},
+            "groups": [{
+                "opacity": 85,
+                "blend": "screen",
+                "layers": [{
+                    "path": "C:/pics/a.png",
+                    "matrix": [1, 0, 0, 1, 0, 0],
+                    "adjust": null,
+                    "opacity": 60,
+                    "blend": "multiply",
+                    "mask": {"path": "C:/pics/mask.png", "matrix": null},
+                    "clipped": false
+                }, {
+                    "path": "C:/pics/b.png",
+                    "matrix": [2, 0, 0, 2, 1, 1],
+                    "adjust": null,
+                    "opacity": 100,
+                    "blend": "normal",
+                    "mask": {"path": "C:/pics/mask2.png", "matrix": [1, 0, 0, 1, 3, 4]},
+                    "clipped": true
+                }]
+            }]
+        }"#;
+        let doc: DocumentRequest = serde_json::from_str(json).expect("groups 分段必须可解析");
+        assert_eq!(doc.groups.len(), 1);
+        assert_eq!(doc.groups[0].opacity, 85);
+        let l = &doc.groups[0].layers[0];
+        assert_eq!(l.opacity, Some(60));
+        assert_eq!(l.blend.as_deref(), Some("multiply"));
+        // 链接蒙版：matrix 缺省 = null（Rust 走拉伸预乘路径）
+        let m = l.mask.as_ref().expect("蒙版对象必须可读");
+        assert_eq!(m.path, "C:/pics/mask.png");
+        assert!(m.matrix.is_none(), "链接蒙版的 matrix 应为 null");
+        assert!(!l.clipped);
+        // 解链蒙版 + 剪贴
+        let l2 = &doc.groups[0].layers[1];
+        let m2 = l2.mask.as_ref().unwrap();
+        assert_eq!(m2.matrix, Some([1.0, 0.0, 0.0, 1.0, 3.0, 4.0]));
+        assert!(l2.clipped);
+
+        // 旧的平铺形状必须被拒（缺 groups 字段）——静默兼容只会把形状漂移藏回去
+        let legacy = r#"{
+            "canvas": {"width": 10, "height": 10, "background": "transparent"},
+            "layers": []
+        }"#;
+        assert!(serde_json::from_str::<DocumentRequest>(legacy).is_err());
+    }
 }

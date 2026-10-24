@@ -100,6 +100,20 @@ impl AffineMatrix {
     pub fn map_point(self, x: f64, y: f64) -> (f64, f64) {
         (self.a * x + self.c * y + self.e, self.b * x + self.d * y + self.f)
     }
+
+    /// 矩阵复合 `outer ∘ inner`（**先作用 inner 再作用 outer**），与前端
+    /// `layerTransform.multiplyAffine` 同序同式。蒙版解链（把蒙版换算到图层
+    /// 内容空间）与 CSS 包裹渲染的坐标换算共用这一条。
+    pub fn concat(outer: AffineMatrix, inner: AffineMatrix) -> AffineMatrix {
+        AffineMatrix {
+            a: outer.a * inner.a + outer.c * inner.b,
+            b: outer.b * inner.a + outer.d * inner.b,
+            c: outer.a * inner.c + outer.c * inner.d,
+            d: outer.b * inner.c + outer.d * inner.d,
+            e: outer.a * inner.e + outer.c * inner.f + outer.e,
+            f: outer.b * inner.e + outer.d * inner.f + outer.f,
+        }
+    }
 }
 
 /// 画布背景。最小模型只给三档——对应"新建空白文档"对话框里的选项（设计稿 §2）。
@@ -118,6 +132,10 @@ pub struct CompositeLayer<'a> {
     pub matrix: AffineMatrix,
     /// 混合模式。`Normal` 即普通的 src-over（默认）。
     pub blend: BlendMode,
+    /// 剪贴蒙版（PS 的 Clipping Mask）：这一层只显示在**本组内下方最近的基础层**
+    /// （非剪贴层）有像素的地方。连续剪贴层裁进同一个基础层；没有基础层的剪贴层
+    /// 按普通层合成（数据损坏容忍，与前端 CSS 渲染同口径）。
+    pub clipped: bool,
 }
 
 /// 一个**组**的分段：成员先在透明子画布上按序合成（成员各自的 blend/opacity 生效），
@@ -274,6 +292,9 @@ pub fn composite(
 ///
 /// 组的合成顺序与 CSS 嵌套 div 的浏览器语义一致（成员先互相混 → 组画布按组的
 /// opacity/blend 叠上来），前端 `EditorCanvasLayers` 的分组渲染与之逐像素等价。
+/// 剪贴蒙版（`clipped`）在组内生效：基础层照常合成并记录其 warp 光栅，
+/// 剪贴层先 warp 到透明 scratch、alpha 乘基础层光栅、再以单位矩阵叠进组画布
+/// （层的 blend/opacity 已在 scratch 里，语义与 CSS"壳 + mask-image"等价）。
 pub fn composite_grouped(
     width: u32,
     height: u32,
@@ -285,8 +306,26 @@ pub fn composite_grouped(
     for group in groups {
         // 组画布：透明底 + 成员按序合成
         let mut sub = RgbaImage::new(width, height);
+        // 剪贴基础层（最近的非剪贴层）与其 warp 光栅；换基础层时光栅作废重算
+        let mut last_base: Option<(&RgbaImage, AffineMatrix)> = None;
+        let mut clip_raster: Option<RgbaImage> = None;
         for layer in &group.layers {
-            warp_into(&mut sub, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
+            if layer.clipped && last_base.is_some() {
+                if clip_raster.is_none() {
+                    let (src, matrix) = last_base.expect("上面刚查过 is_some");
+                    clip_raster = Some(warp_affine(src, width, height, matrix, Sampling::Bilinear)?);
+                }
+                let clip = clip_raster.as_ref().expect("上面刚建好");
+                let mut scratch =
+                    warp_affine(layer.src, width, height, layer.matrix, Sampling::Bilinear)?;
+                super::mask::apply_alpha_raster(&mut scratch, clip);
+                warp_into(&mut sub, &scratch, AffineMatrix::IDENTITY, Sampling::Bilinear, layer.blend)?;
+            } else {
+                // 普通层（含"没有基础层的剪贴层"——按普通层合成，与前端同口径）
+                warp_into(&mut sub, layer.src, layer.matrix, Sampling::Bilinear, layer.blend)?;
+                clip_raster = None;
+                last_base = Some((layer.src, layer.matrix));
+            }
         }
         // 组不透明度 = 组画布整体 alpha 缩放（直通 alpha，见 imaging::opacity）
         super::apply_opacity(&mut sub, group.opacity);

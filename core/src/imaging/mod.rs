@@ -48,6 +48,7 @@ mod crop;
 mod decode;
 mod encode;
 mod exif;
+mod mask;
 mod opacity;
 mod resize;
 mod transform;
@@ -67,6 +68,7 @@ pub use decode::{
 };
 pub use encode::{encode, EncodeFormat};
 pub use exif::read_orientation;
+pub use mask::{apply_alpha_raster, apply_mask, apply_mask_image};
 pub use opacity::apply_opacity;
 pub use resize::resize_to_max_edge;
 pub use transform::{flip_image, rotate_image, Rotation};
@@ -526,8 +528,8 @@ mod tests {
             1,
             CanvasBackground::Transparent,
             &[
-                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal },
-                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Multiply },
+                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: false },
+                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Multiply, clipped: false },
             ],
         )
         .unwrap();
@@ -540,8 +542,8 @@ mod tests {
             1,
             CanvasBackground::Transparent,
             &[
-                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal },
-                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Screen },
+                CompositeLayer { src: &grey, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: false },
+                CompositeLayer { src: &black, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Screen, clipped: false },
             ],
         )
         .unwrap();
@@ -564,7 +566,7 @@ mod tests {
                 1,
                 1,
                 CanvasBackground::Transparent,
-                &[CompositeLayer { src: &red, matrix: AffineMatrix::IDENTITY, blend: mode }],
+                &[CompositeLayer { src: &red, matrix: AffineMatrix::IDENTITY, blend: mode, clipped: false }],
             )
             .unwrap();
             assert_eq!(*out.get_pixel(0, 0), image::Rgba([255, 0, 0, 255]), "{mode:?}");
@@ -578,7 +580,7 @@ mod tests {
             4,
             4,
             CanvasBackground::White,
-            &[CompositeLayer { src: &red, matrix: AffineMatrix::translation(3.0, 3.0), blend: BlendMode::Normal }],
+            &[CompositeLayer { src: &red, matrix: AffineMatrix::translation(3.0, 3.0), blend: BlendMode::Normal, clipped: false }],
         )
         .unwrap();
 
@@ -600,7 +602,7 @@ mod tests {
             1,
             1,
             CanvasBackground::White,
-            &[CompositeLayer { src: &half_red, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal }],
+            &[CompositeLayer { src: &half_red, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: false }],
         )
         .unwrap();
 
@@ -611,6 +613,110 @@ mod tests {
         assert!((px[2] as i32 - 127).abs() <= 1, "蓝通道应约 127，实际 {}", px[2]);
         assert_eq!(px[3], 255, "盖在白底上必须完全不透明");
     }
+
+    // ---- 矩阵复合与剪贴蒙版（2026-10-24 第二轮） ----
+
+    #[test]
+    fn concat_composes_then_inverts_back_to_identity() {
+        let outer = AffineMatrix::from_array([1.5, 0.2, -0.3, 0.9, 7.0, -4.0]);
+        let inner = AffineMatrix::from_array([0.8, -0.1, 0.4, 1.2, 3.0, 5.0]);
+        // 复合语义 = 先 inner 后 outer（与前端 multiplyAffine 同序）：逐点对照
+        let composed = AffineMatrix::concat(outer, inner);
+        let p = (13.7f64, 42.1f64);
+        let mid = inner.map_point(p.0, p.1);
+        let via_two = outer.map_point(mid.0, mid.1);
+        let via_one = composed.map_point(p.0, p.1);
+        assert!((via_one.0 - via_two.0).abs() < 1e-9);
+        assert!((via_one.1 - via_two.1).abs() < 1e-9);
+
+        // M · M⁻¹ = 恒等
+        let round = AffineMatrix::concat(outer, outer.invert().unwrap());
+        assert!((round.a - 1.0).abs() < 1e-9 && (round.d - 1.0).abs() < 1e-9);
+        assert!(round.b.abs() < 1e-9 && round.c.abs() < 1e-9);
+        assert!(round.e.abs() < 1e-9 && round.f.abs() < 1e-9);
+    }
+
+    /// 剪贴蒙版的核心语义：上层只显示在基础层有像素的地方（吃基础层 alpha）。
+    #[test]
+    fn clipped_layer_only_shows_over_base_pixels() {
+        // 4×1 透明画布：红基础层盖 x0..2；蓝剪贴层盖 x2..4（基础层外）；
+        // 绿剪贴层盖 x0..2（基础层内，必须可见）
+        let red = filled(2, 1, [255, 0, 0, 255]);
+        let blue = filled(2, 1, [0, 0, 255, 255]);
+        let green = filled(2, 1, [0, 255, 0, 255]);
+        let group = CompositeGroup {
+            opacity: 100,
+            blend: BlendMode::Normal,
+            layers: vec![
+                CompositeLayer { src: &red, matrix: AffineMatrix::translation(0.0, 0.0), blend: BlendMode::Normal, clipped: false },
+                CompositeLayer { src: &blue, matrix: AffineMatrix::translation(2.0, 0.0), blend: BlendMode::Normal, clipped: true },
+                CompositeLayer { src: &green, matrix: AffineMatrix::translation(0.0, 0.0), blend: BlendMode::Normal, clipped: true },
+            ],
+        };
+        let out = composite_grouped(4, 1, CanvasBackground::Transparent, &[group]).unwrap();
+        assert_eq!(*out.get_pixel(0, 0), image::Rgba([0, 255, 0, 255]), "绿在基础层内：盖在红上");
+        assert_eq!(*out.get_pixel(1, 0), image::Rgba([0, 255, 0, 255]));
+        assert_eq!(*out.get_pixel(2, 0), image::Rgba([0, 0, 0, 0]), "蓝在基础层外：被剪掉");
+        assert_eq!(*out.get_pixel(3, 0), image::Rgba([0, 0, 0, 0]));
+    }
+
+    /// 链式剪贴（A 剪 B 剪 C 基础）全部裁进最底的基础层；半透明基础层按显示 alpha 裁。
+    #[test]
+    fn chained_clips_and_half_transparent_base() {
+        let base = filled(2, 1, [255, 0, 0, 128]); // 半透明红
+        let mid = filled(2, 1, [0, 255, 0, 255]);
+        let top = filled(2, 1, [0, 0, 255, 255]);
+        let group = CompositeGroup {
+            opacity: 100,
+            blend: BlendMode::Normal,
+            layers: vec![
+                CompositeLayer { src: &base, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: false },
+                CompositeLayer { src: &mid, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: true },
+                CompositeLayer { src: &top, matrix: AffineMatrix::IDENTITY, blend: BlendMode::Normal, clipped: true },
+            ],
+        };
+        let out = composite_grouped(2, 1, CanvasBackground::Transparent, &[group]).unwrap();
+        // 链式剪贴都裁进基础层：蓝（链尾）为主，且整串的 alpha 被基础层的半透明
+        // 压住——三层各 0.502 的 src-over：a = 1−(1−0.502)³ ≈ 0.876 → 224。
+        // 没有剪贴的话蓝会是全不透明 255，这正是这条测试要盯的差异。
+        let px = out.get_pixel(0, 0).0;
+        assert!(px[2] > px[0] && px[2] > px[1], "链尾的蓝应为主导，实际 {px:?}");
+        assert!((px[3] as i32 - 224).abs() <= 2, "剪贴把整串压到基础层的半透明，alpha 应约 224，实际 {}", px[3]);
+    }
+
+    /// 数据损坏容忍：没有基础层的剪贴层按普通层合成（与前端 CSS 同口径）。
+    #[test]
+    fn clipped_layer_without_base_renders_normally() {
+        let blue = filled(2, 1, [0, 0, 255, 255]);
+        let group = CompositeGroup {
+            opacity: 100,
+            blend: BlendMode::Normal,
+            layers: vec![CompositeLayer {
+                src: &blue,
+                matrix: AffineMatrix::IDENTITY,
+                blend: BlendMode::Normal,
+                clipped: true,
+            }],
+        };
+        let out = composite_grouped(2, 1, CanvasBackground::Transparent, &[group]).unwrap();
+        assert_eq!(*out.get_pixel(0, 0), image::Rgba([0, 0, 255, 255]));
+    }
+
+    #[test]
+    fn alpha_raster_multiplies_alpha_only() {
+        let mut img = filled(1, 1, [10, 200, 30, 200]);
+        let mut raster = filled(1, 1, [99, 99, 99, 128]);
+        apply_alpha_raster(&mut img, &raster);
+        assert_eq!(img.get_pixel(0, 0).0, [10, 200, 30, 100], "只动 alpha，RGB 原样");
+
+        // 全不透明光栅 = noop；全透明 = 清 alpha
+        let mut img2 = filled(1, 1, [1, 2, 3, 77]);
+        apply_alpha_raster(&mut img2, &filled(1, 1, [0, 0, 0, 255]));
+        assert_eq!(img2.get_pixel(0, 0).0[3], 77);
+        apply_alpha_raster(&mut img2, &filled(1, 1, [0, 0, 0, 0]));
+        assert_eq!(img2.get_pixel(0, 0).0[3], 0);
+    }
+
 
     // ---- EXIF 方向（S8）----
 

@@ -32,6 +32,8 @@ interface RightPanelProps {
   }) => void;
   /** 图层面板：选中某一层（只改选区，不置 dirty） */
   onEditorSelectLayer?: (layerId: string) => void;
+  /** 图层面板：点缩略图选中图层/蒙版（只改选区，不置 dirty） */
+  onEditorSelectTarget?: (layerId: string, target: 'image' | 'mask') => void;
   /** 图层面板：图层数组/活动层发生变化（可见性、顺序、复制、删除、改名） */
   onEditorLayersChange?: (next: { layers: EditorLayer[]; activeLayerId?: string }) => void;
 }
@@ -56,6 +58,7 @@ export const RightPanel = ({
   toggleColorPicker,
   onEditorAdjustChange,
   onEditorSelectLayer,
+  onEditorSelectTarget,
   onEditorLayersChange,
 }: RightPanelProps) => {
   // 编辑态：容器不变、内容换成 PS 式面板组（UI 设计 §1.2「模式驱动的双态」）。
@@ -84,7 +87,9 @@ export const RightPanel = ({
               background={editorDoc?.canvas?.background}
               layers={editorDoc?.layers}
               activeLayerId={editorDoc?.activeLayerId}
+              activeTarget={editorDoc?.activeTarget}
               onSelectLayer={onEditorSelectLayer}
+              onSelectTarget={onEditorSelectTarget}
               onLayersChange={onEditorLayersChange}
               adjust={editorLayer?.adjust}
               onAdjustChange={next => onEditorAdjustChange?.(next)}

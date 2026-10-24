@@ -602,6 +602,34 @@ export interface EditorLayer {
    * 读的时候一律走 `layerOpacity()` / Rust 的 `unwrap_or(100)`，不要各处自己 `?? 100`。
    */
   opacity?: number;
+  /**
+   * **图层蒙版**（undefined = 无蒙版）。v1 蒙版 = 一张现成图片：
+   * 亮度 × alpha 作为覆盖度（白 = 显示 / 黑 = 隐藏），与图层共用变换；
+   * **解链**（`box` 存在）后蒙版有自己独立的定界框，可单独移动/变换。
+   *
+   * `naturalWidth/Height` 是蒙版图的自然尺寸（添加时从 Rust 代理取回）：
+   * 解链后的变换框要按它算矩阵。蒙版上作画要等画笔工具。
+   */
+  mask?: {
+    source: string;
+    naturalWidth: number;
+    naturalHeight: number;
+    /** 缺省 = 链接（跟图层同框）；解链后为蒙版自己的框（画布坐标系） */
+    box?: LayerBox;
+    /**
+     * **停用蒙版**（PS 的 Shift+点蒙版缩略图）：true = 蒙版暂时不参与合成
+     * （预览按无蒙版渲染、导出载荷 mask 发 null），但蒙版数据保留——再切回来
+     * 就恢复。缺省 = 启用。
+     */
+    disabled?: boolean;
+  };
+  /**
+   * **剪贴蒙版**（PS 的 Clipping Mask，Alt+点行 / Ctrl+Alt+G）：这一层只显示在
+   * **同分段内下方最近的基础层**（非剪贴层）有像素的地方——吃的是基础层的
+   * alpha，与图层蒙版的黑白语义无关。连续多个剪贴层全部裁进同一个基础层。
+   * 删除式字段：false 不落。
+   */
+  clipped?: boolean;
   name: string;
 }
 
@@ -632,6 +660,13 @@ export interface EditorDocument {
   /** 自底向上。v2 起可叠多层（导入图层、渲染、导出都支持）；面板仍只显示一行 */
   layers?: EditorLayer[];
   activeLayerId?: string;
+  /**
+   * 选中对象落在**图层本体**还是它的**蒙版**上（PS 点缩略图切换的那个状态）。
+   * 缺省 `'image'`。影响：变换/拖动改谁的框（解链时）、Delete 删谁、面板缩略图
+   * 的高亮框。**选区不是文档内容**：不进撤销签名、不落 `.aurora`（与
+   * `activeLayerId` 同口径）。
+   */
+  activeTarget?: 'image' | 'mask';
 
   // ---- v1 遗留（v2 切换后已无人读取，待删）：crop / rotation / flipH / flipV / adjust ----
   /**

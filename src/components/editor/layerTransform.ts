@@ -13,7 +13,7 @@
  * 这一条是架构事实第 1、3 条的反向应用：调色被迫把公式写成两份再用单测锁死；
  * 变换干脆不写两份，直接传同一组六参，"两端顺序不一致"这整类 bug 从根上消失。
  */
-import type { LayerBox } from '../../types';
+import type { EditorLayer, LayerBox } from '../../types';
 
 /** CSS 与 Rust 同序的 `matrix(a,b,c,d,e,f)`：`x' = a·x + c·y + e`，`y' = b·x + d·y + f`。 */
 export type AffineMatrix = [number, number, number, number, number, number];
@@ -82,6 +82,89 @@ export function toCssMatrix(m: AffineMatrix): string {
  */
 export function applyMatrix(m: AffineMatrix, x: number, y: number): { x: number; y: number } {
   return { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] };
+}
+
+/**
+ * 矩阵复合 `outer ∘ inner`：**先作用 inner，再作用 outer**——与 CSS 嵌套语义
+ * （外层容器的 transform 作用在子元素变换的结果上）一致。
+ *
+ * 蒙版解链 / 剪贴蒙版的渲染都要做"在别的坐标系里摆一层"的换算：
+ * 子元素想要画布空间矩阵 `M_child`，而它实际挂在带 `M_outer` 的容器里，
+ * 就给它 `multiplyAffine(invertAffine(M_outer), M_child)`。
+ */
+export function multiplyAffine(
+  outer: AffineMatrix,
+  inner: AffineMatrix,
+): AffineMatrix {
+  const [a1, b1, c1, d1, e1, f1] = outer;
+  const [a2, b2, c2, d2, e2, f2] = inner;
+  return [
+    a1 * a2 + c1 * b2,
+    b1 * a2 + d1 * b2,
+    a1 * c2 + c1 * d2,
+    b1 * c2 + d1 * d2,
+    a1 * e2 + c1 * f2 + e1,
+    b1 * e2 + d1 * f2 + f1,
+  ];
+}
+
+/**
+ * 逆矩阵。行列式接近 0（图层被压成线/点）时返回 `null`——调用方决定兜底，
+ * 这里不猜（与 Rust 侧 `DegenerateAffine` 报错同一口径）。
+ */
+export function invertAffine(m: AffineMatrix): AffineMatrix | null {
+  const [a, b, c, d, e, f] = m;
+  const det = a * d - b * c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  return [
+    d / det,
+    -b / det,
+    -c / det,
+    a / det,
+    (c * f - d * e) / det,
+    (b * e - a * f) / det,
+  ];
+}
+
+/**
+ * 蒙版壳（EditorCanvasLayers 的 A 壳）的几何：壳尺寸 + 壳的画布矩阵。
+ *
+ * 返回 null = **没有壳**：无蒙版，或蒙版被**停用**（PS 的 Shift+点缩略图——
+ * 停用时合成按无蒙版走，调用方据此直出内容）。
+ * - **链接**（`mask.box` 不存在）：壳 = **图层内容框**——尺寸取图层自然尺寸、
+ *   矩阵取 `M_layer`，蒙版图被 `mask-size: 100% 100%` 拉伸铺满，与第一轮
+ *   "mask 直接挂 img"逐像素等价（也与 Rust 链接路径的 Triangle 拉伸同义）。
+ *
+ *   ⚠️ 不能按蒙版自然尺寸建壳：`M_layer` 把"**图层**内容坐标"映射到画布，
+ *   蒙版尺寸的壳只盖住内容的一角，`no-repeat` 之外全按隐藏处理——表现为
+ *   "链接蒙版几乎全透明、解链反而正常"（2026-10-24 实测踩坑）。
+ * - **解链**：壳 = 蒙版内容框（蒙版自然尺寸 + 蒙版自己的矩阵），蒙版 1:1。
+ */
+export function maskShellSpec(layer: EditorLayer): {
+  width: number;
+  height: number;
+  matrix: AffineMatrix;
+} | null {
+  const mask = layer.mask;
+  if (!mask || mask.disabled) return null;
+  if (!mask.box) {
+    return {
+      width: layer.naturalWidth,
+      height: layer.naturalHeight,
+      matrix: composeMatrix(layer.box, {
+        width: layer.naturalWidth,
+        height: layer.naturalHeight,
+      }),
+    };
+  }
+  return {
+    width: mask.naturalWidth,
+    height: mask.naturalHeight,
+    matrix: composeMatrix(mask.box, {
+      width: mask.naturalWidth,
+      height: mask.naturalHeight,
+    }),
+  };
 }
 
 /**

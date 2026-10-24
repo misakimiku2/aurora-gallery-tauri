@@ -35,6 +35,14 @@ const layer = (over: Partial<EditorLayer> = {}): EditorLayer => ({
   ...over,
 });
 
+/** 蒙版夹具：独立于图层的一张小图 */
+const mask = (over: Partial<NonNullable<EditorLayer['mask']>> = {}): NonNullable<EditorLayer['mask']> => ({
+  source: 'C:\\pics\\m.png',
+  naturalWidth: 64,
+  naturalHeight: 32,
+  ...over,
+});
+
 const doc = (over: Partial<EditorDocument> = {}): EditorDocument => ({
   path: 'C:\\pics\\a.jpg',
   name: 'a',
@@ -46,13 +54,19 @@ const doc = (over: Partial<EditorDocument> = {}): EditorDocument => ({
   ...over,
 });
 
-/** 模拟 Rust 侧 `editor_open_project` 的返回：读回来的就是存进去的。 */
+/** 模拟 Rust 侧 `editor_open_project` 的返回：读回来的就是存进去的
+ * （source 可为 null = 组行；蒙版自然尺寸按解压文件回读）。 */
 function roundTrip(source: EditorDocument): OpenedProjectPayload {
   const payload = buildSavePayload(source);
   return {
     name: payload.name,
     canvas: payload.canvas,
-    layers: payload.layers.map(l => ({ ...l, source: l.source })),
+    layers: payload.layers.map(l => ({
+      ...l,
+      source: l.source || null,
+      maskNaturalWidth: l.maskSource ? 64 : 0,
+      maskNaturalHeight: l.maskSource ? 32 : 0,
+    })),
     activeLayerId: payload.activeLayerId,
     source: 'editor',
     warnings: [],
@@ -229,17 +243,112 @@ describe('路径小工具', () => {
 
     // 未锁：保存时显式写 false，读回来折成 undefined（文档保持干净）
     const payload = buildSavePayload(doc({ layers: [layer()] }));
-    expect(payload.layers[0].lock_pixel).toBe(false);
+    expect(payload.layers[0].lockPixel).toBe(false);
     expect(projectPayloadToDocument(roundTrip(doc()), 'x.aurora').layers?.[0].lockPixel).toBeUndefined();
   });
 
   it('老工程没有锁字段时按未锁读', () => {
     const legacy = roundTrip(doc({ layers: [layer()] }));
-    delete (legacy.layers[0] as { lock_pixel?: boolean }).lock_pixel;
-    delete (legacy.layers[0] as { lock_position?: boolean }).lock_position;
+    delete (legacy.layers[0] as { lockPixel?: boolean }).lockPixel;
+    delete (legacy.layers[0] as { lockPosition?: boolean }).lockPosition;
     const opened = projectPayloadToDocument(legacy, 'x.aurora').layers?.[0];
     expect(opened?.lockPixel).toBeUndefined();
     expect(opened?.lockPosition).toBeUndefined();
+  });
+
+  // ⚠️ 这组盯的是 2026-10-24 修的 IPC 键名契约：Rust `ProjectLayerRequest` 挂着
+  // `rename_all = "camelCase"`，snake_case 的键会被静默丢弃——锁定/编组曾因此
+  // 存盘即丢。这里把"存出去的键"钉死成 camelCase，谁改回 snake_case 当场红。
+  it('载荷键名是 camelCase（Rust 侧 rename_all = camelCase，snake_case 会被静默丢掉）', () => {
+    const payload = buildSavePayload(
+      doc({
+        layers: [layer({ lockPixel: true, groupId: 'g1', clipped: true, mask: mask() })],
+      }),
+    );
+    const l = payload.layers[0] as unknown as Record<string, unknown>;
+    for (const key of [
+      'lockPixel',
+      'lockPosition',
+      'layerKind',
+      'groupId',
+      'maskSource',
+      'maskBox',
+      'maskDisabled',
+      'clipped',
+      'naturalWidth',
+    ]) {
+      expect(key in l, `缺少 camelCase 键 ${key}`).toBe(true);
+    }
+    for (const bad of [
+      'lock_pixel',
+      'lock_position',
+      'layer_kind',
+      'group_id',
+      'mask_source',
+      'mask_box',
+      'mask_disabled',
+    ]) {
+      expect(bad in l, `不该出现 snake_case 键 ${bad}`).toBe(false);
+    }
+    expect(l.groupId).toBe('g1');
+    expect(l.clipped).toBe(true);
+  });
+
+  it('蒙版往返：路径/自然尺寸/解链框/停用标志不丢；无蒙版 = null / 不落字段', () => {
+    const unlinkedMask = mask({ box: box({ x: 3, w: 50 }), disabled: true });
+    const masked = roundTrip(doc({ layers: [layer({ mask: unlinkedMask, clipped: true })] }));
+    expect(masked.layers[0].maskSource).toBe('C:\\pics\\m.png');
+    expect(masked.layers[0].maskBox).toEqual(box({ x: 3, w: 50 }));
+    expect(masked.layers[0].maskDisabled).toBe(true);
+    expect(masked.layers[0].clipped).toBe(true);
+    const opened = projectPayloadToDocument(masked, 'x.aurora').layers?.[0];
+    expect(opened?.mask).toEqual({
+      source: 'C:\\pics\\m.png',
+      naturalWidth: 64,
+      naturalHeight: 32,
+      box: box({ x: 3, w: 50 }),
+      disabled: true,
+    });
+    expect(opened?.clipped).toBe(true);
+
+    // 启用态：保存显式写 false，读回来折成 undefined（文档保持干净）
+    const enabled = roundTrip(doc({ layers: [layer({ mask: mask() })] }));
+    expect(enabled.layers[0].maskDisabled).toBe(false);
+    expect(projectPayloadToDocument(enabled, 'x.aurora').layers?.[0]?.mask?.disabled).toBeUndefined();
+
+    // 链接态：maskBox null → 文档里 mask.box 不落
+    const linked = roundTrip(doc({ layers: [layer({ mask: mask() })] }));
+    expect(linked.layers[0].maskBox).toBeNull();
+    expect(projectPayloadToDocument(linked, 'x.aurora').layers?.[0]?.mask?.box).toBeUndefined();
+
+    // 无蒙版：显式 null，读回 undefined
+    const plain = buildSavePayload(doc({ layers: [layer()] }));
+    expect(plain.layers[0].maskSource).toBeNull();
+    expect(plain.layers[0].maskBox).toBeNull();
+    expect(projectPayloadToDocument(roundTrip(doc()), 'x.aurora').layers?.[0].mask).toBeUndefined();
+  });
+
+  it('组行往返：无 source 也保留（组结构的锚点），成员的 groupId 不丢', () => {
+    const groupDoc = doc({
+      // 自底向上：成员在组行之前（createGroup 的数组口径）
+      layers: [
+        layer({ id: 'm1', groupId: 'g1', name: '成员' }),
+        {
+          ...layer({ id: 'g1', kind: 'group', name: '我的组', source: undefined }),
+          source: undefined,
+          naturalWidth: 0,
+          naturalHeight: 0,
+          box: box({ x: 0, y: 0, w: 0, h: 0 }),
+        },
+      ],
+      activeLayerId: 'm1',
+    });
+    const opened = projectPayloadToDocument(roundTrip(groupDoc), 'x.aurora');
+    expect(opened.layers?.map(l => l.id)).toEqual(['m1', 'g1']);
+    expect(opened.layers?.[0].groupId).toBe('g1');
+    expect(opened.layers?.[1].kind).toBe('group');
+    expect(opened.layers?.[1].source).toBeUndefined();
+    expect(opened.layers?.[1].naturalWidth).toBe(0);
   });
 
   it('字节格式化', () => {

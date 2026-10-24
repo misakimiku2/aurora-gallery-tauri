@@ -30,9 +30,13 @@ import {
   reorderLayers,
   resolveActiveLayer,
   setLayerBlend,
+  setLayerClipped,
   setLayerLock,
+  setLayerMask,
   setLayerOpacity,
   setLayerVisible,
+  toggleMaskDisabled,
+  toggleMaskLink,
 } from '../layerModel';
 import { layerAABB } from '../layerTransform';
 
@@ -50,6 +54,14 @@ const layer = (over: Partial<EditorLayer> = {}): EditorLayer => ({
   box: box(),
   visible: true,
   name: 'photo',
+  ...over,
+});
+
+/** 蒙版夹具：独立于图层的一张小图 */
+const mask = (over: Partial<NonNullable<EditorLayer['mask']>> = {}): NonNullable<EditorLayer['mask']> => ({
+  source: 'C:/img/mask.png',
+  naturalWidth: 64,
+  naturalHeight: 32,
   ...over,
 });
 
@@ -183,6 +195,9 @@ describe('layerStateSignature', () => {
 
     const mutations: Array<[string, Partial<EditorLayer>]> = [
       ['source', { source: 'C:/img/other.png' }],
+      ['mask', { mask: mask() }],
+      ['mask.box', { mask: mask({ box: box({ x: 5 }) }) }],
+      ['clipped', { clipped: true }],
       ['naturalWidth', { naturalWidth: 201 }],
       ['naturalHeight', { naturalHeight: 101 }],
       ['visible', { visible: false }],
@@ -255,6 +270,81 @@ describe('文档级签名（撤销栈用）', () => {
     const b = layer({ adjust: { brightness: 30, contrast: 0, saturation: 0, temperature: 0 } });
     expect(layerGeometrySignature(a)).toBe(layerGeometrySignature(b));
     expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
+  });
+
+  it('加/删蒙版两个签名都要变——蒙版是内容，是离散的一步撤销，不进 700ms 合并窗口', () => {
+    const a = layer();
+    const b = layer({ mask: mask() });
+    expect(layerGeometrySignature(a)).not.toBe(layerGeometrySignature(b));
+    expect(layerStateSignature(a)).not.toBe(layerStateSignature(b));
+    // 剪贴蒙版同样进两个签名
+    const c = layer({ clipped: true });
+    expect(layerGeometrySignature(a)).not.toBe(layerGeometrySignature(c));
+    expect(layerStateSignature(a)).not.toBe(layerStateSignature(c));
+  });
+});
+
+describe('setLayerMask（图层蒙版）', () => {
+  it('设置蒙版（深拷贝，不与调用方共享 box）；删蒙版删字段', () => {
+    const src = [layer()];
+    const incoming = mask({ box: box({ x: 3 }) });
+    const withMask = setLayerMask(src, 'L1', incoming);
+    expect(withMask[0].mask?.source).toBe('C:/img/mask.png');
+    expect(withMask[0].mask?.box).toEqual(box({ x: 3 }));
+    // 深拷贝：调用方改自己的 box 不影响文档
+    incoming.box!.x = 99;
+    expect(withMask[0].mask?.box?.x).toBe(3);
+    expect(withMask).not.toBe(src);
+
+    const removed = setLayerMask(withMask, 'L1', undefined);
+    expect(removed[0].mask).toBeUndefined();
+    expect('mask' in removed[0]).toBe(false);
+  });
+
+  it('值没变时返回原数组引用（不置 dirty、不产生空撤销）', () => {
+    const src = [layer()];
+    expect(setLayerMask(src, 'L1', undefined)).toBe(src);
+  });
+
+  it('找不到图层时原样返回', () => {
+    const src = [layer()];
+    expect(setLayerMask(src, 'nope', mask())).toBe(src);
+  });
+
+  it('别的图层不受影响（不可变更新）', () => {
+    const src = [layer(), layer({ id: 'L2', name: 'two' })];
+    const next = setLayerMask(src, 'L1', mask());
+    expect(next[1].mask).toBeUndefined();
+    expect(next[1]).toBe(src[1]);
+  });
+});
+
+describe('toggleMaskLink（链接/解链）', () => {
+  it('解链：蒙版拿到图层框的拷贝起步（画面不变，之后独立）；再链接：删 box', () => {
+    const linked = [layer({ box: box({ x: 10, y: 20 }), mask: mask() })];
+    const unlinked = toggleMaskLink(linked, 'L1');
+    expect(unlinked[0].mask?.box).toEqual(box({ x: 10, y: 20 }));
+    // 框必须是拷贝，不能共享引用（否则拖蒙版会连着拖图层）
+    expect(unlinked[0].mask?.box).not.toBe(linked[0].box);
+
+    const relinked = toggleMaskLink(unlinked, 'L1');
+    expect(relinked[0].mask?.box).toBeUndefined();
+  });
+
+  it('无蒙版时原样返回', () => {
+    const src = [layer()];
+    expect(toggleMaskLink(src, 'L1')).toBe(src);
+  });
+});
+
+describe('setLayerClipped（剪贴蒙版）', () => {
+  it('设置 / 取消（取消删字段）；值没变时返回原引用', () => {
+    const src = [layer(), layer({ id: 'L2' })];
+    const on = setLayerClipped(src, 'L2', true);
+    expect(on[1].clipped).toBe(true);
+    expect(setLayerClipped(on, 'L2', true)).toBe(on);
+    const off = setLayerClipped(on, 'L2', false);
+    expect('clipped' in off[1]).toBe(false);
   });
 });
 
@@ -665,5 +755,38 @@ describe('图层锁定', () => {
     const r = duplicateLayer([layer({ id: 'B', lockPixel: true, lockPosition: true })], 'B', 'B2');
     expect(r.layers[1].lockPixel).toBe(true);
     expect(r.layers[1].lockPosition).toBe(true);
+  });
+});
+
+describe('toggleMaskDisabled（停用/启用蒙版，PS 的 Shift+点缩略图）', () => {
+  it('停用落 disabled: true；启用删字段；无蒙版原样返回', () => {
+    const src = [layer({ mask: mask() })];
+    const off = toggleMaskDisabled(src, 'L1');
+    expect(off[0].mask?.disabled).toBe(true);
+    // 停用是文档改动，必须产生新数组
+    expect(off).not.toBe(src);
+
+    const on = toggleMaskDisabled(off, 'L1');
+    expect(on[0].mask?.disabled).toBeUndefined();
+    // 启用后字段整个删掉，文档保持干净
+    expect('disabled' in (on[0].mask as object)).toBe(false);
+
+    const noMask = [layer()];
+    // 无蒙版没有可停用的东西：原样返回（调用方据此不置 dirty）
+    expect(toggleMaskDisabled(noMask, 'L1')).toBe(noMask);
+  });
+
+  it('停用/启用进两个签名（离散的一步撤销）；链条来回不丢停用标志', () => {
+    const base = layer({ mask: mask() });
+    const off = { ...base, mask: { ...base.mask!, disabled: true } };
+    expect(layerGeometrySignature(base)).not.toBe(layerGeometrySignature(off));
+    expect(layerStateSignature(base)).not.toBe(layerStateSignature(off));
+
+    // 解链时 disabled 跟着蒙版走；再链接也不该顺手启用蒙版
+    const unlinked = toggleMaskLink([layer({ mask: mask({ disabled: true }) })], 'L1');
+    expect(unlinked[0].mask?.disabled).toBe(true);
+    const relinked = toggleMaskLink(unlinked, 'L1');
+    expect(relinked[0].mask?.box).toBeUndefined();
+    expect(relinked[0].mask?.disabled).toBe(true);
   });
 });

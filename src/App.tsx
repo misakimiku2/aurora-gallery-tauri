@@ -3091,6 +3091,16 @@ export const App: React.FC = () => {
               return { editorDocument: { ...doc, activeLayerId: layerId } };
             })
           }
+          // 点缩略图选中图层/蒙版：同样只改选区（activeTarget 不进签名、不落工程）
+          onEditorSelectTarget={(layerId, target) =>
+            updateTabById(activeTab.id, prev => {
+              const doc = prev.editorDocument;
+              if (!doc) return {};
+              return {
+                editorDocument: { ...doc, activeLayerId: layerId, activeTarget: target },
+              };
+            })
+          }
           // 图层结构变化（可见性 / 顺序 / 复制 / 删除 / 改名）：由面板算好整个数组交上来
           onEditorLayersChange={({ layers, activeLayerId }) =>
             updateTabById(activeTab.id, prev => {

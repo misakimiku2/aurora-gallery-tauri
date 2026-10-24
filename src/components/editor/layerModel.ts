@@ -252,6 +252,35 @@ const EMPTY_BOX_FOR_SIGN = {
   skewY: 0,
 };
 
+/**
+ * 蒙版在签名里的形态：source + 自然尺寸 + 框（链接态记 `linked`）+ 停用标志。
+ * 蒙版的**几何**（box）变了画面就变，所以框字段必须进签名；而"链接/解链"
+ * 本身——box 从无到有但数值等于图层框——画面不变却换了框归属，也进签名
+ * （一步撤销能退回，代价是可能有一个"看不出变化"的撤销步，可接受）。
+ * 停用/启用（PS 的 Shift+点缩略图）同理：离散的一步撤销。
+ */
+function maskSignaturePart(layer: EditorLayer): string {
+  const m = layer.mask;
+  if (!m) return 'none';
+  const b = m.box ?? EMPTY_BOX_FOR_SIGN;
+  return [
+    m.source,
+    m.naturalWidth,
+    m.naturalHeight,
+    m.box ? 'own' : 'linked',
+    m.disabled ? 'off' : 'on',
+    b.x,
+    b.y,
+    b.w,
+    b.h,
+    b.rotation,
+    b.flipH ? 1 : 0,
+    b.flipV ? 1 : 0,
+    b.skewX,
+    b.skewY,
+  ].join('~');
+}
+
 export function layerStateSignature(layer: EditorLayer): string {
   // 组行（kind 'group'）没有 box/source/naturalWidth——兜一个零框，签名里靠
   // kind/groupId 区分；collapsed 是纯 UI 态，**不进**签名（折叠不该有撤销步）
@@ -263,6 +292,8 @@ export function layerStateSignature(layer: EditorLayer): string {
     layer.kind ?? 'image',
     layer.groupId ?? 'none',
     layer.source ?? 'none',
+    maskSignaturePart(layer),
+    layer.clipped ? 1 : 0,
     layer.naturalWidth ?? 0,
     layer.naturalHeight ?? 0,
     layer.visible ? 1 : 0,
@@ -296,6 +327,8 @@ export function layerGeometrySignature(layer: EditorLayer): string {
   return [
     layer.id,
     layer.source ?? 'none',
+    maskSignaturePart(layer),
+    layer.clipped ? 1 : 0,
     layer.naturalWidth ?? 0,
     layer.naturalHeight ?? 0,
     layer.visible ? 1 : 0,
@@ -473,6 +506,96 @@ export function setLayerVisible(layers: EditorLayer[], id: string, visible: bool
   if (i < 0 || layers[i].visible === visible) return layers;
   const next = layers.slice();
   next[i] = { ...next[i], visible };
+  return next;
+}
+
+/**
+ * 设置 / 删除图层蒙版。`mask` 传 `undefined` = 删除蒙版（**删字段**，
+ * 与不透明度回 100 / 混合模式回 normal 同一口径，文档保持干净）。
+ *
+ * 传入的 mask 会被**深拷贝**（source/natural + box 各一份）：调用方（面板/hook）
+ * 手里的临时对象不该与文档共享引用——box 共享就是"拖副本连着拖原件"那类 bug。
+ *
+ * 蒙版与 `source` 一样属于**内容**：进 `layerStateSignature`（画面变了必须能撤销），
+ * 也进 `layerGeometrySignature`（加/删/换蒙版是离散操作，不该落进 700ms 合并窗口）。
+ */
+export function setLayerMask(
+  layers: EditorLayer[],
+  id: string,
+  mask: EditorLayer['mask'],
+): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return layers;
+  if (layers[i].mask === mask) return layers;
+  const next = layers.slice();
+  const target: EditorLayer = { ...next[i] };
+  if (mask) {
+    target.mask = {
+      source: mask.source,
+      naturalWidth: mask.naturalWidth,
+      naturalHeight: mask.naturalHeight,
+      ...(mask.box ? { box: { ...mask.box } } : {}),
+    };
+  } else delete target.mask;
+  next[i] = target;
+  return next;
+}
+
+/**
+ * 链接 / 解链蒙版（PS 缩略图之间的链条）：
+ * - 链接 → 解链：给蒙版一份**图层当前框的拷贝**起步（画面不变，之后各自独立）；
+ * - 解链 → 链接：删掉 `mask.box`（蒙版回到"跟图层同框"，图层框从此带着它走）。
+ */
+export function toggleMaskLink(layers: EditorLayer[], id: string): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0 || !layers[i].mask) return layers;
+  const src = layers[i];
+  const mask = src.mask as NonNullable<EditorLayer['mask']>;
+  const nextMask: NonNullable<EditorLayer['mask']> = mask.box
+    ? // 重新链接：删独立框，**停用标志要跟着蒙版走**（解链↔链接不该顺手启用蒙版）
+      { source: mask.source, naturalWidth: mask.naturalWidth, naturalHeight: mask.naturalHeight, ...(mask.disabled ? { disabled: true } : {}) }
+    : { ...mask, box: { ...src.box } };
+  const next = layers.slice();
+  next[i] = { ...src, mask: nextMask };
+  return next;
+}
+
+/**
+ * 停用 / 启用蒙版（PS 的 Shift+点蒙版缩略图，2026-10-24 用户确认要的功能）。
+ * 停用 = 蒙版**暂时不参与合成**（预览按无蒙版渲染、导出载荷 mask 发 null），
+ * 但数据原地保留——再切回来立刻恢复，不是删除。启用 = 删掉 disabled 字段
+ * （与不透明度回 100 / 混合回 normal 同一"缺省不落字段"口径）。
+ */
+export function toggleMaskDisabled(layers: EditorLayer[], id: string): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0 || !layers[i].mask) return layers;
+  const src = layers[i];
+  const mask = src.mask as NonNullable<EditorLayer['mask']>;
+  const { disabled, ...rest } = mask;
+  const nextMask: NonNullable<EditorLayer['mask']> = disabled ? rest : { ...mask, disabled: true };
+  const next = layers.slice();
+  next[i] = { ...src, mask: nextMask };
+  return next;
+}
+
+/**
+ * 设置 / 取消剪贴蒙版（`clipped`）。取消时**删字段**（文档保持干净）。
+ * 能不能剪贴的判定在 `layerClipping.ts`（`canClipLayer`），这里只管落字段——
+ * 调用方负责先问（面板的 Alt+点与键盘 Ctrl+Alt+G 都走那条判定）。
+ */
+export function setLayerClipped(
+  layers: EditorLayer[],
+  id: string,
+  clipped: boolean,
+): EditorLayer[] {
+  const i = indexOfLayer(layers, id);
+  if (i < 0) return layers;
+  if ((layers[i].clipped === true) === clipped) return layers;
+  const next = layers.slice();
+  const target: EditorLayer = { ...next[i] };
+  if (clipped) target.clipped = true;
+  else delete target.clipped;
+  next[i] = target;
   return next;
 }
 

@@ -21,6 +21,8 @@ export interface EditorKeyActions {
   saveProject: (saveAs: boolean) => void | Promise<void>;
   openProject: () => void | Promise<void>;
   deleteActiveLayer: () => void;
+  /** Ctrl+Alt+G：切换活动图层的剪贴蒙版（PS 键位） */
+  toggleActiveClip: () => void;
   commitCrop: () => void;
   cancelCrop: () => void;
   cancelTransform: () => void;
@@ -64,6 +66,8 @@ export function useEditorKeyboard(opts: {
   openProjectRef.current = actions.openProject;
   const deleteLayerRef = useRef(actions.deleteActiveLayer);
   deleteLayerRef.current = actions.deleteActiveLayer;
+  const toggleClipRef = useRef(actions.toggleActiveClip);
+  toggleClipRef.current = actions.toggleActiveClip;
   const commitCropRef = useRef(actions.commitCrop);
   commitCropRef.current = actions.commitCrop;
   const cancelCropRef = useRef(actions.cancelCrop);
@@ -118,6 +122,13 @@ export function useEditorKeyboard(opts: {
         e.preventDefault();
         if (transformLockedRef.current && toolRef.current !== 'transform') return;
         onToolChange(toolRef.current === 'transform' ? 'move' : 'transform');
+        return;
+      }
+      // Ctrl+Alt+G：剪贴蒙版（PS 键位）。必须放在下面那条 `ctrl||meta||alt` 早退
+      // **之前**——这个快捷键自己就带着 Alt。
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        toggleClipRef.current();
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;

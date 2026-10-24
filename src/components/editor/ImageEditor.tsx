@@ -87,17 +87,17 @@ import {
   createOrientedImageLayer,
   EDITOR_DOC_VERSION,
   isLegacyEditorDocument,
-  layerBlend,
   layerLocks,
-  layerOpacity,
   orientationToBox,
   removeLayer,
   resolveActiveLayer,
+  setLayerMask,
 } from './layerModel';
 import { loadLayerProxy } from './layerProxy';
-import { composeMatrix, flipDocumentCanvas, pointInBox, rotateDocumentCanvas } from './layerTransform';
+import { flipDocumentCanvas, pointInBox, rotateDocumentCanvas } from './layerTransform';
 import { deleteGroupWithMembers } from './layerGroups';
-import { splitSegments } from './EditorCanvasLayers';
+import { toggleClipped } from './layerClipping';
+import { buildRenderGroups } from './renderPayload';
 import { AutoSelectMode } from './editorTools';
 import { CLICK_ZOOM_STEP } from './useEditorViewport';
 import { formatBytes, isProjectPath } from './projectFile';
@@ -454,21 +454,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   //   3. 吸附目标额外加上画布四边与中心（`snapBounds`，只传了活动图层，
   //      没有别的项可对齐）。
   // 变换结果写回 layer.box，预览靠 CSS、导出靠同一组矩阵，不经过 Rust 往返。
+  //
+  // **选中对象 = 蒙版**（面板点了蒙版缩略图）且蒙版已解链时，变换/拖动改的是
+  // `mask.box`（PS 同款：蒙版独立移动/变换）；链接态（无独立框）则回到图层框——
+  // 移动图层、蒙版跟着走。
+  const editingMask = doc?.activeTarget === 'mask' && !!activeLayer?.mask?.box;
+  const targetBox = editingMask
+    ? (activeLayer?.mask?.box as LayerBox)
+    : activeLayer?.box;
+
   const transformStartRef = useRef<LayerBox | null>(null);
 
   useEffect(() => {
-    if (tool === 'transform' && activeLayer) {
-      if (!transformStartRef.current) transformStartRef.current = activeLayer.box;
+    if (tool === 'transform' && targetBox) {
+      if (!transformStartRef.current) transformStartRef.current = targetBox;
     } else {
       transformStartRef.current = null;
     }
-  }, [tool, activeLayer]);
+  }, [tool, targetBox]);
 
   const overlayItem = useMemo((): ComparisonItem | null => {
-    if (!activeLayer) return null;
-    const b = activeLayer.box;
+    if (!activeLayer || !targetBox) return null;
+    const b = targetBox;
     return {
-      id: activeLayer.id,
+      id: editingMask ? `${activeLayer.id}::mask` : activeLayer.id,
       x: b.x,
       y: b.y,
       width: b.w,
@@ -477,39 +486,52 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       src: activeLayer.source ?? '',
       opacity: 1,
     };
-  }, [activeLayer]);
+  }, [activeLayer, targetBox, editingMask]);
 
-  /** `EditOverlay` 的字段名（x/width/height）→ 图层的定界框字段（x/w/h） */
-  const handleOverlayUpdate = useCallback(
-    (_id: string, updates: Partial<ComparisonItem>) => {
+  /** 把一层（或它的蒙版）的框写回文档。`patch` 落到 `mask.box` 还是 `box`
+   *  由 `editingMask` 决定——两条路只在这一处分流。 */
+  const patchTargetBox = useCallback(
+    (patch: Partial<LayerBox>) => {
       if (!doc || !activeLayer) return;
-      const box: LayerBox = { ...activeLayer.box };
-      if (updates.x !== undefined) box.x = updates.x;
-      if (updates.y !== undefined) box.y = updates.y;
-      if (updates.width !== undefined) box.w = updates.width;
-      if (updates.height !== undefined) box.h = updates.height;
-      if (updates.rotation !== undefined) box.rotation = updates.rotation;
+      const apply = (base: LayerBox): LayerBox => ({ ...base, ...patch });
       onDocumentChange({
         ...doc,
-        layers: (doc.layers ?? []).map(l => (l.id === activeLayer.id ? { ...l, box } : l)),
+        layers: (doc.layers ?? []).map(l => {
+          if (l.id !== activeLayer.id) return l;
+          if (editingMask && l.mask?.box) {
+            return { ...l, mask: { ...l.mask, box: apply(l.mask.box) } };
+          }
+          return { ...l, box: apply(l.box) };
+        }),
         dirty: true,
       });
     },
-    [doc, activeLayer, onDocumentChange],
+    [doc, activeLayer, editingMask, onDocumentChange],
   );
 
-  /** Esc 取消本次变换：把定界框还原到进入变换时的样子（PS 行为） */
+  /** `EditOverlay` 的字段名（x/width/height）→ 定界框字段（x/w/h） */
+  const handleOverlayUpdate = useCallback(
+    (_id: string, updates: Partial<ComparisonItem>) => {
+      if (!doc || !activeLayer) return;
+      const patch: Partial<LayerBox> = {};
+      if (updates.x !== undefined) patch.x = updates.x;
+      if (updates.y !== undefined) patch.y = updates.y;
+      if (updates.width !== undefined) patch.w = updates.width;
+      if (updates.height !== undefined) patch.h = updates.height;
+      if (updates.rotation !== undefined) patch.rotation = updates.rotation;
+      patchTargetBox(patch);
+    },
+    [doc, activeLayer, patchTargetBox],
+  );
+
+  /** Esc 取消本次变换：把目标框还原到进入变换时的样子（PS 行为） */
   const cancelTransform = useCallback(() => {
     const start = transformStartRef.current;
     if (start && doc && activeLayer) {
-      onDocumentChange({
-        ...doc,
-        layers: (doc.layers ?? []).map(l => (l.id === activeLayer.id ? { ...l, box: start } : l)),
-        dirty: true,
-      });
+      patchTargetBox(start);
     }
     onToolChange('move');
-  }, [doc, activeLayer, onDocumentChange, onToolChange]);
+  }, [doc, activeLayer, patchTargetBox, onToolChange]);
 
   // ---- 导入图层 ----
   //
@@ -589,6 +611,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       setExportState({ status: 'working' });
       // 与预览**同一组矩阵六参**：前端算的矩阵原样交给 Rust，两端不各推一次。
       // 这是"所见即所得"的保证——顺序/公式只存在一份（layerTransform.ts）。
+      // 分段/可见性/蒙版字段全在 `buildRenderGroups` 里构造（全览图走同一份）。
       const res = await invoke<{ path: string; width: number; height: number; bytes: number }>(
         'editor_export_document',
         {
@@ -598,30 +621,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               height: canvas.height,
               background: canvas.background,
             },
-            // **分段**（与渲染共用 `splitSegments`）：平层 = 单成员组，组 = 成员段 +
-            // 组行。组行被眼睛关掉 = 整组不导出（Rust 的合成分不清"可见性"）。
-            groups: splitSegments(doc.layers ?? [])
-              .map(seg => {
-                const row = seg.type === 'group' ? seg.row : seg.layer;
-                const members = seg.type === 'group' ? seg.members : [seg.layer];
-                return {
-                  opacity: layerOpacity(row),
-                  blend: layerBlend(row),
-                  layers: members
-                    .filter(m => m.source && m.visible)
-                    .map(m => ({
-                      path: m.source,
-                      matrix: composeMatrix(m.box, {
-                        width: m.naturalWidth,
-                        height: m.naturalHeight,
-                      }),
-                      adjust: m.adjust ?? null,
-                      opacity: layerOpacity(m),
-                      blend: layerBlend(m),
-                    })),
-                };
-              })
-              .filter(g => g.layers.length > 0),
+            groups: buildRenderGroups(doc.layers ?? []),
           },
           targetPath: target,
         },
@@ -725,11 +725,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
    *
    * 面板里的删除按钮在另一棵子树（`RightPanel`），那边自己算好新数组交给 App；
    * 这里给键盘用，语义与 `layerModel.removeLayer` 完全一致（删完活动层落到下面那层）。
+   *
+   * **有蒙版先删蒙版**（用户口径 2026-10-24：只留一个删除，蒙版优先，不看选中
+   * 对象在缩略图还是蒙版上）——删完选中对象回到图层本体，再按一次才删图层。
    */
   const handleDeleteActiveLayer = useCallback(() => {
     if (!doc) return;
     const active = resolveActiveLayer(doc);
     if (!active) return;
+    if (active.mask) {
+      const next = setLayerMask(doc.layers ?? [], active.id, undefined);
+      if (next === (doc.layers ?? [])) return;
+      onDocumentChange({ ...doc, layers: next, activeTarget: 'image', dirty: true });
+      return;
+    }
     // 活动层是**组行** → 删组连带成员（与面板删除按钮同一口径）
     if (active.kind === 'group') {
       onDocumentChange({
@@ -745,6 +754,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
     onDocumentChange({ ...doc, layers: r.layers, activeLayerId: r.activeLayerId, dirty: true });
   }, [doc, onDocumentChange]);
 
+  /** Ctrl+Alt+G：切换活动图层的剪贴蒙版（PS 键位）。不可剪贴时无操作。 */
+  const handleToggleClip = useCallback(() => {
+    if (!doc) return;
+    const active = resolveActiveLayer(doc);
+    if (!active) return;
+    const next = toggleClipped(doc.layers ?? [], active.id);
+    if (next === (doc.layers ?? [])) return;
+    onDocumentChange({ ...doc, layers: next, dirty: true });
+  }, [doc, onDocumentChange]);
+
   // ---- 键盘（useEditorKeyboard）----
   const { spaceHeld, altHeld, altHeldRef } = useEditorKeyboard({
     isActive,
@@ -758,6 +777,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
       saveProject: handleSaveProject,
       openProject: handleOpenProject,
       deleteActiveLayer: handleDeleteActiveLayer,
+      toggleActiveClip: handleToggleClip,
       commitCrop,
       cancelCrop,
       cancelTransform,
@@ -1011,21 +1031,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             cropRatio={cropRatio}
             docAspect={canvas && canvas.height > 0 ? canvas.width / canvas.height : undefined}
             onCropRatioChange={handleCropRatioChange}
-            layerBox={activeLayer?.box}
+            layerBox={targetBox}
             snapEnabled={snapEnabled}
             onSnapToggle={setSnapEnabled}
             autoSelect={autoSelect}
             onAutoSelectChange={setAutoSelect}
-            onLayerBoxChange={patch => {
-              if (!doc || !activeLayer) return;
-              onDocumentChange({
-                ...doc,
-                layers: (doc.layers ?? []).map(l =>
-                  l.id === activeLayer.id ? { ...l, box: { ...l.box, ...patch } } : l,
-                ),
-                dirty: true,
-              });
-            }}
+            onLayerBoxChange={patch => patchTargetBox(patch)}
           />
 
           {/* 画布（视口） */}

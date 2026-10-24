@@ -36,13 +36,29 @@ export interface ProjectLayerPayload {
   opacity: number;
   /** 混合模式（kebab-case，与 CSS `mix-blend-mode` 同名） */
   blend: string;
-  /** 锁像素 / 锁位置（false = 未锁；显式写出，读工程时一眼能看懂） */
-  lock_pixel: boolean;
-  lock_position: boolean;
+  /**
+   * ⚠️ **键名必须是 camelCase**（`lockPixel` / `lockPosition` / `layerKind` /
+   * `groupId` / `maskSource` / `maskBox` / `maskDisabled` / `clipped`）：Rust 侧
+   * `ProjectLayerRequest` 整体挂着 `#[serde(rename_all = "camelCase")]`，
+   * snake_case 的键它**静默不认**（未知字段忽略 + 缺字段走 default）。
+   * 2026-10-24 之前这里发的是 snake_case，锁定与编组存盘后再打开会无声丢掉
+   * ——core 层的往返单测走 `SaveLayer` 直连、不穿 IPC，所以一直没红。
+   * 打开方向同理（`OpenedLayer` 序列化出来的也是 camelCase）。
+   */
+  lockPixel: boolean;
+  lockPosition: boolean;
   /** 条目类型："layer"（缺省）/ "group"（组行，source 为空串） */
-  layer_kind: string;
+  layerKind: string;
   /** 成员层的组行 id（组行为 null） */
-  group_id: string | null;
+  groupId: string | null;
+  /** 图层蒙版源文件路径；null = 无蒙版 */
+  maskSource: string | null;
+  /** 解链蒙版自己的定界框；null = 链接（跟图层同框） */
+  maskBox: LayerBox | null;
+  /** 蒙版被停用（Shift+点缩略图；合成按无蒙版走，数据保留）；false = 启用 */
+  maskDisabled: boolean;
+  /** 剪贴蒙版（裁进下方最近的基础层）；false = 不剪贴 */
+  clipped: boolean;
   /** Rust 侧字段叫 `frame`，JSON 键是 `box`（`box` 在 Rust 里是保留字） */
   box: LayerBox;
   adjust: EditorAdjust | null;
@@ -63,12 +79,23 @@ export interface OpenedProjectPayload {
     opacity?: number;
     /** 老工程没有这个字段时会缺省（Rust 侧 serde default = normal） */
     blend?: string;
-    /** 老工程缺这两字段时按 false（未锁） */
-    lock_pixel?: boolean;
-    lock_position?: boolean;
+    /** 老工程缺这两字段时按 false（未锁）。⚠️ camelCase，见 ProjectLayerPayload 注释 */
+    lockPixel?: boolean;
+    lockPosition?: boolean;
     /** 老工程缺字段按 "layer" */
-    layer_kind?: string;
-    group_id?: string | null;
+    layerKind?: string;
+    groupId?: string | null;
+    /** 蒙版解压出的路径；老工程缺字段 = 无蒙版 */
+    maskSource?: string | null;
+    /** 蒙版图自然尺寸（Rust 按解压文件读出；无蒙版 = 0） */
+    maskNaturalWidth?: number;
+    maskNaturalHeight?: number;
+    /** 解链蒙版框；null/缺省 = 链接 */
+    maskBox?: LayerBox | null;
+    /** 蒙版被停用；缺省 false（老工程按启用读） */
+    maskDisabled?: boolean;
+    /** 剪贴蒙版；缺省 false */
+    clipped?: boolean;
     box: LayerBox;
     adjust: EditorAdjust | null;
   }>;
@@ -162,10 +189,15 @@ export function buildSavePayload(doc: EditorDocument): ProjectSavePayload {
       // 显式写出来（而不是省掉）：Rust 侧缺省虽然也是 100/normal，但存进去的数要能一眼看懂
       opacity: layerOpacity(l),
       blend: layerBlend(l),
-      lock_pixel: layerLocks(l).pixel,
-      lock_position: layerLocks(l).position,
-      layer_kind: l.kind === 'group' ? 'group' : 'layer',
-      group_id: l.groupId ?? null,
+      // ⚠️ camelCase 键——snake_case 会被 Rust 的 rename_all 静默丢掉（见接口注释）
+      lockPixel: layerLocks(l).pixel,
+      lockPosition: layerLocks(l).position,
+      layerKind: l.kind === 'group' ? 'group' : 'layer',
+      groupId: l.groupId ?? null,
+      maskSource: l.mask?.source ?? null,
+      maskBox: l.mask?.box ?? null,
+      maskDisabled: l.mask?.disabled === true,
+      clipped: l.clipped === true,
       box: l.box,
       adjust: l.adjust ?? null,
     })),
@@ -237,28 +269,48 @@ export function projectPayloadToDocument(
   archivePath: string,
 ): EditorDocument {
   const layers: EditorLayer[] = (payload.layers ?? [])
-    .filter(l => !!l.source)
-    .map((l, index) => ({
-      id: l.id || `layer-${index}`,
-      // kind/groupId 在下方组结构段（老工程缺字段按平层）
-      source: l.source as string,
-      naturalWidth: Math.max(1, Math.round(finiteOr(l.naturalWidth, 1))),
-      naturalHeight: Math.max(1, Math.round(finiteOr(l.naturalHeight, 1))),
-      box: normalizeBox(l.box),
-      adjust: normalizeAdjust(l.adjust),
-      visible: l.visible !== false,
-      opacity: normalizeOpacity(l.opacity),
-      // 正常模式不落字段（与 `setLayerBlend` 回到 normal 时删字段同一口径）
-      blend: normalizeBlendMode(l.blend) === 'normal' ? undefined : normalizeBlendMode(l.blend),
-      // 锁只在 true 时落字段（文档保持干净；undefined 经 layerLocks() 读回 false）
-      // 注意：EditorLayer 的字段是 camelCase，payload 侧才是 snake_case
-      lockPixel: l.lock_pixel === true ? true : undefined,
-      lockPosition: l.lock_position === true ? true : undefined,
-      // 组结构：组行 kind='group'；成员层的 groupId 指回组行 id。老工程缺字段按平层
-      kind: l.layer_kind === 'group' ? 'group' : undefined,
-      groupId: l.group_id ?? undefined,
-      name: l.name || `图层 ${index + 1}`,
-    }));
+    // 组行没有 source 也要保留（`layerKind === 'group'`）——它是组结构的锚点，
+    // 按旧判据 `!!l.source` 过滤会让所有编组在重开时塌成平层
+    .filter(l => !!l.source || l.layerKind === 'group')
+    .map((l, index) => {
+      const isGroup = l.layerKind === 'group';
+      return {
+        id: l.id || `layer-${index}`,
+        // kind/groupId 在下方组结构段（老工程缺字段按平层）
+        source: (l.source ?? undefined) || undefined,
+        // 组行没有像素：natural 保持 0（`createGroup` 的口径），不要钳到 1
+        naturalWidth: isGroup ? 0 : Math.max(1, Math.round(finiteOr(l.naturalWidth, 1))),
+        naturalHeight: isGroup ? 0 : Math.max(1, Math.round(finiteOr(l.naturalHeight, 1))),
+        box: normalizeBox(l.box),
+        adjust: normalizeAdjust(l.adjust),
+        visible: l.visible !== false,
+        opacity: normalizeOpacity(l.opacity),
+        // 正常模式不落字段（与 `setLayerBlend` 回到 normal 时删字段同一口径）
+        blend: normalizeBlendMode(l.blend) === 'normal' ? undefined : normalizeBlendMode(l.blend),
+        // 锁只在 true 时落字段（文档保持干净；undefined 经 layerLocks() 读回 false）
+        // 注意：EditorLayer 的字段是 camelCase，与 payload 同名
+        lockPixel: l.lockPixel === true ? true : undefined,
+        lockPosition: l.lockPosition === true ? true : undefined,
+        // 组结构：组行 kind='group'；成员层的 groupId 指回组行 id。老工程缺字段按平层
+        kind: isGroup ? 'group' : undefined,
+        groupId: l.groupId ?? undefined,
+        // 蒙版：重建对象（自然尺寸由 Rust 按解压文件读出）；空/缺字段都折成"无蒙版"
+        mask:
+          l.maskSource && l.maskSource.length > 0
+            ? {
+                source: l.maskSource,
+                naturalWidth: Math.max(0, Math.round(finiteOr(l.maskNaturalWidth, 0))),
+                naturalHeight: Math.max(0, Math.round(finiteOr(l.maskNaturalHeight, 0))),
+                ...(l.maskBox ? { box: normalizeBox(l.maskBox) } : {}),
+                // 停用只在 true 时落字段（缺省 = 启用，文档保持干净）
+                ...(l.maskDisabled ? { disabled: true } : {}),
+              }
+            : undefined,
+        // 剪贴蒙版：只在 true 时落字段
+        clipped: l.clipped === true ? true : undefined,
+        name: l.name || `图层 ${index + 1}`,
+      } satisfies EditorLayer;
+    });
 
   const activeLayerId =
     payload.activeLayerId && layers.some(l => l.id === payload.activeLayerId)

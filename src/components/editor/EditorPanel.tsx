@@ -30,12 +30,15 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Brush,
   ChevronDown,
   ChevronRight,
+  Contrast,
   Copy,
+  CornerDownRight,
   Eye,
   EyeOff,
   Folder,
@@ -43,9 +46,12 @@ import {
   FolderPlus,
   Grid2x2,
   Image as ImageIcon,
+  Link,
   Lock,
   Move,
   Trash2,
+  Unlink,
+  X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { EditorCanvas, EditorLayer } from '../../types';
@@ -78,7 +84,10 @@ import {
 } from './layerGroups';
 import { BLEND_MODES, BlendMode, blendModeLabel, normalizeBlendMode } from './blendModes';
 import { ensureLayerPreview } from './layerProxy';
-import { composeMatrix } from './layerTransform';
+import { buildRenderGroups } from './renderPayload';
+import { useEditorMask } from './useEditorMask';
+import { canClipLayer, toggleClipped } from './layerClipping';
+import { toggleMaskDisabled, toggleMaskLink } from './layerModel';
 
 /** `editor_render_document` 的返回（camelCase 由 Rust 侧 serde 重命名） */
 interface DocumentRender {
@@ -98,8 +107,12 @@ interface EditorPanelProps {
   /** 图层数组（**自底向上**，与文档一致） */
   layers?: EditorLayer[];
   activeLayerId?: string;
+  /** 选中对象落在图层本体还是蒙版上（PS 点缩略图切换的那个状态） */
+  activeTarget?: 'image' | 'mask';
   /** 选中图层（只改选区，不算改动，不置 dirty） */
   onSelectLayer?: (id: string) => void;
+  /** 点缩略图：选层并指定 target（图层/蒙版）——同样只改选区，不置 dirty */
+  onSelectTarget?: (layerId: string, target: 'image' | 'mask') => void;
   /** 改动图层（可见性 / 顺序 / 复制 / 删除 / 改名 / 不透明度） */
   onLayersChange?: (next: { layers: EditorLayer[]; activeLayerId?: string }) => void;
   /** 活动图层的调色参数（-100..100） */
@@ -552,10 +565,21 @@ const BlendSelect: React.FC<{
  * 缩略图按图层各自的代理图算（`ensureLayerPreview` 排队生成，未就绪时显示图标占位）。
  * **调色滤镜只套在活动行上**：那张 SVG 滤镜的矩阵来自活动图层，套到别的行上会让
  * 非活动层的缩略图显示错误的颜色。
+ *
+ * ## 选中对象（PS 的图层/蒙版切换，2026-10-24 第二轮）
+ *
+ * 点**图层缩略图** = 选中图层本体（target=image）；点**蒙版缩略图** = 选中蒙版
+ * （target=mask，变换/删除作用到蒙版上）。两缩略图之间是**链条**（链接/解链蒙版）。
+ * 行内其余位置的点击仍是"选中图层"（target=image）。
+ *
+ * **Alt+点行** = 切换这层的**剪贴蒙版**（PS 是 Alt+点两行之间的分割线，这里放宽到
+ * 整行——被剪贴的行左侧带折线箭头标记）。
  */
 const LayerRow: React.FC<{
   layer: EditorLayer;
   active: boolean;
+  /** 选中对象落在图层还是蒙版（仅活动行有意义） */
+  activeTarget: 'image' | 'mask';
   adjustFilter?: string;
   dragging: boolean;
   dropHint: DropPosition | null;
@@ -563,12 +587,21 @@ const LayerRow: React.FC<{
   indent?: boolean;
   /** 组行：缩略图位置显示文件夹 + 折叠箭头（成员可能藏在折叠里） */
   isGroup?: boolean;
+  /** 按住 Alt 悬停：这行可剪贴/已剪贴 → alias 光标（行 class 里的 cursor-pointer 被它覆盖） */
+  clipCursor?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   onSelect: () => void;
+  /** 点缩略图：选层并指定 target（图层本体 / 蒙版） */
+  onSelectTarget: (target: 'image' | 'mask') => void;
+  /** 链接/解链蒙版（链条按钮） */
+  onToggleMaskLink: () => void;
+  /** Shift+点蒙版缩略图：停用/启用蒙版（PS 同款） */
+  onToggleMaskDisabled: () => void;
+  /** Alt+点行：切换剪贴蒙版 */
+  onToggleClip: () => void;
   onToggleVisible: () => void;
   onRename: (name: string) => void;
-  onBlendChange: (mode: BlendMode) => void;
   onOpacityChange: (value: number) => void;
   onOpenOpacityEditor: (anchor: HTMLElement) => void;
   onDragStart: (e: React.DragEvent<HTMLDivElement>) => void;
@@ -578,17 +611,22 @@ const LayerRow: React.FC<{
 }> = ({
   layer,
   active,
+  activeTarget,
   adjustFilter,
   dragging,
   dropHint,
   indent,
   isGroup,
+  clipCursor,
   collapsed,
   onToggleCollapse,
   onSelect,
+  onSelectTarget,
+  onToggleMaskLink,
+  onToggleMaskDisabled,
+  onToggleClip,
   onToggleVisible,
   onRename,
-  onBlendChange,
   onOpacityChange,
   onOpenOpacityEditor,
   onDragStart,
@@ -599,7 +637,10 @@ const LayerRow: React.FC<{
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(layer.name);
   const opacity = layerOpacity(layer);
-  const blend = layerBlend(layer);
+  const mask = layer.mask;
+  // 选中框落点：PS 是给"被点的那个缩略图"描白边；无蒙版的层永远在图层缩略图上
+  const imageThumbSelected = active && (!mask || activeTarget === 'image');
+  const maskThumbSelected = active && !!mask && activeTarget === 'mask';
 
   const preview = useSyncExternalStore(subscribePreview, () =>
     peekPreview(buildLayerPreviewKey(layer) ?? ''),
@@ -625,7 +666,16 @@ const LayerRow: React.FC<{
       role="button"
       tabIndex={0}
       draggable={!editing}
-      onClick={onSelect}
+      onClick={e => {
+        // Alt+点行 = 切换剪贴蒙版（PS 的 Alt+点分割线，这里放宽到整行）。
+        // 缩略图/眼睛/链条这些子按钮自己 stopPropagation，不会走到这。
+        if (e.altKey) {
+          e.stopPropagation();
+          onToggleClip();
+          return;
+        }
+        onSelect();
+      }}
       onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
@@ -636,10 +686,18 @@ const LayerRow: React.FC<{
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
-      title={`${layer.name}（拖拽可调整顺序）`}
+      // 按住 Alt 时的剪贴提示光标（alias = "这里 Alt+点有意义"）；内联 style 覆盖
+      // class 里的 cursor-pointer，松开 Alt 后回到 undefined = 恢复原光标
+      style={clipCursor ? { cursor: 'alias' } : undefined}
+      title={
+        clipCursor
+          ? `${layer.name}（Alt+点击 = ${layer.clipped ? '取消' : '建立'}剪贴蒙版）`
+          : `${layer.name}（拖拽可调整顺序；Alt+点击 = 切换剪贴蒙版）`
+      }
       className={[
         'relative flex items-center gap-1.5 px-1 py-1 rounded border cursor-pointer select-none',
         indent ? 'ml-5' : '',
+        layer.clipped ? 'ml-2' : '',
         active
           ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800'
           : 'border-transparent hover:bg-neutral-100 dark:hover:bg-neutral-700',
@@ -653,6 +711,13 @@ const LayerRow: React.FC<{
             dropHint === 'above' ? '-top-[2px]' : '-bottom-[2px]'
           }`}
         />
+      )}
+
+      {/* 剪贴蒙版标记：PS 的左侧折线箭头（这层裁进下面的基础层） */}
+      {layer.clipped && (
+        <span className="shrink-0 -ml-0.5 text-blue-500 dark:text-blue-400" title="剪贴蒙版：只显示在下方基础层有像素处（Alt+点击可取消）">
+          <CornerDownRight size={10} aria-hidden />
+        </span>
       )}
 
       <button
@@ -670,30 +735,36 @@ const LayerRow: React.FC<{
         {layer.visible ? <Eye size={12} /> : <EyeOff size={12} />}
       </button>
 
-      <div
+      {/* 图层缩略图：点击 = 选中图层本体（变换/删除作用到图层）。
+          组行没有"本体"，点缩略图 = 切折叠（原来就是这个交互，只是外面套了按钮）。 */}
+      <button
+        type="button"
+        data-no-drag
+        title={isGroup ? (collapsed ? '展开组' : '折叠组') : '图层缩略图（点击选中图层本体）'}
+        onClick={e => {
+          e.stopPropagation();
+          if (isGroup) onToggleCollapse?.();
+          else onSelectTarget('image');
+        }}
         className={[
-          'w-8 h-8 shrink-0 rounded-sm overflow-hidden flex items-center justify-center',
-          'bg-neutral-200 dark:bg-neutral-700',
+          // 组行**不带缩略图底板**（用户 2026-10-24：去掉矩形背景只留图标），
+          // 选中态交给整行高亮——透明底上再画白圈会像个悬空的空框
+          isGroup
+            ? 'w-8 h-8 shrink-0 flex items-center justify-center'
+            : 'w-8 h-8 shrink-0 rounded-sm overflow-hidden flex items-center justify-center bg-neutral-200 dark:bg-neutral-700',
           layer.visible ? '' : 'opacity-40',
+          // 选中对象的白边框（PS 同款）：活动行的"被点中那个缩略图"描边（组行除外）
+          imageThumbSelected && !isGroup
+            ? 'ring-2 ring-white ring-offset-0 outline outline-1 outline-blue-500'
+            : '',
         ].join(' ')}
       >
         {isGroup ? (
-          /* 组行：文件夹图标 + 折叠箭头（点击切折叠，data-no-drag 防拖行） */
-          <button
-            type="button"
-            data-no-drag
-            onClick={e => {
-              e.stopPropagation();
-              onToggleCollapse?.();
-            }}
-            className="w-full h-full flex items-center justify-center gap-0.5 text-neutral-600 dark:text-neutral-300"
-            title={collapsed ? '展开组' : '折叠组'}
-          >
+          <span className="w-full h-full flex items-center justify-center gap-0.5 text-neutral-600 dark:text-neutral-300">
             {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
             <Folder size={12} />
-          </button>
-        ) : null}
-        {thumb ? (
+          </span>
+        ) : thumb ? (
           <img
             src={thumb.src}
             alt=""
@@ -704,7 +775,76 @@ const LayerRow: React.FC<{
         ) : (
           <ImageIcon size={12} className="text-neutral-400" />
         )}
-      </div>
+      </button>
+
+      {/*
+        链条（链接/解链蒙版，PS 缩略图之间那个）与蒙版缩略图：
+        无蒙版时都不占位（UI 设计 §4）。
+      */}
+      {!isGroup && mask && (
+        <>
+          <button
+            type="button"
+            data-no-drag
+            title={
+              mask.box
+                ? '重新链接蒙版（蒙版回到跟图层同框同变换）｜当前已解链：拖动图层时蒙版留在原地'
+                : '解链蒙版（变换不再联动）｜解链后拖图层不动蒙版、拖蒙版不动图层；点击瞬间画面不变是正常的（蒙版拿图层当前框拷贝起步）'
+            }
+            onClick={e => {
+              e.stopPropagation();
+              onToggleMaskLink();
+            }}
+            // 已解链 = 蓝色高亮：链条不是"蒙版开关"（蒙版永远生效，PS 同款），
+            // 唯一的状态反馈就是这个图标翻转，10px 灰图标用户根本看不见（2026-10-24 反馈）
+            className={[
+              'shrink-0 p-0',
+              mask.box
+                ? 'text-blue-500 dark:text-blue-400'
+                : 'text-neutral-400 hover:text-neutral-700 dark:text-neutral-500 dark:hover:text-neutral-200',
+            ].join(' ')}
+          >
+            {mask.box ? <Unlink size={11} /> : <Link size={11} />}
+          </button>
+          <button
+            type="button"
+            data-no-drag
+            title="蒙版缩略图：点击选中蒙版（白 = 显示 / 黑 = 隐藏）；Shift+点击 = 停用/启用蒙版"
+            onClick={e => {
+              e.stopPropagation();
+              // Shift+点 = 停用/启用（PS 同款红叉）；普通点 = 选中蒙版
+              if (e.shiftKey) {
+                onToggleMaskDisabled();
+                return;
+              }
+              onSelectTarget('mask');
+            }}
+            className={[
+              'relative w-5 h-8 shrink-0 rounded-sm overflow-hidden border border-neutral-300 dark:border-neutral-600',
+              layer.visible ? '' : 'opacity-40',
+              maskThumbSelected ? 'ring-2 ring-white ring-offset-0 outline outline-1 outline-blue-500' : '',
+            ].join(' ')}
+            style={{
+              backgroundImage: 'repeating-conic-gradient(#d0d0d0 0% 25%, #ffffff 0% 50%)',
+              backgroundSize: '8px 8px',
+            }}
+          >
+            <img
+              src={convertFileSrc(mask.source)}
+              alt=""
+              className="w-full h-full object-cover"
+              style={{ filter: 'grayscale(1)' }}
+              draggable={false}
+            />
+            {/* 停用标记：PS 的红叉（蒙版数据还在，再 Shift+点恢复） */}
+            {mask.disabled && (
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <X size={12} strokeWidth={3} className="text-red-500" aria-label="蒙版已停用" />
+              </span>
+            )}
+          </button>
+        </>
+      )}
 
       {editing ? (
         <input
@@ -753,11 +893,9 @@ const LayerRow: React.FC<{
       )}
 
       {/*
-        混合模式（自定义下拉，见 `BlendSelect`）：名字与 CSS `mix-blend-mode` 同名，
-        预览与导出共用这一个字符串。展开后**悬停滚轮直接换档**、画布实时预览。
+        混合模式下拉已移到面板顶部、作用于活动图层（用户 2026-10-24：不需要每行一个）。
+        行内只保留不透明度数值（点/拖）。
       */}
-      <BlendSelect value={blend} onChange={onBlendChange} />
-
       <OpacityScrub value={opacity} onChange={onOpacityChange} onOpenEditor={onOpenOpacityEditor} />
     </div>
   );
@@ -771,7 +909,9 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   background,
   layers,
   activeLayerId,
+  activeTarget,
   onSelectLayer,
+  onSelectTarget,
   onLayersChange,
   adjust,
   onAdjustChange,
@@ -786,16 +926,20 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
   // ---- 全览图：整份文档的合成（PS 的 Navigator 语义） ----
   //
-  // 走 `editor_render_document`：Rust 按**导出同一条路**（含调色/不透明度、跳过隐藏层）
-  // 合成后降到 ≤2048。防抖 300ms——拖图层/拖滑杆时图层引用狂变，不能每帧合成一次。
+  // 走 `editor_render_document`：Rust 按**导出同一条路**（含调色/不透明度/蒙版、跳过
+  // 隐藏层与被关掉的组）合成后降到 ≤2048。防抖 300ms——拖图层/拖滑杆时图层引用狂变，
+  // 不能每帧合成一次。
+  //
+  // 载荷与导出**同一份构造**（`buildRenderGroups`）：编组落地后 Rust 的 DocumentRequest
+  // 要的是 `groups` 分段，这里一度还在发旧的 `layers` 平铺形状——反序列化直接报
+  // "missing field groups"，又被下面的 catch 吞掉，全览图静默失效（2026-10-24 修）。
   //
   // 依赖里用 `layers` 的**引用**而不是内容签名：App 里换选区是 `{...doc, activeLayerId}`，
   // layers 引用不变 ⇒ 换选区不重渲；改图层（可见性/顺序/几何/调色）才会换引用。
   const [overviewUrl, setOverviewUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
-    const all = layers ?? [];
-    const renderable = all.filter(l => l.source && l.visible);
-    if (!width || !height || renderable.length === 0) {
+    const groups = buildRenderGroups(layers ?? []);
+    if (!width || !height || groups.length === 0) {
       setOverviewUrl(undefined);
       return;
     }
@@ -804,12 +948,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       invoke<DocumentRender>('editor_render_document', {
         doc: {
           canvas: { width, height, background: background ?? 'transparent' },
-          layers: renderable.map(l => ({
-            path: l.source,
-            matrix: composeMatrix(l.box, { width: l.naturalWidth, height: l.naturalHeight }),
-            adjust: l.adjust ?? null,
-            opacity: layerOpacity(l),
-          })),
+          groups,
         },
       })
         .then(res => {
@@ -918,6 +1057,53 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     emit({ layers: setLayerLock(layers ?? [], layerId, kind, on), activeLayerId });
   };
 
+  // ---- 蒙版（useEditorMask）：添加 = 选一张图片（白 = 显示 / 黑 = 隐藏），
+  //      删除 = 摘掉（可撤销）。组行不支持蒙版（组蒙版等嵌套组那批）。
+  //      添加/删除后把选中对象切到蒙版（PS：刚建的蒙版处于选中态）。 ----
+  const { addMask, removeMask, busy: maskBusy } = useEditorMask(
+    active,
+    layers ?? [],
+    activeLayerId,
+    emit,
+    (layerId, target) => onSelectTarget?.(layerId, target),
+  );
+  const canAddMask = !!active && !isGroupRow(active) && !!active.source && !maskBusy;
+
+  /** 链接/解链蒙版（行内链条；解链给蒙版一份图层框拷贝起步）。 */
+  const handleToggleMaskLink = (layerId: string) => {
+    emit({ layers: toggleMaskLink(layers ?? [], layerId), activeLayerId });
+  };
+
+  /** Shift+点蒙版缩略图：停用/启用蒙版（红叉；停用 = 不参与合成但数据保留）。 */
+  const handleToggleMaskDisabled = (layerId: string) => {
+    emit({ layers: toggleMaskDisabled(layers ?? [], layerId), activeLayerId });
+  };
+
+  /** Alt+点行：切换剪贴蒙版（不可剪贴时 toggleClipped 原样返回、不置 dirty）。 */
+  const handleToggleClip = (layerId: string) => {
+    emit({ layers: toggleClipped(layers ?? [], layerId), activeLayerId });
+  };
+
+  // Alt 按住态（悬停指示用）：可剪贴/已剪贴的行在按住 Alt 时换 `alias` 光标——
+  // 剪贴的入口是 Alt+点行，没有独立按钮，光标是"这行现在能 Alt+点"的唯一提示
+  // （用户 2026-10-24 反馈"光标还是手指，看不出有这功能"）。blur 兜底：Alt+Tab
+  // 切走会漏掉 keyup，不清就永远卡在 alias。
+  const [altHeld, setAltHeld] = useState(false);
+  useEffect(() => {
+    const setTo = (held: boolean) => (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setAltHeld(held);
+    };
+    const onBlur = () => setAltHeld(false);
+    window.addEventListener('keydown', setTo(true));
+    window.addEventListener('keyup', setTo(false));
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', setTo(true));
+      window.removeEventListener('keyup', setTo(false));
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
   // ---- 其余图层操作（都作用于活动图层） ----
   const handleToggleVisible = (layer: EditorLayer) => {
     emit({ layers: setLayerVisible(layers ?? [], layer.id, !layer.visible), activeLayerId });
@@ -925,6 +1111,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
   const handleDelete = () => {
     if (!active) return;
+    // **有蒙版先删蒙版**（用户口径 2026-10-24：只留一个删除按钮，蒙版优先，
+    // 不看选中对象在哪）——removeMask 里会把选中对象切回图层本体
+    if (!isGroupRow(active) && active.mask) {
+      removeMask();
+      return;
+    }
     // 活动层是**组行** → 删组连带成员（PS 的"组和内容"）；普通层照旧单删
     if (isGroupRow(active)) {
       emit({ layers: deleteGroupWithMembers(layers ?? [], active.id), activeLayerId: undefined });
@@ -1044,6 +1236,21 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
       {/* 图层（用户要求沉到最下；与 PS 的默认面板栈一致） */}
       <Section title="图层" hint={`${list.length} 个`}>
+        {/* 混合模式：作用于**活动图层**，放面板顶部（PS 同款；用户 2026-10-24
+            要求从每行的卡片里移上来）。交互不变：点开全铺、悬停滚轮直接换档、
+            画布实时变。无活动层时整块灰掉。 */}
+        <div className={`flex items-center gap-2 ${active ? '' : 'pointer-events-none opacity-50'}`}>
+          <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 select-none">
+            混合模式
+          </span>
+          <BlendSelect
+            value={active ? layerBlend(active) : 'normal'}
+            onChange={mode => {
+              if (active) setBlend(active.id, mode);
+            }}
+          />
+        </div>
+
         {/* 顶部 = 锁定四格（PS 的锁在面板顶部）；**复制/删除在面板底部右侧**（PS 同款，
             用户 2026-10-24）。排序没有按钮了，直接拖卡片；「新建空白图层」的灰按钮也撤了
             ——空白层要等画笔，留着只是噪音。
@@ -1130,11 +1337,19 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 layer={layer}
                 indent={indent}
                 isGroup={isGrp}
+                clipCursor={
+                  !isGrp && altHeld && (layer.clipped === true || canClipLayer(layers ?? [], layer.id))
+                }
                 collapsed={layer.collapsed === true}
                 onToggleCollapse={() =>
-                  setGroupCollapsed(layers ?? [], layer.id, layer.collapsed !== true)
+                  // 折叠是纯 UI 态，不进撤销签名，但要真的写回文档（这里原来只算不发）
+                  emit({
+                    layers: setGroupCollapsed(layers ?? [], layer.id, layer.collapsed !== true),
+                    activeLayerId,
+                  })
                 }
                 active={active?.id === layer.id}
+                activeTarget={activeTarget === 'mask' ? 'mask' : 'image'}
                 adjustFilter={adjustFilter}
                 dragging={draggingId === layer.id}
                 dropHint={
@@ -1143,9 +1358,15 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                     : null
                 }
                 onSelect={() => onSelectLayer?.(layer.id)}
+                onSelectTarget={target => {
+                  // 点缩略图 = 选层 + 指定 target；行高亮/撤销栈都不受影响（选区不算改动）
+                  onSelectTarget?.(layer.id, target);
+                }}
+                onToggleMaskLink={() => handleToggleMaskLink(layer.id)}
+                onToggleMaskDisabled={() => handleToggleMaskDisabled(layer.id)}
+                onToggleClip={() => handleToggleClip(layer.id)}
                 onToggleVisible={() => handleToggleVisible(layer)}
                 onRename={name => handleRename(layer, name)}
-                onBlendChange={mode => setBlend(layer.id, mode)}
                 onOpacityChange={value => setOpacity(layer.id, value)}
                 onOpenOpacityEditor={anchor => openOpacityEditor(layer, anchor)}
                 onDragStart={e => {
@@ -1185,16 +1406,31 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           </div>
         )}
 
-        {/* 复制/删除在面板**右下方**（PS 的图层面板底部同款，用户 2026-10-24）。
-            w-8 容器约束 PanelIconButton 的 flex-1——按钮固定 32px 宽，靠右排。 */}
-        <div className="flex justify-end gap-1 mt-2">
+        {/* 底部按钮排（PS 的图层面板底部同款）：左侧添加蒙版，右侧复制/删除
+            （用户 2026-10-24）。**没有单独的"删蒙版"按钮**——删除蒙版优先走
+            右下角那个删除：有蒙版时点它先删蒙版，再点才删图层。w-8 容器约束
+            PanelIconButton 的 flex-1——按钮固定 32px 宽。 */}
+        <div className="flex items-center gap-1 mt-2">
+          <div className="w-8 flex">
+            <PanelIconButton
+              icon={Contrast}
+              title={
+                active?.mask
+                  ? '更换图层蒙版（选另一张图片）'
+                  : '添加图层蒙版（选一张图片：白 = 显示 / 黑 = 隐藏）'
+              }
+              onClick={() => void addMask()}
+              disabled={!canAddMask}
+            />
+          </div>
+          <div className="flex-1" />
           <div className="w-8 flex">
             <PanelIconButton icon={Copy} title="复制图层" onClick={handleDuplicate} disabled={!active} />
           </div>
           <div className="w-8 flex">
             <PanelIconButton
               icon={Trash2}
-              title="删除图层（Delete）"
+              title={active?.mask ? '删除图层蒙版（再点一次删图层）' : '删除图层（Delete）'}
               onClick={handleDelete}
               disabled={!active}
               danger
@@ -1203,11 +1439,16 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         </div>
 
         <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-relaxed">
-          拖拽卡片可调整上下顺序；点右侧百分比可输入数值，按住左右拖可快速调节；选中图层后按{' '}
-          <kbd className="px-1 rounded border border-neutral-300 dark:border-neutral-600 text-[9px]">
-            Delete
-          </kbd>{' '}
-          删除。导入图层请点文档栏的「图片 +」图标；新建空白图层要等画笔/填充；混合模式展开后悬停滚轮可直接换档。
+          拖拽卡片可调整上下顺序；点右侧百分比可输入数值，按住左右拖可快速调节。删除
+          （右下角按钮 / <kbd className="px-1 rounded border border-neutral-300 dark:border-neutral-600 text-[9px]">Delete</kbd>
+          ）：图层带蒙版时先删蒙版，再按一次才删图层。蒙版：点缩略图切换选中图层/蒙版，
+          <kbd className="px-1 rounded border border-neutral-300 dark:border-neutral-600 text-[9px]">Shift+点</kbd>{' '}
+          蒙版缩略图 = 停用/启用（红叉），链条可解链（各自独立移动），作画要等画笔。
+          混合模式在面板顶部，作用于选中图层（悬停滚轮换档）。剪贴蒙版：选上层后{' '}
+          <kbd className="px-1 rounded border border-neutral-300 dark:border-neutral-600 text-[9px]">Alt+点击</kbd>{' '}
+          该行（按住 Alt 时行会换光标）或{' '}
+          <kbd className="px-1 rounded border border-neutral-300 dark:border-neutral-600 text-[9px]">Ctrl+Alt+G</kbd>
+          ——上层只显示在下方基础层有像素处。
         </p>
       </Section>
 
