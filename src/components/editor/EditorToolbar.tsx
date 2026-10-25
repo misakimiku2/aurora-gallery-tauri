@@ -7,15 +7,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Move, BoxSelect, CircleDashed, Lasso, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
-  Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw,
+  Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw, MoveHorizontal, MoveVertical,
 } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
 import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
+import { nextMarqueeShape } from './toolLogic';
 
-/** 选框组子形态(M 键组内循环,同上游)。 */
-const MARQUEE_SHAPES = [
-  { shape: 'rect' as const, label: '矩形选框 (M)', icon: <BoxSelect size={17} /> },
-  { shape: 'ellipse' as const, label: '椭圆选框 (M)', icon: <CircleDashed size={17} /> },
+/** 选框组子形态(M 键组内循环,PS 口径四形态)。 */
+const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: React.ReactNode }[] = [
+  { shape: 'rect', label: '矩形选框 (M)', icon: <BoxSelect size={17} /> },
+  { shape: 'ellipse', label: '椭圆选框 (M)', icon: <CircleDashed size={17} /> },
+  { shape: 'row', label: '单行选框 (M)', icon: <MoveHorizontal size={17} /> },
+  { shape: 'column', label: '单列选框 (M)', icon: <MoveVertical size={17} /> },
 ];
 
 const GROUPS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
@@ -66,7 +69,8 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   const marqueeShape = s.options.marqueeShape;
   const marqueeIcon = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.icon ?? <BoxSelect size={17} />;
-  const pickMarquee = (shape: 'rect' | 'ellipse') => {
+  const shapeLabel = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.label ?? '矩形选框 (M)';
+  const pickMarquee = (shape: 'rect' | 'ellipse' | 'row' | 'column') => {
     setOptions(tabId, { marqueeShape: shape });
     setTool(tabId, 'marquee');
     setMenuPos(null);
@@ -76,12 +80,16 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     <div className="w-11 shrink-0 flex flex-col items-center gap-0.5 py-1.5 bg-panel border-r border-black/10 dark:border-white/10 select-none overflow-y-auto">
       <button
         key="marquee"
-        title={`${marqueeShape === 'rect' ? '矩形' : '椭圆'}选框 (M) — 右键切换形状`}
+        title={`${shapeLabel} — 右键切换形状`}
         onClick={() => setTool(tabId, 'marquee')}
         onContextMenu={(e) => {
           e.preventDefault();
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setMenuPos({ x: r.right + 4, y: r.top });
+        }}
+        onDoubleClick={() => {
+          // 双击=循环到下一形态(长按弹层之外的快速切换)
+          setOptions(tabId, { marqueeShape: nextMarqueeShape(marqueeShape) });
         }}
         className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
           s.tool === 'marquee'

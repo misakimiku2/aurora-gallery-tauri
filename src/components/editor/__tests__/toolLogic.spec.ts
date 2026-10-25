@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, chainSegments, constrainSquare, docToRaster, effectiveMode,
   initialMods, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect,
-  normalizeRect, reflectFromCenter, rgbToHex, sampleHex, selectMode, strokeCommand, strokeParams,
-  TOOL_KEYS, trackMods,
+  nextMarqueeShape, normalizeRect, reflectFromCenter, resolveSelectionMode, rgbToHex, sampleHex,
+  selectMode, singleLineParams, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
+  selectionMode: 'replace',
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -215,6 +216,32 @@ describe('套索参数(photocraft select.lasso 口径)', () => {
     expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: 5000 }, 'replace').feather).toBe(1000);
     expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: -3 }, 'replace').feather).toBe(0);
     expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: 60 }, 'replace').feather).toBe(60);
+  });
+});
+
+describe('单行/单列选框 + 选区四态(photocraft select.rect line 口径)', () => {
+  it('singleLineParams:row=整幅宽×1px 在 y 处;column=1px×整幅高在 x 处;位置钳进画布', () => {
+    expect(singleLineParams('row', 12.6, 100, 80, OPTS, 'replace')).toEqual({
+      x: 0, y: 13, width: 100, height: 1, line: 'row', mode: 'replace', antiAlias: true, feather: 0,
+    });
+    expect(singleLineParams('column', -5, 100, 80, OPTS, 'replace')).toEqual({
+      x: 0, y: 0, width: 1, height: 80, line: 'column', mode: 'replace', antiAlias: true, feather: 0,
+    });
+    expect(singleLineParams('row', 999, 100, 80, OPTS, 'replace').y).toBe(79);
+  });
+  it('nextMarqueeShape:M 键四形态循环', () => {
+    expect(nextMarqueeShape('rect')).toBe('ellipse');
+    expect(nextMarqueeShape('ellipse')).toBe('row');
+    expect(nextMarqueeShape('row')).toBe('column');
+    expect(nextMarqueeShape('column')).toBe('rect');
+  });
+  it('resolveSelectionMode:修饰键优先且空选区降级;无修饰键用选项条显式模式(不降级)', () => {
+    expect(resolveSelectionMode({ pressShift: true, pressAlt: false }, 'replace', false)).toBe('add');
+    expect(resolveSelectionMode({ pressShift: false, pressAlt: true }, 'replace', false)).toBe('replace'); // 空选区 Alt 降级
+    expect(resolveSelectionMode({ pressShift: false, pressAlt: true }, 'replace', true)).toBe('subtract');
+    expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'subtract', false)).toBe('subtract'); // 选项条显式保留
+    expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'intersect', true)).toBe('intersect');
+    expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'replace', true)).toBe('replace');
   });
 });
 

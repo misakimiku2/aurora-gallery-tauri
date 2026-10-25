@@ -81,11 +81,26 @@ export function marqueeRect(d: DragPoint, mods: DragMods): { x: number; y: numbe
 }
 
 /** 按下时的修饰键 → select.rect 的 mode(Photoshop:Shift 添加,Alt 减去,Shift+Alt 相交)。 */
-export function selectMode(shift: boolean, alt: boolean): 'replace' | 'add' | 'subtract' | 'intersect' {
+export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect';
+export function selectMode(shift: boolean, alt: boolean): SelectionMode {
   if (shift && alt) return 'intersect';
   if (shift) return 'add';
   if (alt) return 'subtract';
   return 'replace';
+}
+
+/**
+ * 选区模式总解析(上游 tool_feedback::document_selection_mode 口径):
+ * 按下时有修饰键 → 修饰键模式(空选区时减/交降级 replace,#1106);
+ * 无修饰键 → 选项条显式模式(显式选了减/交则**保留**,不降级)。
+ */
+export function resolveSelectionMode(
+  m: { pressShift: boolean; pressAlt: boolean },
+  barMode: SelectionMode,
+  hasSelection: boolean,
+): SelectionMode {
+  if (m.pressShift || m.pressAlt) return effectiveMode(selectMode(m.pressShift, m.pressAlt), hasSelection);
+  return barMode;
 }
 
 /** 上游 tool_feedback::document_selection_mode 的口径:无现有选区时,减去/相交落回新选区。 */
@@ -109,6 +124,31 @@ export function marqueeParams(
     antiAlias: opts.antiAlias,
     feather: opts.feather,
   };
+}
+
+/**
+ * 单行/单列选框(select.rect 的 line:"row"|"column",历史名 Single Row/Column Marquee):
+ * 整幅宽/高 × 1px;位置=释放点坐标取整钳进画布。点击即定位(PS 口径,不取消选择)。
+ */
+export function singleLineParams(
+  shape: 'row' | 'column',
+  pos: number,
+  docW: number,
+  docH: number,
+  opts: ToolOptions,
+  mode: 'replace' | 'add' | 'subtract' | 'intersect',
+): Record<string, unknown> {
+  const p = Math.round(pos);
+  return shape === 'row'
+    ? { x: 0, y: Math.min(docH - 1, Math.max(0, p)), width: docW, height: 1, line: 'row', mode, antiAlias: opts.antiAlias, feather: opts.feather }
+    : { x: Math.min(docW - 1, Math.max(0, p)), y: 0, width: 1, height: docH, line: 'column', mode, antiAlias: opts.antiAlias, feather: opts.feather };
+}
+
+/** 选框组 M 键循环顺序(PS 口径:矩形→椭圆→单行→单列)。 */
+export const MARQUEE_CYCLE = ['rect', 'ellipse', 'row', 'column'] as const;
+export function nextMarqueeShape(shape: ToolOptions['marqueeShape']): ToolOptions['marqueeShape'] {
+  const i = MARQUEE_CYCLE.indexOf(shape);
+  return MARQUEE_CYCLE[(i + 1) % MARQUEE_CYCLE.length];
 }
 
 /** 任意拖拽矩形归一化(套索等后续工具也用);不足 1px 返回 null。 */

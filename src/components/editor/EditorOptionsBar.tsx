@@ -6,12 +6,25 @@
 import React, { useEffect, useState } from 'react';
 import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
+import { Square, PlusSquare, MinusSquare, XSquare } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
   move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
   brush: '画笔', eraser: '橡皮擦', gradient: '渐变', bucket: '油漆桶',
   blur: '模糊', sharpen: '锐化', smudge: '涂抹', hand: '抓手', zoom: '缩放',
 };
+
+const SHAPE_NAMES: Record<string, string> = {
+  rect: '矩形选框', ellipse: '椭圆选框', row: '单行选框', column: '单列选框',
+};
+
+/** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
+const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
+  { mode: 'replace', label: '新选区', icon: <Square size={13} /> },
+  { mode: 'add', label: '添加到选区', icon: <PlusSquare size={13} /> },
+  { mode: 'subtract', label: '从选区减去', icon: <MinusSquare size={13} /> },
+  { mode: 'intersect', label: '与选区交叉', icon: <XSquare size={13} /> },
+];
 
 const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 顺序 dab 工具(blur/sharpen/smudge):有 strength(强度),参数单位是百分数。 */
@@ -84,9 +97,25 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         <>
           {s.tool === 'marquee' && (
             <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">
-              {s.options.marqueeShape === 'rect' ? '矩形' : '椭圆'}
+              {SHAPE_NAMES[s.options.marqueeShape] ?? '矩形选框'}
             </span>
           )}
+          <div className="flex items-center gap-0.5" title="选区模式(修饰键临时优先:Shift 添加 / Alt 减去 / Shift+Alt 相交)">
+            {SEL_MODES.map(({ mode, label, icon }) => (
+              <button
+                key={mode}
+                title={label}
+                onClick={() => setOptions(tabId, { selectionMode: mode })}
+                className={`w-6 h-6 rounded flex items-center justify-center ${
+                  s.options.selectionMode === mode
+                    ? 'bg-sky-600/20 text-sky-700 dark:text-sky-300'
+                    : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
             羽化
             <input

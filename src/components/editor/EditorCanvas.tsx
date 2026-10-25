@@ -16,8 +16,8 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDelta, moveDirtyRect, rgbToHex, sampleHex, selectMode, strokeCommand,
-  strokeParams, TOOL_KEYS, trackMods,
+  moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape, resolveSelectionMode, rgbToHex, sampleHex,
+  selectMode, singleLineParams, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
 } from './toolLogic';
 import { error as logError } from '../../utils/logger';
@@ -224,26 +224,50 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
     }
 
-    // overlay:选框拖拽实时预览(约束同提交口径:拖拽中新按的 Shift=正方形 / Alt=从中心)
+    // overlay:选框拖拽实时预览(约束同提交口径:拖拽中新按的 Shift=正方形 / Alt=从中心);
+    // 单行/单列:贯穿整幅的 1px 定位线,跟随指针位置
     if (marqueeRef.current) {
       const m = marqueeRef.current;
-      const r = marqueeRect(m, m.mods);
-      if (r) {
+      const shape = s.options.marqueeShape;
+      if (shape === 'row' || shape === 'column') {
         octx.save();
         octx.setLineDash([4, 4]);
         octx.strokeStyle = '#ffffffcc';
         octx.lineWidth = 1;
         octx.beginPath();
-        if (s.options.marqueeShape === 'ellipse') {
-          octx.ellipse((r.x + r.w / 2) * v.scale + v.ox, (r.y + r.h / 2) * v.scale + v.oy, (r.w / 2) * v.scale, (r.h / 2) * v.scale, 0, 0, Math.PI * 2);
+        if (shape === 'row') {
+          const sy = Math.round(m.y1) * v.scale + v.oy;
+          octx.moveTo(v.ox, sy);
+          octx.lineTo(v.ox + dw, sy);
         } else {
-          octx.rect(r.x * v.scale + v.ox, r.y * v.scale + v.oy, r.w * v.scale, r.h * v.scale);
+          const sx = Math.round(m.x1) * v.scale + v.ox;
+          octx.moveTo(sx, v.oy);
+          octx.lineTo(sx, v.oy + dh);
         }
         octx.stroke();
         octx.strokeStyle = '#000000cc';
         octx.lineDashOffset = 4;
         octx.stroke();
         octx.restore();
+      } else {
+        const r = marqueeRect(m, m.mods);
+        if (r) {
+          octx.save();
+          octx.setLineDash([4, 4]);
+          octx.strokeStyle = '#ffffffcc';
+          octx.lineWidth = 1;
+          octx.beginPath();
+          if (shape === 'ellipse') {
+            octx.ellipse((r.x + r.w / 2) * v.scale + v.ox, (r.y + r.h / 2) * v.scale + v.oy, (r.w / 2) * v.scale, (r.h / 2) * v.scale, 0, 0, Math.PI * 2);
+          } else {
+            octx.rect(r.x * v.scale + v.ox, r.y * v.scale + v.oy, r.w * v.scale, r.h * v.scale);
+          }
+          octx.stroke();
+          octx.strokeStyle = '#000000cc';
+          octx.lineDashOffset = 4;
+          octx.stroke();
+          octx.restore();
+        }
       }
     }
 
@@ -593,7 +617,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const st = getSession(tabId);
         if (ls && st?.state) {
           if (ls.points.length >= 3) {
-            const mode = effectiveMode(selectMode(ls.mods.pressShift, ls.mods.pressAlt), st.state.hasSelection);
+            const mode = resolveSelectionMode(ls.mods, st.options.selectionMode, st.state.hasSelection);
             lassoRef.current = null;
             void runCommand(tabId, 'select.lasso', lassoParams(ls.points, st.options, mode))
               .catch((err) => logError('[editor] select.lasso 失败', err));
@@ -670,10 +694,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'd') {
         void runCommand(tabId, 'tools.defaultColors', {}).catch(console.error);
       } else if (k === 'm') {
-        // M 键组内循环:已在选框工具上时切换矩形/椭圆(photocraft 上游口径)
+        // M 键组内循环:矩形→椭圆→单行→单列(PS 口径四形态)
         const st = getSession(tabId);
         if (st?.tool === 'marquee') {
-          setOptions(tabId, { marqueeShape: st.options.marqueeShape === 'rect' ? 'ellipse' : 'rect' });
+          setOptions(tabId, { marqueeShape: nextMarqueeShape(st.options.marqueeShape) });
         } else {
           setTool(tabId, 'marquee');
         }
@@ -889,7 +913,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (s && ls && s.state) {
       // 上游 canvas.rs Lasso 分支:≥3 点提交 select.lasso;<3 点(含单击)= 取消选择
       if (ls.points.length >= 3) {
-        const mode = effectiveMode(selectMode(ls.mods.pressShift, ls.mods.pressAlt), s.state.hasSelection);
+        const mode = resolveSelectionMode(ls.mods, s.options.selectionMode, s.state.hasSelection);
         void runCommand(tabId, 'select.lasso', lassoParams(ls.points, s.options, mode))
           .catch((err) => logError('[editor] select.lasso 失败', err));
       } else {
@@ -898,15 +922,25 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
     }
     if (s && m && s.state) {
-      const r = marqueeRect(m, m.mods);
-      if (r) {
-        // mode 由按下时的修饰键决定;无现有选区时减去/相交落回新选区(PS 口径)
-        const mode = effectiveMode(selectMode(m.mods.pressShift, m.mods.pressAlt), s.state.hasSelection);
-        void runCommand(tabId, 'select.rect', marqueeParams(r, s.options, mode))
-          .catch((err) => console.error('[editor] select.rect', err));
+      const shape = s.options.marqueeShape;
+      // mode:按下时修饰键优先(空选区降级);无修饰键用选项条显式四态(上游 #1106 口径)
+      const mode = resolveSelectionMode(m.mods, s.options.selectionMode, s.state.hasSelection);
+      if (shape === 'row' || shape === 'column') {
+        // 单行/单列:位置=释放点,点击即定位(PS 口径,不取消选择)
+        const rect = wrapRef.current!.getBoundingClientRect();
+        const [, uy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+        const [ux] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+        void runCommand(tabId, 'select.rect', singleLineParams(shape, shape === 'row' ? uy : ux, s.state.width, s.state.height, s.options, mode))
+          .catch((err) => logError('[editor] select.rect line 失败', err));
       } else {
-        // 点击(近零位移)= 取消选择(PS 行为;无选区时引擎空转无历史步)
-        void runCommand(tabId, 'select.deselect', {}).catch(console.error);
+        const r = marqueeRect(m, m.mods);
+        if (r) {
+          void runCommand(tabId, 'select.rect', marqueeParams(r, s.options, mode))
+            .catch((err) => logError('[editor] select.rect', err));
+        } else {
+          // 点击(近零位移)= 取消选择(PS 行为;无选区时引擎空转无历史步)
+          void runCommand(tabId, 'select.deselect', {}).catch(console.error);
+        }
       }
       scheduleDraw();
     }

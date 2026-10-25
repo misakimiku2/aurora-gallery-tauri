@@ -19,8 +19,10 @@ export interface ToolOptions {
   tolerance: number;
   antiAlias: boolean;
   gradientStyle: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
-  /** 选框工具形状(矩形/椭圆);提交给 select.rect 的 ellipse。 */
-  marqueeShape: 'rect' | 'ellipse';
+  /** 选框工具形状(矩形/椭圆/单行/单列);提交给 select.rect 的 ellipse/line。 */
+  marqueeShape: 'rect' | 'ellipse' | 'row' | 'column';
+  /** 选区四态(选项条显式模式,上游 selection_mode):无修饰键时用;修饰键优先。 */
+  selectionMode: 'replace' | 'add' | 'subtract' | 'intersect';
 }
 
 export interface EditorRuntime {
@@ -97,6 +99,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       antiAlias: true,
       gradientStyle: 'linear',
       marqueeShape: 'rect',
+      selectionMode: 'replace',
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0 },
   };
