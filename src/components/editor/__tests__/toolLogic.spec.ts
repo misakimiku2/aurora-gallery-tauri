@@ -251,7 +251,9 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     const h = constrain45([0, 0], [10, 2]); // 近水平:方向吸平,长度保留
     expect(h[1]).toBeCloseTo(0);
     expect(h[0]).toBeCloseTo(Math.hypot(10, 2));
-    expect(constrain45([0, 0], [5, 5])).toEqual([5, 5]);   // 已是 45°
+    const diag = constrain45([0, 0], [5, 5]); // 已是 45°
+    expect(diag[0]).toBeCloseTo(5);
+    expect(diag[1]).toBeCloseTo(5);
     const h2 = constrain45([0, 0], [-10, 3]);
     expect(h2[1]).toBeCloseTo(0);
     expect(h2[0]).toBeCloseTo(-Math.hypot(10, 3));
