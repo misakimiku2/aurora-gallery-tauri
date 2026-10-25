@@ -151,6 +151,52 @@ export function nextMarqueeShape(shape: ToolOptions['marqueeShape']): ToolOption
   return MARQUEE_CYCLE[(i + 1) % MARQUEE_CYCLE.length];
 }
 
+/**
+ * 渐变提交参数(paint.gradient):from/to 文档坐标取整;颜色缺省=前景→背景
+ * (引擎口径);Shift 吸附 45° 方向(长度不变);<2px 拖拽由调用方忽略。
+ */
+export function constrain45(from: [number, number], to: [number, number]): [number, number] {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return to;
+  const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+  return [from[0] + Math.cos(angle) * len, from[1] + Math.sin(angle) * len];
+}
+
+export function gradientParams(
+  from: [number, number],
+  to: [number, number],
+  opts: ToolOptions,
+): Record<string, unknown> {
+  return {
+    from: [Math.round(from[0]), Math.round(from[1])],
+    to: [Math.round(to[0]), Math.round(to[1])],
+    style: opts.gradientStyle,
+    opacity: Math.max(1, Math.min(100, Math.round(opts.brushOpacity * 100))),
+    dither: true,
+  };
+}
+
+/** 油漆桶提交参数(paint.bucket):容差 0..255,连续默认开;颜色=前景色。 */
+export function bucketParams(
+  x: number,
+  y: number,
+  opts: ToolOptions,
+  foregroundHex: string,
+): Record<string, unknown> {
+  return {
+    x: Math.floor(x),
+    y: Math.floor(y),
+    tolerance: Math.min(255, Math.max(0, Math.round(opts.tolerance))),
+    contiguous: true,
+    antiAlias: opts.antiAlias,
+    contents: 'foreground',
+    color: foregroundHex,
+    opacity: Math.max(1, Math.min(100, Math.round(opts.brushOpacity * 100))),
+  };
+}
+
 /** 任意拖拽矩形归一化(套索等后续工具也用);不足 1px 返回 null。 */
 export function normalizeRect(d: DragPoint): { x: number; y: number; w: number; h: number } | null {
   const x = Math.round(Math.min(d.x0, d.x1));

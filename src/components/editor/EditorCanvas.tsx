@@ -15,9 +15,10 @@ import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape, resolveSelectionMode, rgbToHex, sampleHex,
-  selectMode, singleLineParams, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, effectiveMode, gradientParams, initialMods,
+  lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape,
+  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
+  strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
 } from './toolLogic';
 import { error as logError } from '../../utils/logger';
@@ -90,6 +91,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const cropRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   /** 裁剪拖画新框中。 */
   const cropDragRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
+  /** 渐变拖线中(上游 classic 口径:拖方向线,松手一条命令)。 */
+  const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -199,6 +202,37 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
       // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
     }
+    // overlay:渐变方向线预览(上游 classic 口径:3px 黑(α140)垫底 + 1px 白,两端白色实心圆)
+    if (gradientRef.current) {
+      const g = gradientRef.current;
+      const to = g.mods.liveShift ? constrain45([g.x0, g.y0], [g.x1, g.y1]) : [g.x1, g.y1];
+      const ax = g.x0 * v.scale + v.ox;
+      const ay = g.y0 * v.scale + v.oy;
+      const bx = to[0] * v.scale + v.ox;
+      const by = to[1] * v.scale + v.oy;
+      octx.save();
+      octx.lineCap = 'round';
+      octx.beginPath();
+      octx.moveTo(ax, ay);
+      octx.lineTo(bx, by);
+      octx.strokeStyle = 'rgba(0,0,0,0.55)';
+      octx.lineWidth = 3;
+      octx.stroke();
+      octx.beginPath();
+      octx.moveTo(ax, ay);
+      octx.lineTo(bx, by);
+      octx.strokeStyle = '#ffffff';
+      octx.lineWidth = 1;
+      octx.stroke();
+      octx.fillStyle = '#ffffff';
+      for (const [cx, cy] of [[ax, ay], [bx, by]]) {
+        octx.beginPath();
+        octx.arc(cx, cy, 3, 0, Math.PI * 2);
+        octx.fill();
+      }
+      octx.restore();
+    }
+
     // overlay:裁剪框(上游 crop 口径简化版):框外 50% 遮罩 + 白边 + 三分线 + 角柄
     if (s.tool === 'crop') {
       const frame = cropDragRef.current ? marqueeRect(cropDragRef.current, cropDragRef.current.mods) : cropRef.current;
@@ -867,6 +901,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 裁剪:拖画新框(约束同选框:Shift 正方形 / Alt 从中心)
       cropDragRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
       scheduleDraw();
+    } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
+      // 渐变:拖方向线(Shift 吸附 45°;松手 ≥2px 才发命令)
+      gradientRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
+      scheduleDraw();
+    } else if (s.tool === 'bucket' && e.button === 0 && s.state) {
+      // 油漆桶:纯点击即填(上游口径,无拖拽);Alt=临时吸管
+      if (e.altKey) {
+        eyedropRef.current = { last: performance.now() };
+        pickColor(s);
+      } else {
+        void runCommand(tabId, 'paint.bucket', bucketParams(dx, dy, s.options, rgbToHex(s.state.foreground)))
+          .catch((err) => logError('[editor] paint.bucket 失败', err));
+      }
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -931,6 +978,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       cd.x1 = dx;
       cd.y1 = dy;
       cd.mods = trackMods(cd.mods, e.shiftKey, e.altKey);
+      scheduleDraw();
+      return;
+    }
+    const gr = gradientRef.current;
+    if (gr) {
+      gr.x1 = dx;
+      gr.y1 = dy;
+      gr.mods = trackMods(gr.mods, e.shiftKey, e.altKey);
       scheduleDraw();
       return;
     }
@@ -1009,6 +1064,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     eyedropRef.current = null;
     const cd = cropDragRef.current;
     cropDragRef.current = null;
+    const gr = gradientRef.current;
+    gradientRef.current = null;
+    if (s && gr && s.state) {
+      // 上游口径:曼哈顿距离 <2px = 无操作;Shift 吸附 45° 方向
+      const to: [number, number] = gr.mods.liveShift ? constrain45([gr.x0, gr.y0], [gr.x1, gr.y1]) : [gr.x1, gr.y1];
+      if (Math.abs(gr.x1 - gr.x0) + Math.abs(gr.y1 - gr.y0) >= 2) {
+        void runCommand(tabId, 'paint.gradient', gradientParams([gr.x0, gr.y0], to, s.options))
+          .catch((err) => logError('[editor] paint.gradient 失败', err));
+      }
+      scheduleDraw();
+    }
     if (s && cd && s.state) {
       const r = marqueeRect(cd, cd.mods);
       // 拖出的框成为裁剪框(即使等于整幅——commit 时判无操作);近零位移保留原框
@@ -1069,6 +1135,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     moveDragRef.current = null;
     lassoRef.current = null;
     cropDragRef.current = null;
+    gradientRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;

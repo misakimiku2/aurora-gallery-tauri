@@ -5,6 +5,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { getSession, setOptions, subscribeSession } from './editorStore';
+import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff } from 'lucide-react';
 
@@ -35,6 +36,15 @@ const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
   eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
   crop: '裁剪框交互(M2 后续切片接入)',
 };
+
+/** 渐变五样式(引擎 paint.gradient style;PS 选项条同序)。 */
+const GRADIENT_STYLES: { style: ToolOptions['gradientStyle']; label: string }[] = [
+  { style: 'linear', label: '线性' },
+  { style: 'radial', label: '径向' },
+  { style: 'angle', label: '角度' },
+  { style: 'reflected', label: '对称' },
+  { style: 'diamond', label: '菱形' },
+];
 
 export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
@@ -157,6 +167,48 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           >
             <CircleOff size={12} />取消
           </button>
+        </>
+      ) : s.tool === 'gradient' ? (
+        <>
+          <div className="flex items-center gap-0.5" title="渐变样式">
+            {GRADIENT_STYLES.map(({ style, label }) => (
+              <button
+                key={style}
+                title={label}
+                onClick={() => setOptions(tabId, { gradientStyle: style })}
+                className={`px-1.5 h-6 rounded text-[11px] ${
+                  s.options.gradientStyle === style
+                    ? 'bg-sky-600/20 text-sky-700 dark:text-sky-300'
+                    : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-neutral-400 dark:text-neutral-500">拖画方向线(Shift 吸附 45°);前景色 → 背景色;小于 2px 无操作</span>
+        </>
+      ) : s.tool === 'bucket' ? (
+        <>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+            容差
+            <input
+              type="range" min={0} max={255} value={s.options.tolerance}
+              onChange={(e) => setOptions(tabId, { tolerance: Number(e.target.value) })}
+              className="w-24 accent-sky-600"
+              title="容差 0..255(颜色相近判定范围)"
+            />
+            <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.tolerance}</span>
+          </label>
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400">
+            <input
+              type="checkbox" checked={s.options.antiAlias}
+              onChange={(e) => setOptions(tabId, { antiAlias: e.target.checked })}
+              className="accent-sky-600"
+            />
+            消除锯齿
+          </label>
+          <span className="text-neutral-400 dark:text-neutral-500">点击填充(前景色);Alt+点击=取色</span>
         </>
       ) : CROSSHAIR_HINT[s.tool] ? (
         <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>

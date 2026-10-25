@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BRUSH_FAMILY, brushSizeStep, chainSegments, constrainSquare, docToRaster, effectiveMode,
-  initialMods, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect,
-  nextMarqueeShape, normalizeRect, reflectFromCenter, resolveSelectionMode, rgbToHex, sampleHex,
-  selectMode, singleLineParams, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainSquare,
+  docToRaster, effectiveMode, gradientParams, initialMods, lassoParams, marqueeParams, marqueeRect,
+  moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape, normalizeRect, reflectFromCenter,
+  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
+  strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 
@@ -242,6 +243,34 @@ describe('单行/单列选框 + 选区四态(photocraft select.rect line 口径)
     expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'subtract', false)).toBe('subtract'); // 选项条显式保留
     expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'intersect', true)).toBe('intersect');
     expect(resolveSelectionMode({ pressShift: false, pressAlt: false }, 'replace', true)).toBe('replace');
+  });
+});
+
+describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径)', () => {
+  it('constrain45:方向吸附到 45° 倍数,长度不变', () => {
+    const h = constrain45([0, 0], [10, 2]); // 近水平:方向吸平,长度保留
+    expect(h[1]).toBeCloseTo(0);
+    expect(h[0]).toBeCloseTo(Math.hypot(10, 2));
+    expect(constrain45([0, 0], [5, 5])).toEqual([5, 5]);   // 已是 45°
+    const h2 = constrain45([0, 0], [-10, 3]);
+    expect(h2[1]).toBeCloseTo(0);
+    expect(h2[0]).toBeCloseTo(-Math.hypot(10, 3));
+    expect(constrain45([0, 0], [0, 0])).toEqual([0, 0]);   // 零长度原样
+  });
+  it('gradientParams:from/to 取整 + 样式 + 不透明度(1..100)+ dither', () => {
+    expect(gradientParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', brushOpacity: 0.5 })).toEqual({
+      from: [1, 3], to: [10, 8], style: 'radial', opacity: 50, dither: true,
+    });
+    expect(gradientParams([0, 0], [5, 5], { ...OPTS, brushOpacity: 0.005 }).opacity).toBe(1);
+    expect(gradientParams([0, 0], [5, 5], { ...OPTS, brushOpacity: 2 }).opacity).toBe(100);
+  });
+  it('bucketParams:坐标取整、容差钳 0..255、前景色、连续开', () => {
+    expect(bucketParams(3.7, 8.2, OPTS, '#123456')).toEqual({
+      x: 3, y: 8, tolerance: 32, contiguous: true, antiAlias: true,
+      contents: 'foreground', color: '#123456', opacity: 100,
+    });
+    expect(bucketParams(0, 0, { ...OPTS, tolerance: 999 }, '#000000').tolerance).toBe(255);
+    expect(bucketParams(0, 0, { ...OPTS, tolerance: -5 }, '#000000').tolerance).toBe(0);
   });
 });
 
