@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  constrainSquare, docToRaster, effectiveMode, initialMods, marqueeParams, marqueeRect,
-  normalizeRect, reflectFromCenter, sampleHex, selectMode,
+  chainSegments, constrainSquare, docToRaster, effectiveMode, initialMods, marqueeParams,
+  marqueeRect, normalizeRect, reflectFromCenter, sampleHex, selectMode,
   TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -101,6 +101,35 @@ describe('docToRaster / sampleHex', () => {
     expect(sampleHex(ctx, 1.9, 0.5, 1)).toBe('#ff8000');
     expect(sampleHex(ctx, 2, 0, 1)).toBeNull();
     expect(sampleHex(ctx, -1, 0, 1)).toBeNull();
+  });
+});
+
+describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)', () => {
+  it('矩形 4 段串成 1 条闭合折线(5 点,末点回到起点)', () => {
+    const polys = chainSegments([
+      [2, 3, 10, 3], [10, 3, 10, 7], [10, 7, 2, 7], [2, 7, 2, 3],
+    ]);
+    expect(polys).toHaveLength(1);
+    expect(polys[0]).toHaveLength(10); // 4 段 + 闭合点 = 5 点
+    expect([polys[0][8], polys[0][9]]).toEqual([polys[0][0], polys[0][1]]);
+  });
+  it('台阶段(L 形轮廓,像素级短段)串成一条连续折线', () => {
+    // 椭圆光栅化的典型台阶:水平 1px + 竖直 1px 交替首尾相接
+    const polys = chainSegments([
+      [0, 0, 1, 0], [1, 0, 1, 1], [1, 1, 2, 1], [2, 1, 2, 2], [2, 2, 0, 2], [0, 2, 0, 0],
+    ]);
+    expect(polys).toHaveLength(1);
+    expect(polys[0]).toHaveLength(14); // 6 段 + 闭合点 = 7 点
+  });
+  it('两个分离的轮廓串成 2 条折线;顺序打乱也能接上', () => {
+    const polys = chainSegments([
+      [10, 10, 10, 20], [0, 0, 0, 5], [0, 5, 5, 5], [10, 20, 20, 20], [20, 20, 20, 10], [20, 10, 10, 10], [5, 5, 5, 0], [5, 0, 0, 0],
+    ]);
+    expect(polys).toHaveLength(2);
+    expect(polys.every((p) => p.length === 10)).toBe(true); // 4 段 + 闭合点 = 5 点
+  });
+  it('空段集返回空', () => {
+    expect(chainSegments([])).toEqual([]);
   });
 });
 

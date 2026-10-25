@@ -145,3 +145,48 @@ export const TOOL_KEYS: Record<string, string> = {
   b: 'brush', e: 'eraser', g: 'gradient', k: 'bucket',
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };
+
+/**
+ * 边界段串接成连续折线(蚂蚁线的虚线必须沿连续路径跑:canvas 的 setLineDash 在每个
+ * moveTo 子路径重置相位,离散的 1-2px 台阶段会全部显示为实线,只有长段才是虚线)。
+ * 输入 outline 段集 [x0,y0,x1,y1]…,输出若干条折线的扁平点列 [x0,y0,x1,y1,…];
+ * mask 边界段首尾相接(闭合环),接龙自然还原;文档边缘等开放端走到无路即停。
+ */
+export function chainSegments(segs: number[][]): number[][] {
+  const key = (x: number, y: number) => `${x},${y}`;
+  const adj = new Map<string, number[][]>();
+  const push = (k: string, s: number[]) => {
+    const list = adj.get(k);
+    if (list) list.push(s);
+    else adj.set(k, [s]);
+  };
+  for (const s of segs) {
+    const a = key(s[0], s[1]);
+    const b = key(s[2], s[3]);
+    push(a, s);
+    if (a !== b) push(b, s);
+  }
+  const used = new Set<number[]>();
+  const otherEnd = (s: number[], x: number, y: number): [number, number] =>
+    s[0] === x && s[1] === y ? [s[2], s[3]] : [s[0], s[1]];
+  const polys: number[][] = [];
+  for (const start of segs) {
+    if (used.has(start)) continue;
+    used.add(start);
+    const pts: number[] = [start[0], start[1], start[2], start[3]];
+    for (const dir of [0, 1]) {
+      for (;;) {
+        const ex = dir === 0 ? pts[pts.length - 2] : pts[0];
+        const ey = dir === 0 ? pts[pts.length - 1] : pts[1];
+        const next = (adj.get(key(ex, ey)) ?? []).find((s) => !used.has(s));
+        if (!next) break;
+        used.add(next);
+        const [ox, oy] = otherEnd(next, ex, ey);
+        if (dir === 0) pts.push(ox, oy);
+        else pts.unshift(ox, oy);
+      }
+    }
+    polys.push(pts);
+  }
+  return polys;
+};

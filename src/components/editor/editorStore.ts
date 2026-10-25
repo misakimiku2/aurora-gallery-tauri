@@ -5,6 +5,7 @@
  */
 import type { EditorDocState, EditorTool } from './editorTypes';
 import { editorClose, editorRun, editorSelectionOutline, editorState } from './editorBridge';
+import { chainSegments } from './toolLogic';
 import type { ViewTransform } from './viewMath';
 
 export interface ToolOptions {
@@ -145,6 +146,9 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
     try {
       const st = await editorState(s.docId);
       updateSession(tabId, { state: st });
+      // 选区一变就同步拉轮廓:与 state 同帧到达,首帧即真实形状(椭圆不会先闪外接矩形);
+      // 内部按 key 防抖,选区没变的命令不发请求。
+      refreshSelectionOutline(tabId);
       // 状态变化可能影响画布 overlay(选区蚂蚁线/图层可见性后的位图):调度一帧重绘。
       // React 重渲染不会重画 canvas,没有这步选区要等下一次交互才出现。
       s.runtime.requestDraw?.();
@@ -189,7 +193,9 @@ export function refreshSelectionOutline(tabId: string): void {
   void editorSelectionOutline(s.docId, step)
     .then((r) => {
       s.runtime.outlineFetching = '';
-      s.runtime.selectionOutline = r ? r.segments : null;
+      // 段集先串接成连续折线再存:canvas 的 dash 在每个 moveTo 子路径重置,
+      // 离散台阶段会全显成实线;折线内虚线才连续(上游 ants 沿边跑 dash 同理)。
+      s.runtime.selectionOutline = r ? chainSegments(r.segments) : null;
       s.runtime.outlineKey = r ? key : '';
       s.runtime.requestDraw?.();
     })

@@ -140,23 +140,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const sel = s.state.selectionBounds;
     if (sel) {
       refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
-      const segs = s.runtime.selectionOutline;
-      if (segs && segs.length) {
+      const polys = s.runtime.selectionOutline;
+      if (polys && polys.length) {
         drawAnts((c) => {
           c.beginPath();
-          for (let i = 0; i < segs.length; i++) {
-            const [x0, y0, x1, y1] = segs[i];
-            c.moveTo(x0 * v.scale + v.ox, y0 * v.scale + v.oy);
-            c.lineTo(x1 * v.scale + v.ox, y1 * v.scale + v.oy);
+          for (const poly of polys) {
+            c.moveTo(poly[0] * v.scale + v.ox, poly[1] * v.scale + v.oy);
+            for (let i = 2; i < poly.length; i += 2) {
+              c.lineTo(poly[i] * v.scale + v.ox, poly[i + 1] * v.scale + v.oy);
+            }
           }
         });
-      } else {
-        const [x, y, w, h] = sel;
-        drawAnts((c) => {
-          c.beginPath();
-          c.rect(x * v.scale + v.ox, y * v.scale + v.oy, w * v.scale, h * v.scale);
-        });
       }
+      // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
+      // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
     }
     // overlay:选框拖拽实时预览(约束同提交口径:拖拽中新按的 Shift=正方形 / Alt=从中心)
     if (marqueeRef.current) {
