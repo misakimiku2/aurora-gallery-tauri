@@ -1021,6 +1021,7 @@ export const App: React.FC = () => {
     handleOpenCanvas,
     handleOpenCompareAndClearSelection,
     handleAddToCompareCanvas,
+    handleOpenEditorTab,
     handleCloseAllTabs,
     handleCloseOtherTabs,
   } = useTabHandlers({
@@ -2746,7 +2747,7 @@ export const App: React.FC = () => {
             handleReferenceModeChange={handleReferenceModeChange}
             isReferenceMode={isReferenceMode}
           />
-          <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
+          <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode || activeTab.isEditorMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
             <ToolbarPane
               lanUploadInputRef={lanUploadInputRef}
               handleUploadFilesSelected={handleUploadFilesSelected}
@@ -3034,6 +3035,7 @@ export const App: React.FC = () => {
         t={t}
         closeContextMenu={closeContextMenu}
         handleOpenInNewTab={handleOpenInNewTab}
+        handleOpenEditorTab={handleOpenEditorTab}
         handleViewInExplorer={handleViewInExplorer}
         enterFolder={enterFolder}
         setModal={(type, data) => setState(s => ({ ...s, activeModal: { type: type as any, data } }))}

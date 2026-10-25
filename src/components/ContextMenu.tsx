@@ -4,7 +4,7 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play, Brush
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
@@ -31,6 +31,7 @@ interface ContextMenuProps {
   t: (key: string) => string;
   closeContextMenu: () => void;
   handleOpenInNewTab: (id: string) => void;
+  handleOpenEditorTab?: (fileId: string) => void;
   handleViewInExplorer: (id: string) => void;
   enterFolder: (id: string, options?: any) => void;
   setModal: (type: string, data?: any) => void;
@@ -78,6 +79,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   t,
   closeContextMenu,
   handleOpenInNewTab,
+  handleOpenEditorTab,
   handleViewInExplorer,
   enterFolder,
   setModal,
@@ -352,6 +354,22 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Sparkles size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
         )}
+        {/* 编辑器 v3:单图进编辑器(桌面端) */}
+        {contextMenu.type === 'file-single' && !isAndroidSync() && handleOpenEditorTab && (() => {
+          const id = contextMenu.targetId || activeTab.lastSelectedId;
+          const file = id ? files[id] : undefined;
+          if (!id || file?.type !== FileType.IMAGE) return null;
+          return (
+            <div
+              className={menuItemClass}
+              style={menuItemStyle}
+              onClick={() => { handleOpenEditorTab(id); closeContextMenu(); }}
+            >
+              <Brush size={iconSize} className="mr-2 opacity-70" />
+              {t('context.editImage') || '编辑图片'}
+            </div>
+          );
+        })()}
         {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && (() => {
           const imageIds = activeTab.selectedFileIds.filter(id => files[id]?.type === FileType.IMAGE);
           const canCompare = imageIds.length >= 1 && imageIds.length <= 24;

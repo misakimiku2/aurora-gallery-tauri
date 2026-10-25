@@ -44,6 +44,10 @@ pub mod update_commands;
 #[cfg(target_os = "android")]
 pub mod android;
 
+// 图片编辑器 v3:photocraft 引擎桥(桌面端;aurora-editor 为平台无关 crate)
+#[cfg(not(target_os = "android"))]
+pub mod editor_cmds;
+
 pub use thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
 pub use color_search::{search_by_palette, search_by_color};
 pub use aurora_core::file_types::SavedWindowState;
@@ -2124,7 +2128,13 @@ pub fn run() {
         lan_share_commands::lan_share_check_port,
         lan_share_commands::lan_share_update_config,
         lan_share_commands::lan_share_rename_device,
-        lan_share_commands::lan_share_remove_device
+        lan_share_commands::lan_share_remove_device,
+        // 图片编辑器 v3:photocraft 引擎桥(aurora-editor)
+        editor_cmds::editor_open,
+        editor_cmds::editor_run,
+        editor_cmds::editor_render,
+        editor_cmds::editor_state,
+        editor_cmds::editor_close
     ]);
 
     #[cfg(target_os = "android")]
@@ -2345,7 +2355,10 @@ pub fn run() {
 
             // PixCall 迁移：probe 与 import 共用同一份只读快照（设计方案 §6.2 末），
             // 快照按库根存这里，跨两次命令调用活着。
-            app.manage(import_commands::PixcallSnapshots::default());
+                app.manage(import_commands::PixcallSnapshots::default());
+                // 图片编辑器 v3:photocraft 引擎会话(单例,多文档由引擎 Session 自持)
+                #[cfg(not(target_os = "android"))]
+                app.manage(editor_cmds::EditorState::default());
             // Eagle 迁移（第二期）：「快照」= 一次性解码出的内存 SourceData（Eagle 的库
             // 不是 SQLite，没有 db+wal 可复制），probe 存这里、import 取同一条。
             app.manage(import_commands::EagleSnapshots::default());

@@ -537,6 +537,10 @@ export interface TabState {
   selectedPersonIds: string[];
   currentPage: number;
   isCompareMode: boolean;
+  /** 编辑器 v3:该 Tab 是图片编辑器(photocraft 引擎) */
+  isEditorMode?: boolean;
+  /** 编辑器 v3:被编辑图片的 file id */
+  editorFileId?: string;
   sessionName?: string;
   scrollToItemId?: string;
   history: {

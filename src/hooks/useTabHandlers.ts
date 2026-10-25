@@ -268,6 +268,29 @@ export const useTabHandlers = ({
     }
   }, [state.tabs, state.files, state.settings.paths.cacheRoot, setState, showToast, t]);
 
+  /** 编辑器 v3:在编辑器 Tab 中打开图片(桌面端) */
+  const handleOpenEditorTab = useCallback((fileId: string) => {
+    const file = state.files[fileId];
+    if (!file) return;
+    const baseName = (file.name || '图片').replace(/\.[^.]+$/, '');
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: file.parentId || file.id,
+      selectedFileIds: [fileId],
+      lastSelectedId: fileId,
+      isCompareMode: false,
+      isEditorMode: true,
+      editorFileId: fileId,
+      sessionName: baseName,
+      history: {
+        stack: [{ folderId: file.parentId || file.id, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }],
+        currentIndex: 0,
+      },
+    };
+    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [state.files, setState]);
+
   const handleCloseAllTabs = () => {
     setState(prev => {
       if (prev.tabs.length <= 1) return prev;
@@ -292,6 +315,7 @@ export const useTabHandlers = ({
     handleOpenCanvas,
     handleOpenCompareAndClearSelection,
     handleAddToCompareCanvas,
+    handleOpenEditorTab,
     handleCloseAllTabs,
     handleCloseOtherTabs,
   };

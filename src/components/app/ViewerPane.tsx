@@ -1,6 +1,7 @@
 import React from 'react';
 import { ImageViewer } from '../ImageViewer';
 import { ImageComparer } from '../ImageComparer';
+import { EditorShell } from '../editor/EditorShell';
 import { isAndroidSync } from '../../utils/androidPlatform';
 import { AppState, FileNode, FileType, TabState } from '../../types';
 
@@ -143,6 +144,21 @@ export const ViewerPane = ({
           />
         </div>
       ))}
+      {/* 编辑器 v3:编辑 Tab(桌面端;引擎文档随 Tab 生命周期开合) */}
+      {!isAndroidSync() && state.tabs.map(tab => tab.isEditorMode && (() => {
+        const file = tab.editorFileId ? state.files[tab.editorFileId] : undefined;
+        if (!file?.path) return null;
+        return (
+          <div key={tab.id} className={`w-full h-full flex-1 flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
+            <EditorShell
+              tabId={tab.id}
+              fileId={file.id}
+              filePath={file.path}
+              isActive={tab.id === state.activeTabId}
+            />
+          </div>
+        );
+      })())}
     </>
   );
 };

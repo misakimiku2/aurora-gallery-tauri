@@ -166,6 +166,17 @@ impl EditorManager {
                     obj.insert(key.into(), x.clone());
                 }
             }
+            // 历史面板的"当前状态"下标(document.inspect 未含;entries = 过去 + 当前 + 可重做)
+            if let Some(st) = self.session.active() {
+                obj.insert("historyCurrent".into(), json!(st.history.past_len()));
+            }
+            // 图层面板的混合模式下拉(layer_modes 的显示标签,与 setProps 的 blend 参数同源)
+            if !obj.contains_key("blendModes") {
+                obj.insert(
+                    "blendModes".into(),
+                    json!(photocraft_color::blend::BlendMode::layer_modes().map(|m| m.label()).collect::<Vec<_>>()),
+                );
+            }
         }
         Ok(v)
     }
