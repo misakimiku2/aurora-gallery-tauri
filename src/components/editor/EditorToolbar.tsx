@@ -1,18 +1,25 @@
 /**
  * 工具栏(左侧竖排):工具组按钮 + 前/背景色芯片。
- * 长按子工具弹层在 M2 接入,M1 每组一个主形态。主题色随应用浅/深色。
+ * 工具组子形态(photocraft 上游口径):同组共享一个槽位与快捷键,组内最近使用的
+ * 形态显示为图标;**右键工具图标**弹出子形态菜单(选框组=矩形/椭圆)。
+ * 长按弹层、更多组(套索族/模糊族)随 M2 后续切片接入。
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Move, BoxSelect, Lasso, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
+  Move, BoxSelect, CircleDashed, Lasso, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
   Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw,
 } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
-import { getSession, setTool, subscribeSession, runCommand } from './editorStore';
+import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
+
+/** 选框组子形态(M 键组内循环,同上游)。 */
+const MARQUEE_SHAPES = [
+  { shape: 'rect' as const, label: '矩形选框 (M)', icon: <BoxSelect size={17} /> },
+  { shape: 'ellipse' as const, label: '椭圆选框 (M)', icon: <CircleDashed size={17} /> },
+];
 
 const GROUPS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
   { tool: 'move', label: '移动 (V)', icon: <Move size={17} /> },
-  { tool: 'marquee', label: '矩形选框 (M)', icon: <BoxSelect size={17} /> },
   { tool: 'lasso', label: '套索 (L)', icon: <Lasso size={17} /> },
   { tool: 'crop', label: '裁剪 (C)', icon: <Crop size={17} /> },
   { tool: 'eyedropper', label: '吸管 (I)', icon: <Pipette size={17} /> },
@@ -37,14 +44,71 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 点菜单外关闭子形态弹层
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const close = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [menuOpen]);
+
   if (!s) return null;
 
   const onKey = (which: 'swap' | 'reset') => {
     void runCommand(tabId, which === 'swap' ? 'tools.swapColors' : 'tools.defaultColors', {}).catch(console.error);
   };
 
+  const marqueeShape = s.options.marqueeShape;
+  const marqueeIcon = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.icon ?? <BoxSelect size={17} />;
+  const pickMarquee = (shape: 'rect' | 'ellipse') => {
+    setOptions(tabId, { marqueeShape: shape });
+    setTool(tabId, 'marquee');
+    setMenuOpen(false);
+  };
+
   return (
     <div className="w-11 shrink-0 flex flex-col items-center gap-0.5 py-1.5 bg-panel border-r border-black/10 dark:border-white/10 select-none overflow-y-auto">
+      <button
+        key="marquee"
+        title={`${marqueeShape === 'rect' ? '矩形' : '椭圆'}选框 (M) — 右键切换形状`}
+        onClick={() => setTool(tabId, 'marquee')}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenuOpen(true);
+        }}
+        className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
+          s.tool === 'marquee'
+            ? 'bg-sky-600 text-white'
+            : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
+        }`}
+      >
+        {marqueeIcon}
+      </button>
+      {menuOpen && (
+        <div ref={menuRef} className="relative w-full z-50">
+          <div className="absolute left-9 top-0 w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15">
+            {MARQUEE_SHAPES.map(({ shape, label, icon }) => (
+              <button
+                key={shape}
+                onClick={() => pickMarquee(shape)}
+                className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
+                  marqueeShape === shape
+                    ? 'text-sky-700 dark:text-sky-300'
+                    : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+              >
+                {icon}
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {GROUPS.map(({ tool, label, icon }) => (
         <button
           key={tool}

@@ -1,6 +1,10 @@
 /**
  * 工具交互的纯函数层:拖拽几何、选区模式、取色。
  * 画布指针交互(EditorCanvas)只做坐标采集与提交,数学全部在这里(可单测)。
+ * 修饰键时序照 photocraft 上游口径(canvas.rs Drag::marquee_mods / tool_feedback selection_mode):
+ * - 按下时就按住的修饰键 → 选区运算模式(Shift 添加 / Alt 减去 / Shift+Alt 相交),
+ *   直到松开并再次按下为止不做形状约束;
+ * - 拖拽中途才新按下的修饰键(fresh)→ 形状约束(Shift 正方形 / Alt 从中心)。
  */
 import type { ToolOptions } from './editorStore';
 
@@ -9,9 +13,49 @@ export interface DragPoint {
   y0: number;
   x1: number;
   y1: number;
-  /** pointerdown 时的修饰键(Photoshop:按下时决定新选区的运算模式)。 */
-  shift?: boolean;
-  alt?: boolean;
+}
+
+/** 拖拽手势的修饰键跟踪(live=现在按着;press=按下时按着;released=按下后松开过)。 */
+export interface DragMods {
+  pressShift: boolean;
+  pressAlt: boolean;
+  liveShift: boolean;
+  liveAlt: boolean;
+  releasedShift: boolean;
+  releasedAlt: boolean;
+}
+
+export function initialMods(shift: boolean, alt: boolean): DragMods {
+  return { pressShift: shift, pressAlt: alt, liveShift: shift, liveAlt: alt, releasedShift: false, releasedAlt: false };
+}
+
+/** 每个 pointer 事件后更新:live 跟随当前,松开过的记下来(再按时变"新按")。 */
+export function trackMods(m: DragMods, shift: boolean, alt: boolean): DragMods {
+  return {
+    ...m,
+    liveShift: shift,
+    liveAlt: alt,
+    releasedShift: m.releasedShift || (m.pressShift && !shift),
+    releasedAlt: m.releasedAlt || (m.pressAlt && !alt),
+  };
+}
+
+/** 上游 Drag::marquee_mods 的 fresh 判定:现在按着,且(按下时没按 或 松开过)= 拖拽中新按。 */
+function fresh(now: boolean, atPress: boolean, released: boolean): boolean {
+  return now && (!atPress || released);
+}
+
+/** 拖拽中的形状约束:正方形 / 从中心。 */
+export function constraintMods(m: DragMods): { square: boolean; fromCenter: boolean } {
+  return {
+    square: fresh(m.liveShift, m.pressShift, m.releasedShift),
+    fromCenter: fresh(m.liveAlt, m.pressAlt, m.releasedAlt),
+  };
+}
+
+/** Alt 从中心:把起点反射到对侧(起点为圆心,终点定另一半)。 */
+export function reflectFromCenter(d: DragPoint): DragPoint {
+  return { x0: 2 * d.x0 - d.x1, y0: 2 * d.y0 - d.y1, x1: d.x1, y1: d.y1 };
 }
 
 /** Shift 约束:以起点为角的正方形(取 |dx|、|dy| 较大者,保方向)。 */
@@ -22,17 +66,21 @@ export function constrainSquare(d: DragPoint): DragPoint {
   return { x0: d.x0, y0: d.y0, x1: d.x0 + Math.sign(dx || 1) * m, y1: d.y0 + Math.sign(dy || 1) * m };
 }
 
-/** 归一化为整数 x/y/w/h;宽或高不足 1px 视为点击,返回 null。 */
-export function normalizeRect(d: DragPoint): { x: number; y: number; w: number; h: number } | null {
-  const x = Math.round(Math.min(d.x0, d.x1));
-  const y = Math.round(Math.min(d.y0, d.y1));
-  const w = Math.round(Math.max(d.x0, d.x1)) - x;
-  const h = Math.round(Math.max(d.y0, d.y1)) - y;
+/** 拖拽几何 → 提交/预览用的矩形(先应用约束,再归一化取整);不足 1px 视为点击返回 null。 */
+export function marqueeRect(d: DragPoint, mods: DragMods): { x: number; y: number; w: number; h: number } | null {
+  let p: DragPoint = d;
+  const { square, fromCenter } = constraintMods(mods);
+  if (fromCenter) p = reflectFromCenter(p);
+  if (square) p = constrainSquare(p);
+  const x = Math.round(Math.min(p.x0, p.x1));
+  const y = Math.round(Math.min(p.y0, p.y1));
+  const w = Math.round(Math.max(p.x0, p.x1)) - x;
+  const h = Math.round(Math.max(p.y0, p.y1)) - y;
   if (w < 1 || h < 1) return null;
   return { x, y, w, h };
 }
 
-/** 修饰键 → select.rect 的 mode(Photoshop:Shift 添加,Alt 减去,Shift+Alt 相交)。 */
+/** 按下时的修饰键 → select.rect 的 mode(Photoshop:Shift 添加,Alt 减去,Shift+Alt 相交)。 */
 export function selectMode(shift: boolean, alt: boolean): 'replace' | 'add' | 'subtract' | 'intersect' {
   if (shift && alt) return 'intersect';
   if (shift) return 'add';
@@ -40,20 +88,37 @@ export function selectMode(shift: boolean, alt: boolean): 'replace' | 'add' | 's
   return 'replace';
 }
 
+/** 上游 tool_feedback::document_selection_mode 的口径:无现有选区时,减去/相交落回新选区。 */
+export function effectiveMode(mode: 'replace' | 'add' | 'subtract' | 'intersect', hasSelection: boolean): 'replace' | 'add' | 'subtract' | 'intersect' {
+  return !hasSelection && (mode === 'subtract' || mode === 'intersect') ? 'replace' : mode;
+}
+
 /** 拖拽结束 → select.rect 参数;点击(近零位移)返回 null(调用方走 deselect)。 */
-export function marqueeParams(d: DragPoint, opts: ToolOptions): Record<string, unknown> | null {
-  const r = normalizeRect(d);
-  if (!r) return null;
+export function marqueeParams(
+  r: { x: number; y: number; w: number; h: number },
+  opts: ToolOptions,
+  mode: 'replace' | 'add' | 'subtract' | 'intersect',
+): Record<string, unknown> {
   return {
     x: r.x,
     y: r.y,
     width: r.w,
     height: r.h,
     ellipse: opts.marqueeShape === 'ellipse',
-    mode: selectMode(d.shift ?? false, d.alt ?? false),
+    mode,
     antiAlias: opts.antiAlias,
     feather: opts.feather,
   };
+}
+
+/** 任意拖拽矩形归一化(套索等后续工具也用);不足 1px 返回 null。 */
+export function normalizeRect(d: DragPoint): { x: number; y: number; w: number; h: number } | null {
+  const x = Math.round(Math.min(d.x0, d.x1));
+  const y = Math.round(Math.min(d.y0, d.y1));
+  const w = Math.round(Math.max(d.x0, d.x1)) - x;
+  const h = Math.round(Math.max(d.y0, d.y1)) - y;
+  if (w < 1 || h < 1) return null;
+  return { x, y, w, h };
 }
 
 /** 文档坐标 → 离屏位图像素坐标(rasterScale<1 为大图降采样保护)。 */
@@ -90,9 +155,9 @@ export function shapeMatchesBounds(
   return shape.rect[0] === bounds[0] && shape.rect[1] === bounds[1] && shape.rect[2] === bounds[2] && shape.rect[3] === bounds[3];
 }
 
-/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。 */
+/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M 键不在表内:选框组内循环,由画布层处理。 */
 export const TOOL_KEYS: Record<string, string> = {
-  v: 'move', m: 'marquee', l: 'lasso', c: 'crop', i: 'eyedropper',
+  v: 'move', l: 'lasso', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser', g: 'gradient', k: 'bucket',
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };

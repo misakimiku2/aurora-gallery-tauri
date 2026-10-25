@@ -142,6 +142,9 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
     try {
       const st = await editorState(s.docId);
       updateSession(tabId, { state: st });
+      // 状态变化可能影响画布 overlay(选区蚂蚁线/图层可见性后的位图):调度一帧重绘。
+      // React 重渲染不会重画 canvas,没有这步选区要等下一次交互才出现。
+      s.runtime.requestDraw?.();
     } catch {
       /* 文档已关闭等;忽略 */
     }

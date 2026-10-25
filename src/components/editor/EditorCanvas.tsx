@@ -11,7 +11,10 @@ import { getSession, runCommand, setOptions, setTool, subscribeSession } from '.
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
-import { constrainSquare, marqueeParams, normalizeRect, sampleHex, shapeMatchesBounds, TOOL_KEYS, type DragPoint } from './toolLogic';
+import {
+  effectiveMode, initialMods, marqueeParams, marqueeRect, sampleHex,
+  selectMode, shapeMatchesBounds, TOOL_KEYS, trackMods, type DragPoint, type DragMods,
+} from './toolLogic';
 
 const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
@@ -39,8 +42,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const spaceRef = useRef(false);
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const drawPending = useRef(false);
-  /** 选框拖拽中(文档坐标 + 按下时修饰键 + 最近一次 shift 用于正方形约束)。 */
-  const marqueeRef = useRef<(DragPoint & { lastShift: boolean }) | null>(null);
+  /** 选框拖拽中(文档坐标 + 修饰键时序跟踪,口径同 photocraft 上游 Drag)。 */
+  const marqueeRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   /** 吸管按下取色中(节流到每 40ms 一次 IPC)。 */
   const eyedropRef = useRef<{ last: number } | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
@@ -161,11 +164,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         });
       }
     }
-    // overlay:选框拖拽实时预览(shift 约束正方形)
+    // overlay:选框拖拽实时预览(约束同提交口径:拖拽中新按的 Shift=正方形 / Alt=从中心)
     if (marqueeRef.current) {
       const m = marqueeRef.current;
-      const d = m.lastShift ? constrainSquare(m) : m;
-      const r = normalizeRect(d);
+      const r = marqueeRect(m, m.mods);
       if (r) {
         octx.save();
         octx.setLineDash([4, 4]);
@@ -196,9 +198,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.stroke();
     }
 
-    // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位;选区消失后本循环自然停
+    // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位(≈15px/s,近 photocraft 上游 10);
+    // 选区消失后本循环自然停
     if (s.state.hasSelection || marqueeRef.current) {
-      s.runtime.antsPhase = (s.runtime.antsPhase + 0.6) % 8;
+      s.runtime.antsPhase = (s.runtime.antsPhase + 0.25) % 8;
       scheduleDraw();
     }
   }, [tabId]);
@@ -309,6 +312,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         void runCommand(tabId, 'tools.swapColors', {}).catch(console.error);
       } else if (k === 'd') {
         void runCommand(tabId, 'tools.defaultColors', {}).catch(console.error);
+      } else if (k === 'm') {
+        // M 键组内循环:已在选框工具上时切换矩形/椭圆(photocraft 上游口径)
+        const st = getSession(tabId);
+        if (st?.tool === 'marquee') {
+          setOptions(tabId, { marqueeShape: st.options.marqueeShape === 'rect' ? 'ellipse' : 'rect' });
+        } else {
+          setTool(tabId, 'marquee');
+        }
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -376,8 +387,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
     if (s.tool === 'marquee' && e.button === 0) {
-      // 修饰键在按下时定模式(PS):Shift 添加 / Alt 减去 / Shift+Alt 相交
-      marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, shift: e.shiftKey, alt: e.altKey, lastShift: e.shiftKey };
+      // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
+      marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
       scheduleDraw();
     } else if (s.tool === 'eyedropper' && e.button === 0) {
       eyedropRef.current = { last: performance.now() };
@@ -403,7 +414,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (marqueeRef.current) {
       marqueeRef.current.x1 = dx;
       marqueeRef.current.y1 = dy;
-      marqueeRef.current.lastShift = e.shiftKey;
+      marqueeRef.current.mods = trackMods(marqueeRef.current.mods, e.shiftKey, e.altKey);
       scheduleDraw();
     } else if (eyedropRef.current) {
       const now = performance.now();
@@ -422,14 +433,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     marqueeRef.current = null;
     eyedropRef.current = null;
     if (s && m && s.state) {
-      // 松手时的 shift 决定是否按正方形约束提交
-      const d = m.lastShift ? constrainSquare(m) : m;
-      const params = marqueeParams(d, s.options);
-      if (params) {
-        void runCommand(tabId, 'select.rect', params)
+      const r = marqueeRect(m, m.mods);
+      if (r) {
+        // mode 由按下时的修饰键决定;无现有选区时减去/相交落回新选区(PS 口径)
+        const mode = effectiveMode(selectMode(m.mods.pressShift, m.mods.pressAlt), s.state.hasSelection);
+        void runCommand(tabId, 'select.rect', marqueeParams(r, s.options, mode))
           .then(() => {
-            const r = normalizeRect(d);
-            if (r) s.runtime.selectionShape = { kind: s.options.marqueeShape, rect: [r.x, r.y, r.w, r.h] };
+            s.runtime.selectionShape = { kind: s.options.marqueeShape, rect: [r.x, r.y, r.w, r.h] };
           })
           .catch((err) => console.error('[editor] select.rect', err));
       } else {

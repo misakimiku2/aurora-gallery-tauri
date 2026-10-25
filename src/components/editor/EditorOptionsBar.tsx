@@ -64,21 +64,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : isMarquee ? (
         <>
-          <div className="flex items-center rounded border border-black/10 dark:border-white/15 overflow-hidden">
-            {(['rect', 'ellipse'] as const).map((shape, i) => (
-              <button
-                key={shape}
-                onClick={() => setOptions(tabId, { marqueeShape: shape })}
-                className={`px-2 py-0.5 ${i === 1 ? 'border-l border-black/10 dark:border-white/15' : ''} ${
-                  s.options.marqueeShape === shape
-                    ? 'bg-sky-600 text-white'
-                    : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10'
-                }`}
-              >
-                {shape === 'rect' ? '矩形' : '椭圆'}
-              </button>
-            ))}
-          </div>
+          <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">
+            {s.options.marqueeShape === 'rect' ? '矩形' : '椭圆'}
+          </span>
+          <span className="text-neutral-400 dark:text-neutral-500">右键工具图标或再按 M 切换形状</span>
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
             羽化
             <input
@@ -97,7 +86,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             消除锯齿
           </label>
-          <span className="text-neutral-400 dark:text-neutral-500">Shift 添加 / Alt 减去 / Shift+Alt 相交;单击取消选择</span>
+          <span className="text-neutral-400 dark:text-neutral-500">按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心</span>
         </>
       ) : CROSSHAIR_HINT[s.tool] ? (
         <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>
