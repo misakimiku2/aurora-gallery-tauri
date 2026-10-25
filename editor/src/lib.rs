@@ -10,6 +10,8 @@ use photocraft_engine::{file_cmds, Session};
 use photocraft_geom::Rect;
 use serde_json::{json, Value};
 
+pub mod outline;
+
 #[derive(Debug)]
 pub struct EditorError(pub String);
 
@@ -184,5 +186,23 @@ impl EditorManager {
     /// 打开中的文档 id 列表。
     pub fn documents(&self) -> Vec<u64> {
         self.session.documents().iter().map(|d| d.doc.id.0).collect()
+    }
+
+    /// 选区轮廓(mask 阈值 0.5 的边界,合并后的水平/垂直线段,文档像素坐标)。
+    /// `step` 为采样步长(前端按视图 zoom 给:2^floor(log2(1/zoom)),zoom≥100% 时为 1);
+    /// 服务端再经 `bounded_step` 把采样网格压到 ≤2²⁰ 格。无选区返回 None。
+    /// 蚂蚁线画真实轮廓(加减/羽化/反选后的形状都正确),而非 selectionBounds 外接框。
+    pub fn selection_outline(&mut self, doc: u64, step: u32) -> Result<Option<Value>> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let sel = match st.doc.selection.as_ref() {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let bounds = sel.content_bounds();
+        let step = outline::bounded_step(bounds, step);
+        let segs = outline::outline_scaled(sel, bounds, step);
+        let flat: Vec<[i32; 4]> = segs.iter().map(|(a, b)| [a[0], a[1], b[0], b[1]]).collect();
+        Ok(Some(json!({ "step": step, "segments": flat })))
     }
 }

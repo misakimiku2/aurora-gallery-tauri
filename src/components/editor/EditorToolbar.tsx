@@ -44,18 +44,19 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
-  const [menuOpen, setMenuOpen] = useState(false);
+  /** 子形态弹层位置(屏幕坐标;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 点菜单外关闭子形态弹层
   useEffect(() => {
-    if (!menuOpen) return undefined;
+    if (!menuPos) return undefined;
     const close = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+      if (!menuRef.current?.contains(e.target as Node)) setMenuPos(null);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
-  }, [menuOpen]);
+  }, [menuPos]);
 
   if (!s) return null;
 
@@ -68,7 +69,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const pickMarquee = (shape: 'rect' | 'ellipse') => {
     setOptions(tabId, { marqueeShape: shape });
     setTool(tabId, 'marquee');
-    setMenuOpen(false);
+    setMenuPos(null);
   };
 
   return (
@@ -79,7 +80,8 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
         onClick={() => setTool(tabId, 'marquee')}
         onContextMenu={(e) => {
           e.preventDefault();
-          setMenuOpen(true);
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setMenuPos({ x: r.right + 4, y: r.top });
         }}
         className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
           s.tool === 'marquee'
@@ -89,24 +91,22 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
       >
         {marqueeIcon}
       </button>
-      {menuOpen && (
-        <div ref={menuRef} className="relative w-full z-50">
-          <div className="absolute left-9 top-0 w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15">
-            {MARQUEE_SHAPES.map(({ shape, label, icon }) => (
-              <button
-                key={shape}
-                onClick={() => pickMarquee(shape)}
-                className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
-                  marqueeShape === shape
-                    ? 'text-sky-700 dark:text-sky-300'
-                    : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
-                }`}
-              >
-                {icon}
-                {label}
-              </button>
-            ))}
-          </div>
+      {menuPos && (
+        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menuPos.x, top: menuPos.y }}>
+          {MARQUEE_SHAPES.map(({ shape, label, icon }) => (
+            <button
+              key={shape}
+              onClick={() => pickMarquee(shape)}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
+                marqueeShape === shape
+                  ? 'text-sky-700 dark:text-sky-300'
+                  : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+              }`}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
         </div>
       )}
       {GROUPS.map(({ tool, label, icon }) => (

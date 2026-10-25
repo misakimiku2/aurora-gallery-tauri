@@ -139,22 +139,6 @@ export function sampleHex(
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** 蚂蚁线形状:引擎只回 selectionBounds,矩形/椭圆形状由工具交互侧补记。 */
-export interface SelectionShape {
-  kind: 'rect' | 'ellipse';
-  /** 与 selectionBounds 同口径的外接矩形 [x,y,w,h]。 */
-  rect: [number, number, number, number];
-}
-
-/** shape 与引擎 bounds 完全一致时才可信(undo/全选/反选后退回 bounds 框)。 */
-export function shapeMatchesBounds(
-  shape: SelectionShape | null,
-  bounds: [number, number, number, number] | null | undefined,
-): shape is SelectionShape {
-  if (!shape || !bounds) return false;
-  return shape.rect[0] === bounds[0] && shape.rect[1] === bounds[1] && shape.rect[2] === bounds[2] && shape.rect[3] === bounds[3];
-}
-
 /** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M 键不在表内:选框组内循环,由画布层处理。 */
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', l: 'lasso', c: 'crop', i: 'eyedropper',

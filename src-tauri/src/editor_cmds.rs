@@ -71,6 +71,13 @@ pub fn editor_state(s: State<EditorState>, doc: u64) -> Result<Value, String> {
     m.state(doc).map_err(|e| e.to_string())
 }
 
+/// 选区真实轮廓(边界线段,文档坐标;蚂蚁线数据源)。无选区返回 null。
+#[tauri::command]
+pub fn editor_selection_outline(s: State<EditorState>, doc: u64, step: Option<u32>) -> Result<Option<Value>, String> {
+    let mut m = lock(&s)?;
+    m.selection_outline(doc, step.unwrap_or(1)).map_err(|e| e.to_string())
+}
+
 /// 关闭文档(未保存修改直接丢弃,保存流程由前端先行决定)。
 #[tauri::command]
 pub fn editor_close(s: State<EditorState>, doc: u64) -> Result<(), String> {

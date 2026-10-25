@@ -7,13 +7,13 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { editorRender } from './editorBridge';
-import { getSession, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
+import { getSession, refreshSelectionOutline, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   effectiveMode, initialMods, marqueeParams, marqueeRect, sampleHex,
-  selectMode, shapeMatchesBounds, TOOL_KEYS, trackMods, type DragPoint, type DragMods,
+  selectMode, TOOL_KEYS, trackMods, type DragPoint, type DragMods,
 } from './toolLogic';
 
 const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
@@ -53,12 +53,6 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const fittedRef = useRef(false);
 
   const session = (sessionRef.current = getSession(tabId));
-
-  // 订阅 store(tool/revision/docId 变化触发 React 更新)
-  useEffect(() => {
-    const un = subscribeSession(tabId, () => forceUpdate((n) => n + 1));
-    return un;
-  }, [tabId]);
 
   const scheduleDraw = useCallback(() => {
     if (drawPending.current) return;
@@ -128,8 +122,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     octx.lineWidth = 1;
     octx.strokeRect(v.ox - 0.5, v.oy - 0.5, dw + 1, dh + 1);
 
-    // overlay:蚂蚁线(黑白互补虚线,相位逐帧推进)。rect/ellipse 形状由选框交互侧补记,
-    // 与引擎 bounds 匹配才画形状,其余(全选/反选/undo 后)退回 bounds 框。
+    // overlay:选区蚂蚁线——真实 mask 轮廓(editor_selection_outline,引擎侧 outline.rs
+    // 按 0.5 阈值提边界段),加减/羽化/反选后的形状都正确;轮廓到达前的过渡帧画 bounds 框。
     const drawAnts = (build: (c: CanvasRenderingContext2D) => void) => {
       octx.save();
       octx.lineWidth = 1;
@@ -143,19 +137,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.stroke();
       octx.restore();
     };
-    const docRectPath = (r: { x: number; y: number; w: number; h: number }) => (c: CanvasRenderingContext2D) => {
-      c.beginPath();
-      if (s.options.marqueeShape === 'ellipse') {
-        c.ellipse((r.x + r.w / 2) * v.scale + v.ox, (r.y + r.h / 2) * v.scale + v.oy, (r.w / 2) * v.scale, (r.h / 2) * v.scale, 0, 0, Math.PI * 2);
-      } else {
-        c.rect(r.x * v.scale + v.ox, r.y * v.scale + v.oy, r.w * v.scale, r.h * v.scale);
-      }
-    };
     const sel = s.state.selectionBounds;
     if (sel) {
-      const shape = s.runtime.selectionShape;
-      if (shapeMatchesBounds(shape, sel)) {
-        drawAnts(docRectPath({ x: shape.rect[0], y: shape.rect[1], w: shape.rect[2], h: shape.rect[3] }));
+      refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
+      const segs = s.runtime.selectionOutline;
+      if (segs && segs.length) {
+        drawAnts((c) => {
+          c.beginPath();
+          for (let i = 0; i < segs.length; i++) {
+            const [x0, y0, x1, y1] = segs[i];
+            c.moveTo(x0 * v.scale + v.ox, y0 * v.scale + v.oy);
+            c.lineTo(x1 * v.scale + v.ox, y1 * v.scale + v.oy);
+          }
+        });
       } else {
         const [x, y, w, h] = sel;
         drawAnts((c) => {
@@ -173,8 +167,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.setLineDash([4, 4]);
         octx.strokeStyle = '#ffffffcc';
         octx.lineWidth = 1;
-        const build = docRectPath(r);
-        build(octx);
+        octx.beginPath();
+        if (s.options.marqueeShape === 'ellipse') {
+          octx.ellipse((r.x + r.w / 2) * v.scale + v.ox, (r.y + r.h / 2) * v.scale + v.oy, (r.w / 2) * v.scale, (r.h / 2) * v.scale, 0, 0, Math.PI * 2);
+        } else {
+          octx.rect(r.x * v.scale + v.ox, r.y * v.scale + v.oy, r.w * v.scale, r.h * v.scale);
+        }
         octx.stroke();
         octx.strokeStyle = '#000000cc';
         octx.lineDashOffset = 4;
@@ -205,6 +203,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
     }
   }, [tabId]);
+
+  // 订阅 store(tool/revision/docId/state 变化):驱动 React 更新 + 调度一帧画布重绘。
+  // 重绘不能只靠 requestDraw 注册(挂载时 session 常未建好)或位图 effect(只在
+  // revision 变化时画,画时 state 还没到):draw 直读 store,任何命令落地(选区/
+  // 取色/图层)都当帧可见。这才是"提交后立即显示"的保证。
+  useEffect(() => {
+    const un = subscribeSession(tabId, () => {
+      const s = getSession(tabId);
+      if (s && s.runtime.requestDraw !== scheduleDraw) s.runtime.requestDraw = scheduleDraw;
+      forceUpdate((n) => n + 1);
+      scheduleDraw();
+    });
+    return un;
+  }, [tabId, scheduleDraw]);
 
   // 注册重绘请求 + 初始适配
   useEffect(() => {
@@ -438,9 +450,6 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         // mode 由按下时的修饰键决定;无现有选区时减去/相交落回新选区(PS 口径)
         const mode = effectiveMode(selectMode(m.mods.pressShift, m.mods.pressAlt), s.state.hasSelection);
         void runCommand(tabId, 'select.rect', marqueeParams(r, s.options, mode))
-          .then(() => {
-            s.runtime.selectionShape = { kind: s.options.marqueeShape, rect: [r.x, r.y, r.w, r.h] };
-          })
           .catch((err) => console.error('[editor] select.rect', err));
       } else {
         // 点击(近零位移)= 取消选择(PS 行为;无选区时引擎空转无历史步)

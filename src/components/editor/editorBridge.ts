@@ -32,6 +32,11 @@ export async function editorState(doc: number): Promise<EditorDocState> {
   return invoke<EditorDocState>('editor_state', { doc });
 }
 
+/** 选区真实轮廓(边界线段 [x0,y0,x1,y1],文档像素坐标;蚂蚁线数据源)。无选区为 null。 */
+export async function editorSelectionOutline(doc: number, step: number): Promise<{ step: number; segments: number[][] } | null> {
+  return invoke<{ step: number; segments: number[][] } | null>('editor_selection_outline', { doc, step });
+}
+
 export async function editorClose(doc: number): Promise<void> {
   return invoke<void>('editor_close', { doc });
 }

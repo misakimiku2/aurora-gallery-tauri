@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   constrainSquare, docToRaster, effectiveMode, initialMods, marqueeParams, marqueeRect,
-  normalizeRect, reflectFromCenter, sampleHex, selectMode, shapeMatchesBounds,
+  normalizeRect, reflectFromCenter, sampleHex, selectMode,
   TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -101,16 +101,6 @@ describe('docToRaster / sampleHex', () => {
     expect(sampleHex(ctx, 1.9, 0.5, 1)).toBe('#ff8000');
     expect(sampleHex(ctx, 2, 0, 1)).toBeNull();
     expect(sampleHex(ctx, -1, 0, 1)).toBeNull();
-  });
-});
-
-describe('shapeMatchesBounds', () => {
-  it('完全一致才认形状,否则退回 bounds 框', () => {
-    const shape = { kind: 'ellipse' as const, rect: [1, 2, 30, 40] as [number, number, number, number] };
-    expect(shapeMatchesBounds(shape, [1, 2, 30, 40])).toBe(true);
-    expect(shapeMatchesBounds(shape, [1, 2, 30, 41])).toBe(false);
-    expect(shapeMatchesBounds(shape, null)).toBe(false);
-    expect(shapeMatchesBounds(null, [1, 2, 30, 40])).toBe(false);
   });
 });
 

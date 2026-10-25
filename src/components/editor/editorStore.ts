@@ -4,9 +4,8 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool } from './editorTypes';
-import { editorClose, editorRun, editorState } from './editorBridge';
+import { editorClose, editorRun, editorSelectionOutline, editorState } from './editorBridge';
 import type { ViewTransform } from './viewMath';
-import type { SelectionShape } from './toolLogic';
 
 export interface ToolOptions {
   brushSize: number;
@@ -34,8 +33,12 @@ export interface EditorRuntime {
   viewH: number;
   /** 画布注册的重绘请求(视图动作/工具预览用)。 */
   requestDraw: (() => void) | null;
-  /** 选框刚提交的形状(引擎只回外接 bounds;与 bounds 匹配时画形状蚂蚁线,否则退回 bounds 框)。 */
-  selectionShape: SelectionShape | null;
+  /** 选区真实轮廓(mask 边界段,文档坐标;draw 每帧按 key 防抖拉取)。 */
+  selectionOutline: number[][] | null;
+  /** 已拉取轮廓对应的 key(revision:bounds:step);空 = 与当前不符需重拉。 */
+  outlineKey: string;
+  /** 正在拉取的 key(防重复请求)。 */
+  outlineFetching: string;
   /** 蚂蚁线相位(动画帧推进,画布直写不走订阅)。 */
   antsPhase: number;
 }
@@ -91,7 +94,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       gradientStyle: 'linear',
       marqueeShape: 'rect',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionShape: null, antsPhase: 0 },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0 },
   };
   sessions.set(tabId, s);
   return s;
@@ -161,4 +164,37 @@ export function disposeSession(tabId: string): void {
   if (s.docId != null) {
     void editorClose(s.docId).catch(() => undefined);
   }
+}
+
+/**
+ * 拉取选区真实轮廓(蚂蚁线数据)。draw 每帧调用,内部按
+ * revision:bounds:step 防抖——选区没变就不发请求;无选区时清空。
+ * step 采样步长按视图 zoom(photocraft 上游口径:2^floor(log2(1/zoom)),钳 1..64)。
+ */
+export function refreshSelectionOutline(tabId: string): void {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null || !s.state) return;
+  const sel = s.state.selectionBounds;
+  if (!s.state.hasSelection || !sel) {
+    if (s.runtime.selectionOutline !== null) {
+      s.runtime.selectionOutline = null;
+      s.runtime.outlineKey = '';
+    }
+    return;
+  }
+  const step = Math.min(64, Math.max(1, Math.pow(2, Math.floor(Math.log2(1 / s.runtime.view.scale)))));
+  const key = `${s.revision}:${sel.join(',')}:${step}`;
+  if (s.runtime.outlineKey === key || s.runtime.outlineFetching === key) return;
+  s.runtime.outlineFetching = key;
+  void editorSelectionOutline(s.docId, step)
+    .then((r) => {
+      s.runtime.outlineFetching = '';
+      s.runtime.selectionOutline = r ? r.segments : null;
+      s.runtime.outlineKey = r ? key : '';
+      s.runtime.requestDraw?.();
+    })
+    .catch((e) => {
+      s.runtime.outlineFetching = '';
+      console.error('[editor] selection outline', e);
+    });
 }

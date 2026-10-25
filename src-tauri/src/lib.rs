@@ -2134,6 +2134,7 @@ pub fn run() {
         editor_cmds::editor_run,
         editor_cmds::editor_render,
         editor_cmds::editor_state,
+        editor_cmds::editor_selection_outline,
         editor_cmds::editor_close
     ]);
 
