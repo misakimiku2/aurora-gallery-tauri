@@ -74,25 +74,25 @@ const NavigatorTab: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   return (
     <div className="flex flex-col gap-1.5 p-2">
-      <div className="bg-[#1b1b1b] rounded border border-neutral-800 h-[150px] flex items-center justify-center overflow-hidden">
+      <div className="bg-subtle rounded border border-black/10 dark:border-white/10 h-[150px] flex items-center justify-center overflow-hidden">
         <div className="relative inline-block leading-none">
           <canvas ref={thumbRef} className="max-w-[220px] max-h-[142px]" />
           <div ref={boxRef} className="absolute border border-red-500/90 pointer-events-none" style={{ left: 0, top: 0 }} />
         </div>
       </div>
       <div className="flex items-center gap-1">
-        <button onClick={() => zoomSession(tabId, 1 / ZOOM_STEP)} className="p-1 text-neutral-400 hover:text-neutral-100" title="缩小">
+        <button onClick={() => zoomSession(tabId, 1 / ZOOM_STEP)} className="p-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="缩小">
           <Minus size={13} />
         </button>
-        <span ref={zoomTextRef} className="text-[11px] text-neutral-300 w-12 text-center">100%</span>
-        <button onClick={() => zoomSession(tabId, ZOOM_STEP)} className="p-1 text-neutral-400 hover:text-neutral-100" title="放大">
+        <span ref={zoomTextRef} className="text-[11px] text-gray-700 dark:text-neutral-300 w-12 text-center">100%</span>
+        <button onClick={() => zoomSession(tabId, ZOOM_STEP)} className="p-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="放大">
           <Plus size={13} />
         </button>
         <div className="flex-1" />
-        <button onClick={() => fitSession(tabId)} className="p-1 text-neutral-400 hover:text-neutral-100" title="适合屏幕">
+        <button onClick={() => fitSession(tabId)} className="p-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="适合屏幕">
           <Maximize size={13} />
         </button>
-        <button onClick={() => actualPixelsSession(tabId)} className="p-1 text-neutral-400 hover:text-neutral-100" title="实际像素 (100%)">
+        <button onClick={() => actualPixelsSession(tabId)} className="p-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="实际像素 (100%)">
           <Frame size={13} />
         </button>
       </div>
@@ -145,28 +145,28 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
   const sel = s?.state?.selectionBounds;
 
   return (
-    <div className="p-2 space-y-1 text-[11px] text-neutral-300 font-mono">
+    <div className="p-2 space-y-1 text-[11px] text-gray-700 dark:text-neutral-300 font-mono">
       <div className="flex justify-between">
-        <span className="text-neutral-500">X / Y</span>
+        <span className="text-gray-500 dark:text-neutral-400">X / Y</span>
         <span>{info ? `${info.x}, ${info.y}` : '—'}</span>
       </div>
       <div className="flex justify-between items-center">
-        <span className="text-neutral-500">R / G / B</span>
+        <span className="text-gray-500 dark:text-neutral-400">R / G / B</span>
         <span className="flex items-center gap-1.5">
-          {info?.rgb && <span className="w-3 h-3 rounded-sm border border-neutral-600 inline-block" style={{ background: `rgb(${info.rgb.join(',')})` }} />}
+          {info?.rgb && <span className="w-3 h-3 rounded-sm border border-black/20 dark:border-neutral-600 inline-block" style={{ background: `rgb(${info.rgb.join(',')})` }} />}
           <span>{info?.rgb ? info.rgb.join(', ') : '—'}</span>
         </span>
       </div>
       <div className="flex justify-between">
-        <span className="text-neutral-500">文档</span>
+        <span className="text-gray-500 dark:text-neutral-400">文档</span>
         <span>{s?.state ? `${s.state.width} × ${s.state.height}` : '—'}</span>
       </div>
       <div className="flex justify-between">
-        <span className="text-neutral-500">选区</span>
+        <span className="text-gray-500 dark:text-neutral-400">选区</span>
         <span>{sel ? `${sel[2]} × ${sel[3]}` : '—'}</span>
       </div>
       <div className="flex justify-between">
-        <span className="text-neutral-500">文档名</span>
+        <span className="text-gray-500 dark:text-neutral-400">文档名</span>
         <span className="truncate max-w-[140px]" title={s?.state?.name ?? ''}>{s?.state?.name ?? '—'}</span>
       </div>
     </div>
@@ -176,13 +176,13 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
 export const NavigatorInfoPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [tab, setTab] = useState<'nav' | 'info'>('nav');
   return (
-    <div className="border-b border-neutral-800 shrink-0">
-      <div className="flex border-b border-neutral-800">
+    <div className="border-b border-black/10 dark:border-white/10 shrink-0">
+      <div className="flex border-b border-black/10 dark:border-white/10">
         {([['nav', '导航器'], ['info', '信息']] as const).map(([k, label]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`px-3 py-1 text-[11px] ${tab === k ? 'text-neutral-100 border-b-2 border-sky-500' : 'text-neutral-500 hover:text-neutral-300'}`}
+            className={`px-3 py-1 text-[11px] ${tab === k ? 'text-neutral-100 border-b-2 border-sky-500' : 'text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:text-neutral-300'}`}
           >
             {label}
           </button>

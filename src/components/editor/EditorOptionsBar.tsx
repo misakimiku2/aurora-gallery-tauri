@@ -1,0 +1,66 @@
+/**
+ * 工具选项条(文件信息栏之下):随当前工具显示设置项。
+ * M1 先做画笔族的笔径/硬度/不透明度(本地选项,M2 接引擎 ToolState);其余工具占位。
+ */
+import React, { useEffect, useState } from 'react';
+import { getSession, setOptions, subscribeSession } from './editorStore';
+import type { EditorTool } from './editorTypes';
+
+const TOOL_NAMES: Record<EditorTool, string> = {
+  move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
+  brush: '画笔', eraser: '橡皮擦', gradient: '渐变', bucket: '油漆桶',
+  blur: '模糊', sharpen: '锐化', smudge: '涂抹', hand: '抓手', zoom: '缩放',
+};
+
+const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
+
+export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  const s = getSession(tabId);
+  if (!s) return null;
+
+  const isBrush = BRUSH_FAMILY.has(s.tool);
+
+  return (
+    <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
+      <span className="font-medium text-neutral-700 dark:text-neutral-200">{TOOL_NAMES[s.tool]}</span>
+      {isBrush ? (
+        <>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+            笔径
+            <input
+              type="range" min={1} max={500} value={s.options.brushSize}
+              onChange={(e) => setOptions(tabId, { brushSize: Number(e.target.value) })}
+              className="w-28 accent-sky-600"
+              title="笔径([ / ] 调节)"
+            />
+            <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.brushSize}px</span>
+          </label>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+            硬度
+            <input
+              type="range" min={0} max={100} value={Math.round(s.options.brushHardness * 100)}
+              onChange={(e) => setOptions(tabId, { brushHardness: Number(e.target.value) / 100 })}
+              className="w-20 accent-sky-600"
+            />
+            <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{Math.round(s.options.brushHardness * 100)}%</span>
+          </label>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+            不透明度
+            <input
+              type="range" min={1} max={100} value={Math.round(s.options.brushOpacity * 100)}
+              onChange={(e) => setOptions(tabId, { brushOpacity: Number(e.target.value) / 100 })}
+              className="w-20 accent-sky-600"
+            />
+            <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{Math.round(s.options.brushOpacity * 100)}%</span>
+          </label>
+        </>
+      ) : (
+        <span className="text-neutral-400 dark:text-neutral-500">该工具的选项在 M2 接入</span>
+      )}
+      <div className="flex-1" />
+      <span className="text-neutral-400 dark:text-neutral-500">编辑器 v3 · M1</span>
+    </div>
+  );
+};

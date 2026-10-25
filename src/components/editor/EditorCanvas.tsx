@@ -15,15 +15,15 @@ const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
 
-function makeCheckerPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+function makeCheckerPattern(ctx: CanvasRenderingContext2D, dark: boolean): CanvasPattern | null {
   const c = document.createElement('canvas');
   c.width = 16;
   c.height = 16;
   const g = c.getContext('2d');
   if (!g) return null;
-  g.fillStyle = '#3f3f3f';
+  g.fillStyle = dark ? '#3f3f3f' : '#ffffff';
   g.fillRect(0, 0, 16, 16);
-  g.fillStyle = '#313131';
+  g.fillStyle = dark ? '#313131' : '#d8d8d8';
   g.fillRect(0, 0, 8, 8);
   g.fillRect(8, 8, 8, 8);
   return ctx.createPattern(c, 'repeat');
@@ -98,10 +98,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const dw = docW * v.scale;
     const dh = docH * v.scale;
 
-    // 棋盘格:锚定文档原点(平移时随文档走)
+    // 棋盘格:锚定文档原点(平移时随文档走);配色随应用浅/深主题
+    const isDark = document.documentElement.classList.contains('dark');
     dctx.save();
     dctx.translate(v.ox, v.oy);
-    const pattern = makeCheckerPattern(dctx);
+    const pattern = makeCheckerPattern(dctx, isDark);
     if (pattern) {
       dctx.fillStyle = pattern;
       dctx.fillRect(0, 0, dw, dh);
@@ -114,7 +115,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     dctx.drawImage(s.runtime.offscreen, v.ox, v.oy, dw, dh);
 
     // overlay:文档外框
-    octx.strokeStyle = '#00000088';
+    octx.strokeStyle = isDark ? '#ffffff66' : '#00000055';
     octx.lineWidth = 1;
     octx.strokeRect(v.ox - 0.5, v.oy - 0.5, dw + 1, dh + 1);
 
@@ -316,7 +317,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   return (
     <div
       ref={wrapRef}
-      className="relative flex-1 min-h-0 overflow-hidden bg-[#262626]"
+      className="relative flex-1 min-h-0 overflow-hidden bg-subtle"
       style={{ cursor, touchAction: 'none' }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -326,7 +327,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     >
       <canvas ref={displayRef} className="absolute inset-0" />
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
-      {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-400">正在打开…</div>}
+      {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">正在打开…</div>}
       {session.error && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-400 p-8 text-center">{session.error}</div>}
     </div>
   );

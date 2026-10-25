@@ -98,24 +98,24 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const svRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
 
-  if (!s || !s.state) return <div className="px-2 py-1.5 text-[11px] text-neutral-400">颜色</div>;
+  if (!s || !s.state) return <div className="px-2 py-1.5 text-[11px] text-gray-500 dark:text-neutral-400">颜色</div>;
   const [h, sv, v] = hsv;
 
   return (
-    <div className="border-b border-neutral-800">
-      <div className="px-2 py-1 text-[11px] text-neutral-400">颜色</div>
+    <div className="border-b border-black/10 dark:border-white/10">
+      <div className="px-2 py-1 text-[11px] text-gray-500 dark:text-neutral-400">颜色</div>
       <div className="flex gap-2 px-2 pb-2">
         <div className="relative w-11 h-11 shrink-0">
           <button
             title="背景色"
             onClick={() => setTarget('background')}
-            className={`absolute right-0 bottom-0 w-7 h-7 rounded-sm border ${target === 'background' ? 'border-sky-400 ring-1 ring-sky-400' : 'border-neutral-500'}`}
+            className={`absolute right-0 bottom-0 w-7 h-7 rounded-sm border ${target === 'background' ? 'border-sky-400 ring-1 ring-sky-400' : 'border-black/30 dark:border-neutral-500'}`}
             style={{ background: toHex(...(s.state.background.slice(0, 3) as RGB)) }}
           />
           <button
             title="前景色"
             onClick={() => setTarget('foreground')}
-            className={`absolute left-0 top-0 w-7 h-7 rounded-sm border z-10 ${target === 'foreground' ? 'border-sky-400 ring-1 ring-sky-400' : 'border-neutral-300'}`}
+            className={`absolute left-0 top-0 w-7 h-7 rounded-sm border z-10 ${target === 'foreground' ? 'border-sky-400 ring-1 ring-sky-400' : 'border-black/40 dark:border-neutral-300'}`}
             style={{ background: toHex(...(s.state.foreground.slice(0, 3) as RGB)) }}
           />
         </div>
@@ -139,12 +139,12 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
             className="h-3 rounded cursor-pointer relative"
             style={{ background: 'linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red)' }}
           >
-            <div className="absolute top-0 w-1.5 h-full bg-white border border-neutral-700 rounded pointer-events-none" style={{ left: `calc(${h * 100}% - 3px)` }} />
+            <div className="absolute top-0 w-1.5 h-full bg-white border border-black/10 dark:border-white/15 rounded pointer-events-none" style={{ left: `calc(${h * 100}% - 3px)` }} />
           </div>
         </div>
       </div>
       <div className="flex items-center gap-2 px-2 pb-2">
-        <span className="w-3 h-3 rounded-sm border border-neutral-600" style={{ background: hex }} />
+        <span className="w-3 h-3 rounded-sm border border-black/20 dark:border-neutral-600" style={{ background: hex }} />
         <input
           value={hex}
           onChange={(e) => setHex(e.target.value)}
@@ -158,10 +158,10 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
             applyHsv(rgbToHsv(((parseInt(m[1].slice(0, 2), 16)) / 255), ((parseInt(m[1].slice(2, 4), 16)) / 255), ((parseInt(m[1].slice(4, 6), 16)) / 255)));
             void runCommand(tabId, 'tools.setColors', { [target]: `#${m[1]}` }).catch(console.error);
           }}
-          className="w-20 px-1.5 py-0.5 text-xs bg-neutral-800 border border-neutral-700 rounded text-neutral-200"
+          className="w-20 px-1.5 py-0.5 text-xs bg-surface border border-black/10 dark:border-white/15 rounded text-neutral-200"
           spellCheck={false}
         />
-        <span className="text-[10px] text-neutral-500">{target === 'foreground' ? '前景色' : '背景色'}</span>
+        <span className="text-[10px] text-gray-500 dark:text-neutral-400">{target === 'foreground' ? '前景色' : '背景色'}</span>
       </div>
     </div>
   );

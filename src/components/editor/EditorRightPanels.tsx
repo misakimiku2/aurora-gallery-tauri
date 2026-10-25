@@ -13,12 +13,12 @@ const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [tab, setTab] = useState<'props' | 'adjust' | 'history'>('history');
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="flex shrink-0 border-b border-neutral-800">
+      <div className="flex shrink-0 border-b border-black/10 dark:border-white/10">
         {([['props', '属性'], ['adjust', '调整'], ['history', '历史记录']] as const).map(([k, label]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`px-2.5 py-1 text-[11px] ${tab === k ? 'text-neutral-100 border-b-2 border-sky-500' : 'text-neutral-500 hover:text-neutral-300'}`}
+            className={`px-2.5 py-1 text-[11px] ${tab === k ? 'text-sky-700 dark:text-neutral-100 border-b-2 border-sky-500' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-300'}`}
           >
             {label}
           </button>
@@ -26,8 +26,8 @@ const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         {tab === 'history' && <HistoryPanel tabId={tabId} />}
-        {tab === 'props' && <div className="p-2 text-[11px] text-neutral-500">文档属性/蒙版属性(M3)</div>}
-        {tab === 'adjust' && <div className="p-2 text-[11px] text-neutral-500">16 种调整层(M3)</div>}
+        {tab === 'props' && <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">文档属性/蒙版属性(M3)</div>}
+        {tab === 'adjust' && <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">16 种调整层(M3)</div>}
       </div>
     </div>
   );
@@ -91,10 +91,10 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   ];
 
   return (
-    <div ref={containerRef} className="h-full flex flex-col bg-[#252525] overflow-hidden">
+    <div ref={containerRef} className="h-full flex flex-col bg-panel overflow-hidden">
       {heights === null
         ? groups.map((g, i) => (
-            <div key={i} className="flex-1 min-h-0 overflow-hidden border-b border-neutral-800">
+            <div key={i} className="flex-1 min-h-0 overflow-hidden border-b border-black/10 dark:border-white/10">
               {g}
             </div>
           ))
@@ -106,9 +106,11 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
               {i < groups.length - 1 && (
                 <div
                   onPointerDown={onDividerDown(i)}
-                  className="h-1.5 shrink-0 cursor-row-resize bg-neutral-800 hover:bg-sky-600/70 transition-colors"
+                  className="group h-[5px] shrink-0 cursor-row-resize border-y border-black/10 dark:border-white/15 hover:bg-sky-500/25 transition-colors"
                   title="拖动调节面板高度"
-                />
+                >
+                  <div className="h-px w-8 mx-auto mt-[2px] bg-black/15 dark:bg-white/20 group-hover:bg-sky-500/60" />
+                </div>
               )}
             </React.Fragment>
           ))}
