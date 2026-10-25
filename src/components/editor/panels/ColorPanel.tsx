@@ -102,7 +102,7 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [h, sv, v] = hsv;
 
   return (
-    <div className="border-b border-black/10 dark:border-white/10">
+    <div className="h-full overflow-y-auto">
       <div className="px-2 py-1 text-[11px] text-gray-500 dark:text-neutral-400">颜色</div>
       <div className="flex gap-2 px-2 pb-2">
         <div className="relative w-11 h-11 shrink-0">

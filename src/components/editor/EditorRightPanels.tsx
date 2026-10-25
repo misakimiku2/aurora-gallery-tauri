@@ -94,22 +94,22 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
     <div ref={containerRef} className="h-full flex flex-col bg-panel overflow-hidden">
       {heights === null
         ? groups.map((g, i) => (
-            <div key={i} className="flex-1 min-h-0 overflow-hidden border-b border-black/10 dark:border-white/10">
+            <div key={i} className="flex-1 min-h-0 overflow-hidden">
               {g}
             </div>
           ))
         : groups.map((g, i) => (
             <React.Fragment key={i}>
               <div className="shrink-0 overflow-hidden" style={{ height: heights[i] }} title={GROUP_TITLES[i]}>
-                <div className="h-full flex flex-col overflow-y-auto">{g}</div>
+                <div className="h-full flex flex-col overflow-hidden">{g}</div>
               </div>
               {i < groups.length - 1 && (
                 <div
                   onPointerDown={onDividerDown(i)}
-                  className="group h-[5px] shrink-0 cursor-row-resize border-y border-black/10 dark:border-white/15 hover:bg-sky-500/25 transition-colors"
+                  className="h-2.5 shrink-0 cursor-row-resize flex items-center justify-center hover:bg-sky-500/20 transition-colors"
                   title="拖动调节面板高度"
                 >
-                  <div className="h-px w-8 mx-auto mt-[2px] bg-black/15 dark:bg-white/20 group-hover:bg-sky-500/60" />
+                  <div className="h-px w-8 bg-black/20 dark:bg-white/25" />
                 </div>
               )}
             </React.Fragment>

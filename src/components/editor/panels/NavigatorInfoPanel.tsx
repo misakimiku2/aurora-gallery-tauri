@@ -176,7 +176,7 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
 export const NavigatorInfoPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [tab, setTab] = useState<'nav' | 'info'>('nav');
   return (
-    <div className="border-b border-black/10 dark:border-white/10 shrink-0">
+    <div className="h-full overflow-y-auto shrink-0">
       <div className="flex border-b border-black/10 dark:border-white/10">
         {([['nav', '导航器'], ['info', '信息']] as const).map(([k, label]) => (
           <button
