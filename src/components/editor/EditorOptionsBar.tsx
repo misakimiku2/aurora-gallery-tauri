@@ -16,9 +16,10 @@ const TOOL_NAMES: Record<EditorTool, string> = {
 const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 顺序 dab 工具(blur/sharpen/smudge):有 strength(强度),参数单位是百分数。 */
 const RETOUCH_TOOLS = new Set(['blur', 'sharpen', 'smudge']);
+/** 选区类工具:羽化/消锯齿/四态模式提示共用。 */
+const SELECTION_TOOLS = new Set(['marquee', 'lasso']);
 const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
   eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
-  lasso: '套索拖拽(M2 后续切片接入)',
   crop: '裁剪框交互(M2 后续切片接入)',
 };
 
@@ -29,7 +30,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   if (!s) return null;
 
   const isBrush = BRUSH_FAMILY.has(s.tool);
-  const isMarquee = s.tool === 'marquee';
 
   return (
     <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
@@ -80,12 +80,13 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             {s.tool === 'eraser' ? '擦除(锁定透明度的图层上涂背景色)' : '左键绘制;[ / ] 调笔径'}
           </span>
         </>
-      ) : isMarquee ? (
+      ) : SELECTION_TOOLS.has(s.tool) ? (
         <>
-          <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">
-            {s.options.marqueeShape === 'rect' ? '矩形' : '椭圆'}
-          </span>
-          <span className="text-neutral-400 dark:text-neutral-500">右键工具图标或再按 M 切换形状</span>
+          {s.tool === 'marquee' && (
+            <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">
+              {s.options.marqueeShape === 'rect' ? '矩形' : '椭圆'}
+            </span>
+          )}
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
             羽化
             <input
@@ -104,7 +105,11 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             消除锯齿
           </label>
-          <span className="text-neutral-400 dark:text-neutral-500">按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心</span>
+          <span className="text-neutral-400 dark:text-neutral-500">
+            {s.tool === 'marquee'
+              ? '按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心'
+              : '拖拽圈选;<3 点提交=取消选择;Esc 取消轮廓;按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交'}
+          </span>
         </>
       ) : CROSSHAIR_HINT[s.tool] ? (
         <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>

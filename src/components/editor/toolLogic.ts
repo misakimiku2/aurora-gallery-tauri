@@ -253,6 +253,24 @@ export function moveBounds(
 }
 
 /**
+ * 套索提交参数(select.lasso;photocraft selection_cmds 口径):points 为文档坐标
+ * [[x,y],…] 自由序列,mode 同选框四态,feather 引擎域 0..=1000 **越界报错**
+ * (select.rect 是静默钳,lasso 不是——发送前必须钳住)。
+ */
+export function lassoParams(
+  points: number[][],
+  opts: ToolOptions,
+  mode: 'replace' | 'add' | 'subtract' | 'intersect',
+): Record<string, unknown> {
+  return {
+    points,
+    mode,
+    antiAlias: opts.antiAlias,
+    feather: Math.min(1000, Math.max(0, opts.feather)),
+  };
+}
+
+/**
  * 边界段串接成连续折线(蚂蚁线的虚线必须沿连续路径跑:canvas 的 setLineDash 在每个
  * moveTo 子路径重置相位,离散的 1-2px 台阶段会全部显示为实线,只有长段才是虚线)。
  * 输入 outline 段集 [x0,y0,x1,y1]…,输出若干条折线的扁平点列 [x0,y0,x1,y1,…];

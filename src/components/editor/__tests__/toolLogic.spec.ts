@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, chainSegments, constrainSquare, docToRaster, effectiveMode,
-  initialMods, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, normalizeRect,
-  reflectFromCenter, rgbToHex, sampleHex, selectMode, strokeCommand, strokeParams,
+  initialMods, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect,
+  normalizeRect, reflectFromCenter, rgbToHex, sampleHex, selectMode, strokeCommand, strokeParams,
   TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -203,6 +203,18 @@ describe('rgbToHex(引擎前景色 0..1 → #rrggbb)', () => {
     expect(rgbToHex(undefined)).toBe('#000000');
     expect(rgbToHex(null)).toBe('#000000');
     expect(rgbToHex([])).toBe('#000000');
+  });
+});
+
+describe('套索参数(photocraft select.lasso 口径)', () => {
+  it('透传 points 文档坐标序列 + mode + antiAlias + feather', () => {
+    const p = lassoParams([[1.5, 2], [10, 3], [5, 9]], OPTS, 'add');
+    expect(p).toEqual({ points: [[1.5, 2], [10, 3], [5, 9]], mode: 'add', antiAlias: true, feather: 0 });
+  });
+  it('feather 钳 0..=1000(引擎越界报错,与 select.rect 的静默钳不同)', () => {
+    expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: 5000 }, 'replace').feather).toBe(1000);
+    expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: -3 }, 'replace').feather).toBe(0);
+    expect(lassoParams([[0, 0], [1, 1], [2, 5]], { ...OPTS, feather: 60 }, 'replace').feather).toBe(60);
   });
 });
 

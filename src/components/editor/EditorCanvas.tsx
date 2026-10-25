@@ -15,7 +15,7 @@ import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, marqueeParams, marqueeRect,
+  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, lassoParams, marqueeParams, marqueeRect,
   moveBounds, moveDelta, moveDirtyRect, rgbToHex, sampleHex, selectMode, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
@@ -84,6 +84,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   } | null>(null);
   /** 浮动件已提交偏移(select.float 结果回读;脏矩形计算用,选区/revision 变了作废)。 */
   const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
+  /** 套索拖拽中(上游 lasso_ui 口径:每个 pointer 事件采一点、实线预览、<3 点=取消选择)。 */
+  const lassoRef = useRef<{ points: number[][]; mods: DragMods } | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -193,6 +195,35 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
       // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
     }
+    // overlay:套索拖拽实线预览(上游 tool_feedback::draw_solid_path:白晕 3px + 黑线 1px,
+    // 开放路径不闭合,点取整到像素中心保持 1px 线锐利)
+    if (lassoRef.current) {
+      const pts = lassoRef.current.points;
+      if (pts.length >= 2) {
+        const lassoPath = () => {
+          octx.beginPath();
+          pts.forEach(([x, y], i) => {
+            const sx = Math.round(x * v.scale + v.ox) + 0.5;
+            const sy = Math.round(y * v.scale + v.oy) + 0.5;
+            if (i === 0) octx.moveTo(sx, sy);
+            else octx.lineTo(sx, sy);
+          });
+        };
+        octx.save();
+        octx.lineJoin = 'round';
+        octx.lineCap = 'round';
+        lassoPath();
+        octx.strokeStyle = 'rgba(255,255,255,0.55)';
+        octx.lineWidth = 3;
+        octx.stroke();
+        lassoPath();
+        octx.strokeStyle = '#000000';
+        octx.lineWidth = 1;
+        octx.stroke();
+        octx.restore();
+      }
+    }
+
     // overlay:选框拖拽实时预览(约束同提交口径:拖拽中新按的 Shift=正方形 / Alt=从中心)
     if (marqueeRef.current) {
       const m = marqueeRef.current;
@@ -555,10 +586,30 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         console.log(`[editor] brush size ${next}px`);
         return;
       }
-      // Enter:落定浮动选区(select.drop;无浮动时引擎空转)
+      // Enter:套索进行中=提交轮廓(上游 Enter 提交);否则落定浮动选区(select.drop;无浮动时引擎空转)
       if (e.key === 'Enter') {
         e.preventDefault();
-        void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+        const ls = lassoRef.current;
+        const st = getSession(tabId);
+        if (ls && st?.state) {
+          if (ls.points.length >= 3) {
+            const mode = effectiveMode(selectMode(ls.mods.pressShift, ls.mods.pressAlt), st.state.hasSelection);
+            lassoRef.current = null;
+            void runCommand(tabId, 'select.lasso', lassoParams(ls.points, st.options, mode))
+              .catch((err) => logError('[editor] select.lasso 失败', err));
+          } else {
+            lassoRef.current = null;
+            scheduleDraw();
+          }
+        } else {
+          void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+        }
+        return;
+      }
+      // Esc:取消进行中的套索(不提交任何命令,上游口径)
+      if (e.key === 'Escape' && lassoRef.current) {
+        lassoRef.current = null;
+        scheduleDraw();
         return;
       }
       // 方向键微移(上游 arrow_keys 口径:1px / Shift 10px):
@@ -697,6 +748,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
     } else if (s.tool === 'move' && e.button === 0 && s.state) {
       beginMoveDrag(s, dx, dy);
+    } else if (s.tool === 'lasso' && e.button === 0 && s.state) {
+      // 套索:按下即起笔(上游绕过拖拽阈值口径),首点入列
+      lassoRef.current = { points: [[dx, dy]], mods: initialMods(e.shiftKey, e.altKey) };
+      scheduleDraw();
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -740,6 +795,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (md) {
       md.pending = { x: dx, y: dy, shift: e.shiftKey };
       void flushMove();
+      return;
+    }
+    const ls = lassoRef.current;
+    if (ls) {
+      // 上游口径:每个 PointerMoved 事件都采一个顶点(无距离节流),仅完全重复去重
+      const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] };
+      const samples = native.getCoalescedEvents?.() ?? [];
+      const list = samples.length ? samples : [native];
+      for (const ev of list) {
+        const [x, y] = screenToDoc(s.runtime.view, ev.clientX - rect.left, ev.clientY - rect.top);
+        const last = ls.points[ls.points.length - 1];
+        if (x !== last[0] || y !== last[1]) ls.points.push([x, y]);
+      }
+      scheduleDraw();
       return;
     }
     if (marqueeRef.current) {
@@ -815,6 +884,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const m = marqueeRef.current;
     marqueeRef.current = null;
     eyedropRef.current = null;
+    const ls = lassoRef.current;
+    lassoRef.current = null;
+    if (s && ls && s.state) {
+      // 上游 canvas.rs Lasso 分支:≥3 点提交 select.lasso;<3 点(含单击)= 取消选择
+      if (ls.points.length >= 3) {
+        const mode = effectiveMode(selectMode(ls.mods.pressShift, ls.mods.pressAlt), s.state.hasSelection);
+        void runCommand(tabId, 'select.lasso', lassoParams(ls.points, s.options, mode))
+          .catch((err) => logError('[editor] select.lasso 失败', err));
+      } else {
+        void runCommand(tabId, 'select.deselect', {}).catch(console.error);
+      }
+      scheduleDraw();
+    }
     if (s && m && s.state) {
       const r = marqueeRect(m, m.mods);
       if (r) {
@@ -844,6 +926,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
     }
     moveDragRef.current = null;
+    lassoRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;
