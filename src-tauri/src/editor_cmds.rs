@@ -78,6 +78,67 @@ pub fn editor_selection_outline(s: State<EditorState>, doc: u64, step: Option<u3
     m.selection_outline(doc, step.unwrap_or(1)).map_err(|e| e.to_string())
 }
 
+/// live 描边帧字节协议:[x:i32 LE][y:i32 LE][w:u32 LE][h:u32 LE][RGBA8…](文档坐标矩形);
+/// w=0 表示本帧无变化。
+fn stroke_frame_bytes(f: aurora_editor::StrokeFrame) -> Response {
+    let mut bytes = Vec::with_capacity(16 + f.pixels.len());
+    bytes.extend_from_slice(&(f.x as i32).to_le_bytes());
+    bytes.extend_from_slice(&(f.y as i32).to_le_bytes());
+    bytes.extend_from_slice(&(f.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(f.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&f.pixels);
+    Response::new(bytes)
+}
+
+/// 落笔:按命令族创建 live 描边(paint.stroke/paint.pencil 走 LiveStroke,
+/// paint.blur|sharpen|smudge 走 LiveDab),渲染首点并返回增量帧。
+#[tauri::command]
+pub fn editor_stroke_begin(s: State<EditorState>, doc: u64, cmd: String, params: Value) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let f = m.stroke_begin(doc, &cmd, params).map_err(|e| e.to_string())?;
+    Ok(stroke_frame_bytes(f))
+}
+
+/// 拖动中投点(三元组 [x,y,pressure,…] 平铺),返回本批点改变区域的增量帧。
+#[tauri::command]
+pub fn editor_stroke_push(s: State<EditorState>, doc: u64, points: Vec<f64>) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let f = m.stroke_push(doc, &points).map_err(|e| e.to_string())?;
+    Ok(stroke_frame_bytes(f))
+}
+
+/// 抬笔:递交 live 像素并回放命令(fromLive 命中则引擎零重渲染),入一步历史。
+/// 响应 = [jsonLen:u32 LE][RunOutcome JSON][描边补差帧(x,y,w,h 头 + RGBA)];帧 w=0 表示无需补差。
+#[tauri::command]
+pub fn editor_stroke_commit(s: State<EditorState>, doc: u64) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let (o, f) = m.stroke_commit(doc).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(&json!({
+        "revision": o.revision,
+        "viewRevision": o.view_revision,
+        "damage": o.damage,
+        "result": o.result,
+    }))
+    .map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(20 + json.len() + f.pixels.len());
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&json);
+    bytes.extend_from_slice(&(f.x as i32).to_le_bytes());
+    bytes.extend_from_slice(&(f.y as i32).to_le_bytes());
+    bytes.extend_from_slice(&(f.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(f.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&f.pixels);
+    Ok(Response::new(bytes))
+}
+
+/// 放弃进行中的描边(无历史)。
+#[tauri::command]
+pub fn editor_stroke_cancel(s: State<EditorState>, doc: u64) -> Result<(), String> {
+    let mut m = lock(&s)?;
+    m.stroke_cancel(doc).map_err(|e| e.to_string())
+}
+
+
 /// 关闭文档(未保存修改直接丢弃,保存流程由前端先行决定)。
 #[tauri::command]
 pub fn editor_close(s: State<EditorState>, doc: u64) -> Result<(), String> {

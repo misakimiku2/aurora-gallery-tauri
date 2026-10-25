@@ -904,7 +904,7 @@ fn color_dab(fmt: &PixelFormat, work: &mut Region, fp: &Footprint, strength: f32
 /// brush stroke, capped at full coverage, so Exposure caps a stroke the way Opacity caps a paint
 /// stroke: overlapping dabs and passes within one stroke don't compound the tone curve, and a
 /// new stroke builds on the last.
-fn tone_stroke(fmt: PixelFormat, toned: impl Fn([f32; 3]) -> [f32; 3] + 'static) -> DabEffect {
+fn tone_stroke(fmt: PixelFormat, toned: impl Fn([f32; 3]) -> [f32; 3] + 'static + Send) -> DabEffect {
     /// Side of the cells that remember, per touched pixel, the coverage applied so far and the
     /// original pixel (copied from the working pixels the first time a dab reaches it). Dense
     /// cells rather than a map per pixel: a map lookup per covered pixel made long strokes with
@@ -989,8 +989,9 @@ enum DabTool {
     Smudge { strength: f32, finger: Option<[f32; 4]>, max_size: f32 },
 }
 
-/// One dab's edit of the working copy.
-pub(crate) type DabEffect = Box<dyn FnMut(&mut Region, &Footprint)>;
+/// One dab's edit of the working copy. `Send` so a `LiveDab` can be held in an editor shell's
+/// cross-thread state (aurora-editor keeps the live stroke inside its shared `EditorManager`).
+pub(crate) type DabEffect = Box<dyn FnMut(&mut Region, &Footprint) + Send>;
 
 /// Pixels an effect reads beyond the dab it writes. Smudge's pickup is a fixed-size square,
 /// independent of pressure, roundness and the dab's current angle.

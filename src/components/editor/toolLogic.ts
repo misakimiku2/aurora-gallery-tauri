@@ -146,6 +146,63 @@ export const TOOL_KEYS: Record<string, string> = {
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };
 
+/** 画笔族(live 描边工具):brush/eraser 走 LiveStroke,blur/sharpen/smudge 走 LiveDab。 */
+export type BrushFamilyTool = 'brush' | 'eraser' | 'blur' | 'sharpen' | 'smudge';
+export const BRUSH_FAMILY: ReadonlySet<BrushFamilyTool> = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
+
+/** 引擎前景色(0..1 浮点)→ #rrggbb(画笔描边的 color 参数)。 */
+export function rgbToHex(c: number[] | undefined | null): string {
+  if (!c || c.length < 3) return '#000000';
+  return `#${[c[0], c[1], c[2]].map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** 画笔族工具 → live 描边命令(与引擎 stroke_begin/commit 的命令族一致)。 */
+export function strokeCommand(tool: BrushFamilyTool): string {
+  return tool === 'blur' || tool === 'sharpen' || tool === 'smudge' ? `paint.${tool}` : 'paint.stroke';
+}
+
+/**
+ * 画笔族落笔参数(photocraft spec 口径;begin 原样传,commit 由桥层原样回放):
+ * - brush/eraser → paint.stroke:橡皮 = erase:true(同一引擎管线);spacing 为小数(0.25=25%),
+ *   平滑 0.1(上游各工具初始值,PS 口径);
+ * - blur/sharpen/smudge → paint.<tool>:retouch 族单位是百分数(hardness/opacity/flow/spacing),
+ *   强度走 strength(1..100)。
+ */
+export function strokeParams(
+  tool: BrushFamilyTool,
+  opts: ToolOptions,
+  foregroundHex: string,
+  zoom: number,
+): Record<string, unknown> {
+  if (tool === 'brush' || tool === 'eraser') {
+    return {
+      size: opts.brushSize,
+      hardness: opts.brushHardness,
+      opacity: opts.brushOpacity,
+      flow: opts.brushFlow,
+      spacing: 0.25,
+      smoothing: 0.1,
+      color: foregroundHex,
+      erase: tool === 'eraser',
+      zoom,
+    };
+  }
+  return {
+    size: opts.brushSize,
+    hardness: Math.round(opts.brushHardness * 100),
+    opacity: Math.max(1, Math.round(opts.brushOpacity * 100)),
+    flow: 100,
+    spacing: 25,
+    strength: opts.retouchStrength,
+  };
+}
+
+/** [ / ] 调笔径(上游 tools.in/decreaseBrushSize 口径:±25% 且至少 ±1px,钳 1..500)。 */
+export function brushSizeStep(size: number, dir: 1 | -1): number {
+  const step = Math.max(1, Math.round(size * 0.25));
+  return Math.min(500, Math.max(1, Math.round(size + dir * step)));
+}
+
 /**
  * 边界段串接成连续折线(蚂蚁线的虚线必须沿连续路径跑:canvas 的 setLineDash 在每个
  * moveTo 子路径重置相位,离散的 1-2px 台阶段会全部显示为实线,只有长段才是虚线)。

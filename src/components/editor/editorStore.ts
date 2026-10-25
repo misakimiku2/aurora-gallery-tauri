@@ -3,7 +3,7 @@
  * React 态(docId/revision/state/tool/选项)走订阅通知;
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
-import type { EditorDocState, EditorTool } from './editorTypes';
+import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorRun, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
 import type { ViewTransform } from './viewMath';
@@ -13,6 +13,8 @@ export interface ToolOptions {
   brushHardness: number;
   brushOpacity: number;
   brushFlow: number;
+  /** blur/sharpen/smudge 的强度(引擎 strength,1..100)。 */
+  retouchStrength: number;
   feather: number;
   tolerance: number;
   antiAlias: boolean;
@@ -89,6 +91,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       brushHardness: 0.8,
       brushOpacity: 1,
       brushFlow: 1,
+      retouchStrength: 50,
       feather: 0,
       tolerance: 32,
       antiAlias: true,
@@ -137,10 +140,23 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
   const s = sessions.get(tabId);
   if (!s || s.docId == null) throw new Error('editor session not open');
   const out = await editorRun(s.docId, cmd, params);
+  await applyRunOutcome(tabId, out, out.revision > 0 || cmd.startsWith('tools.'));
+  return out.result;
+}
+
+/**
+ * 命令落地后的公共收尾:推进 revision、拉状态快照(面板)、同步选区轮廓、
+ * 请求一帧画布重绘。描边提交(stroke_commit)与 runCommand 共用这条路径。
+ * 调用方若已把像素画进离屏位图(fromLive),先抬位画布的 bitmapKey 再进来,
+ * 整幅重渲就会被跳过。
+ */
+export async function applyRunOutcome(tabId: string, out: RunOutcome, pullState: boolean): Promise<void> {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null) return;
   if (out.revision > 0 && out.revision !== s.revision) {
     updateSession(tabId, { revision: out.revision });
   }
-  if (out.revision > 0 || cmd.startsWith('tools.')) {
+  if (pullState) {
     // 文档还在(未被 file.close 关掉):拉状态供面板。tools.*(取色/换色)不推进
     // revision 但改了会话级前/背景色,芯片读 state,所以也要拉。
     try {
@@ -156,7 +172,6 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
       /* 文档已关闭等;忽略 */
     }
   }
-  return out.result;
 }
 
 /** 关闭会话(引擎文档释放),Tab 卸载时调用。 */

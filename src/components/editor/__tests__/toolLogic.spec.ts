@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chainSegments, constrainSquare, docToRaster, effectiveMode, initialMods, marqueeParams,
-  marqueeRect, normalizeRect, reflectFromCenter, sampleHex, selectMode,
-  TOOL_KEYS, trackMods,
+  BRUSH_FAMILY, brushSizeStep, chainSegments, constrainSquare, docToRaster, effectiveMode,
+  initialMods, marqueeParams, marqueeRect, normalizeRect, reflectFromCenter, rgbToHex,
+  sampleHex, selectMode, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 
 const OPTS: ToolOptions = {
-  brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1,
+  brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
 };
 
@@ -138,5 +138,69 @@ describe('TOOL_KEYS', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
     expect(Object.keys(TOOL_KEYS)).toHaveLength(13);
+  });
+});
+
+describe('画笔族 live 描边参数(photocraft spec 口径)', () => {
+  it('BRUSH_FAMILY 五工具;brush/eraser 走 paint.stroke,retouch 三工具走 paint.<tool>', () => {
+    expect([...BRUSH_FAMILY]).toEqual(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
+    expect(strokeCommand('brush')).toBe('paint.stroke');
+    expect(strokeCommand('eraser')).toBe('paint.stroke');
+    expect(strokeCommand('blur')).toBe('paint.blur');
+    expect(strokeCommand('sharpen')).toBe('paint.sharpen');
+    expect(strokeCommand('smudge')).toBe('paint.smudge');
+  });
+  it('brush:小数单位(size/hardness/opacity/flow 0..1)+ 前景色 + zoom', () => {
+    const p = strokeParams('brush', OPTS, '#3366cc', 2.5);
+    expect(p).toEqual({
+      size: 24, hardness: 0.8, opacity: 1, flow: 1,
+      spacing: 0.25, smoothing: 0.1, color: '#3366cc', erase: false, zoom: 2.5,
+    });
+  });
+  it('eraser:同管线,只多 erase:true', () => {
+    const p = strokeParams('eraser', OPTS, '#3366cc', 1) as Record<string, unknown>;
+    expect(p.erase).toBe(true);
+    expect(p.size).toBe(24);
+  });
+  it('retouch 族:hardness/opacity/flow/spacing 换算百分数,强度走 strength', () => {
+    const p = strokeParams('blur', OPTS, '#000000', 1) as Record<string, unknown>;
+    expect(p.size).toBe(24);
+    expect(p.hardness).toBe(80); // 0.8 → 80
+    expect(p.opacity).toBe(100); // 1 → 100
+    expect(p.flow).toBe(100);
+    expect(p.spacing).toBe(25);
+    expect(p.strength).toBe(50);
+    expect('erase' in p).toBe(false);
+  });
+  it('retouch 不透明度下限 1(引擎 clamp 1..100)', () => {
+    const p = strokeParams('smudge', { ...OPTS, brushOpacity: 0.005 }, '#000000', 1) as Record<string, unknown>;
+    expect(p.opacity).toBe(1);
+  });
+});
+
+describe('brushSizeStep([ / ] 调笔径,上游 tools.*BrushSize 口径)', () => {
+  it('±25% 且至少 ±1px', () => {
+    expect(brushSizeStep(24, 1)).toBe(30);
+    expect(brushSizeStep(24, -1)).toBe(18);
+    expect(brushSizeStep(3, 1)).toBe(4); // 步长至少 1
+    expect(brushSizeStep(3, -1)).toBe(2);
+  });
+  it('钳 1..500,往返不越界', () => {
+    expect(brushSizeStep(1, -1)).toBe(1);
+    expect(brushSizeStep(490, 1)).toBe(500);
+    expect(brushSizeStep(500, 1)).toBe(500);
+  });
+});
+
+describe('rgbToHex(引擎前景色 0..1 → #rrggbb)', () => {
+  it('常规换算与钳位', () => {
+    expect(rgbToHex([1, 0, 0])).toBe('#ff0000');
+    expect(rgbToHex([0.2, 0.4, 0.6])).toBe('#336699');
+    expect(rgbToHex([2, -1, 0.5])).toBe('#ff0080'); // 钳到 0..1
+  });
+  it('缺失/空值回退黑色', () => {
+    expect(rgbToHex(undefined)).toBe('#000000');
+    expect(rgbToHex(null)).toBe('#000000');
+    expect(rgbToHex([])).toBe('#000000');
   });
 });

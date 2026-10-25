@@ -1,6 +1,7 @@
 /**
  * 工具选项条(文件信息栏之下):随当前工具显示设置项。
- * M1 先做画笔族的笔径/硬度/不透明度(本地选项,M2 接引擎 ToolState);其余工具占位。
+ * 画笔族选项(笔径/硬度/不透明度;blur 族加强度)直接进 live 描边参数;
+ * 其余工具占位。
  */
 import React, { useEffect, useState } from 'react';
 import { getSession, setOptions, subscribeSession } from './editorStore';
@@ -13,6 +14,8 @@ const TOOL_NAMES: Record<EditorTool, string> = {
 };
 
 const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
+/** 顺序 dab 工具(blur/sharpen/smudge):有 strength(强度),参数单位是百分数。 */
+const RETOUCH_TOOLS = new Set(['blur', 'sharpen', 'smudge']);
 const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
   eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
   lasso: '套索拖拽(M2 后续切片接入)',
@@ -61,6 +64,21 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{Math.round(s.options.brushOpacity * 100)}%</span>
           </label>
+          {RETOUCH_TOOLS.has(s.tool) && (
+            <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+              强度
+              <input
+                type="range" min={1} max={100} value={s.options.retouchStrength}
+                onChange={(e) => setOptions(tabId, { retouchStrength: Number(e.target.value) })}
+                className="w-20 accent-sky-600"
+                title="工具强度(引擎 strength,1..100)"
+              />
+              <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.retouchStrength}%</span>
+            </label>
+          )}
+          <span className="text-neutral-400 dark:text-neutral-500">
+            {s.tool === 'eraser' ? '擦除(锁定透明度的图层上涂背景色)' : '左键绘制;[ / ] 调笔径'}
+          </span>
         </>
       ) : isMarquee ? (
         <>

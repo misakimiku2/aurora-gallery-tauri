@@ -28,7 +28,10 @@
 1. **workspace 根**:新建本 `Cargo.toml`(上游根的裁剪版:`[workspace.package]` 四个继承键、
    `[workspace.dependencies]` 只保留闭包用到的条目、`[workspace.lints]`、dev 依赖优化 profile)。
 2. **engine/algo/io**:删除 dev-dependencies 里的 `photocraft-testkit`(未抄入)。
-3. 除此之外 crate 源码与各自 Cargo.toml 零改动。
+3. **engine/retouch_cmds.rs**:`DabEffect` 加 `+ Send`(`tone_stroke` 的入参闭包同步加 bound)。
+   aurora-editor 把 `LiveDab` 存进跨线程共享的 `EditorManager`(Tauri State 要求 Send),
+   effect 闭包只捕获数值,天然满足。
+4. 除此之外 crate 源码与各自 Cargo.toml 零改动。
 
 ## 升级 procedure
 

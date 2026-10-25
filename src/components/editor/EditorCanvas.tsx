@@ -1,22 +1,27 @@
 /**
  * 编辑器画布:三层结构。
  *  0) CSS 棋盘格(由显示 canvas 自绘,锚定文档原点)
- *  1) 文档位图:全分辨率离屏 canvas,损伤时 putImageData 更新,显示层按视图变换 drawImage
- *  2) overlay:选区框/笔刷圆环/工具预览(M2 起逐步补齐蚂蚁线)
+ *  1) 文档位图:离屏 canvas,revision 变化整幅替换;live 描边期间按 damage 矩形局部贴图
+ *  2) overlay:选区框/笔刷圆环/工具预览(蚂蚁线等)
  * 交互:滚轮=绕指针缩放(PS 习惯)、空格/中键/抓手=平移、缩放工具点击、[/] 调笔径。
+ * 画笔族(brush/eraser/blur/sharpen/smudge):落笔 begin → 每帧批量 push(引擎在文档克隆上
+ * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorRender } from './editorBridge';
-import { getSession, refreshSelectionOutline, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
+import { editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import type { StrokeFrame } from './editorBridge';
+import { applyRunOutcome, getSession, refreshSelectionOutline, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  effectiveMode, initialMods, marqueeParams, marqueeRect, sampleHex,
-  selectMode, TOOL_KEYS, trackMods, type DragPoint, type DragMods,
+  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, marqueeParams, marqueeRect, rgbToHex,
+  sampleHex, selectMode, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
+  type BrushFamilyTool, type DragPoint, type DragMods,
 } from './toolLogic';
+import { error as logError } from '../../utils/logger';
 
-const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
+const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
 
@@ -46,6 +51,23 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const marqueeRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   /** 吸管按下取色中(节流到每 40ms 一次 IPC)。 */
   const eyedropRef = useRef<{ last: number } | null>(null);
+  /** live 描边状态机(画笔族):pump 单飞循环,pointermove 只积累点。 */
+  const strokeRef = useRef<{
+    tool: BrushFamilyTool;
+    docId: number;
+    /** begin IPC 完成(失败则 failed=true 并清除)。 */
+    started: boolean;
+    failed: boolean;
+    /** pointer up 已发生:排空后提交。 */
+    ended: boolean;
+    /** pump 循环运行中(单飞:同一时刻至多一个 push/commit 在途)。 */
+    pumping: boolean;
+    /** 待投点 [x,y,pressure,…] 平铺。 */
+    pending: number[];
+    beginPromise: Promise<void>;
+  } | null>(null);
+  /** 增量帧上屏的中转画布(整幅 putImageData 只支持原点,先入 scratch 再缩放贴图)。 */
+  const scratchRef = useRef<HTMLCanvasElement | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -201,6 +223,117 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId]);
 
+  /** live 描边增量帧 → 离屏位图局部贴图(文档坐标矩形,rasterScale<1 时缩放绘制)。 */
+  const applyStrokeFrame = useCallback((s: EditorSession | undefined, f: StrokeFrame) => {
+    if (!s || !f.width || !f.height) return;
+    const off = s.runtime.offscreen;
+    if (!off) return;
+    let scratch = scratchRef.current;
+    if (!scratch) {
+      scratch = document.createElement('canvas');
+      scratchRef.current = scratch;
+    }
+    if (scratch.width !== f.width || scratch.height !== f.height) {
+      scratch.width = f.width;
+      scratch.height = f.height;
+    }
+    const sctx = scratch.getContext('2d');
+    if (!sctx) return;
+    sctx.putImageData(new ImageData(f.rgba, f.width, f.height), 0, 0);
+    const octx = off.getContext('2d');
+    if (!octx) return;
+    const rs = s.runtime.rasterScale;
+    octx.imageSmoothingEnabled = rs < 1;
+    octx.drawImage(scratch, 0, 0, f.width, f.height, f.x * rs, f.y * rs, f.width * rs, f.height * rs);
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  /**
+   * 描边泵:单飞循环,直到提交/失败才退出。
+   * - 有待投点 → 一批 push(引擎渲染真像素,返回 damage 增量帧直接上屏);
+   * - up 后排空 → commit(fromLive 命中时离屏位图已是提交像素,抬位 bitmapKey
+   *   跳过整幅重渲,applyRunOutcome 只补状态/轮廓);
+   * - 按住不动 → 重复投当前点驱动平滑追赶(上游 HOLD_REPEAT 口径)。
+   */
+  const pumpStroke = useCallback(async () => {
+    const st = strokeRef.current;
+    if (!st || st.pumping) return;
+    st.pumping = true;
+    try {
+      while (strokeRef.current === st) {
+        if (!st.started) {
+          await st.beginPromise;
+          if (st.failed || strokeRef.current !== st) return;
+          continue;
+        }
+        const batch = st.pending;
+        st.pending = [];
+        if (batch.length) {
+          const frame = await editorStrokePush(st.docId, batch);
+          applyStrokeFrame(getSession(tabId), frame);
+        } else if (st.ended) {
+          const { outcome, frame } = await editorStrokeCommit(st.docId);
+          applyStrokeFrame(getSession(tabId), frame);
+          strokeRef.current = null;
+          if ((outcome.result as { fromLive?: boolean } | null)?.fromLive === true) {
+            // 增量帧(+补差帧)已把提交后的像素画进离屏位图:抬位 bitmapKey,
+            // revision 变化触发的整幅重渲按 key 相同跳过
+            bitmapKeyRef.current = `${st.docId}:${outcome.revision}`;
+          }
+          await applyRunOutcome(tabId, outcome, true);
+          scheduleDraw();
+          return;
+        } else {
+          const s = getSession(tabId);
+          const p = s?.runtime.pointerDoc;
+          if (s && p) {
+            const frame = await editorStrokePush(st.docId, [p.x, p.y, 1]);
+            applyStrokeFrame(s, frame);
+          }
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+      }
+    } catch (err) {
+      logError('[editor] live 描边中断,已取消', err);
+      strokeRef.current = null;
+      void editorStrokeCancel(st.docId).catch(() => undefined);
+      scheduleDraw();
+    } finally {
+      if (strokeRef.current === st) st.pumping = false;
+    }
+  }, [tabId, applyStrokeFrame, scheduleDraw]);
+
+  /** 落笔:建 live 描边(begin 渲染首点),随后的 move 点全部走 pump 批量投递。 */
+  const beginStroke = useCallback((
+    s: EditorSession, tool: BrushFamilyTool, x: number, y: number,
+  ) => {
+    const docId = s.docId;
+    if (docId == null) return;
+    const st = {
+      tool, docId, started: false, failed: false, ended: false, pumping: false,
+      pending: [] as number[],
+      beginPromise: Promise.resolve(),
+    };
+    strokeRef.current = st;
+    const params = strokeParams(tool, s.options, rgbToHex(s.state?.foreground), s.runtime.view.scale);
+    params.points = [[x, y, 1]];
+    st.beginPromise = (async () => {
+      try {
+        const frame = await editorStrokeBegin(docId, strokeCommand(tool), params);
+        st.started = true;
+        applyStrokeFrame(s, frame);
+      } catch (err) {
+        // 隐藏层/无图层等引擎拒绝:无副作用,取消本地状态即可(日志可查)
+        st.failed = true;
+        logError(`[editor] ${strokeCommand(tool)} 落笔被拒绝`, err);
+        if (strokeRef.current === st) strokeRef.current = null;
+      }
+    })();
+    void st.beginPromise.then(() => {
+      void pumpStroke();
+    });
+  }, [applyStrokeFrame, pumpStroke]);
+
   // 订阅 store(tool/revision/docId/state 变化):驱动 React 更新 + 调度一帧画布重绘。
   // 重绘不能只靠 requestDraw 注册(挂载时 session 常未建好)或位图 effect(只在
   // revision 变化时画,画时 state 还没到):draw 直读 store,任何命令落地(选区/
@@ -293,10 +426,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         return;
       }
       if (isTyping(e.target)) return;
-      if (e.key === '[' || e.key === ']') {
+      // [ / ] 调笔径:除 e.key 外还匹配物理键码——中文输入法下 e.key 是全角"【】"，
+      // e.code(BracketLeft/Right)不受布局/输入法影响(PS 键位按物理键算)
+      const brushKey = e.key === '[' || e.key === ']'
+        ? (e.key === ']' ? 1 : -1)
+        : e.code === 'BracketRight' ? 1 : e.code === 'BracketLeft' ? -1 : 0;
+      if (brushKey !== 0) {
         e.preventDefault();
-        const step = e.key === '[' ? -1 : 1;
-        const next = Math.min(500, Math.max(1, Math.round(s.options.brushSize * (step > 0 ? 1.15 : 1 / 1.15))));
+        // 上游 tools.in/decreaseBrushSize 口径:±25% 且至少 ±1px,钳 1..500
+        const next = brushSizeStep(s.options.brushSize, brushKey as 1 | -1);
         setOptions(tabId, { brushSize: next });
         console.log(`[editor] brush size ${next}px`);
         return;
@@ -395,7 +533,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const rect = wrapRef.current!.getBoundingClientRect();
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
-    if (s.tool === 'marquee' && e.button === 0) {
+    if (BRUSH_TOOLS.has(s.tool) && e.button === 0 && s.state) {
+      beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
+    } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
       scheduleDraw();
@@ -420,6 +560,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    const st = strokeRef.current;
+    if (st) {
+      // 一帧内的合并采样点全部投给引擎(高刷鼠标下更平滑;上游回放所有样本的口径)
+      const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] };
+      const samples = native.getCoalescedEvents?.() ?? [];
+      const list = samples.length ? samples : [native];
+      for (const ev of list) {
+        const [x, y] = screenToDoc(s.runtime.view, ev.clientX - rect.left, ev.clientY - rect.top);
+        st.pending.push(x, y, 1);
+      }
+      void pumpStroke();
+      scheduleDraw();
+      return;
+    }
     if (marqueeRef.current) {
       marqueeRef.current.x1 = dx;
       marqueeRef.current.y1 = dy;
@@ -438,6 +592,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   const onPointerUp = (e: React.PointerEvent) => {
     const s = getSession(tabId);
+    const stroke = strokeRef.current;
+    if (s && stroke) {
+      // 上游 commit 前的"补齐剩余点":终点本身也要投给引擎,再标记结束
+      if (s.state) {
+        const rect = wrapRef.current!.getBoundingClientRect();
+        const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+        stroke.pending.push(dx, dy, 1);
+      }
+      stroke.ended = true;
+      void pumpStroke();
+    }
     const m = marqueeRef.current;
     marqueeRef.current = null;
     eyedropRef.current = null;
@@ -458,9 +623,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
 
+  const onPointerCancel = (e: React.PointerEvent) => {
+    const stroke = strokeRef.current;
+    if (stroke) {
+      strokeRef.current = null;
+      void editorStrokeCancel(stroke.docId).catch(() => undefined);
+    }
+    marqueeRef.current = null;
+    eyedropRef.current = null;
+    panRef.current = null;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    scheduleDraw();
+  };
+
   const onPointerLeave = () => {
     const s = getSession(tabId);
-    if (s) {
+    if (s && !strokeRef.current) {
       s.runtime.pointerDoc = null;
       scheduleDraw();
     }
@@ -483,6 +661,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}
       onContextMenu={(e) => e.preventDefault()}
     >

@@ -5,7 +5,10 @@
 //! src-tauri 的 editor_* 命令是这里的薄包装;引擎的增量协议
 //! (revision / last_damage / view_revision)经 [`RunOutcome`] 透传给前端。
 
+use photocraft_engine::brush_cmds::LiveStroke;
 use photocraft_engine::doc::DocId;
+use photocraft_engine::paint::StrokePoint;
+use photocraft_engine::retouch_cmds::LiveDab;
 use photocraft_engine::{file_cmds, Session};
 use photocraft_geom::Rect;
 use serde_json::{json, Value};
@@ -56,8 +59,70 @@ pub struct Rendered {
     pub pixels: Vec<u8>,
 }
 
+/// live 描边的一帧增量:文档坐标矩形 + 该区域的合成像素(来自 stroke 的文档克隆)。
+/// 空矩形(width=0)表示本帧无变化。
+#[derive(Debug, Clone)]
+pub struct StrokeFrame {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+impl StrokeFrame {
+    fn empty() -> Self {
+        Self { x: 0, y: 0, width: 0, height: 0, pixels: Vec::new() }
+    }
+}
+
+/// 进行中的 live 描边的引擎侧载体。画笔/铅笔走 [`LiveStroke`],
+/// 顺序 dab 工具(blur/sharpen/smudge)走 [`LiveDab`];两者生命周期同构。
+enum LiveKind {
+    Brush(LiveStroke),
+    Dab(LiveDab),
+}
+
+impl LiveKind {
+    fn doc(&self) -> &photocraft_engine::doc::Document {
+        match self {
+            LiveKind::Brush(l) => &l.doc,
+            LiveKind::Dab(l) => &l.doc,
+        }
+    }
+
+    fn bounds(&self) -> Rect {
+        match self {
+            LiveKind::Brush(l) => l.bounds(),
+            LiveKind::Dab(l) => l.bounds(),
+        }
+    }
+
+    fn push(&mut self, pts: &[StrokePoint]) -> Result<Rect> {
+        match self {
+            LiveKind::Brush(l) => l.push(pts).map_err(Into::into),
+            LiveKind::Dab(l) => l.push(pts).map_err(Into::into),
+        }
+    }
+}
+
+/// 一支 live 描边的完整状态:引擎对象 + begin 时的原始参数 + 全部点。
+/// commit 时把参数原样回放(只换 points/seed),引擎 `LiveCommit::matches`
+/// 比对命中即直接采用 live 像素,不再整笔重渲染。
+struct LiveStrokeState {
+    kind: LiveKind,
+    cmd: String,
+    params: Value,
+    /// 全部点三元组 [x, y, pressure](begin 首点 + 每次 push 的批次)。
+    points: Vec<[f64; 3]>,
+    /// 已返回给前端的帧矩形之并——commit 的 fromLive 帧只需补未送达的部分
+    /// (dab 族收尾 dab 只写进 live 文档,不经 push 返回;点击式点画同理)。
+    returned: Rect,
+}
+
 pub struct EditorManager {
     session: Session,
+    live: Option<LiveStrokeState>,
 }
 
 impl Default for EditorManager {
@@ -68,7 +133,7 @@ impl Default for EditorManager {
 
 impl EditorManager {
     pub fn new() -> Self {
-        Self { session: Session::new() }
+        Self { session: Session::new(), live: None }
     }
 
     fn index_of(&self, doc: u64) -> Result<usize> {
@@ -112,7 +177,9 @@ impl EditorManager {
     }
 
     /// 关闭文档(丢弃未保存修改,与 PS 一致;保存由调用方先行决定)。
+    /// 进行中的 live 描边一并丢弃(其文档克隆随会话释放)。
     pub fn close(&mut self, doc: u64) -> Result<()> {
+        self.live = None;
         self.run(doc, "file.close", json!({})).map(|_| ())
     }
 
@@ -142,6 +209,144 @@ impl EditorManager {
         let img = photocraft_compose::render(&st.doc, rect).to_rgba8();
         Ok(Rendered { width: img.width, height: img.height, pixels: img.pixels })
     }
+
+    // ---- live 描边(画笔族)----
+    //
+    // 口径与 photocraft UI(canvas.rs EngineStroke)一致:落笔时 begin(params 带首点,
+    // 引擎在文档克隆上直接渲染真像素),拖动中每帧 push 一批点并按返回的 damage 矩形
+    // 局部合成给前端,抬笔 commit——用 begin 的原参数回放命令,引擎比对命中(fromLive)
+    // 直接采用 live 像素,零重渲染。
+
+    fn doc_size(&self) -> Result<(u32, u32)> {
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        Ok((st.doc.size.width, st.doc.size.height))
+    }
+
+    /// live 文档(克隆)上合成 `dmg` 区域;空/越界矩形 → 空帧。
+    fn live_frame(kind: &LiveKind, size: (u32, u32), dmg: Rect) -> Result<StrokeFrame> {
+        let full = Rect::from_xywh(0, 0, size.0, size.1);
+        let r = dmg.intersect(&full);
+        if r.is_empty() {
+            return Ok(StrokeFrame::empty());
+        }
+        let img = photocraft_compose::render(kind.doc(), r).to_rgba8();
+        Ok(StrokeFrame { x: r.x0, y: r.y0, width: img.width, height: img.height, pixels: img.pixels })
+    }
+
+    /// 落笔:按命令族创建 live 描边并渲染首点。`params` 须含 `points`(首点起),
+    /// 参数原样留存,commit 时回放。命令族:`paint.stroke`(画笔/橡皮,erase 参数)、
+    /// `paint.pencil`;`paint.blur` / `paint.sharpen` / `paint.smudge`(顺序 dab 工具)。
+    pub fn stroke_begin(&mut self, doc: u64, cmd: &str, params: Value) -> Result<StrokeFrame> {
+        self.activate(doc)?;
+        if self.live.is_some() {
+            return Err(EditorError("a stroke is already active".into()));
+        }
+        let pts = params
+            .get("points")
+            .and_then(Value::as_array)
+            .ok_or_else(|| EditorError(format!("{cmd}: missing `points`")))?;
+        let mut points = Vec::with_capacity(pts.len());
+        for v in pts {
+            let a = v.as_array().ok_or_else(|| EditorError(format!("{cmd}: points must be [x,y,pressure] arrays")))?;
+            let g = |i: usize| a.get(i).and_then(Value::as_f64).ok_or_else(|| EditorError(format!("{cmd}: point needs x and y")));
+            points.push([g(0)?, g(1)?, a.get(2).and_then(Value::as_f64).unwrap_or(1.0)]);
+        }
+        let kind = match cmd {
+            "paint.stroke" | "paint.pencil" => LiveKind::Brush(LiveStroke::begin_with(&self.session, cmd, &params)?),
+            "paint.blur" | "paint.sharpen" | "paint.smudge" => LiveKind::Dab(LiveDab::begin(&self.session, cmd, &params)?),
+            other => return Err(EditorError(format!("{other}: not a live-stroke command"))),
+        };
+        let size = self.doc_size()?;
+        let frame = Self::live_frame(&kind, size, kind.bounds())?;
+        let returned = Rect::from_xywh(frame.x, frame.y, frame.width, frame.height);
+        self.live = Some(LiveStrokeState {
+            kind,
+            cmd: cmd.into(),
+            params,
+            points,
+            returned: if frame.width > 0 { returned } else { Rect::EMPTY },
+        });
+        Ok(frame)
+    }
+
+    /// 拖动中投点:`flat` 为 [x,y,pressure, x,y,pressure, …] 三元组序列。
+    /// 返回本批点改变的区域的合成像素(增量帧)。
+    pub fn stroke_push(&mut self, doc: u64, flat: &[f64]) -> Result<StrokeFrame> {
+        self.activate(doc)?;
+        if flat.len() % 3 != 0 {
+            return Err(EditorError("stroke_push: points must be [x,y,pressure] triples".into()));
+        }
+        let pts: Vec<StrokePoint> = flat.chunks_exact(3).map(|c| StrokePoint::new(c[0], c[1], c[2] as f32)).collect();
+        let size = self.doc_size()?;
+        let st = self.live.as_mut().ok_or_else(|| EditorError("no active stroke".into()))?;
+        let dmg = st.kind.push(&pts)?;
+        for c in flat.chunks_exact(3) {
+            st.points.push([c[0], c[1], c[2]]);
+        }
+        let frame = Self::live_frame(&st.kind, size, dmg)?;
+        if frame.width > 0 {
+            st.returned = st.returned.union(&Rect::from_xywh(frame.x, frame.y, frame.width, frame.height));
+        }
+        Ok(frame)
+    }
+
+    /// 抬笔:递交 live 像素并以 begin 原参数回放命令(引擎比对命中则 `fromLive:true`,
+    /// 直接采用 live 像素);推进一步历史。返回值口径同 [`Self::run`],并附带一笔
+    /// **补差帧**:damage 中尚未返回给前端的部分(dab 族收尾 dab、点击式点画只写进
+    /// live 文档,不经 push 链路;fromLive 命中时前端不再整幅重渲,这帧必须补上)。
+    pub fn stroke_commit(&mut self, doc: u64) -> Result<(RunOutcome, StrokeFrame)> {
+        self.activate(doc)?;
+        let live = self.live.take().ok_or_else(|| EditorError("no active stroke".into()))?;
+        let returned = live.returned;
+        // Brush 族 commit 必须带 begin 生成的 seed(matches 单独比对);dab 族无 seed,不能带。
+        let seed = match &live.kind {
+            LiveKind::Brush(l) => Some(l.seed),
+            LiveKind::Dab(_) => None,
+        };
+        match live.kind {
+            LiveKind::Brush(l) => self.session.offer_live_stroke(l)?,
+            LiveKind::Dab(l) => self.session.offer_live_dab(l)?,
+        }
+        let mut p = live.params;
+        p["points"] = Value::Array(live.points.iter().map(|c| json!([c[0], c[1], c[2]])).collect());
+        if let Some(s) = seed {
+            p["seed"] = json!(s);
+        }
+        let cmd = live.cmd;
+        let result = self.session.execute(&cmd, p)?;
+        let outcome = match self.session.active() {
+            Some(st) if st.doc.id == DocId(doc) => RunOutcome {
+                revision: st.revision,
+                view_revision: st.view_revision,
+                damage: st.last_damage.map(|r| (r.x0, r.y0, r.width(), r.height())),
+                result,
+            },
+            _ => RunOutcome { revision: 0, view_revision: 0, damage: None, result },
+        };
+        // 补差帧:提交后 damage(dab 族收尾含在内)未被此前帧覆盖的部分,从正式文档渲染。
+        let size = self.doc_size()?;
+        let dmg = match outcome.damage {
+            Some((x, y, w, h)) if w > 0 && h > 0 => Rect::from_xywh(x, y, w, h),
+            _ => Rect::EMPTY,
+        };
+        let missing = dmg.intersect(&Rect::from_xywh(0, 0, size.0, size.1));
+        let frame = if missing.is_empty() || missing.union(&returned) == returned {
+            StrokeFrame::empty()
+        } else {
+            let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+            let img = photocraft_compose::render(&st.doc, missing).to_rgba8();
+            StrokeFrame { x: missing.x0, y: missing.y0, width: img.width, height: img.height, pixels: img.pixels }
+        };
+        Ok((outcome, frame))
+    }
+
+    /// 放弃进行中的描边(不产生历史;画布应回退到 revision 快照重渲)。
+    pub fn stroke_cancel(&mut self, doc: u64) -> Result<()> {
+        self.activate(doc)?;
+        self.live = None;
+        Ok(())
+    }
+
 
     /// 降采样合成(导航器/首屏大图);保持宽高比,输出不超过 `max_w`×`max_h`。
     pub fn render_reduced(&mut self, doc: u64, max_w: u32, max_h: u32) -> Result<Rendered> {
