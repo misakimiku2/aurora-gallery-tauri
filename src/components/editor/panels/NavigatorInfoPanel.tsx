@@ -182,7 +182,7 @@ export const NavigatorInfoPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           <button
             key={k}
             onClick={() => setTab(k)}
-            className={`px-3 py-1 text-[11px] ${tab === k ? 'text-neutral-100 border-b-2 border-sky-500' : 'text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:text-neutral-300'}`}
+            className={`px-3 py-1 text-[11px] ${tab === k ? 'text-sky-700 dark:text-neutral-100 border-b-2 border-sky-500' : 'text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:text-neutral-300'}`}
           >
             {label}
           </button>

@@ -36,19 +36,21 @@ const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
 /** 各组的最小高度(px)。 */
 const MIN_H = [132, 120, 168, 132];
 const GROUP_TITLES = ['颜色', '属性 · 调整 · 历史记录', '导航器 · 信息', '图层 · 路径'];
+/** 分隔条高度(px)——初始分配时要从容器里扣除,否则总高溢出把最后一组底部裁掉。 */
+const DIVIDER_H = 10;
 
 export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [heights, setHeights] = useState<number[] | null>(null);
 
-  // 首次测量容器高度,按权重分配(图层组最大)
+  // 首次测量容器高度,按权重分配(扣除分隔条;图层组最大)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
     const init = () => {
       if (heights) return;
-      const h = el.clientHeight;
-      if (h > 100) setHeights([h * 0.2, h * 0.26, h * 0.24, h * 0.3]);
+      const avail = el.clientHeight - 3 * DIVIDER_H;
+      if (avail > 100) setHeights([avail * 0.2, avail * 0.26, avail * 0.24, avail * 0.3]);
     };
     init();
     const ro = new ResizeObserver(init);
@@ -106,10 +108,11 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
               {i < groups.length - 1 && (
                 <div
                   onPointerDown={onDividerDown(i)}
-                  className="h-2.5 shrink-0 cursor-row-resize flex items-center justify-center hover:bg-sky-500/20 transition-colors"
+                  className="h-2.5 shrink-0 cursor-row-resize flex items-center px-2 hover:bg-sky-500/20 transition-colors"
+                  style={{ height: DIVIDER_H }}
                   title="拖动调节面板高度"
                 >
-                  <div className="h-px w-8 bg-black/20 dark:bg-white/25" />
+                  <div className="h-[3px] w-full bg-black/10 dark:bg-white/25 rounded-sm" />
                 </div>
               )}
             </React.Fragment>
