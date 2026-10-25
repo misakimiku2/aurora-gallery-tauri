@@ -5,7 +5,7 @@
  * 四组面板渲染在应用 RightPanel 槽位(RightPanel → EditorRightPanels)。
  */
 import React, { useEffect, useState } from 'react';
-import { Undo2, Redo2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Undo2, Redo2, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
 import { disposeSession, ensureSession, getSession, runCommand, subscribeSession, updateSession } from './editorStore';
 import { EditorToolbar } from './EditorToolbar';
@@ -14,20 +14,18 @@ import { EditorCanvas } from './EditorCanvas';
 import { actualPixelsSession, fitSession, zoomSession } from './editorViewActions';
 import { ZOOM_STEP } from './viewMath';
 
-/** 边缘折叠钮:贴在左右面板边缘,点击收起/展开(与主界面同源的全局布局态)。 */
-const EdgeToggle: React.FC<{ side: 'left' | 'right'; visible: boolean; onClick: () => void; title: string }> = ({
-  side, visible, onClick, title,
+/** 侧面板切换按钮:样式与主界面 TopBar 完全一致(激活 text-blue-500)。 */
+const PanelToggle: React.FC<{ onClick: () => void; active: boolean; title: string; children: React.ReactNode }> = ({
+  onClick, active, title, children,
 }) => (
   <button
-    title={title}
     onClick={onClick}
-    className={`w-4 shrink-0 bg-panel ${side === 'left' ? 'border-r' : 'border-l'} border-black/10 dark:border-white/10
-      flex items-start justify-center pt-1.5 text-neutral-400 dark:text-neutral-500
-      hover:bg-sky-500/15 hover:text-sky-600 dark:hover:text-sky-400 transition-colors`}
+    title={title}
+    className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${
+      active ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'
+    }`}
   >
-    {side === 'left'
-      ? (visible ? <ChevronLeft size={13} /> : <ChevronRight size={13} />)
-      : (visible ? <ChevronRight size={13} /> : <ChevronLeft size={13} />)}
+    {children}
   </button>
 );
 
@@ -71,8 +69,11 @@ export const EditorShell: React.FC<{
 
   return (
     <div className="w-full h-full flex flex-col bg-content text-neutral-800 dark:text-neutral-200 select-none">
-      {/* 文件信息栏(蓝) */}
-      <div className="h-9 shrink-0 flex items-center gap-1 px-2 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
+      {/* 文件信息栏(蓝):左端/右端为侧面板切换(样式同主界面 TopBar) */}
+      <div className="h-9 shrink-0 flex items-center gap-1 px-1 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
+        <PanelToggle onClick={onToggleSidebar} active={sidebarVisible} title={sidebarVisible ? '收起文件夹树' : '展开文件夹树'}>
+          <Sidebar size={18} />
+        </PanelToggle>
         <button
           title="撤销 (Ctrl+Z)"
           disabled={!s?.state?.canUndo}
@@ -97,25 +98,16 @@ export const EditorShell: React.FC<{
         <button onClick={() => fitSession(tabId)} className="px-1.5 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="适合屏幕">适应</button>
         <button onClick={() => actualPixelsSession(tabId)} className="px-1.5 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="实际像素">100%</button>
         <button onClick={() => zoomSession(tabId, ZOOM_STEP)} className="px-1.5 text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100" title="放大">+</button>
+        <PanelToggle onClick={onToggleMetadata} active={metadataVisible} title={metadataVisible ? '收起右侧面板' : '展开右侧面板'}>
+          <PanelRight size={18} />
+        </PanelToggle>
       </div>
       {/* 工具选项条(绿):随工具显示对应设置 */}
       <EditorOptionsBar tabId={tabId} />
-      {/* 主行:边缘钮 | 工具栏(黄) | 画布(白) | 边缘钮 */}
+      {/* 主行:工具栏(黄) | 画布(白);四组面板在应用右栏槽位 */}
       <div className="flex-1 min-h-0 flex">
-        <EdgeToggle
-          side="left"
-          visible={sidebarVisible}
-          onClick={onToggleSidebar}
-          title={sidebarVisible ? '收起文件夹树' : '展开文件夹树'}
-        />
         <EditorToolbar tabId={tabId} />
         <EditorCanvas tabId={tabId} isActive={isActive} />
-        <EdgeToggle
-          side="right"
-          visible={metadataVisible}
-          onClick={onToggleMetadata}
-          title={metadataVisible ? '收起右侧面板' : '展开右侧面板'}
-        />
       </div>
     </div>
   );
