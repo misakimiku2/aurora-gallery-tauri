@@ -3,6 +3,7 @@ import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
+import { EditorRightPanels } from '../editor/EditorRightPanels';
 
 interface RightPanelProps {
   state: AppState;
@@ -50,6 +51,10 @@ export const RightPanel = ({
         <div
           className="h-full flex flex-col"
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
+          {/* 编辑器 v3:编辑 Tab 激活时,右侧槽位换成编辑器四组面板(可拖调高度);退出即还原详情面板 */}
+          {activeTab.isEditorMode && !isAndroidPlatformCached() ? (
+            <EditorRightPanels tabId={activeTab.id} />
+          ) : (
           <MetadataPanel
             files={state.files}
             selectedFileIds={activeTab.selectedFileIds}
@@ -74,6 +79,7 @@ export const RightPanel = ({
             settings={state.settings}
             aiConnectionStatus={state.aiConnectionStatus}
           />
+          )}
         </div>
       </div>
       {isAndroidPlatformCached() && (

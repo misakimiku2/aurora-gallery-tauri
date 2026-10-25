@@ -2746,6 +2746,8 @@ export const App: React.FC = () => {
             setIsReferenceMode={setIsReferenceMode}
             handleReferenceModeChange={handleReferenceModeChange}
             isReferenceMode={isReferenceMode}
+            onToggleSidebar={toggleSidebar}
+            onToggleMetadata={toggleMetadata}
           />
           <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode || activeTab.isEditorMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
             <ToolbarPane

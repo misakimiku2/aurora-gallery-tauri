@@ -33,6 +33,8 @@ interface ViewerPaneProps {
   setIsReferenceMode: React.Dispatch<React.SetStateAction<boolean>>;
   handleReferenceModeChange: (inReferenceMode: boolean) => void;
   isReferenceMode: boolean;
+  onToggleSidebar: () => void;
+  onToggleMetadata: () => void;
 }
 
 // 查看器区域：大图预览（ImageViewer）+ 图片对比画布（ImageComparer）
@@ -64,6 +66,8 @@ export const ViewerPane = ({
   setIsReferenceMode,
   handleReferenceModeChange,
   isReferenceMode,
+  onToggleSidebar,
+  onToggleMetadata,
 }: ViewerPaneProps) => {
   return (
     <>
@@ -144,7 +148,8 @@ export const ViewerPane = ({
           />
         </div>
       ))}
-      {/* 编辑器 v3:编辑 Tab(桌面端;引擎文档随 Tab 生命周期开合) */}
+      {/* 编辑器 v3:编辑 Tab(桌面端;引擎文档随 Tab 生命周期开合)。
+          右侧四组面板走应用 RightPanel 槽位;左栏/右栏可见性切换沿用全局布局态。 */}
       {!isAndroidSync() && state.tabs.map(tab => tab.isEditorMode && (() => {
         const file = tab.editorFileId ? state.files[tab.editorFileId] : undefined;
         if (!file?.path) return null;
@@ -155,6 +160,10 @@ export const ViewerPane = ({
               fileId={file.id}
               filePath={file.path}
               isActive={tab.id === state.activeTabId}
+              sidebarVisible={state.layout.isSidebarVisible}
+              metadataVisible={state.layout.isMetadataVisible}
+              onToggleSidebar={onToggleSidebar}
+              onToggleMetadata={onToggleMetadata}
             />
           </div>
         );
