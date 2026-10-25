@@ -239,7 +239,10 @@ impl EditorManager {
     pub fn stroke_begin(&mut self, doc: u64, cmd: &str, params: Value) -> Result<StrokeFrame> {
         self.activate(doc)?;
         if self.live.is_some() {
-            return Err(EditorError("a stroke is already active".into()));
+            // 上一笔被前端遗弃(异常路径未走到 commit/cancel)。描边协议本身是严格串行的
+            // (begin→push→commit,下一笔 begin 到来即证明旧笔已死):自动丢弃自愈,
+            // 否则一次前端异常会让画笔永久 "a stroke is already active"。
+            self.live = None;
         }
         let pts = params
             .get("points")

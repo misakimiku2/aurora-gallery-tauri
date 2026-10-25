@@ -323,10 +323,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         st.started = true;
         applyStrokeFrame(s, frame);
       } catch (err) {
-        // 隐藏层/无图层等引擎拒绝:无副作用,取消本地状态即可(日志可查)
+        // 隐藏层/无图层等引擎拒绝:无副作用,取消本地状态即可(日志可查)。
+        // 失败也可能发生在引擎 begin 成功之后(帧解析/上屏抛错)——补发 cancel,
+        // 不让 Rust 侧留下悬空 live(否则此后每次落笔都被拒绝)。
         st.failed = true;
-        logError(`[editor] ${strokeCommand(tool)} 落笔被拒绝`, err);
+        logError(`[editor] ${strokeCommand(tool)} 落笔失败`, err);
         if (strokeRef.current === st) strokeRef.current = null;
+        void editorStrokeCancel(docId).catch(() => undefined);
       }
     })();
     void st.beginPromise.then(() => {
@@ -557,7 +560,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
     if (BRUSH_TOOLS.has(s.tool) && e.button === 0 && s.state) {
-      beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
+      // 一笔进行中时忽略再次按下(鼠标不会出现;触屏多指防把进行中描边的 live 顶掉)
+      if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };

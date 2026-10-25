@@ -42,6 +42,7 @@
     "fs:allow-rename",
     "fs:allow-exists",
     "shell:allow-open",
+    "log:default",
     "drag:default",
     "drag:allow-start-drag",
     {

@@ -170,6 +170,22 @@ fn dab_tap_dot_is_delivered() {
 }
 
 #[test]
+fn stroke_begin_recovers_from_abandoned_live() {
+    // 前端异常路径可能遗留未 commit/cancel 的 live:下一次 begin 自愈(丢弃旧笔),
+    // 而不是永久 "a stroke is already active"(用户实测:十余笔后画笔/橡皮全失灵)
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    let _ = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[8, 8, 1.0]]), "#ff0000", false)).unwrap();
+    let f1 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[40, 40, 1.0]]), "#0000ff", false)).unwrap();
+    assert!(f1.width > 0, "second begin recovers");
+    let (out, _) = m.stroke_commit(doc).unwrap();
+    assert_eq!(out.result.get("fromLive"), Some(&json!(true)));
+    // 文档上只有第二笔(蓝);被遗弃的第一笔从未提交
+    assert!(full_px(&mut m, doc, 40, 40)[2] > 200, "second stroke committed");
+    assert_eq!(full_px(&mut m, doc, 8, 8), [255, 255, 255], "abandoned stroke never lands");
+}
+
+#[test]
 fn stroke_error_paths() {
     let mut m = EditorManager::new();
     let doc = m.new_document(32, 32, "white").unwrap();

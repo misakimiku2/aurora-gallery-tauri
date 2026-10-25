@@ -49,6 +49,11 @@ function parseStrokeFrame(buf: ArrayBuffer, offset = 0): StrokeFrame {
   const y = i32(offset + 4);
   const width = u32(offset + 8);
   const height = u32(offset + 12);
+  // 载荷与头不符时给空帧而非抛错:帧解析抛错会把"引擎已成功的 begin"留在 Rust 侧
+  // 成悬空 live(此后每次落笔都被拒),宁可丢这一帧。
+  if (width === 0 || height === 0 || offset + 16 + width * height * 4 > u8.length) {
+    return { x: 0, y: 0, width: 0, height: 0, rgba: new Uint8ClampedArray(0) };
+  }
   return { x, y, width, height, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + offset + 16, width * height * 4) };
 }
 

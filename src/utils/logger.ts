@@ -72,8 +72,11 @@ const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...arg
     }
   }
 
-  // 输出到Tauri日志插件（写入日志文件）
-  if (LOG_CONFIG.enableTauriConsole && typeof window !== 'undefined' && '__TAURI__' in window) {
+  // 输出到Tauri日志插件（写入日志文件）。不能以 `'__TAURI__' in window` 做开关:
+  // withGlobalTauri 未开启时该全局不存在,但 @tauri-apps/plugin-log 走 invoke 照常可用——
+  // 一旦被挡,所有前端 error 都不落盘,"报错要日志可查"就落空了。非 Tauri 环境
+  // (纯浏览器 dev)invoke 失败,catch 静默。
+  if (LOG_CONFIG.enableTauriConsole && typeof window !== 'undefined') {
     let logMessage = message;
     if (args.length > 0) {
       const formattedArgs = args.map(arg => {
