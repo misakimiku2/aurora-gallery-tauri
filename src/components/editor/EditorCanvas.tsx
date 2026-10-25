@@ -358,7 +358,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     };
   }, [tabId, scheduleDraw]);
 
-  // 位图刷新:docId/revision 变化 → 重渲染整幅(M1 简化;M2 起按损伤矩形增量)
+  // 位图刷新:docId/revision 变化 → 重渲染整幅(描边提交 fromLive 已局部贴图,bitmapKey 相同跳过)。
+  // deps 只含值级触发器——runCommand 先落 revision 再落 state 两次 notify,若 effect 每次渲染都重跑,
+  // 第二次会 cancel 掉第一次的异步渲染(cancelled 标记)而 bitmapKey 已前移 → 跳过,整帧永久丢失
+  // (撤销/重做后画布不刷新的根因;选区类命令不改像素所以从未暴露)。只有同一依赖再次变化
+  // (revision 又动了)才应取消上一次渲染。docW/docH 覆盖裁剪等改尺寸的命令。
+  const docIdForBitmap = session?.docId ?? null;
+  const revisionForBitmap = session?.revision ?? -1;
+  const stateReady = session?.state != null;
+  const docW = session?.state?.width ?? 0;
+  const docH = session?.state?.height ?? 0;
   useEffect(() => {
     const s = getSession(tabId);
     if (!s || s.docId == null || !s.state) return;
@@ -394,7 +403,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return () => {
       cancelled = true;
     };
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId, docIdForBitmap, revisionForBitmap, stateReady, docW, docH]);
 
   // 容器尺寸观察
   useEffect(() => {
@@ -441,7 +451,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       if (e.ctrlKey || e.metaKey) {
         const k = e.key.toLowerCase();
-        if (k === 'd') {
+        // 撤销/重做(与工具栏按钮同命令);e.code 兜底防 IME 吃掉字母键
+        const k2 = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y' : k;
+        if (k2 === 'z') {
+          e.preventDefault();
+          const redo = e.shiftKey;
+          if (redo ? s.state?.canRedo : s.state?.canUndo) {
+            void runCommand(tabId, redo ? 'edit.redo' : 'edit.undo', {}).catch(console.error);
+          }
+        } else if (k2 === 'y') {
+          e.preventDefault();
+          if (s.state?.canRedo) {
+            void runCommand(tabId, 'edit.redo', {}).catch(console.error);
+          }
+        } else if (k === 'd') {
           e.preventDefault();
           void runCommand(tabId, 'select.deselect', {}).catch(console.error);
         } else if (k === 'a') {
