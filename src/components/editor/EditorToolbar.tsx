@@ -50,6 +50,10 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   /** 子形态弹层位置(屏幕坐标;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  /** 长按弹层(上游 0.35s 口径):计时器 + "本次长按已开弹层"标记(抑制定击的选工具)。 */
+  const pressTimer = useRef<number | null>(null);
+  const pressPosRef = useRef({ x: 0, y: 0 });
+  const pressOpenedRef = useRef(false);
 
   // 点菜单外关闭子形态弹层
   useEffect(() => {
@@ -75,15 +79,44 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     setTool(tabId, 'marquee');
     setMenuPos(null);
   };
+  /** 长按 0.35s 开弹层(上游 panels.rs 口径);短按仍走 onClick 选工具。 */
+  const startMarqueePress = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    pressPosRef.current = { x: r.right + 4, y: r.top };
+    pressOpenedRef.current = false;
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      pressOpenedRef.current = true;
+      setMenuPos(pressPosRef.current);
+    }, 350);
+  };
+  const endMarqueePress = () => {
+    if (pressTimer.current != null) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
 
   return (
     <div className="w-11 shrink-0 flex flex-col items-center gap-0.5 py-1.5 bg-panel border-r border-black/10 dark:border-white/10 select-none overflow-y-auto">
       <button
         key="marquee"
-        title={`${shapeLabel} — 右键切换形状`}
-        onClick={() => setTool(tabId, 'marquee')}
+        title={`${shapeLabel} — 右键/长按切换形状`}
+        onClick={() => {
+          // 长按刚开的弹层,这次释放不重复选工具
+          if (pressOpenedRef.current) {
+            pressOpenedRef.current = false;
+            return;
+          }
+          setTool(tabId, 'marquee');
+        }}
+        onPointerDown={startMarqueePress}
+        onPointerUp={endMarqueePress}
+        onPointerLeave={endMarqueePress}
         onContextMenu={(e) => {
           e.preventDefault();
+          endMarqueePress();
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setMenuPos({ x: r.right + 4, y: r.top });
         }}
