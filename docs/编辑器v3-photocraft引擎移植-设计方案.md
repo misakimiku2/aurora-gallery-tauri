@@ -82,6 +82,30 @@ M0 集成测试 `editor/tests/bridge.rs`:new → setColors → select.rect → p
 - **M3**:调整层+蒙版基础+快捷键+保存链路+vitest(视图变换/工具状态机/桥批处理)。**一期终验:修图→Ctrl+S→缩略图刷新→重开恢复图层。**
 - **二期**(另立计划):钢笔族/文字族(IME)/形状族/路径面板/路径选择/自由变换/属性面板完整化。
 
+### 5.1 M2 落地进度(2026-10-26,按切片提交)
+
+| 切片 | 提交 | 内容 |
+|---|---|---|
+| 第一切片 | ebdd2f5→e815ade | 选框(矩形/椭圆)+真实轮廓蚂蚁线(移植上游 outline.rs)+吸管+工具单键 |
+| 画笔族 | 6e7cc7f | brush/eraser/blur/sharpen/smudge 五工具端到端:LiveStroke/LiveDab 桥(stroke_begin/push/commit)+ damage 增量帧 + fromLive 零重渲染提交 + 补差帧;DabEffect+Send vendor 补丁 |
+| 修缺陷 | 74a6742 / d0bb768 | 撤销画布不刷新(位图 effect 取消竞态)+ Ctrl+Z/Y 接线;live 描边悬空自愈(十余笔后永久失灵根因)+ 前端日志落盘修复(`__TAURI__` 开关+capabilities log:default) |
+| 移动工具 | 858ca8c | 选区像素浮动移动(select.float 按下即切割/displayed 纯函数预览/Enter 落定一步 Move)+ 整层平移(layer.translate)+ 方向键微移(1px/Shift 10px) |
+| 套索 | af72b75 | select.lasso 自由圈选(每事件采点/实线预览/<3 点=取消/Esc 取消/Enter 提交) |
+| 单行列+四态 | 46f4f44 | select.rect line:row\|column(单行/单列选框,M 键四形态循环)+ 选项条选区四态(新选区/添加/减去/相交,修饰键优先且空选区降级) |
+| 裁剪 | 180bdf5 | 拖框裁剪(image.crop,历史 Crop):框外遮罩+三分线+Enter/双击/✓ 提交+Esc 取消 |
+| 渐变+油漆桶 | 52f3e07 | paint.gradient 拖线(Shift 45° 吸附/<2px 无操作/五样式选项条)+ paint.bucket 点击填充(容差滑杆/Alt 取色) |
+| 长按弹层 | a7c261f | 选框工具长按 0.35s 弹出子形态(与右键等效) |
+
+**架构要点(实现层沉淀)**:
+- live 描边三段式协议:桥层 `stroke_begin/push/commit/cancel`;push 同帧返回 damage 矩形合成字节(16B 头);commit 回放 begin 原参数,引擎 `LiveCommit::matches` 命中(fromLive)零重渲染;补差帧兜 dab 收尾/点画。
+- 移动/裁剪共用"纯函数预览+一条命令提交"模式:拖动中不入历史(桥 `move_frame`:float=`float_cmds::displayed`、layer=`layer_multi_cmds::moved`),抬起才提交。
+- 前端 rAF 单飞泵:指针事件只积累,循环批量投递(描边 coalesced 全采样/移动取最新)。
+- 引擎命令映射(一期已接):`paint.stroke`(brush/eraser,erase 参数)、`paint.blur/sharpen/smudge`(LiveDab,参数百分数)、`select.rect`(ellipse/line:row|column)、`select.lasso`、`select.float/drop`、`layer.translate`、`image.crop`、`paint.gradient`、`paint.bucket`。
+
+**M2 验收(2026-10-26 实测)**:画笔/橡皮/模糊/撤销重做/快捷键/移动(选区像素+整层+方向键)/套索/裁剪/渐变/油漆桶/单行选框全部真机过;cargo 8 测试绿、vitest 231 绿、tsc 0。
+
+**M2 已知裁剪(后续补)**:移动工具 Auto-Select/链接层扩散/Alt 复制移动;裁剪旋转/拉直/比例预设/画布外扩展;多边形/磁性套索;渐变 Live 图层模式;上游 G 键渐变/油漆桶同组循环(本版按 PS 惯例 K=油漆桶)。
+
 ## 6. 风险与对策
 
 | 风险 | 对策 |
