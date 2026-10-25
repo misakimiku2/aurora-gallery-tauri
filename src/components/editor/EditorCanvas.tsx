@@ -7,9 +7,11 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { editorRender } from './editorBridge';
-import { getSession, setOptions, subscribeSession } from './editorStore';
+import { getSession, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
+import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
+import { constrainSquare, marqueeParams, normalizeRect, sampleHex, shapeMatchesBounds, TOOL_KEYS, type DragPoint } from './toolLogic';
 
 const BRUSH_TOOLS = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
@@ -37,6 +39,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const spaceRef = useRef(false);
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const drawPending = useRef(false);
+  /** 选框拖拽中(文档坐标 + 按下时修饰键 + 最近一次 shift 用于正方形约束)。 */
+  const marqueeRef = useRef<(DragPoint & { lastShift: boolean }) | null>(null);
+  /** 吸管按下取色中(节流到每 40ms 一次 IPC)。 */
+  const eyedropRef = useRef<{ last: number } | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -119,19 +125,60 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     octx.lineWidth = 1;
     octx.strokeRect(v.ox - 0.5, v.oy - 0.5, dw + 1, dh + 1);
 
-    // overlay:选区边界(M1 简化为虚线框;M2 换蚂蚁线轮廓)
+    // overlay:蚂蚁线(黑白互补虚线,相位逐帧推进)。rect/ellipse 形状由选框交互侧补记,
+    // 与引擎 bounds 匹配才画形状,其余(全选/反选/undo 后)退回 bounds 框。
+    const drawAnts = (build: (c: CanvasRenderingContext2D) => void) => {
+      octx.save();
+      octx.lineWidth = 1;
+      octx.setLineDash([4, 4]);
+      octx.lineDashOffset = -s.runtime.antsPhase;
+      octx.strokeStyle = '#ffffff';
+      build(octx);
+      octx.stroke();
+      octx.lineDashOffset = -s.runtime.antsPhase + 4;
+      octx.strokeStyle = '#000000';
+      octx.stroke();
+      octx.restore();
+    };
+    const docRectPath = (r: { x: number; y: number; w: number; h: number }) => (c: CanvasRenderingContext2D) => {
+      c.beginPath();
+      if (s.options.marqueeShape === 'ellipse') {
+        c.ellipse((r.x + r.w / 2) * v.scale + v.ox, (r.y + r.h / 2) * v.scale + v.oy, (r.w / 2) * v.scale, (r.h / 2) * v.scale, 0, 0, Math.PI * 2);
+      } else {
+        c.rect(r.x * v.scale + v.ox, r.y * v.scale + v.oy, r.w * v.scale, r.h * v.scale);
+      }
+    };
     const sel = s.state.selectionBounds;
     if (sel) {
-      const [x, y, w, h] = sel;
-      octx.save();
-      octx.strokeStyle = '#ffffff';
-      octx.setLineDash([4, 4]);
-      octx.lineWidth = 1;
-      octx.strokeRect(x * v.scale + v.ox, y * v.scale + v.oy, w * v.scale, h * v.scale);
-      octx.strokeStyle = '#000000';
-      octx.lineDashOffset = 4;
-      octx.strokeRect(x * v.scale + v.ox, y * v.scale + v.oy, w * v.scale, h * v.scale);
-      octx.restore();
+      const shape = s.runtime.selectionShape;
+      if (shapeMatchesBounds(shape, sel)) {
+        drawAnts(docRectPath({ x: shape.rect[0], y: shape.rect[1], w: shape.rect[2], h: shape.rect[3] }));
+      } else {
+        const [x, y, w, h] = sel;
+        drawAnts((c) => {
+          c.beginPath();
+          c.rect(x * v.scale + v.ox, y * v.scale + v.oy, w * v.scale, h * v.scale);
+        });
+      }
+    }
+    // overlay:选框拖拽实时预览(shift 约束正方形)
+    if (marqueeRef.current) {
+      const m = marqueeRef.current;
+      const d = m.lastShift ? constrainSquare(m) : m;
+      const r = normalizeRect(d);
+      if (r) {
+        octx.save();
+        octx.setLineDash([4, 4]);
+        octx.strokeStyle = '#ffffffcc';
+        octx.lineWidth = 1;
+        const build = docRectPath(r);
+        build(octx);
+        octx.stroke();
+        octx.strokeStyle = '#000000cc';
+        octx.lineDashOffset = 4;
+        octx.stroke();
+        octx.restore();
+      }
     }
 
     // overlay:笔刷圆环光标(画笔族)
@@ -147,6 +194,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.arc(cx, cy, r - 1, 0, Math.PI * 2);
       octx.strokeStyle = '#ffffffcc';
       octx.stroke();
+    }
+
+    // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位;选区消失后本循环自然停
+    if (s.state.hasSelection || marqueeRef.current) {
+      s.runtime.antsPhase = (s.runtime.antsPhase + 0.6) % 8;
+      scheduleDraw();
     }
   }, [tabId]);
 
@@ -214,21 +267,50 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return () => ro.disconnect();
   }, [tabId, scheduleDraw]);
 
-  // 键盘:空格临时抓手、[/] 笔径
+  // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
   useEffect(() => {
     if (!isActive) return undefined;
+    const isTyping = (t: EventTarget | null) =>
+      t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement;
     const down = (e: KeyboardEvent) => {
       const s = getSession(tabId);
       if (!s) return;
       if (e.code === 'Space') {
         spaceRef.current = true;
         scheduleDraw();
-      } else if (e.key === '[' || e.key === ']') {
+        return;
+      }
+      if (isTyping(e.target)) return;
+      if (e.key === '[' || e.key === ']') {
         e.preventDefault();
         const step = e.key === '[' ? -1 : 1;
         const next = Math.min(500, Math.max(1, Math.round(s.options.brushSize * (step > 0 ? 1.15 : 1 / 1.15))));
         setOptions(tabId, { brushSize: next });
         console.log(`[editor] brush size ${next}px`);
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'd') {
+          e.preventDefault();
+          void runCommand(tabId, 'select.deselect', {}).catch(console.error);
+        } else if (k === 'a') {
+          e.preventDefault();
+          void runCommand(tabId, 'select.all', {}).catch(console.error);
+        } else if (e.shiftKey && k === 'i') {
+          e.preventDefault();
+          void runCommand(tabId, 'select.inverse', {}).catch(console.error);
+        }
+        return;
+      }
+      if (e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'x') {
+        void runCommand(tabId, 'tools.swapColors', {}).catch(console.error);
+      } else if (k === 'd') {
+        void runCommand(tabId, 'tools.defaultColors', {}).catch(console.error);
+      } else if (TOOL_KEYS[k]) {
+        setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
     };
     const up = (e: KeyboardEvent) => {
@@ -262,6 +344,18 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return () => el.removeEventListener('wheel', onWheel);
   }, [tabId, scheduleDraw]);
 
+  /** 吸管取色:offscreen 复合位图采样 → 前景色(拖动中 40ms 节流)。 */
+  const pickColor = (s: EditorSession) => {
+    const off = s.runtime.offscreen;
+    const p = s.runtime.pointerDoc;
+    if (!off || !p) return;
+    const ctx = off.getContext('2d');
+    if (!ctx) return;
+    const hex = sampleHex(ctx, p.x, p.y, s.runtime.rasterScale);
+    if (!hex) return;
+    void runCommand(tabId, 'tools.setColors', { foreground: hex }).catch(console.error);
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     const s = getSession(tabId);
     if (!s) return;
@@ -276,8 +370,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const factor = e.altKey ? 1 / ZOOM_STEP : ZOOM_STEP;
       s.runtime.view = zoomAbout(s.runtime.view, factor, e.clientX - rect.left, e.clientY - rect.top);
       scheduleDraw();
+      return;
     }
-    // 其余工具的落笔交互在 M2 接入(tools/)
+    const rect = wrapRef.current!.getBoundingClientRect();
+    const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+    s.runtime.pointerDoc = { x: dx, y: dy };
+    if (s.tool === 'marquee' && e.button === 0) {
+      // 修饰键在按下时定模式(PS):Shift 添加 / Alt 减去 / Shift+Alt 相交
+      marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, shift: e.shiftKey, alt: e.altKey, lastShift: e.shiftKey };
+      scheduleDraw();
+    } else if (s.tool === 'eyedropper' && e.button === 0) {
+      eyedropRef.current = { last: performance.now() };
+      pickColor(s);
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -295,10 +400,44 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
-    if (BRUSH_TOOLS.has(s.tool)) scheduleDraw();
+    if (marqueeRef.current) {
+      marqueeRef.current.x1 = dx;
+      marqueeRef.current.y1 = dy;
+      marqueeRef.current.lastShift = e.shiftKey;
+      scheduleDraw();
+    } else if (eyedropRef.current) {
+      const now = performance.now();
+      if (now - eyedropRef.current.last >= 40) {
+        eyedropRef.current.last = now;
+        pickColor(s);
+      }
+    } else if (BRUSH_TOOLS.has(s.tool)) {
+      scheduleDraw();
+    }
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    const s = getSession(tabId);
+    const m = marqueeRef.current;
+    marqueeRef.current = null;
+    eyedropRef.current = null;
+    if (s && m && s.state) {
+      // 松手时的 shift 决定是否按正方形约束提交
+      const d = m.lastShift ? constrainSquare(m) : m;
+      const params = marqueeParams(d, s.options);
+      if (params) {
+        void runCommand(tabId, 'select.rect', params)
+          .then(() => {
+            const r = normalizeRect(d);
+            if (r) s.runtime.selectionShape = { kind: s.options.marqueeShape, rect: [r.x, r.y, r.w, r.h] };
+          })
+          .catch((err) => console.error('[editor] select.rect', err));
+      } else {
+        // 点击(近零位移)= 取消选择(PS 行为;无选区时引擎空转无历史步)
+        void runCommand(tabId, 'select.deselect', {}).catch(console.error);
+      }
+      scheduleDraw();
+    }
     panRef.current = null;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
@@ -312,7 +451,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   if (!session) return null;
-  const cursor = session.tool === 'hand' || spaceRef.current ? 'grab' : session.tool === 'zoom' ? 'zoom-in' : BRUSH_TOOLS.has(session.tool) ? 'none' : 'default';
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'crop', 'eyedropper', 'gradient', 'bucket']);
+  const cursor =
+    session.tool === 'hand' || spaceRef.current ? 'grab'
+      : session.tool === 'zoom' ? 'zoom-in'
+        : BRUSH_TOOLS.has(session.tool) ? 'none'
+          : CROSSHAIR_TOOLS.has(session.tool) ? 'crosshair'
+            : 'default';
 
   return (
     <div

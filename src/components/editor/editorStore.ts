@@ -6,6 +6,7 @@
 import type { EditorDocState, EditorTool } from './editorTypes';
 import { editorClose, editorRun, editorState } from './editorBridge';
 import type { ViewTransform } from './viewMath';
+import type { SelectionShape } from './toolLogic';
 
 export interface ToolOptions {
   brushSize: number;
@@ -16,6 +17,8 @@ export interface ToolOptions {
   tolerance: number;
   antiAlias: boolean;
   gradientStyle: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
+  /** 选框工具形状(矩形/椭圆);提交给 select.rect 的 ellipse。 */
+  marqueeShape: 'rect' | 'ellipse';
 }
 
 export interface EditorRuntime {
@@ -31,6 +34,10 @@ export interface EditorRuntime {
   viewH: number;
   /** 画布注册的重绘请求(视图动作/工具预览用)。 */
   requestDraw: (() => void) | null;
+  /** 选框刚提交的形状(引擎只回外接 bounds;与 bounds 匹配时画形状蚂蚁线,否则退回 bounds 框)。 */
+  selectionShape: SelectionShape | null;
+  /** 蚂蚁线相位(动画帧推进,画布直写不走订阅)。 */
+  antsPhase: number;
 }
 
 export interface EditorSession {
@@ -82,8 +89,9 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       tolerance: 32,
       antiAlias: true,
       gradientStyle: 'linear',
+      marqueeShape: 'rect',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionShape: null, antsPhase: 0 },
   };
   sessions.set(tabId, s);
   return s;
@@ -128,8 +136,9 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
   if (out.revision > 0 && out.revision !== s.revision) {
     updateSession(tabId, { revision: out.revision });
   }
-  if (out.revision > 0) {
-    // 文档还在(未被 file.close 关掉):拉状态供面板
+  if (out.revision > 0 || cmd.startsWith('tools.')) {
+    // 文档还在(未被 file.close 关掉):拉状态供面板。tools.*(取色/换色)不推进
+    // revision 但改了会话级前/背景色,芯片读 state,所以也要拉。
     try {
       const st = await editorState(s.docId);
       updateSession(tabId, { state: st });
