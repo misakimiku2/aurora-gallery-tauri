@@ -8,15 +8,16 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, getSession, refreshSelectionOutline, runCommand, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, marqueeParams, marqueeRect, rgbToHex,
-  sampleHex, selectMode, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
+  BRUSH_FAMILY, brushSizeStep, effectiveMode, initialMods, marqueeParams, marqueeRect,
+  moveBounds, moveDelta, moveDirtyRect, rgbToHex, sampleHex, selectMode, strokeCommand,
+  strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
 } from './toolLogic';
 import { error as logError } from '../../utils/logger';
@@ -68,6 +69,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   } | null>(null);
   /** 增量帧上屏的中转画布(整幅 putImageData 只支持原点,先入 scratch 再缩放贴图)。 */
   const scratchRef = useRef<HTMLCanvasElement | null>(null);
+  /** 移动工具拖拽中(photocraft move_ui 口径:按下即切割浮动、拖动纯函数预览、提交一条命令)。 */
+  const moveDragRef = useRef<{
+    mode: 'float' | 'layer';
+    startDoc: { x: number; y: number };
+    bounds: [number, number, number, number] | null;
+    lastDx: number;
+    lastDy: number;
+    /** rAF 语义的合帧:待发送的最新指针位置。 */
+    pending: { x: number; y: number; shift: boolean } | null;
+    flushing: boolean;
+    /** float 模式:按下切割(select.float)完成后才可预览;失败则降级 layer。 */
+    ready: Promise<void>;
+  } | null>(null);
+  /** 浮动件已提交偏移(select.float 结果回读;脏矩形计算用,选区/revision 变了作废)。 */
+  const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -325,7 +341,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } catch (err) {
         // 隐藏层/无图层等引擎拒绝:无副作用,取消本地状态即可(日志可查)。
         // 失败也可能发生在引擎 begin 成功之后(帧解析/上屏抛错)——补发 cancel,
-        // 不让 Rust 侧留下悬空 live(否则此后每次落笔都被拒绝)。
+        // 不让 Rust 侧留下悬空 live(否则此后每次落笔都被拒)。
         st.failed = true;
         logError(`[editor] ${strokeCommand(tool)} 落笔失败`, err);
         if (strokeRef.current === st) strokeRef.current = null;
@@ -336,6 +352,93 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       void pumpStroke();
     });
   }, [applyStrokeFrame, pumpStroke]);
+
+  /** 移动拖拽泵:单飞循环,把 pending 的最新指针位置合成一帧预览(纯函数,不入历史)。 */
+  const flushMove = useCallback(async () => {
+    const st = moveDragRef.current;
+    if (!st || st.flushing || !st.pending) return;
+    st.flushing = true;
+    try {
+      while (moveDragRef.current === st) {
+        const p = st.pending;
+        st.pending = null;
+        if (!p) break;
+        await st.ready;
+        const { dx, dy } = moveDelta(p.x - st.startDoc.x, p.y - st.startDoc.y, p.shift);
+        if (dx === st.lastDx && dy === st.lastDy) continue;
+        const s = getSession(tabId);
+        if (!s?.state || s.docId == null) break;
+        const dirty = moveDirtyRect(st.bounds, st.lastDx, st.lastDy, dx, dy, s.state.width, s.state.height);
+        st.lastDx = dx;
+        st.lastDy = dy;
+        if (dirty.w > 0) {
+          try {
+            const frame = await editorMoveFrame(s.docId, st.mode, dx, dy, dirty.x, dirty.y, dirty.w, dirty.h);
+            applyStrokeFrame(getSession(tabId), frame);
+          } catch (err) {
+            // 浮动被并发命令撤掉等瞬时态:跳过这帧(不 logError,提交时会兜底)
+            console.debug('[editor] move preview frame skipped', err);
+          }
+        }
+      }
+    } finally {
+      if (moveDragRef.current === st) {
+        st.flushing = false;
+        if (st.pending) void flushMove();
+      }
+    }
+  }, [tabId, applyStrokeFrame]);
+
+  /** 方向键微移浮动选区后补帧(float 不推进 revision,不会触发整幅重渲)。 */
+  const applyFloatOffsetFrame = useCallback((
+    s: EditorSession, offset: [number, number], dx: number, dy: number,
+  ) => {
+    const sel = s.state?.selectionBounds;
+    if (!sel || s.docId == null) return;
+    const prev = floatOffsetRef.current;
+    const prevOff = prev && prev.rev === s.revision && prev.sel === sel.join(',')
+      ? { x: prev.x, y: prev.y }
+      : { x: offset[0] - dx, y: offset[1] - dy };
+    const dirty = moveDirtyRect(sel, prevOff.x, prevOff.y, offset[0], offset[1], s.state!.width, s.state!.height);
+    floatOffsetRef.current = { x: offset[0], y: offset[1], rev: s.revision, sel: sel.join(',') };
+    if (dirty.w > 0) {
+      void editorMoveFrame(s.docId!, 'float', 0, 0, dirty.x, dirty.y, dirty.w, dirty.h)
+        .then((frame) => applyStrokeFrame(getSession(tabId), frame))
+        .catch((err) => console.debug('[editor] float offset frame skipped', err));
+    }
+  }, [tabId, applyStrokeFrame]);
+
+  /** 移动工具落笔:有选区且活动层是像素层 → 切割浮动(上游口径:不看按下点是否在选区内);
+   * 引擎拒绝(锁定/非像素层)降级整层;无选区直接整层。 */
+  const beginMoveDrag = useCallback((
+    s: EditorSession, x: number, y: number,
+  ) => {
+    const st0 = s.state!;
+    const layer = st0.layers.find((l) => l.id === st0.activeLayer);
+    const floatable = st0.hasSelection && layer?.kind === 'Pixel';
+    const layerBounds = () => moveBounds(st0.layers, st0.activeLayer, st0.width, st0.height);
+    const st = {
+      mode: (floatable ? 'float' : 'layer') as 'float' | 'layer',
+      startDoc: { x, y },
+      bounds: floatable ? st0.selectionBounds : layerBounds(),
+      lastDx: 0,
+      lastDy: 0,
+      pending: null as { x: number; y: number; shift: boolean } | null,
+      flushing: false,
+      ready: Promise.resolve(),
+    };
+    moveDragRef.current = st;
+    if (floatable) {
+      st.ready = runCommand(tabId, 'select.float', { dx: 0, dy: 0 })
+        .then(() => undefined, () => {
+          // 引擎拒绝(层锁定等):降级整层移动
+          if (moveDragRef.current === st) {
+            st.mode = 'layer';
+            st.bounds = layerBounds();
+          }
+        });
+    }
+  }, [tabId]);
 
   // 订阅 store(tool/revision/docId/state 变化):驱动 React 更新 + 调度一帧画布重绘。
   // 重绘不能只靠 requestDraw 注册(挂载时 session 常未建好)或位图 effect(只在
@@ -452,6 +555,36 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         console.log(`[editor] brush size ${next}px`);
         return;
       }
+      // Enter:落定浮动选区(select.drop;无浮动时引擎空转)
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+        return;
+      }
+      // 方向键微移(上游 arrow_keys 口径:1px / Shift 10px):
+      // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate
+      if (s.tool === 'move' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        e.preventDefault();
+        const dist = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowLeft' ? -dist : e.key === 'ArrowRight' ? dist : 0;
+        const dy = e.key === 'ArrowUp' ? -dist : e.key === 'ArrowDown' ? dist : 0;
+        if (s.state?.hasSelection) {
+          void runCommand(tabId, 'select.float', { dx, dy })
+            .then((r) => {
+              // float 不推进 revision,不触发重渲:按结果 offset 补预览帧
+              const s2 = getSession(tabId);
+              const off = (r as { offset?: [number, number] } | null)?.offset;
+              if (s2?.state && off) applyFloatOffsetFrame(s2, off, dx, dy);
+            })
+            .catch(() => {
+              // 层不可浮(锁定/非像素层):降级整层
+              void runCommand(tabId, 'layer.translate', { dx, dy }).catch((err) => logError('[editor] 移动失败', err));
+            });
+        } else {
+          void runCommand(tabId, 'layer.translate', { dx, dy }).catch((err) => logError('[editor] 移动失败', err));
+        }
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
         const k = e.key.toLowerCase();
         // 撤销/重做(与工具栏按钮同命令);e.code 兜底防 IME 吃掉字母键
@@ -562,6 +695,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (BRUSH_TOOLS.has(s.tool) && e.button === 0 && s.state) {
       // 一笔进行中时忽略再次按下(鼠标不会出现;触屏多指防把进行中描边的 live 顶掉)
       if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
+    } else if (s.tool === 'move' && e.button === 0 && s.state) {
+      beginMoveDrag(s, dx, dy);
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -601,6 +736,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
       return;
     }
+    const md = moveDragRef.current;
+    if (md) {
+      md.pending = { x: dx, y: dy, shift: e.shiftKey };
+      void flushMove();
+      return;
+    }
     if (marqueeRef.current) {
       marqueeRef.current.x1 = dx;
       marqueeRef.current.y1 = dy;
@@ -630,6 +771,47 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       stroke.ended = true;
       void pumpStroke();
     }
+    const md = moveDragRef.current;
+    if (s && md && s.state) {
+      moveDragRef.current = null;
+      const rect = wrapRef.current!.getBoundingClientRect();
+      const [ux, uy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+      const { dx, dy } = moveDelta(ux - md.startDoc.x, uy - md.startDoc.y, e.shiftKey);
+      const moved = dx !== 0 || dy !== 0;
+      if (md.mode === 'float') {
+        if (moved) {
+          // 提交总位移(累加进浮动件并保持浮动;落定=Enter/下一命令,上游口径)
+          void runCommand(tabId, 'select.float', { dx, dy })
+            .then((r) => {
+              const off = (r as { offset?: [number, number] } | null)?.offset;
+              const s2 = getSession(tabId);
+              if (off && s2?.state) {
+                floatOffsetRef.current = {
+                  x: off[0], y: off[1], rev: s2.revision, sel: s2.state.selectionBounds?.join(',') ?? '',
+                };
+              }
+              // 预览未覆盖到的最终位移补一帧(提交后 extra=0 即正式视图)
+              const s3 = getSession(tabId);
+              if ((dx !== md.lastDx || dy !== md.lastDy) && s3?.state && s3.docId != null) {
+                const dirty = moveDirtyRect(md.bounds, md.lastDx, md.lastDy, dx, dy, s3.state.width, s3.state.height);
+                if (dirty.w > 0) {
+                  void editorMoveFrame(s3.docId, 'float', 0, 0, dirty.x, dirty.y, dirty.w, dirty.h)
+                    .then((f) => applyStrokeFrame(s3, f))
+                    .catch(() => undefined);
+                }
+              }
+            })
+            .catch((err) => logError('[editor] select.float 提交失败', err));
+        } else {
+          // 原地点击:放回(未动过的 piece 无变化、零历史)
+          void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+        }
+      } else if (moved) {
+        // 整层:一条 layer.translate 一步 "Move" 历史;revision 变化触发整幅重渲
+        void runCommand(tabId, 'layer.translate', { dx, dy, ...(s.state.hasSelection ? { selection: true } : {}) })
+          .catch((err) => logError('[editor] layer.translate 失败', err));
+      }
+    }
     const m = marqueeRef.current;
     marqueeRef.current = null;
     eyedropRef.current = null;
@@ -656,6 +838,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       strokeRef.current = null;
       void editorStrokeCancel(stroke.docId).catch(() => undefined);
     }
+    const md = moveDragRef.current;
+    if (md?.mode === 'float') {
+      // 浮动件已切割:必须 drop 放回(零历史),否则像素留在浮动态丢失显示
+      void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+    }
+    moveDragRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;

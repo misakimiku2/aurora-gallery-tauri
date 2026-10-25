@@ -138,6 +138,17 @@ pub fn editor_stroke_cancel(s: State<EditorState>, doc: u64) -> Result<(), Strin
     m.stroke_cancel(doc).map_err(|e| e.to_string())
 }
 
+/// 移动工具拖拽预览帧:target="float"(选区像素浮动,dx/dy 为未提交增量)或
+/// "layer"(整层平移,dx/dy 为总位移);x/y/w/h 为脏矩形(文档坐标)。
+#[tauri::command]
+pub fn editor_move_frame(
+    s: State<EditorState>, doc: u64, target: String, dx: i32, dy: i32, x: i32, y: i32, w: u32, h: u32,
+) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let f = m.move_frame(doc, &target, dx, dy, x, y, w, h).map_err(|e| e.to_string())?;
+    Ok(stroke_frame_bytes(f))
+}
+
 
 /// 关闭文档(未保存修改直接丢弃,保存流程由前端先行决定)。
 #[tauri::command]

@@ -186,6 +186,105 @@ fn stroke_begin_recovers_from_abandoned_live() {
 }
 
 #[test]
+fn float_drag_previews_and_drops_as_one_move() {
+    // 移动工具·选区像素(photocraft move_ui 口径):
+    // 按下 select.float 切割(零历史)→ 拖动纯函数预览 → select.float 提交偏移(仍零历史)
+    // → select.drop 落定 = 一步 "Move" 历史
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "paint.stroke", brush_params(json!([[20, 20, 1.0], [44, 20, 1.0]]), "#000000", false)).unwrap();
+    m.run(doc, "select.rect", json!({"x": 18, "y": 12, "width": 28, "height": 16})).unwrap();
+    let base = m.run(doc, "document.inspect", json!({})).unwrap().revision;
+    let before = m.render_full(doc).unwrap();
+
+    // 按下即切割:revision 不动(零历史)
+    let cut = m.run(doc, "select.float", json!({"dx": 0, "dy": 0})).unwrap();
+    assert_eq!(cut.revision, base, "float cut adds no history");
+    assert_eq!(cut.result["offset"], json!([0, 0]));
+
+    // 预览帧:displayed 合成(浮动件按未提交增量挪动)。切割后原位显示与切割前同像素;
+    // extra=(10,0) 时选区右缘外出现黑、原左缘露出白
+    let f0 = m.move_frame(doc, "float", 0, 0, 0, 0, 64, 64).unwrap();
+    assert!(f0.width == 64 && f0.height == 64);
+    let f1 = m.move_frame(doc, "float", 10, 0, 0, 0, 64, 64).unwrap();
+    let changed = f0
+        .pixels
+        .chunks_exact(4)
+        .zip(f1.pixels.chunks_exact(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert!(changed > 0, "preview moves the piece: {changed} px changed");
+
+    // 提交总位移(仍零历史,保持浮动)+ 落定 = 一步历史
+    let commit = m.run(doc, "select.float", json!({"dx": 10, "dy": 0})).unwrap();
+    assert_eq!(commit.revision, base);
+    assert_eq!(commit.result["offset"], json!([10, 0]));
+    let drop = m.run(doc, "select.drop", json!({})).unwrap();
+    assert!(drop.revision > base, "drop is one history step");
+    assert_eq!(drop.result["dropped"], json!(true));
+
+    // 落定后:右移后的线与原位的洞(白)
+    let after = m.render_full(doc).unwrap();
+    let diff = before
+        .pixels
+        .chunks_exact(4)
+        .zip(after.pixels.chunks_exact(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert!(diff > 0, "pixels moved");
+
+    // 一步 undo 拿回全部
+    m.run(doc, "edit.undo", json!({})).unwrap();
+    let undone = m.render_full(doc).unwrap();
+    assert_eq!(undone.pixels, before.pixels, "one undo restores the pre-move pixels");
+
+    // 无浮动时 float 预览报错(选区还在但已 drop → 重新切割会再切;先取消选区再验)
+    m.run(doc, "select.deselect", json!({})).unwrap();
+    assert!(m.move_frame(doc, "float", 0, 0, 0, 0, 8, 8).is_err());
+}
+
+#[test]
+fn layer_drag_preview_and_translate() {
+    // 移动工具·整层:moved 纯函数预览(不入历史)→ layer.translate 一步 "Move"
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    // 新建透明层画黑块(Background 锁定移不动,用普通层)
+    m.run(doc, "layer.new.layer", json!({})).unwrap();
+    m.run(doc, "paint.stroke", brush_params(json!([[10, 10, 1.0], [30, 10, 1.0]]), "#000000", false)).unwrap();
+    let base = m.run(doc, "document.inspect", json!({})).unwrap().revision;
+    let before = m.render_full(doc).unwrap();
+
+    // 预览:整层平移 8px(选区无 → bounds 即活动层)
+    let f0 = m.move_frame(doc, "layer", 8, 0, 0, 0, 64, 64).unwrap();
+    assert_eq!(f0.width, 64);
+    let changed = before
+        .pixels
+        .chunks_exact(4)
+        .zip(f0.pixels.chunks_exact(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert!(changed > 0, "layer preview shifts content");
+    // 预览不入历史
+    let mid = m.run(doc, "document.inspect", json!({})).unwrap().revision;
+    assert_eq!(mid, base, "preview adds no history");
+
+    // 提交:一条 translate 一步历史
+    let out = m.run(doc, "layer.translate", json!({"dx": 8, "dy": 0})).unwrap();
+    assert!(out.revision > base);
+    let after = m.render_full(doc).unwrap();
+    let moved_px = after
+        .pixels
+        .chunks_exact(4)
+        .zip(f0.pixels.chunks_exact(4))
+        .filter(|(a, b)| a[..3] != b[..3])
+        .count();
+    assert_eq!(moved_px, 0, "commit matches the preview frame");
+    m.run(doc, "edit.undo", json!({})).unwrap();
+    let undone = m.render_full(doc).unwrap();
+    assert_eq!(undone.pixels, before.pixels, "one undo restores");
+}
+
+#[test]
 fn stroke_error_paths() {
     let mut m = EditorManager::new();
     let doc = m.new_document(32, 32, "white").unwrap();

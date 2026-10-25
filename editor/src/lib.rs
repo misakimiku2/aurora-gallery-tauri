@@ -7,6 +7,8 @@
 
 use photocraft_engine::brush_cmds::LiveStroke;
 use photocraft_engine::doc::DocId;
+use photocraft_engine::float_cmds;
+use photocraft_engine::layer_multi_cmds;
 use photocraft_engine::paint::StrokePoint;
 use photocraft_engine::retouch_cmds::LiveDab;
 use photocraft_engine::{file_cmds, Session};
@@ -348,6 +350,46 @@ impl EditorManager {
         self.activate(doc)?;
         self.live = None;
         Ok(())
+    }
+
+    /// 移动工具拖拽的预览帧(photocraft move_ui 口径:拖动中纯函数合成,提交才一条命令):
+    /// - `target:"float"`:选区像素浮动预览。前端按下时已跑 `select.float {0,0}` 切割,
+    ///   拖动中不跑命令;`dx/dy` 为自最近一次已提交浮动偏移以来的增量,
+    ///   引擎 `displayed` 把浮动件按 offset+extra 合成。
+    /// - `target:"layer"`:整层平移预览,`dx/dy` 为总位移;引擎 `moved` 纯函数
+    ///   (克隆文档平移选中层,Text/Shape 只挪元数据),不入历史。
+    /// `x/y/w/h` 为要合成的区域(前端算的脏矩形:上一帧位置 ∪ 当前位置)。
+    pub fn move_frame(&mut self, doc: u64, target: &str, dx: i32, dy: i32, x: i32, y: i32, w: u32, h: u32) -> Result<StrokeFrame> {
+        self.activate(doc)?;
+        let size = self.doc_size()?;
+        let rect = Rect::from_xywh(x, y, w, h).intersect(&Rect::from_xywh(0, 0, size.0, size.1));
+        if rect.is_empty() {
+            return Ok(StrokeFrame::empty());
+        }
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let img = match target {
+            "float" => {
+                let preview = float_cmds::displayed(st, (dx, dy))
+                    .ok_or_else(|| EditorError("no floating selection".into()))?;
+                photocraft_compose::render(&preview, rect).to_rgba8()
+            }
+            "layer" => {
+                let ids = Self::move_targets(st);
+                let preview = layer_multi_cmds::moved(&st.doc, &ids, dx, dy)?;
+                photocraft_compose::render(&preview, rect).to_rgba8()
+            }
+            other => return Err(EditorError(format!("{other}: not a move target"))),
+        };
+        Ok(StrokeFrame { x: rect.x0, y: rect.y0, width: img.width, height: img.height, pixels: img.pixels })
+    }
+
+    /// 移动目标:全部选中层,否则活动层(上游 move_targets 的简化:不含链接层扩散)。
+    fn move_targets(st: &photocraft_engine::DocState) -> Vec<photocraft_engine::doc::LayerId> {
+        if !st.selected_layers.is_empty() {
+            st.selected_layers.clone()
+        } else {
+            st.active_layer.into_iter().collect()
+        }
     }
 
 

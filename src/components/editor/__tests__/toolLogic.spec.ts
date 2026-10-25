@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, chainSegments, constrainSquare, docToRaster, effectiveMode,
-  initialMods, marqueeParams, marqueeRect, normalizeRect, reflectFromCenter, rgbToHex,
-  sampleHex, selectMode, strokeCommand, strokeParams, TOOL_KEYS, trackMods,
+  initialMods, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, normalizeRect,
+  reflectFromCenter, rgbToHex, sampleHex, selectMode, strokeCommand, strokeParams,
+  TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 
@@ -202,5 +203,37 @@ describe('rgbToHex(引擎前景色 0..1 → #rrggbb)', () => {
     expect(rgbToHex(undefined)).toBe('#000000');
     expect(rgbToHex(null)).toBe('#000000');
     expect(rgbToHex([])).toBe('#000000');
+  });
+});
+
+describe('移动工具纯函数(photocraft move_ui 口径)', () => {
+  it('moveDelta:取整;Shift 约束到主轴', () => {
+    expect(moveDelta(10.4, -3.6, false)).toEqual({ dx: 10, dy: -4 });
+    expect(moveDelta(15, 3, true)).toEqual({ dx: 15, dy: 0 }); // 水平为主
+    expect(moveDelta(3, 15, true)).toEqual({ dx: 0, dy: 15 }); // 垂直为主
+    expect(moveDelta(-8, -2, true)).toEqual({ dx: -8, dy: 0 });
+  });
+  it('moveDirtyRect:上一帧 ∪ 当前帧偏移下的 bounds,再钳进画布', () => {
+    // (10,10,20,20) 从 offset(0,0) 挪到 (5,5):并集 (10,10)-(35,35)
+    expect(moveDirtyRect([10, 10, 20, 20], 0, 0, 5, 5, 100, 100)).toEqual({ x: 10, y: 10, w: 25, h: 25 });
+    // 移出画布左上角:钳到 0
+    expect(moveDirtyRect([2, 2, 10, 10], 0, 0, -8, -8, 100, 100)).toEqual({ x: 0, y: 0, w: 12, h: 12 });
+    // 新旧位置都在画布外:空
+    expect(moveDirtyRect([150, 2, 4, 4], 0, 0, 10, 0, 100, 100)).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+    // bounds 为 null:空
+    expect(moveDirtyRect(null, 0, 0, 5, 5, 100, 100)).toEqual({ x: 0, y: 0, w: 0, h: 0 });
+  });
+  it('moveBounds:选中层并集,无选中回退活动层;空 bounds 回退画布', () => {
+    const layers = [
+      { id: 1, bounds: [5, 5, 10, 10] as [number, number, number, number] | null, selected: false },
+      { id: 2, bounds: [20, 8, 10, 4] as [number, number, number, number] | null, selected: true },
+      { id: 3, bounds: [1, 30, 4, 4] as [number, number, number, number] | null, selected: true },
+      { id: 4, bounds: null as [number, number, number, number] | null, selected: false },
+    ];
+    expect(moveBounds(layers, 1, 64, 64)).toEqual([1, 8, 29, 26]); // 选中 2+3 的并集
+    // 无选中层:回退活动层;活动层无 bounds → 画布
+    expect(moveBounds(layers.map((l) => ({ ...l, selected: false })), 4, 64, 64)).toEqual([0, 0, 64, 64]);
+    expect(moveBounds(layers.map((l) => ({ ...l, selected: false })), 1, 64, 64)).toEqual([5, 5, 10, 10]);
+    expect(moveBounds([], null, 64, 64)).toBeNull();
   });
 });

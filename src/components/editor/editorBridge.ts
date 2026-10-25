@@ -93,6 +93,18 @@ export async function editorStrokeCancel(doc: number): Promise<void> {
   return invoke<void>('editor_stroke_cancel', { doc });
 }
 
+/**
+ * 移动工具拖拽预览帧(photocraft move_ui 口径:拖动中纯函数合成,提交才一条命令)。
+ * target="float":选区像素浮动,dx/dy 为自最近一次已提交偏移以来的增量;
+ * target="layer":整层平移,dx/dy 为总位移。x/y/w/h 为脏矩形(文档坐标)。
+ */
+export async function editorMoveFrame(
+  doc: number, target: 'float' | 'layer', dx: number, dy: number, x: number, y: number, w: number, h: number,
+): Promise<StrokeFrame> {
+  const buf = await invoke<ArrayBuffer>('editor_move_frame', { doc, target, dx, dy, x, y, w, h });
+  return parseStrokeFrame(buf);
+}
+
 /** 选区真实轮廓(边界线段 [x0,y0,x1,y1],文档像素坐标;蚂蚁线数据源)。无选区为 null。 */
 export async function editorSelectionOutline(doc: number, step: number): Promise<{ step: number; segments: number[][] } | null> {
   return invoke<{ step: number; segments: number[][] } | null>('editor_selection_outline', { doc, step });

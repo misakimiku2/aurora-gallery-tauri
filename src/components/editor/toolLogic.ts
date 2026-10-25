@@ -203,6 +203,55 @@ export function brushSizeStep(size: number, dir: 1 | -1): number {
   return Math.min(500, Math.max(1, Math.round(size + dir * step)));
 }
 
+/** 移动拖拽的位移取整;Shift 按住时约束到主轴(上游 constrain 的简化:无 8° 迟滞)。 */
+export function moveDelta(dx: number, dy: number, shift: boolean): { dx: number; dy: number } {
+  const rdx = Math.round(dx);
+  const rdy = Math.round(dy);
+  if (!shift) return { dx: rdx, dy: rdy };
+  return Math.abs(rdx) >= Math.abs(rdy) ? { dx: rdx, dy: 0 } : { dx: 0, dy: rdy };
+}
+
+/**
+ * 移动预览的脏矩形:bounds(选区/图层外接框,文档坐标)在上一帧偏移与当前偏移下
+ * 的两个矩形取并,再钳进画布。空区域(w=0)表示无需合成。
+ */
+export function moveDirtyRect(
+  bounds: [number, number, number, number] | null,
+  prevDx: number, prevDy: number, dx: number, dy: number,
+  docW: number, docH: number,
+): { x: number; y: number; w: number; h: number } {
+  if (!bounds) return { x: 0, y: 0, w: 0, h: 0 };
+  const [bx, by, bw, bh] = bounds;
+  const x0 = Math.min(bx + prevDx, bx + dx);
+  const y0 = Math.min(by + prevDy, by + dy);
+  const x1 = Math.max(bx + prevDx + bw, bx + dx + bw);
+  const y1 = Math.max(by + prevDy + bh, by + dy + bh);
+  const cx0 = Math.max(0, Math.floor(x0));
+  const cy0 = Math.max(0, Math.floor(y0));
+  const cx1 = Math.min(docW, Math.ceil(x1));
+  const cy1 = Math.min(docH, Math.ceil(y1));
+  if (cx1 <= cx0 || cy1 <= cy0) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 };
+}
+
+/** 活动层(或选中层并集)的外接框,文档坐标;无 bounds(如空层)回退整幅画布。 */
+export function moveBounds(
+  layers: { id: number; bounds: [number, number, number, number] | null; selected: boolean }[],
+  activeLayer: number | null,
+  docW: number,
+  docH: number,
+): [number, number, number, number] | null {
+  const ids = new Set(layers.filter((l) => l.selected).map((l) => l.id));
+  const moving = layers.filter((l) => ids.size > 0 ? ids.has(l.id) : l.id === activeLayer);
+  if (!moving.length) return null;
+  const boxes = moving.map((l) => l.bounds ?? [0, 0, docW, docH]);
+  const x0 = Math.min(...boxes.map((b) => b[0]));
+  const y0 = Math.min(...boxes.map((b) => b[1]));
+  const x1 = Math.max(...boxes.map((b) => b[0] + b[2]));
+  const y1 = Math.max(...boxes.map((b) => b[1] + b[3]));
+  return [x0, y0, x1 - x0, y1 - y0];
+}
+
 /**
  * 边界段串接成连续折线(蚂蚁线的虚线必须沿连续路径跑:canvas 的 setLineDash 在每个
  * moveTo 子路径重置相位,离散的 1-2px 台阶段会全部显示为实线,只有长段才是虚线)。
