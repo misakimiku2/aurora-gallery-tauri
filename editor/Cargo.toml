@@ -1,0 +1,11 @@
+[package]
+name = "aurora-editor"
+version = "0.1.0"
+edition = "2021"
+description = "aurora-gallery 图片编辑器 v3:photocraft 引擎桥(无 tauri/UI 依赖)"
+
+[dependencies]
+photocraft-engine = { path = "../photocraft-vendor/crates/engine" }
+photocraft-compose = { path = "../photocraft-vendor/crates/compose" }
+photocraft-geom = { path = "../photocraft-vendor/crates/geom" }
+serde_json = "1"

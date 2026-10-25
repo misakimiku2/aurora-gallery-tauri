@@ -1,0 +1,70 @@
+# PhotoCraft 引擎 vendored workspace 根。
+#
+# 来源:C:\Users\misakimiku\Documents\photocraft-main 快照(workspace version 0.15.1,
+# edition 2024, rust-version 1.95),2026-10 抄入。上游不是 git 仓库,无 commit 可引。
+# 许可证 MIT OR Apache-2.0,见本目录 LICENSE-MIT / LICENSE-APACHE / NOTICE / ATTRIBUTION.md。
+#
+# 与上游的差异(全部记录在 README.md「本地改动」一节):
+#   - 只保留引擎闭包内的 22 个 crate(apps/ui-egui/xtask/gpu/automation/testkit/tablet 未抄入);
+#   - 移除了 3 处对未抄入 photocraft-testkit 的 dev-dependencies(engine/algo/io)。
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.15.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[workspace.dependencies]
+# internal(vendored)
+photocraft-geom = { path = "crates/geom" }
+photocraft-color = { path = "crates/color" }
+photocraft-cms = { path = "crates/cms" }
+photocraft-raster = { path = "crates/raster" }
+photocraft-doc = { path = "crates/doc" }
+photocraft-ops = { path = "crates/ops" }
+photocraft-psd = { path = "crates/psd" }
+photocraft-codecs = { path = "crates/codecs" }
+photocraft-heif = { path = "crates/heif" }
+photocraft-raw = { path = "crates/raw" }
+photocraft-affinity = { path = "crates/affinity" }
+photocraft-compose = { path = "crates/compose" }
+photocraft-paint = { path = "crates/paint" }
+photocraft-algo = { path = "crates/algo" }
+photocraft-io = { path = "crates/io" }
+photocraft-text = { path = "crates/text" }
+photocraft-vector = { path = "crates/vector" }
+photocraft-format = { path = "crates/format" }
+photocraft-plugins = { path = "crates/plugins" }
+photocraft-engine = { path = "crates/engine" }
+photocraft-ipp = { path = "crates/ipp" }
+
+# external(与上游根 workspace 的钉版一致)
+craft-print = { git = "https://github.com/storytold/craft-libs", rev = "3d37da389a3618ab9b76109da11416e9ca4ea719" }
+craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "82a24b006eefa036b43c09a67fb9a3fbd17ffe63" }
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+image = { version = "0.25", default-features = false }
+zune-core = "0.5"
+zune-jpeg = "0.5"
+proptest = "1"
+criterion = { version = "0.5", default-features = false }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+rayon = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+# 像素处理在 debug 构建下慢到不可用,依赖统一按上游做法开优化(上游根 Cargo.toml 同款)。
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

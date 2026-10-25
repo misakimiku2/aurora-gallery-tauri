@@ -58,6 +58,9 @@ src-tauri/static/lan-share/
 # M0 Kotlin 版 PoC（新增工程，编译产物不提交）
 ffi-poc/target/
 core/target/
+# 编辑器 v3：photocraft 引擎 vendor 与桥 crate 的编译产物（本机有全局 CARGO_TARGET_DIR，其他机器可能就地生成）
+photocraft-vendor/target/
+editor/target/
 kotlin-app/.gradle/
 kotlin-app/build/
 kotlin-app/app/build/
