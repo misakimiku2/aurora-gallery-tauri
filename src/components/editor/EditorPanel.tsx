@@ -1278,10 +1278,18 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         />
       </Section>
 
-      {/* 属性 · 调整 */}
+      {/* 属性 · 调整。**只对图层行可调**：组行（和无图层时）画布/导出两侧都不
+          渲染调色（组 div 没有 filter、Rust `LayerGroupRequest` 没有 adjust 字段），
+          滑杆照常出现就是"拖了没反应"的假功能（2026-10-26 用户实测踩到）。
+          PS 口径也是组没有亮度/对比度——要调得等调整层。 */}
       <Section title="属性 · 调整">
         <Row label="文档" value={documentName.length > 16 ? `${documentName.slice(0, 16)}…` : documentName} />
         <Row label="画布" value={`${width} × ${height}`} />
+        {!active || isGroupRow(active) ? (
+          <div className="pt-2 pb-1 text-[11px] text-neutral-400 dark:text-neutral-500">
+            {active ? '组行不支持调色——选中一个图层行再调整。' : '没有选中的图层。'}
+          </div>
+        ) : (
         <div className="pt-1 space-y-2">
           <Slider
             label="亮度"
@@ -1308,7 +1316,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             onReset={() => onAdjustChange({ ...adj, temperature: 0 })}
           />
         </div>
-        {hasAdjust && (
+        )}
+        {hasAdjust && active && !isGroupRow(active) && (
           <button
             type="button"
             onClick={() => onAdjustChange(ZERO_ADJUSTMENTS)}

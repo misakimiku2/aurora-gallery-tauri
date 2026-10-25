@@ -221,16 +221,29 @@ export function registerBlankBitmap(
   paintName: string,
 ): void {
   upsert(key, { canvas, width: canvas.width, height: canvas.height, dirty: true, paintName });
+  noteEngineDirty(key, { x: 0, y: 0, w: canvas.width, h: canvas.height });
   notify();
+}
+
+/**
+ * 建一块**位图仓画布**：必须带 `willReadFrequently` ——引擎显示的上传泵对它
+ * 逐帧 getImageData（管线换血 M3），不开这个属性 Chrome 每次读回都走
+ * GPU→CPU 搬运（控制台性能警告 + 每帧几毫秒的差）。⚠️ 该属性只在**第一次**
+ * getContext 时生效，所以建画布的入口必须统一走这里。
+ */
+export function createStoreCanvas(w: number, h: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d', { willReadFrequently: true });
+  return canvas;
 }
 
 /** 复制图层：把源层的位图克隆给新键（脏——新层要有自己的烘焙文件）。 */
 export function attachClonedBitmap(fromKey: string, toKey: string, paintName: string): boolean {
   const src = entries.get(fromKey);
   if (!src?.canvas) return false;
-  const canvas = document.createElement('canvas');
-  canvas.width = src.width;
-  canvas.height = src.height;
+  const canvas = createStoreCanvas(src.width, src.height);
   const ctx = canvas.getContext('2d');
   if (!ctx) return false;
   ctx.drawImage(src.canvas, 0, 0);
@@ -242,6 +255,7 @@ export function attachClonedBitmap(fromKey: string, toKey: string, paintName: st
     paintName,
     sourcePath: src.sourcePath,
   });
+  noteEngineDirty(toKey, { x: 0, y: 0, w: src.width, h: src.height });
   notify();
   return true;
 }
@@ -279,14 +293,14 @@ export function materializeBitmap(
   const p = (async () => {
     const bytes = await readFileBytes(readFrom);
     const bitmap = await createImageBitmap(new Blob([bytes]));
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    const canvas = createStoreCanvas(width, height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('无法创建 2D 上下文');
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
     upsert(key, { canvas, width, height, sourcePath: opts.sourcePath });
+    // 物化 = 引擎从没见过这块像素：记全幅（引擎显示的上传泵按它整层分条上传）
+    noteEngineDirty(key, { x: 0, y: 0, w: width, h: height });
     notify();
     return canvas;
   })();
@@ -318,8 +332,16 @@ export async function ensureBitmapResident(
 /**
  * 像素变更入口：`fn` 在位图上作画（ctx 已 save/restore 包好），version+1、置脏、
  * 通知订阅者（显示层重画 + 空闲烘焙调度器接手）。位图必须在内存。
+ *
+ * `rect`（可选）= 本次变更覆盖的位图矩形——**引擎显示的上传泵按它做增量上传**
+ * （管线换血 M3，设计稿 §6）；不传时该键记全幅。画笔的 compositeLayerRegion 有
+ * 精确矩形，必须传。
  */
-export function mutatePixels(key: string, fn: (ctx: CanvasRenderingContext2D) => void): boolean {
+export function mutatePixels(
+  key: string,
+  fn: (ctx: CanvasRenderingContext2D) => void,
+  rect?: { x: number; y: number; w: number; h: number },
+): boolean {
   const e = entries.get(key);
   if (!e?.canvas) return false;
   const ctx = e.canvas.getContext('2d');
@@ -330,6 +352,10 @@ export function mutatePixels(key: string, fn: (ctx: CanvasRenderingContext2D) =>
   e.version += 1;
   e.dirty = true;
   e.lastTouch = Date.now();
+  noteEngineDirty(
+    key,
+    rect ?? { x: 0, y: 0, w: e.canvas.width, h: e.canvas.height },
+  );
   notify();
   return true;
 }
@@ -365,6 +391,7 @@ export function applyBitmapPatch(
   e.version += 1;
   e.dirty = true;
   e.lastTouch = Date.now();
+  noteEngineDirty(key, { x, y, w: pixels.width, h: pixels.height });
   notify();
   return true;
 }
@@ -424,6 +451,42 @@ export function forgetBitmap(key: string): void {
     e.paintName = null;
     e.bakedPath = null;
   }
+  enginePending.delete(key); // 待上传也作废（引擎侧由 apply 的 store 集合对账）
   settledVers.delete(key); // 版本归零，滞后镜像跟着清（别让行缩略图多等一拍）
   notify();
+}
+
+// ---- 引擎显示的上传待办（管线换血 M3，设计稿 §6）--------------------------------
+//
+// 像素变更时把脏矩形记到这里（union），engineDisplay 的上传泵取走：getImageData
+// → base64 → `editor_engine_upload_region`。矩形不传 = 全幅（物化/空白/克隆）。
+
+interface IntRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const enginePending = new Map<string, IntRect>();
+
+/** 记一笔引擎待上传矩形（泵消费；变更入口内部调用，测试与特殊路径可直接用）。 */
+export function noteEngineDirty(key: string, rect: IntRect): void {
+  const prev = enginePending.get(key);
+  if (!prev) {
+    enginePending.set(key, { ...rect });
+    return;
+  }
+  const x0 = Math.min(prev.x, rect.x);
+  const y0 = Math.min(prev.y, rect.y);
+  const x1 = Math.max(prev.x + prev.w, rect.x + rect.w);
+  const y1 = Math.max(prev.y + prev.h, rect.y + rect.h);
+  enginePending.set(key, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+}
+
+/** 取走全部待上传矩形（泵消费；空 = 没有积压）。 */
+export function takeEngineDirty(): Map<string, IntRect> {
+  const out = new Map(enginePending);
+  enginePending.clear();
+  return out;
 }

@@ -7,10 +7,12 @@
  * 预览直接把它交给 CSS，导出时原样交给 Rust——**两端不再各翻译一次**，
  * 这是调色那套"公式写两份再靠单测锁死"的对立面：能只写一份就只写一份。
  *
- * ## 只做可分离的 12 档
+ * ## 16 档（2026-10-26 二轮补齐非可分离四档）
  *
- * PS 还有色相 / 饱和度 / 颜色 / 明度四档，它们要把像素转到 HSL 再算，
- * 公式是另一套，CSS 虽然也有同名实现，但 Rust 侧得另写，所以先不上。
+ * 色相 / 饱和度 / 颜色 / 明度是非可分离的（RGB 整组运算），Rust 导出侧的公式照
+ * **PhotoCraft `photocraft-color`**（MIT OR Apache-2.0，PS 口径的 Rust 复刻）移植，
+ * 与 CSS `mix-blend-mode` 用同一套 W3C 公式——预览端依旧零成本（CSS 原生支持），
+ * 两端一致性依旧靠"同一份字符串 + 两份单测锁"。
  */
 export type BlendMode =
   | 'normal'
@@ -24,7 +26,11 @@ export type BlendMode =
   | 'hard-light'
   | 'soft-light'
   | 'difference'
-  | 'exclusion';
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
 
 export interface BlendModeDef {
   id: BlendMode;
@@ -46,6 +52,11 @@ export const BLEND_MODES: BlendModeDef[] = [
   { id: 'hard-light', label: '强光' },
   { id: 'difference', label: '差值' },
   { id: 'exclusion', label: '排除' },
+  // 非可分离四档在 PS 下拉的最末尾
+  { id: 'hue', label: '色相' },
+  { id: 'saturation', label: '饱和度' },
+  { id: 'color', label: '颜色' },
+  { id: 'luminosity', label: '明度' },
 ];
 
 const IDS = new Set(BLEND_MODES.map(m => m.id));

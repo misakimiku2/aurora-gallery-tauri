@@ -1,35 +1,33 @@
 //! 图片编辑器（C11）的 Rust 侧命令。
 //!
-//! 设计依据：`docs/图片编辑与封面合成-设计方案.md` §3.1、`docs/图片编辑-最小图层模型设计.md`。
+//! 设计依据：`docs/图片编辑与封面合成-设计方案.md` §3.1、`docs/图片编辑-最小图层模型设计.md`、
+//! `docs/编辑器管线换血-阶段1设计.md`。
 //!
 //! ## 前端在"看"，Rust 在"算"
 //!
 //! - **显示**：画布直接渲染**原文件**（前端 `convertFileSrc` + 仿射矩阵），Rust 不参与。
-//!   所以"前端永远看不到全分辨率像素"这句话在 v2 已不成立——§3.1 约束的是**处理**
-//!   （不让像素进 JS 做运算、不让全分辨率字节过 IPC），不是显示。
-//! - **计算**：解码、调色、仿射重采样、合成、编码全在 `aurora_core::imaging`。
+//!   管线换血阶段 1 之后，这一条由 engine 帧输出逐步接管（M3），命令层不变。
+//! - **计算**：解码、调色、仿射重采样、合成、编码的**编排**在 `editor-engine`
+//!   （2026-10-26 自本文件迁入，parity 测试逐字节一致）；原语在 `aurora_core::imaging`。
 //!   进出 WebView 的只有**图层代理图**、**文档合成预览**，以及导出结果的元数据
 //!   （路径 / 尺寸 / 字节数）——产物字节直接写盘，不过 IPC。
 //!
-//! ## 五条命令
+//! ## 命令
 //!
 //! - `editor_load_layer_proxy`：一张图层的 ≤2048 JPEG + 自然尺寸 + **EXIF 方向**。
 //!   前端拿它做缩略图，并用 `orientation` 把方向折进图层变换。
-//! - `editor_render_document`：按文档状态合成一张预览（超大图打底用，尚未接线）。
+//! - `editor_render_document`：按文档状态合成一张预览（全览图接线；超大图打底未接）。
 //! - `editor_export_document`：全分辨率合成并写盘。
 //! - `editor_save_project`：把文档存成 `.aurora` 工程（自包含 ZIP，写侧在 Rust）。
 //! - `editor_open_project`：读 `.aurora`，图层图解到系统临时目录并回传路径。
 //!
-//! v1 的三条旧命令（`editor_load_preview` / `editor_render_preview` /
-//! `editor_export_image`）已随 S5 前端切换删除。
-//! S5 落地时旧命令一并删除（`docs/图片编辑-最小图层模型设计.md` §8）。
+//! 合成载荷结构体（`DocumentRequest` 一族）与 `apply_adjustments` 已迁到
+//! `editor-engine::payload`，这里 re-export 维持既有 `use super::*` 的引用面
+//! （IPC 契约测试照旧钉住 serde 形状）。
 
 use aurora_core::editor_project::{self, ProjectAdjust, ProjectCanvas, ProjectBox};
-use aurora_core::imaging::{
-    self, AffineMatrix, BlendMode, CanvasBackground, CompositeLayer, EncodeFormat,
-};
+use aurora_core::imaging::{self, BlendMode, EncodeFormat};
 use base64::{engine::general_purpose, Engine as _};
-use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -81,213 +79,12 @@ fn encode_format_from_path(target: &str) -> Result<EncodeFormat, String> {
     }
 }
 
-/// 调色请求。四个参数都是 `-100 ..= 100`，0 = 不变（与前端滑杆同一口径）。
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(default)]
-pub struct AdjustRequest {
-    pub brightness: f32,
-    pub contrast: f32,
-    pub saturation: f32,
-    pub temperature: f32,
-}
-
-impl AdjustRequest {
-    fn is_noop(&self) -> bool {
-        self.brightness == 0.0
-            && self.contrast == 0.0
-            && self.saturation == 0.0
-            && self.temperature == 0.0
-    }
-}
-
-/// 在**仿射重采样之前**对全分辨率图层执行调色。
-///
-/// 调色与位置无关，先算完颜色再交给 `warp_into`；全程不经过代理尺寸，clamp 直接
-/// 作用在原始像素上（v2 导出路径里没有 crop / resize 这两步）。
-fn apply_adjustments(image: RgbaImage, adjust: Option<AdjustRequest>) -> RgbaImage {
-    let Some(a) = adjust else { return image };
-    if a.is_noop() {
-        return image; // 全 0 时一个像素都不碰
-    }
-    // 前端用 -100..100，core 用 -1..1
-    let matrix = imaging::ColorMatrix::from_adjustments(
-        a.brightness / 100.0,
-        a.contrast / 100.0,
-        a.saturation / 100.0,
-        a.temperature / 100.0,
-    );
-    imaging::apply_color_matrix(&image, &matrix)
-}
-
-// ============================================================================
-// v2 · 最小图层模型（S4）
-//
-// 前端把「画布 + 图层（含仿射六参）」整份丢过来，Rust 只负责按同一组数做全分辨率合成。
-// 六参由前端 `layerTransform.ts` 的 `composeMatrix` 算出，**两端共用同一组数**（设计稿
-// §3.1），所以这里不接收 rotation / flip / scale 这类语义参数——避免再推导一次。
-// ============================================================================
-
-/// 画布请求。
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CanvasRequest {
-    pub width: u32,
-    pub height: u32,
-    /// `'transparent'`（默认） / `'white'` / `'black'`
-    pub background: Option<String>,
-}
-
-/// 图层蒙版请求。`matrix` 有值 = **解链**（蒙版自己的画布空间矩阵）；
-/// 缺省 / null = **链接**（蒙版拉伸铺满图层内容，与 CSS `mask-size: 100% 100%` 同口径）。
-#[derive(Debug, Clone, Deserialize)]
-pub struct MaskRequest {
-    pub path: String,
-    #[serde(default)]
-    pub matrix: Option<[f64; 6]>,
-}
-
-/// 单个图层请求。
-#[derive(Debug, Clone, Deserialize)]
-pub struct LayerRequest {
-    /// 源文件路径
-    pub path: String,
-    /// CSS 顺序的仿射六参 `[a,b,c,d,e,f]`
-    pub matrix: [f64; 6],
-    /// 调色（-100..100）；不传 = 不动
-    pub adjust: Option<AdjustRequest>,
-    /// 不透明度百分比（0..=100）；不传 = 100（完全不透明）
-    ///
-    /// 混合模式（kebab-case：`multiply` / `color-dodge`…）。不传或认不出来 = `normal`。
-    /// 名字与 CSS 的 `mix-blend-mode` 同名，前端预览直接交给 CSS，两端不用再翻译一次。
-    #[serde(default)]
-    pub blend: Option<String>,
-    ///
-    /// 用百分比而不是 0..1 的浮点：与 PS/前端滑杆同口径，JSON 里也是人能读的整数。
-    /// 前端 `layerOpacity()` 出口径，两端的钳位规则一致。
-    #[serde(default)]
-    pub opacity: Option<u8>,
-    /// 图层蒙版（null = 无）。语义见 `imaging::mask`（蒙版值 = 亮度 × alpha）。
-    #[serde(default)]
-    pub mask: Option<MaskRequest>,
-    /// 剪贴蒙版：只显示在同分段内下方基础层有像素处（吃基础层 alpha）。
-    #[serde(default)]
-    pub clipped: bool,
-}
-
-/// 一个**组**的分段（PS 的组语义）：成员先互相合成，组画布按组的 opacity/blend
-/// 整体叠到底板。平层 = 单成员组（opacity 100 / blend normal）——前端
-/// `splitSegments` 出口径，渲染（CSS 嵌套 div）与导出共用同一份分段。
-#[derive(Debug, Clone, Deserialize)]
-pub struct LayerGroupRequest {
-    #[serde(default = "default_opacity")]
-    pub opacity: u8,
-    #[serde(default)]
-    pub blend: Option<String>,
-    pub layers: Vec<LayerRequest>,
-}
-
-/// 整份文档（画布 + 自底向上的**分段**）。
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DocumentRequest {
-    pub canvas: CanvasRequest,
-    pub groups: Vec<LayerGroupRequest>,
-}
-
-fn parse_background(raw: Option<&str>) -> CanvasBackground {
-    match raw.unwrap_or("transparent").to_ascii_lowercase().as_str() {
-        "white" => CanvasBackground::White,
-        "black" => CanvasBackground::Black,
-        _ => CanvasBackground::Transparent,
-    }
-}
-
-/// 按文档状态合成出全分辨率 RGBA。
-///
-/// 顺序：**解码 → 调色 → 不透明度 → 蒙版 → 仿射重采样 → 合成到画布**。调色、不透明度、
-/// 蒙版都与位置无关（前两个动 RGB/alpha、蒙版动 alpha），先做完再重采样，让后续步骤
-/// 拿到最终像素（顺序反过来在本项目里结果一致，但定死一处才不会有人"顺手优化"）。
-/// 不透明度落成 alpha 缩放、蒙版落成 alpha 乘蒙版值，理由分别见 `imaging::opacity`
-/// 与 `imaging::mask` 的文件头。
-///
-/// 蒙版解链（`mask.matrix` 有值）：把蒙版 warp 到**图层内容空间**
-/// （`inv(M_layer)·M_mask`）后仍走同一条 `apply_mask_image` 乘法——与 CSS 包裹
-/// 渲染（A 壳 + B 壳的逆矩阵换算）数学同构，两端不各推一次。
-fn composite_document(doc: &DocumentRequest) -> Result<RgbaImage, String> {
-    // 组员的解码图必须活到合成结束：先收进本层 Vec，再组装带生命周期的 CompositeGroup
-    let mut decoded: Vec<RgbaImage> = Vec::new();
-    let mut group_specs: Vec<(u8, BlendMode, Vec<(usize, AffineMatrix, BlendMode, bool)>)> =
-        Vec::new();
-    for g in &doc.groups {
-        let mut members = Vec::new();
-        for l in &g.layers {
-            let mut img =
-                apply_adjustments(imaging::decode_file(&l.path).map_err(|e| e.to_string())?, l.adjust);
-            imaging::apply_opacity(&mut img, l.opacity.unwrap_or(100).min(100));
-            // 蒙版失败让整份导出失败（而不是静默丢蒙版）：用户屏幕上看着有渐隐边缘，
-            // 成品里却是硬边——那比报错糟糕得多
-            if let Some(mask_req) = &l.mask {
-                if !mask_req.path.is_empty() {
-                    match mask_req.matrix {
-                        None => imaging::apply_mask(&mut img, &mask_req.path).map_err(|e| e.to_string())?,
-                        Some(mask_matrix) => {
-                            let layer_matrix = AffineMatrix::from_array(l.matrix);
-                            // 蒙版源 → 内容空间：inv(M_layer)·M_mask（CSS 的 B 壳换算）
-                            let to_local = AffineMatrix::concat(
-                                layer_matrix.invert().map_err(|e| e.to_string())?,
-                                AffineMatrix::from_array(mask_matrix),
-                            );
-                            let mask_img = imaging::decode_file(&mask_req.path).map_err(|e| e.to_string())?;
-                            let warped = imaging::warp_affine(
-                                &mask_img,
-                                img.width(),
-                                img.height(),
-                                to_local,
-                                imaging::Sampling::Bilinear,
-                            )
-                            .map_err(|e| e.to_string())?;
-                            imaging::apply_mask_image(&mut img, &warped);
-                        }
-                    }
-                }
-            }
-            let idx = decoded.len();
-            decoded.push(img);
-            members.push((
-                idx,
-                AffineMatrix::from_array(l.matrix),
-                l.blend.as_deref().map(BlendMode::parse).unwrap_or_default(),
-                l.clipped,
-            ));
-        }
-        group_specs.push((g.opacity.min(100), g.blend.as_deref().map(BlendMode::parse).unwrap_or_default(), members));
-    }
-
-    let groups: Vec<imaging::CompositeGroup<'_>> = group_specs
-        .iter()
-        .map(|(opacity, blend, members)| imaging::CompositeGroup {
-            opacity: *opacity,
-            blend: *blend,
-            layers: members
-                .iter()
-                .map(|(idx, matrix, blend, clipped)| CompositeLayer {
-                    src: &decoded[*idx],
-                    matrix: *matrix,
-                    blend: *blend,
-                    clipped: *clipped,
-                })
-                .collect(),
-        })
-        .collect();
-
-    imaging::composite_grouped(
-        doc.canvas.width,
-        doc.canvas.height,
-        parse_background(doc.canvas.background.as_deref()),
-        &groups,
-    )
-    .map_err(|e| e.to_string())
-}
+// 合成载荷与调色：2026-10-26 管线换血阶段 1 迁入 `editor-engine::payload`
+// （serde 形状一字未动，IPC 契约测试继续钉住）。这里 re-export 维持引用面。
+pub use editor_engine::payload::{
+    apply_adjustments, AdjustRequest, CanvasRequest, DocumentRequest, LayerGroupRequest,
+    LayerRequest, MaskRequest,
+};
 
 /// 单个图层的代理图（**不含任何变换**）。
 ///
@@ -361,7 +158,9 @@ pub struct DocumentRender {
 #[tauri::command]
 pub async fn editor_render_document(doc: DocumentRequest) -> Result<DocumentRender, String> {
     tokio::task::spawn_blocking(move || {
-        let canvas = composite_document(&doc)?;
+        // 命令级临时 composer：M1 与旧行为等价（无跨调用状态）；M2 起 per-tab 常驻
+        let mut composer = editor_engine::DocumentComposer::new();
+        let canvas = editor_engine::composite_document(&mut composer, &doc)?;
         let (width, height) = (canvas.width(), canvas.height());
         let proxy = imaging::resize_to_max_edge(&canvas, PREVIEW_MAX_EDGE).map_err(|e| e.to_string())?;
         let (preview_width, preview_height) = (proxy.width(), proxy.height());
@@ -393,7 +192,8 @@ pub async fn editor_export_document(
     quality: Option<u8>,
 ) -> Result<EditorExportResult, String> {
     tokio::task::spawn_blocking(move || {
-        let image = composite_document(&doc)?;
+        let mut composer = editor_engine::DocumentComposer::new();
+        let image = editor_engine::composite_document(&mut composer, &doc)?;
         let format = encode_format_from_path(&target_path)?;
         let bytes = imaging::encode(&image, format, quality.unwrap_or(EXPORT_JPEG_QUALITY))
             .map_err(|e| e.to_string())?;
@@ -410,6 +210,336 @@ pub async fn editor_export_document(
     })
     .await
     .map_err(|e| format!("导出任务失败: {e}"))?
+}
+
+// ============================================================================
+// 管线换血 M2 · 帧输出（设计稿 §5 的 A/B 两档；C 档脏区随 M3 画笔接缝一起上）
+// ============================================================================
+
+/// settle 帧的落点：临时目录下独立目录，30 天 TTL 与工程/画笔缓存同口径。
+fn frames_dir() -> PathBuf {
+    std::env::temp_dir().join("aurora-editor-frames")
+}
+
+/// A 档 settle 帧（文档分辨率，M3 显示切换后的"静置真相"）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettleFrame {
+    /// 帧文件的绝对路径（前端 `convertFileSrc` 显示，字节不进 JS）
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    /// `"png"`（透明底文档）或 `"jpg"`
+    pub format: String,
+}
+
+/// A 档同步内核（命令的 spawn_blocking 里跑；test 直接调）。
+fn render_settle_frame_blocking(doc: DocumentRequest) -> Result<SettleFrame, String> {
+    let mut composer = editor_engine::DocumentComposer::new();
+    let image = editor_engine::composite_document(&mut composer, &doc)?;
+    settle_frame_from_image(image)
+}
+
+/// A 档：合成文档分辨率整帧 → 按透明度分流编码（JPEG 无 alpha，透明底走 PNG）→
+/// **内容哈希做文件名**落盘（同帧重渲染复用现有文件，WebView 图片缓存 + 磁盘双命中）。
+/// 低频事件（交互结束/结构变化），24MP 编码几百 ms 可接受；合成与导出同一条
+/// engine 路径——"看到的就是导出的"由 parity 测试在源头锁住。
+#[tauri::command]
+pub async fn editor_render_document_frame(doc: DocumentRequest) -> Result<SettleFrame, String> {
+    tokio::task::spawn_blocking(move || render_settle_frame_blocking(doc))
+        .await
+        .map_err(|e| format!("settle 帧任务失败: {e}"))?
+}
+
+/// B 档视口帧槽：合成端**覆盖写**、fetch 端拿当下最新——没有队列就没有积压，
+/// 前端拉取慢于合成时自然跳帧（设计稿 §5：交互帧要"永远最新"，这正是自定义协议
+/// 相对 Channel 的决定性优势）。Arc 内核让命令能把克隆塞进 spawn_blocking。
+#[derive(Default, Clone)]
+pub struct ViewportFrameSlot(pub std::sync::Arc<std::sync::Mutex<ViewportSlotInner>>);
+
+#[derive(Default)]
+pub struct ViewportSlotInner {
+    pub seq: u64,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Option<std::sync::Arc<Vec<u8>>>,
+}
+
+/// 覆盖式写槽（命令与测试共用）：seq 单调递增，旧帧立即被替换。
+fn store_viewport_frame(slot: &ViewportFrameSlot, img: image::RgbaImage) -> u64 {
+    let (w, h) = (img.width(), img.height());
+    let rgba = std::sync::Arc::new(img.into_raw());
+    let mut inner = slot.0.lock().expect("帧槽锁不会中毒：闭包内无 panic 点");
+    inner.seq += 1;
+    inner.width = w;
+    inner.height = h;
+    inner.rgba = Some(rgba);
+    inner.seq
+}
+
+/// B 档同步内核（命令的 spawn_blocking 里跑）。
+fn render_viewport_blocking(
+    slot: &ViewportFrameSlot,
+    doc: DocumentRequest,
+    x: f64,
+    y: f64,
+    width: u32,
+    height: u32,
+    scale: Option<f64>,
+) -> Result<u64, String> {
+    let mut composer = editor_engine::DocumentComposer::new();
+    let img = editor_engine::composite_region(
+        &mut composer,
+        &doc,
+        editor_engine::Region { x, y, width, height, scale: scale.unwrap_or(1.0) },
+    )?;
+    Ok(store_viewport_frame(slot, img))
+}
+
+/// B 档：只合成视口区域（`composite_region`，与全量渲染 parity 逐位一致），
+/// 写进最新帧槽，返回本次序号。前端 rAF 节流拉取 `editor-frame://viewport`，
+/// 用返回的 seq 与响应头里的 seq 比对判断是否拿到新帧。
+#[tauri::command]
+pub async fn editor_render_viewport(
+    doc: DocumentRequest,
+    x: f64,
+    y: f64,
+    width: u32,
+    height: u32,
+    scale: Option<f64>,
+    slot: tauri::State<'_, ViewportFrameSlot>,
+) -> Result<u64, String> {
+    // Arc 克隆进闭包（State 的借用活不过 spawn_blocking）
+    let slot = slot.inner().clone();
+    tokio::task::spawn_blocking(move || render_viewport_blocking(&slot, doc, x, y, width, height, scale))
+        .await
+        .map_err(|e| format!("视口帧任务失败: {e}"))?
+}
+
+/// 协议取帧端（lib.rs 的 editor-frame handler 调用；测试直接驱动）：
+/// 返回 (http_status, body)，body = 16B LE 头（magic "ARFD" + seq + w + h）+ RGBA。
+/// 元数据嵌在字节流里而不是单独一条消息——拆两条要自己解决"流对齐"，不值得。
+pub fn viewport_frame_body(slot: &ViewportFrameSlot) -> (u16, Vec<u8>) {
+    let Ok(inner) = slot.0.lock() else {
+        return (503, b"slot poisoned".to_vec());
+    };
+    let Some(rgba) = inner.rgba.clone() else {
+        return (404, b"empty".to_vec());
+    };
+    let (seq, w, h) = (inner.seq, inner.width, inner.height);
+    drop(inner);
+    let mut body = Vec::with_capacity(16 + rgba.len());
+    body.extend_from_slice(b"ARFD");
+    // seq 截成 u32：16B 定长头是线格式契约（消费端按 4/8/12 偏移解 w/h）；序号
+    // 只用于"拿到的是不是新帧"的相等比较，4G 帧后才回绕，无所谓。
+    body.extend_from_slice(&(seq as u32).to_le_bytes());
+    body.extend_from_slice(&w.to_le_bytes());
+    body.extend_from_slice(&h.to_le_bytes());
+    body.extend_from_slice(&rgba);
+    (200, body)
+}
+
+// ============================================================================
+// 管线换血 M3 · 有状态文档引擎（D6 画笔接缝的 Rust 半边，设计稿 §4/§6）
+//
+// engine 按 tabId 持有像素仓（前端位图仓上传进来）+ prep 缓存；显示命令从
+// engine 出帧而不是每次从文件重算——画笔笔划的逐帧更新不再依赖空闲烘焙落盘。
+// ============================================================================
+
+/// 每 Tab 一份的引擎注册表。Arc 双层让命令把克隆塞进 spawn_blocking
+/// （外层 Arc = 注册表行、内层 Arc = engine 本体）。
+#[derive(Default, Clone)]
+pub struct EngineRegistry(
+    pub std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<std::sync::Mutex<editor_engine::DocEngine>>>>,
+    >,
+);
+
+impl EngineRegistry {
+    fn slot(
+        &self,
+        tab_id: &str,
+    ) -> std::sync::Arc<std::sync::Mutex<editor_engine::DocEngine>> {
+        self.0
+            .lock()
+            .expect("注册表锁不会中毒")
+            .entry(tab_id.to_string())
+            .or_default()
+            .clone()
+    }
+}
+
+/// 应用文档参数（语义载荷整体替换；像素仓按图层 id 保留）。
+#[tauri::command]
+pub fn editor_engine_apply(
+    tab_id: String,
+    doc: editor_engine::DisplayDocument,
+    registry: tauri::State<'_, EngineRegistry>,
+) -> Result<(), String> {
+    registry.slot(&tab_id).lock().expect("engine 锁").apply_document(doc);
+    Ok(())
+}
+
+/// 上传像素矩形（RGBA 非预乘、行紧凑，base64 进——与画笔烘焙同一条 IPC 口径）。
+/// `key` = 图层 id 或 `{id}::mask`；首片上传按 layerWidth/layerHeight 分配画布。
+#[tauri::command]
+pub async fn editor_engine_upload_region(
+    tab_id: String,
+    key: String,
+    layer_width: u32,
+    layer_height: u32,
+    x: u32,
+    y: u32,
+    rect_width: u32,
+    rect_height: u32,
+    data_base64: String,
+    registry: tauri::State<'_, EngineRegistry>,
+) -> Result<(), String> {
+    use base64::Engine;
+    let slot = registry.slot(&tab_id);
+    tokio::task::spawn_blocking(move || {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(data_base64.trim())
+            .map_err(|e| format!("上传 base64 解码失败: {e}"))?;
+        slot.lock()
+            .expect("engine 锁")
+            .upload_region(&key, layer_width, layer_height, x, y, rect_width, rect_height, &data)
+    })
+    .await
+    .map_err(|e| format!("上传任务失败: {e}"))?
+}
+
+/// 从合成结果出 A 档 settle 帧（M2 的编码/落盘/内容哈希复用；两条命令共用）。
+fn settle_frame_from_image(image: image::RgbaImage) -> Result<SettleFrame, String> {
+    use std::hash::{Hash, Hasher};
+    let has_alpha = image.pixels().any(|p| p.0[3] != 255);
+    let (format, ext, bytes) = if has_alpha {
+        (
+            "png",
+            "png",
+            imaging::encode(&image, EncodeFormat::Png, 0).map_err(|e| e.to_string())?,
+        )
+    } else {
+        (
+            "jpg",
+            "jpg",
+            imaging::encode(&image, EncodeFormat::Jpeg, EXPORT_JPEG_QUALITY)
+                .map_err(|e| e.to_string())?,
+        )
+    };
+    let dir = frames_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let path = dir.join(format!("settle-{:016x}.{ext}", hasher.finish()));
+    if !path.exists() {
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    }
+    prune_project_cache(&dir);
+    Ok(SettleFrame {
+        path: path.display().to_string(),
+        width: image.width(),
+        height: image.height(),
+        format: format.into(),
+    })
+}
+
+/// A 档（引擎版）：从 per-tab 引擎合成 settle 帧并落盘。
+/// 与无状态版 `editor_render_document_frame` 的差别：像素含**上传仓**（画过的层
+/// 不再依赖空闲烘焙落盘），且 prep 走逐层缓存。
+#[tauri::command]
+pub async fn editor_engine_render_settle(
+    tab_id: String,
+    registry: tauri::State<'_, EngineRegistry>,
+) -> Result<SettleFrame, String> {
+    let slot = registry.slot(&tab_id);
+    tokio::task::spawn_blocking(move || {
+        let image = slot.lock().expect("engine 锁").composite_settle()?;
+        settle_frame_from_image(image)
+    })
+    .await
+    .map_err(|e| format!("引擎 settle 任务失败: {e}"))?
+}
+
+/// B 档（引擎版）：从 per-tab 引擎合成视口区域帧写槽，返回序号。
+#[tauri::command]
+pub async fn editor_engine_render_viewport(
+    tab_id: String,
+    x: f64,
+    y: f64,
+    width: u32,
+    height: u32,
+    scale: Option<f64>,
+    registry: tauri::State<'_, EngineRegistry>,
+    slot: tauri::State<'_, ViewportFrameSlot>,
+) -> Result<u64, String> {
+    let engine = registry.slot(&tab_id);
+    let frame_slot = slot.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let img = engine.lock().expect("engine 锁").composite_viewport(
+            x,
+            y,
+            width,
+            height,
+            scale.unwrap_or(1.0),
+        )?;
+        Ok(store_viewport_frame(&frame_slot, img))
+    })
+    .await
+    .map_err(|e| format!("引擎视口帧任务失败: {e}"))?
+}
+
+/// POST /upload 的处理端（lib.rs 的 editor-frame 协议直调）：query 带寻址参数、
+/// **请求体就是裸 RGBA**（无 base64/JSON——画笔逐帧上传的主线程开销曾被实测
+/// 拖卡大笔刷，2026-10-26 改的）。返回 http 状态码。
+///
+/// 键值只做白名单字符校验不做 URL 解码（tabId 是内部 uuid、key 是 id 或
+/// `{id}::mask`——都不含需要转义的字符；出现异常字符直接 400）。
+pub fn engine_upload_from_query(
+    registry: &EngineRegistry,
+    query: &str,
+    body: &[u8],
+) -> u16 {
+    let mut tab_id = None;
+    let mut key = None;
+    let mut nums = [0u32; 6];
+    let names = ["lw", "lh", "x", "y", "rw", "rh"];
+    for pair in query.split('&') {
+        let Some((k, v)) = pair.split_once('=') else { continue };
+        match k {
+            "tab_id" => tab_id = Some(v.to_string()),
+            "key" => key = Some(v.to_string()),
+            "lw" | "lh" | "x" | "y" | "rw" | "rh" => {
+                let i = names.iter().position(|n| *n == k).unwrap_or(0);
+                match v.parse::<u32>() {
+                    Ok(n) => nums[i] = n,
+                    Err(_) => return 400,
+                }
+            }
+            _ => return 400,
+        }
+    }
+    let (Some(tab_id), Some(key)) = (tab_id, key) else {
+        return 400;
+    };
+    let [lw, lh, x, y, rw, rh] = nums;
+    // 键的白名单：内部 id 是 uuid/`::mask` 后缀，出现其它字符 = 有人在探协议
+    let key_ok = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':' || c == '.');
+    if !key_ok || body.is_empty() {
+        return 400;
+    }
+    match registry
+        .slot(&tab_id)
+        .lock()
+        .expect("engine 锁")
+        .upload_region(&key, lw, lh, x, y, rw, rh, body)
+    {
+        Ok(()) => 200,
+        Err(_) => 400,
+    }
 }
 
 // ============================================================================
@@ -440,9 +570,15 @@ pub struct ProjectLayerRequest {
     /// 不透明度百分比（0..=100）。前端老版本不带这个字段时按 100 处理。
     #[serde(default = "default_opacity")]
     pub opacity: u8,
-    /// 混合模式（kebab-case）。前端老版本不带这个字段时按 `normal` 处理。
+    /// 混合模式（kebab-case **字符串**）。前端老版本不带这个字段时按 `normal` 处理。
+    ///
+    /// ⚠️ IPC 边界**收字符串不收枚举**：强类型枚举遇上"前端发了新档位、后端还是
+    /// 旧二进制"（2026-10-26 非可分离四档上线时的实测：`invalid args 'doc'`，
+    /// 整份保存被拒）就全盘失败；字符串 + `BlendMode::parse`（未知落 normal）
+    /// 让这类版本错位降级成"那一档暂时当正常渲染"。与渲染路径的
+    /// `LayerRequest.blend: Option<String>` 同一口径。
     #[serde(default)]
-    pub blend: BlendMode,
+    pub blend: Option<String>,
     /// 锁透明像素 / 锁像素 / 锁位置。老前端不带字段时按 false（未锁）处理。
     #[serde(default)]
     pub lock_transparent: bool,
@@ -521,7 +657,7 @@ pub async fn editor_save_project(
                 natural_height: l.natural_height,
                 visible: l.visible,
                 opacity: l.opacity,
-                blend: l.blend,
+                blend: l.blend.as_deref().map(BlendMode::parse).unwrap_or_default(),
                 lock_transparent: l.lock_transparent,
                 lock_pixel: l.lock_pixel,
                 lock_position: l.lock_position,
@@ -720,7 +856,9 @@ mod tests {
         assert_eq!(l.mask_box.as_ref().expect("解链框必须可读").w, 60.0);
         assert!(l.mask_disabled, "停用标志必须可读（camelCase：maskDisabled）");
         assert!(l.clipped, "剪贴标志必须可读");
-        assert_eq!(l.blend, BlendMode::Multiply);
+        // 保存路径的 blend 收**字符串**（宽松 parse 在 save 转换处做）——强类型枚举
+        // 遇上"新前端 + 旧二进制"会拒收整份请求（2026-10-26 实测）
+        assert_eq!(l.blend.as_deref(), Some("multiply"));
         assert_eq!(l.opacity, 80);
         // box → frame 的 rename 也在这一条里顺带锁住（§6 第 8 条的坑）
         assert_eq!(l.frame.w, 100.0);
@@ -819,5 +957,223 @@ mod tests {
         // 带路径成分的名字必须拒绝（防注入）——正反斜杠都不行
         assert!(editor_write_paint_png("AAAA".into(), Some("a/b.png".into())).is_err());
         assert!(editor_write_paint_png("AAAA".into(), Some("..\\evil.png".into())).is_err());
+    }
+
+    // ---- 管线换血 M2 · 帧输出（A/B 两档的单元验收）----
+
+    /// 造一份单层文档载荷（fixture 图写进临时目录）。
+    fn frame_doc(background: Option<&str>, alpha_pixels: bool) -> DocumentRequest {
+        let mut img = image::RgbaImage::from_pixel(16, 12, image::Rgba([180, 60, 30, 255]));
+        if alpha_pixels {
+            img.put_pixel(0, 0, image::Rgba([0, 0, 0, 0]));
+        }
+        let bytes = imaging::encode(&img, EncodeFormat::Png, 0).expect("编码 fixture");
+        let dir = std::env::temp_dir().join(format!("aurora-frame-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建 fixture 目录");
+        let src = dir.join(if alpha_pixels { "frame-src-alpha.png" } else { "frame-src.png" });
+        std::fs::write(&src, &bytes).expect("写 fixture");
+        DocumentRequest {
+            canvas: CanvasRequest {
+                width: 16,
+                height: 12,
+                background: background.map(|s| s.to_string()),
+            },
+            groups: vec![LayerGroupRequest {
+                opacity: 100,
+                blend: None,
+                layers: vec![LayerRequest {
+                    path: src.display().to_string(),
+                    matrix: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                    adjust: None,
+                    blend: None,
+                    opacity: None,
+                    mask: None,
+                    clipped: false,
+                }],
+            }],
+        }
+    }
+
+    /// A 档：不透明文档 → JPEG；透明像素 → PNG；同文档重渲染 → 内容哈希同路径
+    /// （不重写不刷新 mtime，TTL/缓存口径与工程缓存一致）。
+    #[test]
+    fn settle_frame_formats_and_hash_dedupe() {
+        let jpg = render_settle_frame_blocking(frame_doc(Some("white"), false))
+            .expect("不透明文档必须出帧");
+        assert_eq!(jpg.format, "jpg", "无 alpha 走 JPEG：{}", jpg.format);
+        assert!(jpg.width == 16 && jpg.height == 12);
+        assert!(std::path::Path::new(&jpg.path).is_file(), "{}", jpg.path);
+
+        let png = render_settle_frame_blocking(frame_doc(None, true)).expect("透明文档必须出帧");
+        assert_eq!(png.format, "png", "有 alpha 走 PNG：{}", png.format);
+
+        let again = render_settle_frame_blocking(frame_doc(Some("white"), false))
+            .expect("重复渲染必须成功");
+        assert_eq!(again.path, jpg.path, "内容哈希必须复用同一文件（缓存命中）");
+    }
+
+    /// B 档：空槽 404；覆盖写 seq 递增；响应体 = "ARFD" 头 + seq/w/h + 最后那帧的字节。
+    #[test]
+    fn viewport_slot_overwrites_and_body_format() {
+        let slot = ViewportFrameSlot::default();
+        assert_eq!(viewport_frame_body(&slot).0, 404, "空槽必须 404");
+
+        let seq1 = store_viewport_frame(
+            &slot,
+            image::RgbaImage::from_pixel(8, 6, image::Rgba([1, 2, 3, 255])),
+        );
+        let seq2 = store_viewport_frame(
+            &slot,
+            image::RgbaImage::from_pixel(10, 5, image::Rgba([9, 9, 9, 128])),
+        );
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2, "覆盖写必须递增 seq");
+
+        let (status, body) = viewport_frame_body(&slot);
+        assert_eq!(status, 200);
+        assert_eq!(&body[0..4], b"ARFD", "magic 是消费端防串流的第一道闸");
+        let rd = |off: usize| u64::from(u32::from_le_bytes(body[off..off + 4].try_into().unwrap()));
+        assert_eq!(rd(4), 2, "seq 取最新帧");
+        assert_eq!(rd(8), 10, "宽度取最新帧");
+        assert_eq!(rd(12), 5, "高度取最新帧");
+        assert_eq!(body.len(), 16 + 10 * 5 * 4, "体长 = 头 + RGBA");
+        // 最后那帧的像素（第二像素 [9,9,9,128]）必须在 body 末尾
+        assert_eq!(&body[16 + 4..16 + 8], &[9, 9, 9, 128]);
+    }
+
+    /// M3 引擎注册表冒烟：**serde 契约**（DisplayDocument 的 mode 标签/camelCase
+    /// 从 JSON 读进）+ apply → upload → 引擎 settle 落盘 → 引擎视口帧进槽。
+    /// 这是前端 EngineCanvas 接线将要走的完整 IPC 面。
+    #[test]
+    fn engine_registry_apply_upload_settle_roundtrip() {
+        use base64::Engine;
+        let registry = EngineRegistry::default();
+        let slot = ViewportFrameSlot::default();
+
+        // 前端将发的载荷形状：mode 标签 + camelCase（16×12 两层，一层 store 带调色）
+        let base_img = image::RgbaImage::from_pixel(16, 12, image::Rgba([60, 120, 180, 255]));
+        let base_dir =
+            std::env::temp_dir().join(format!("aurora-engine-registry-{}", std::process::id()));
+        std::fs::create_dir_all(&base_dir).unwrap();
+        let base_path = base_dir.join("base.png");
+        std::fs::write(
+            &base_path,
+            imaging::encode(&base_img, EncodeFormat::Png, 0).unwrap(),
+        )
+        .unwrap();
+        let base_path = base_path.to_string_lossy().replace('\\', "/");
+        let doc_json = format!(
+            r#"{{
+            "width": 16, "height": 12, "background": "white",
+            "groups": [{{
+                "opacity": 100, "blend": null,
+                "layers": [
+                    {{"id": "base", "source": {{"mode": "file", "path": "{base_path}"}},
+                     "pixelWidth": 0, "pixelHeight": 0, "matrix": [1,0,0,1,0,0]}},
+                    {{"id": "painted", "source": {{"mode": "store"}},
+                     "pixelWidth": 16, "pixelHeight": 12, "matrix": [1,0,0,1,0,0],
+                     "adjust": {{"brightness": 10, "contrast": 0, "saturation": 0, "temperature": 0}}}}
+                ]
+            }}]
+        }}"#);
+        let doc: editor_engine::DisplayDocument =
+            serde_json::from_str(&doc_json).expect("DisplayDocument 的 serde 形状必须可解析");
+
+        // apply → 上传整层（base64 的裸 RGBA）
+        registry.slot("tab1").lock().unwrap().apply_document(doc);
+        let mut pixels = vec![0u8; 16 * 12 * 4];
+        for (i, p) in pixels.chunks_exact_mut(4).enumerate() {
+            p[0] = (i % 16) as u8;
+            p[1] = (i / 16) as u8;
+            p[2] = 90;
+            p[3] = 255;
+        }
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&pixels);
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .unwrap();
+        registry
+            .slot("tab1")
+            .lock()
+            .unwrap()
+            .upload_region("painted", 16, 12, 0, 0, 16, 12, &data)
+            .unwrap();
+
+        // 引擎 settle → 落盘（store 层有像素，文件缺失的 base 层按透明容错）
+        let image = registry
+            .slot("tab1")
+            .lock()
+            .unwrap()
+            .composite_settle()
+            .expect("引擎 settle 必须成功");
+        let frame = settle_frame_from_image(image).expect("settle 帧必须落盘");
+        assert_eq!(frame.format, "jpg", "白底不透明文档走 JPEG：{}", frame.format);
+        assert!(std::path::Path::new(&frame.path).is_file());
+
+        // 引擎视口帧 → 槽（seq 1、尺寸正确）
+        let img = registry
+            .slot("tab1")
+            .lock()
+            .unwrap()
+            .composite_viewport(0.0, 0.0, 16, 12, 1.0)
+            .expect("引擎视口合成必须成功");
+        let seq = store_viewport_frame(&slot, img);
+        assert_eq!(seq, 1);
+        let (status, body) = viewport_frame_body(&slot);
+        assert_eq!(status, 200);
+        let w = u32::from_le_bytes(body[8..12].try_into().unwrap());
+        let h = u32::from_le_bytes(body[12..16].try_into().unwrap());
+        assert_eq!((w, h), (16, 12));
+    }
+
+    /// POST /upload 处理端：query 解析 + 白名单 + 像素真的落进引擎
+    /// （"键值被 URL 编码吃掉"类事故在这一层当场红——2026-10-26 实测教训）。
+    #[test]
+    fn engine_upload_query_parses_and_lands_pixels() {
+        let registry = EngineRegistry::default();
+        let body: &[u8] = &[10, 20, 30, 255, 40, 50, 60, 255];
+
+        // 白名单外的键（含空格等异常字符）必须 400
+        assert_eq!(
+            engine_upload_from_query(
+                &registry,
+                "tab_id=t&key=bad key&lw=2&lh=1&x=0&y=0&rw=2&rh=1",
+                body
+            ),
+            400
+        );
+        // 字节量不符必须 400
+        assert_eq!(
+            engine_upload_from_query(
+                &registry,
+                "tab_id=t&key=layer-x&lw=2&lh=1&x=0&y=0&rw=2&rh=1",
+                &[1, 2, 3, 4]
+            ),
+            400
+        );
+        // 缺参数必须 400
+        assert_eq!(engine_upload_from_query(&registry, "tab_id=t&key=layer-x", body), 400);
+
+        // 正常上传 → 像素落地（合成读回验证）
+        assert_eq!(
+            engine_upload_from_query(
+                &registry,
+                "tab_id=t&key=layer-x&lw=2&lh=1&x=0&y=0&rw=2&rh=1",
+                body
+            ),
+            200
+        );
+        let doc: editor_engine::DisplayDocument = serde_json::from_str(
+            r#"{"width":2,"height":1,"background":"white",
+                "groups":[{"layers":[
+                    {"id":"layer-x","source":{"mode":"store"},"pixelWidth":2,"pixelHeight":1,
+                     "matrix":[1,0,0,1,0,0]}]}]}"#,
+        )
+        .unwrap();
+        let engine = registry.slot("t");
+        engine.lock().unwrap().apply_document(doc);
+        let img = engine.lock().unwrap().composite_settle().unwrap();
+        assert_eq!(img.get_pixel(0, 0).0, [10, 20, 30, 255]);
+        assert_eq!(img.get_pixel(1, 0).0, [40, 50, 60, 255]);
     }
 }

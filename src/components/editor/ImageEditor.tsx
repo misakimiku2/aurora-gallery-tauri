@@ -79,6 +79,8 @@ import { EditorStatusBar } from './EditorStatusBar';
 import { CropOverlay } from './CropOverlay';
 import { NewDocumentDialog } from './NewDocumentDialog';
 import { EditorCanvasLayers } from './EditorCanvasLayers';
+import { EngineCanvas } from './EngineCanvas';
+import { setEngineDisplayEnabled, useEngineDisplayEnabled } from './engineDisplay';
 import { buildAdjustMatrix, isZeroAdjustments, toFeColorMatrixValues } from './colorMatrix';
 import {
   buildLayerPreviewKey,
@@ -181,6 +183,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
   const activeLocks = activeLayer ? layerLocks(activeLayer) : { pixel: false, position: false };
   const transformLocked = activeLocks.pixel || activeLocks.position;
   const positionLocked = activeLocks.position;
+
+  // ---- 引擎显示双路（管线换血 M3，设计稿 §7 D4）----
+  // 开 = EngineCanvas（Rust 合成帧）；关 = 旧 DOM 栈。开关在状态栏，验收期并存。
+  const engineDisplayOn = useEngineDisplayEnabled();
+  const toggleEngineDisplay = useCallback(
+    () => setEngineDisplayEnabled(!engineDisplayOn),
+    [engineDisplayOn],
+  );
 
   // ---- 调色预览 ----
   // 预览走浏览器原生 SVG feColorMatrix（GPU，拖动零延迟），导出走 Rust 逐像素。
@@ -1126,16 +1136,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
               </div>
             )}
 
-            {/* 画布容器 + 混合组 + 图层（EditorCanvasLayers）。画过的蒙版在它内部
-                由 MaskedPixels 合成画布直出（2026-10-25 起，画笔也没有预览 overlay 了） */}
+            {/* 画布容器 + 混合组 + 图层。双路（管线换血 M3，设计稿 §7 D4）：
+                引擎显示 = EngineCanvas（Rust 帧），关 = 旧 DOM 栈（EditorCanvasLayers）。
+                开关在状态栏"引擎开/关"，验收期并存，阶段 3 删 DOM 路径。 */}
             {canvas && !error && (
-              <EditorCanvasLayers
-                tabId={tabId}
-                canvas={canvas}
-                transform={transform}
-                layers={layers}
-                onLayerError={setError}
-              />
+              engineDisplayOn ? (
+                <EngineCanvas
+                  tabId={tabId}
+                  canvas={canvas}
+                  layers={layers}
+                  transform={transform}
+                />
+              ) : (
+                <EditorCanvasLayers
+                  tabId={tabId}
+                  canvas={canvas}
+                  transform={transform}
+                  layers={layers}
+                  onLayerError={setError}
+                />
+              )
             )}
 
             {/* 初始化中：尺寸与方向要从 Rust 拿（见上面的 init effect） */}
@@ -1204,6 +1224,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({
             width={canvas?.width ?? 0}
             height={canvas?.height ?? 0}
             spaceHeld={spaceHeld}
+            engineDisplay={{ on: engineDisplayOn, onToggle: toggleEngineDisplay }}
           />
         </div>
       </div>

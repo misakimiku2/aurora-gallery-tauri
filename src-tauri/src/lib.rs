@@ -2013,6 +2013,14 @@ pub fn run() {
         editor_commands::editor_load_layer_proxy,
         editor_commands::editor_render_document,
         editor_commands::editor_export_document,
+        // 管线换血 M2（设计稿 §5）：A 档 settle 帧 + B 档视口帧（editor-frame 协议拉取）
+        editor_commands::editor_render_document_frame,
+        editor_commands::editor_render_viewport,
+        // 管线换血 M3（设计稿 §4/§6）：有状态文档引擎——apply/upload/settle/viewport
+        editor_commands::editor_engine_apply,
+        editor_commands::editor_engine_upload_region,
+        editor_commands::editor_engine_render_settle,
+        editor_commands::editor_engine_render_viewport,
         // 工程文件（.aurora）：存与开成对存在，缺一个都等于没有
         editor_commands::editor_save_project,
         editor_commands::editor_open_project,
@@ -2142,6 +2150,57 @@ pub fn run() {
         lan_share_commands::lan_share_rename_device,
         lan_share_commands::lan_share_remove_device
     ]);
+
+    // 管线换血 M2/M3：editor-frame 协议（设计稿 §5）。
+    // GET  /viewport        → 最新视口帧槽快照（16B LE 头 "ARFD"+seq+w+h + RGBA）；
+    // POST /upload?tab_id=…&key=…&lw=…&lh=…&x=…&y=…&rw=…&rh=…
+    //                       → 像素矩形直传（**裸字节，无 base64/JSON**——画笔逐帧
+    //                         上传走这里；base64+JSON 的主线程开销实测把大笔刷拖卡，
+    //                         2026-10-26 用户实测后改的。Tauri 自己的 invoke 就是
+    //                         WebView2 自定义协议 POST，通路已验证）。
+    // handler 只做"锁 + memcpy + 回包"——重活在命令的线程池里；无队列：fetch 拿到
+    // 的永远是当下最新帧，消费慢了自然跳帧（这是选协议不选 Channel 的决定性理由）。
+    #[cfg(not(target_os = "android"))]
+    let builder = builder
+        .manage(editor_commands::ViewportFrameSlot::default())
+        .manage(editor_commands::EngineRegistry::default())
+        .register_asynchronous_uri_scheme_protocol("editor-frame", |ctx, request, responder| {
+            use tauri::Manager;
+            let app = ctx.app_handle();
+            let path = request.uri().path().to_string();
+            // POST /upload：像素矩形直传（同步 memcpy，快；乱序无妨——矩形并集语义）。
+            // 应答体 = "ok" 令牌：前端校验它，防止请求被错误分支应答还当成功。
+            if request.method() == "POST" && path == "/upload" {
+                let registry = app.state::<editor_commands::EngineRegistry>();
+                let status = editor_commands::engine_upload_from_query(
+                    &registry,
+                    request.uri().query().unwrap_or(""),
+                    request.body(),
+                );
+                responder.respond(
+                    tauri::http::Response::builder()
+                        .status(status)
+                        .header("Access-Control-Allow-Origin", "*")
+                        .header("Cache-Control", "no-store")
+                        .body(if status == 200 { b"ok".to_vec() } else { Vec::new() })
+                        .expect("静态响应头构建不会失败"),
+                );
+                return;
+            }
+            // GET /viewport：视口帧
+            let slot = app.state::<editor_commands::ViewportFrameSlot>();
+            let (status, body) = editor_commands::viewport_frame_body(&slot);
+            responder.respond(
+                tauri::http::Response::builder()
+                    .status(status)
+                    .header("Content-Type", "application/octet-stream")
+                    // 页面 origin 是 http://tauri.localhost，跨源 fetch 必需
+                    .header("Access-Control-Allow-Origin", "*")
+                    .header("Cache-Control", "no-store")
+                    .body(body)
+                    .expect("静态响应头构建不会失败"),
+            );
+        });
 
     #[cfg(target_os = "android")]
     let builder = builder.invoke_handler(tauri::generate_handler![

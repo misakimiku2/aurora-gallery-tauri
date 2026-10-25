@@ -1,0 +1,10 @@
+[package]
+name = "photocraft-geom"
+version = "0.15.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+description = "Vendored from PhotoCraft (storytold/photocraft) crates/geom at v0.15.1; manifests de-workspaced for standalone use"
+
+[dependencies]
+serde = { version = "1", features = ["derive", "rc"] }

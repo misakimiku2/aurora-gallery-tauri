@@ -1,10 +1,13 @@
-//! 图层混合模式（W3C Compositing and Blending 规范的**可分离**模式）。
+//! 图层混合模式（W3C Compositing and Blending 规范：12 档可分离 + 4 档非可分离）。
 //!
-//! ## 为什么只做可分离这一类
+//! ## 非可分离四档（2026-10-26 二轮补齐）
 //!
-//! PS 那 27 档里，色相 / 饱和度 / 颜色 / 明度四档是**非可分离**的：要先把像素转到
-//! HSL，再做 SetSat / SetLum / ClipColor，公式是另外一整套。第一轮只上可分离的那 12 档
-//! （含 Normal），非可分离的四档留第二轮——它们的 UI 也一样，只是后端多一层转换。
+//! 色相 / 饱和度 / 颜色 / 明度是**非可分离**的：逐通道公式算不了，要把 RGB 整组送进
+//! SetSat / SetLum / ClipColor。公式照 **PhotoCraft `photocraft-color::blend`**
+//! （MIT OR Apache-2.0，PS 口径的 Rust 复刻）移植——它与 CSS 的 `mix-blend-mode`
+//! 用同一套 W3C 公式，所以预览端（CSS 原生支持这四档）零成本，两端一致性依旧靠
+//! "同一份字符串 + 单测锁公式"。我们的输入恒为直通 0..1（8 位管线），所以没有
+//! 参考实现里 HDR（>1）的分支。
 //!
 //! ## 量纲（这是最容易写错的地方）
 //!
@@ -45,6 +48,10 @@ pub enum BlendMode {
     SoftLight,
     Difference,
     Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 impl BlendMode {
@@ -65,6 +72,10 @@ impl BlendMode {
             "soft-light" => Self::SoftLight,
             "difference" => Self::Difference,
             "exclusion" => Self::Exclusion,
+            "hue" => Self::Hue,
+            "saturation" => Self::Saturation,
+            "color" => Self::Color,
+            "luminosity" => Self::Luminosity,
             _ => Self::Normal,
         }
     }
@@ -84,6 +95,10 @@ impl BlendMode {
             Self::SoftLight => "soft-light",
             Self::Difference => "difference",
             Self::Exclusion => "exclusion",
+            Self::Hue => "hue",
+            Self::Saturation => "saturation",
+            Self::Color => "color",
+            Self::Luminosity => "luminosity",
         }
     }
 }
@@ -126,6 +141,8 @@ pub fn blend_channel(mode: BlendMode, cb: f32, cs: f32) -> f32 {
         BlendMode::SoftLight => soft_light(cb, cs),
         BlendMode::Difference => (cb - cs).abs(),
         BlendMode::Exclusion => cb + cs - 2.0 * cb * cs,
+        // 非可分离四档由 blend_rgb 整组处理；逐通道口径拿不到它们，退回源色兜底
+        BlendMode::Hue | BlendMode::Saturation | BlendMode::Color | BlendMode::Luminosity => cs,
     }
 }
 
@@ -152,6 +169,82 @@ fn soft_light(cb: f32, cs: f32) -> f32 {
     }
 }
 
+// ---- 非可分离四档（W3C Compositing 的 SetSat / SetLum / ClipColor，照 PhotoCraft 移植）----
+//
+// 这四档是 RGB 整组运算，blend_channel 的逐通道口径处理不了。输入恒为直通 0..1
+// （blend_over 进来前已归一化），所以 ClipColor 的 gamut 上限固定是 1——参考实现里
+// 那些护 HDR（>1）的分支在这里仍保留（l <= 0 / l >= 1 的退化路径），行为一致且免费。
+
+/// 亮度（W3C 权重）。
+fn lum_rgb(c: [f32; 3]) -> f32 {
+    0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2]
+}
+
+/// ClipColor：把 `c` 朝自己的灰度（[`lum_rgb`]）收缩进 0..=1，保持亮度。
+fn clip_color(c: [f32; 3]) -> [f32; 3] {
+    let l = lum_rgb(c);
+    let n = c[0].min(c[1]).min(c[2]);
+    let x = c[0].max(c[1]).max(c[2]);
+    let mut out = c;
+    if n < 0.0 {
+        let d = l - n;
+        for v in &mut out {
+            *v = if l > 0.0 && d > 0.0 { l + (*v - l) * l / d } else { l };
+        }
+    }
+    if x > 1.0 {
+        let d = x - l;
+        for v in &mut out {
+            *v = if l < 1.0 && d > 0.0 { l + (*v - l) * (1.0 - l) / d } else { l };
+        }
+    }
+    out
+}
+
+/// `c` 的亮度挪到 `l`（SetLum + ClipColor）。
+fn set_lum(c: [f32; 3], l: f32) -> [f32; 3] {
+    let d = l - lum_rgb(c);
+    clip_color([c[0] + d, c[1] + d, c[2] + d])
+}
+
+/// 饱和度 = max − min。
+fn sat_rgb(c: [f32; 3]) -> f32 {
+    c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2])
+}
+
+/// 把 `c` 的饱和度换成 `s`（SetSat）：最小通道归 0、最大通道 = s、中间通道按比例。
+fn set_sat(c: [f32; 3], s: f32) -> [f32; 3] {
+    let mut idx = [0usize, 1, 2];
+    idx.sort_by(|&a, &b| c[a].partial_cmp(&c[b]).unwrap_or(std::cmp::Ordering::Equal));
+    let (imin, imid, imax) = (idx[0], idx[1], idx[2]);
+    let mut out = [0.0f32; 3];
+    if c[imax] > c[imin] {
+        out[imid] = (c[imid] - c[imin]) * s / (c[imax] - c[imin]);
+        out[imax] = s;
+    }
+    out[imin] = 0.0;
+    out
+}
+
+/// 整像素混合 `B(Cb, Cs)`：非可分离四档走整组公式，其余逐通道。**输入输出都是直通 0..1**。
+pub fn blend_rgb(mode: BlendMode, cb: [f32; 3], cs: [f32; 3]) -> [f32; 3] {
+    match mode {
+        // 色相：源的色相+饱和度，背板的亮度
+        BlendMode::Hue => set_lum(set_sat(cs, sat_rgb(cb)), lum_rgb(cb)),
+        // 饱和度：源的饱和度，背板的色相+亮度
+        BlendMode::Saturation => set_lum(set_sat(cb, sat_rgb(cs)), lum_rgb(cb)),
+        // 颜色：源的色相+饱和度，背板的亮度
+        BlendMode::Color => set_lum(cs, lum_rgb(cb)),
+        // 明度：背板的色相+饱和度，源的亮度
+        BlendMode::Luminosity => set_lum(cb, lum_rgb(cs)),
+        m => [
+            blend_channel(m, cb[0], cs[0]),
+            blend_channel(m, cb[1], cs[1]),
+            blend_channel(m, cb[2], cs[2]),
+        ],
+    }
+}
+
 /// 把一个已采样好的源像素按混合模式合成到画布上。
 ///
 /// `src_premul` 口径同 `affine::sample_bilinear`：预乘的 0..255 + alpha 的 0..1。
@@ -175,7 +268,9 @@ pub(crate) fn blend_over(
             out[i] = src_premul[i] + dst_premul[i] * (1.0 - a_s);
         }
     } else {
-        // 预乘 → 直通 0..1，交给混合函数；结果再乘回预乘并按 alpha 加权
+        // 预乘 → 直通 0..1，交给混合函数；结果再乘回预乘并按 alpha 加权。
+        // 非可分离四档在这里走 blend_rgb 的整组公式（背板 α=0 时 cb=(0,0,0)，
+        // 但 Co 公式里 blended 项带 a_b 权重，直通源的语义不受影响）。
         let un = |v: f32, a: f32| if a > 1e-6 { (v / a) / 255.0 } else { 0.0 };
         let cb = [
             un(dst_premul[0], a_b),
@@ -187,10 +282,10 @@ pub(crate) fn blend_over(
             un(src_premul[1], a_s),
             un(src_premul[2], a_s),
         ];
+        let blended = blend_rgb(mode, cb, cs);
         for i in 0..3 {
-            let blended = blend_channel(mode, cb[i], cs[i]);
             // Co（预乘、0..1）→ 输出口径（预乘、0..255）
-            let co = a_s * (1.0 - a_b) * cs[i] + a_s * a_b * blended + (1.0 - a_s) * a_b * cb[i];
+            let co = a_s * (1.0 - a_b) * cs[i] + a_s * a_b * blended[i] + (1.0 - a_s) * a_b * cb[i];
             out[i] = co * 255.0;
         }
     }
@@ -213,7 +308,7 @@ pub(crate) fn blend_over(
 mod tests {
     use super::*;
 
-    const ALL: [BlendMode; 12] = [
+    const ALL: [BlendMode; 16] = [
         BlendMode::Normal,
         BlendMode::Multiply,
         BlendMode::Screen,
@@ -226,6 +321,10 @@ mod tests {
         BlendMode::SoftLight,
         BlendMode::Difference,
         BlendMode::Exclusion,
+        BlendMode::Hue,
+        BlendMode::Saturation,
+        BlendMode::Color,
+        BlendMode::Luminosity,
     ];
 
     fn approx(a: f32, b: f32) -> bool {
@@ -246,7 +345,7 @@ mod tests {
     fn unknown_name_falls_back_to_normal() {
         // 认不出来的模式不该让文档打不开
         assert_eq!(BlendMode::parse("溶解"), BlendMode::Normal);
-        assert_eq!(BlendMode::parse("hue"), BlendMode::Normal);
+        assert_eq!(BlendMode::parse("passthrough"), BlendMode::Normal);
         assert_eq!(BlendMode::parse(""), BlendMode::Normal);
     }
 
@@ -290,5 +389,79 @@ mod tests {
         // 所有模式在"下方全透明"时都应退化成直接把源放上去：
         // 这条靠 composite 层测（见 mod.rs），这里只保证 Normal 就是源色
         assert!(approx(blend_channel(BlendMode::Normal, 0.9, 0.1), 0.1));
+    }
+
+    /// 非可分离四档的手算金值：背板 (0.8,0.2,0.2)（亮度 0.38）、源 (0.1,0.1,0.9)
+    /// （亮度 0.188、饱和度 0.8）。数值按 W3C 公式逐步算出，与参考实现的
+    /// luminosity_and_color_swap_components 思路同源但更严——钉住具体像素。
+    #[test]
+    fn non_separable_golden_values() {
+        let cb = [0.8f32, 0.2, 0.2];
+        let cs = [0.1f32, 0.1, 0.9];
+        let check = |name: &str, got: [f32; 3], want: [f32; 3]| {
+            for i in 0..3 {
+                assert!((got[i] - want[i]).abs() < 1e-4, "{name}: {got:?} != {want:?}");
+            }
+        };
+        // Color = 源的色相+饱和度、背板的亮度：set_lum(cs, 0.38) = ClipColor((0.292,0.292,1.092))
+        check("Color", blend_rgb(BlendMode::Color, cb, cs), [0.30337, 0.30337, 1.0]);
+        // Luminosity = 背板的色相+饱和度、源的亮度：0.38 − 0.188 全程在 gamut 内
+        check("Luminosity", blend_rgb(BlendMode::Luminosity, cb, cs), [0.608, 0.008, 0.008]);
+        // Hue = set_sat(cs, 0.6) = (0,0,0.6)，亮度挪到 0.38
+        check("Hue", blend_rgb(BlendMode::Hue, cb, cs), [0.314, 0.314, 0.914]);
+        // Saturation = set_sat(cb, 0.8) = (0.8,0,0)，亮度挪到 0.38
+        check("Saturation", blend_rgb(BlendMode::Saturation, cb, cs), [0.94, 0.14, 0.14]);
+    }
+
+    /// 非可分离四档的性质：结果恒在 gamut 内（ClipColor 的职责）、亮度目标被保留——
+    /// 这是"颜色模式给黑白照片上色但不改变调结构"这类 PS 用法能成立的数学根基。
+    #[test]
+    fn non_separable_keeps_target_luminosity_and_stays_in_gamut() {
+        let mut seed = 0x1234_5678u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((seed >> 8) % 256) as f32 / 255.0
+        };
+        for _ in 0..500 {
+            let cb = [next(), next(), next()];
+            let cs = [next(), next(), next()];
+            for (mode, target) in [
+                (BlendMode::Hue, lum_rgb(cb)),
+                (BlendMode::Saturation, lum_rgb(cb)),
+                (BlendMode::Color, lum_rgb(cb)),
+                (BlendMode::Luminosity, lum_rgb(cs)),
+            ] {
+                let r = blend_rgb(mode, cb, cs);
+                for v in r {
+                    assert!((-1e-4..=1.0 + 1e-4).contains(&v), "{mode:?} {cb:?} {cs:?} → {r:?}");
+                }
+                assert!(
+                    (lum_rgb(r) - target).abs() <= 1e-3,
+                    "{mode:?} {cb:?} {cs:?}: 亮度 {target} 变成了 {}",
+                    lum_rgb(r)
+                );
+            }
+            // 全灰源过 Saturation = 把背板去饱和（三通道相等）
+            let s = blend_rgb(BlendMode::Saturation, cb, [0.5, 0.5, 0.5]);
+            assert!(
+                (s[0] - s[1]).abs() < 1e-4 && (s[1] - s[2]).abs() < 1e-4,
+                "灰源去饱和失败: {s:?}"
+            );
+        }
+    }
+
+    /// `.aurora` 走 serde 的 kebab-case；这四个名字必须与 CSS `mix-blend-mode` 一致，
+    /// 否则预览与导出各说各话（§6.19 的两头同步问题）。
+    #[test]
+    fn serde_kebab_case_matches_css_names() {
+        for (mode, name) in [
+            (BlendMode::Hue, "hue"),
+            (BlendMode::Saturation, "saturation"),
+            (BlendMode::Color, "color"),
+            (BlendMode::Luminosity, "luminosity"),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), format!("\"{name}\""));
+            assert_eq!(serde_json::from_str::<BlendMode>(&format!("\"{name}\"")).unwrap(), mode);
+        }
     }
 }

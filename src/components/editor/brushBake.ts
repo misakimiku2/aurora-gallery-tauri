@@ -200,10 +200,13 @@ export async function remapDocBitmapSources(doc: EditorDocument): Promise<Editor
   return changed ? { ...doc, layers: next } : doc;
 }
 
-/** 一张全透明的空白画布（新建空白图层的初始像素，进位图仓即时显示）。 */
+/** 一张全透明的空白画布（新建空白图层/蒙版的初始像素，进位图仓即时显示）。
+ *  进位图仓的画布会被引擎上传泵逐帧 getImageData（M3）：willReadFrequently 只在
+ *  第一次 getContext 时生效，所以这里先占住带读优化属性的上下文。 */
 export function blankCanvas(width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width));
   canvas.height = Math.max(1, Math.round(height));
+  canvas.getContext('2d', { willReadFrequently: true });
   return canvas;
 }

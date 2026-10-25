@@ -689,7 +689,8 @@ describe('图层混合模式', () => {
   it('layerBlend 缺省与脏数据一律落 normal', () => {
     expect(layerBlend(layer())).toBe('normal');
     expect(layerBlend(layer({ blend: 'multiply' }))).toBe('multiply');
-    expect(layerBlend(layer({ blend: 'hue' }))).toBe('normal'); // 非可分离，这轮不做
+    expect(layerBlend(layer({ blend: 'hue' }))).toBe('hue'); // 二轮起非可分离四档已入表
+    expect(layerBlend(layer({ blend: 'passthrough' }))).toBe('normal'); // 组穿透不暴露给图层行
     expect(layerBlend(layer({ blend: 42 as unknown as string }))).toBe('normal');
   });
 

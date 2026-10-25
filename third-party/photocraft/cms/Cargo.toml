@@ -1,0 +1,10 @@
+[package]
+name = "photocraft-cms"
+description = "Pure-Rust ICC v2/v4 colour management: profile parsing and writing, transforms, rendering intents, black point compensation. Vendored from PhotoCraft (storytold/photocraft) at v0.15.1; manifests de-workspaced for standalone use"
+version = "0.15.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rayon = "1"

@@ -6,6 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import {
+  applyBitmapPatch,
   attachClonedBitmap,
   beginStrokePause,
   bitmapMeta,
@@ -14,15 +15,19 @@ import {
   displaySourceOf,
   endStrokePause,
   ensurePaintName,
+  forgetBitmap,
   layerKey,
   maskKey,
   markBaked,
+  mutatePixels,
+  noteEngineDirty,
   onStrokesSettled,
   readBitmap,
   registerBlankBitmap,
   settledBitmapVersion,
   strokeActive,
   subscribeBitmaps,
+  takeEngineDirty,
 } from '../layerBitmaps';
 
 // 只测 layerBitmaps 的状态机，不 import brushBake（那边模块加载就订阅位图仓排空闲烘焙）
@@ -151,5 +156,25 @@ describe('settled 版本（行缩略图的防抖镜像）', () => {
     vi.advanceTimersByTime(300); // settle 泵跑了也不炸、不自我循环
     expect(settledBitmapVersion(K1)).toBe(bitmapVersion(K1));
     vi.useRealTimers();
+  });
+});
+
+describe('引擎上传待办（管线换血 M3 的 takeEngineDirty）', () => {
+  it('noteEngineDirty 连续记 → 并集；takeEngineDirty 取走即清', () => {
+    takeEngineDirty(); // 清掉别的测试留下的待办
+    noteEngineDirty(K1, { x: 2, y: 3, w: 4, h: 5 });
+    noteEngineDirty(K1, { x: 6, y: 6, w: 4, h: 4 });
+    const dirty = takeEngineDirty();
+    expect(dirty.get(K1)).toEqual({ x: 2, y: 3, w: 8, h: 7 }); // 并集
+    expect(takeEngineDirty().size).toBe(0); // 取走即清
+  });
+
+  it('registerBlankBitmap 记全幅；forgetBitmap 作废待办', () => {
+    registerBlankBitmap(K1, blank(16, 12), 'p1.png');
+    expect(takeEngineDirty().get(K1)).toEqual({ x: 0, y: 0, w: 16, h: 12 });
+
+    noteEngineDirty(K1, { x: 0, y: 0, w: 2, h: 2 });
+    forgetBitmap(K1);
+    expect(takeEngineDirty().has(K1)).toBe(false);
   });
 });

@@ -3074,6 +3074,10 @@ export const App: React.FC = () => {
               const doc = prev.editorDocument;
               if (!doc?.layers?.length) return {};
               const targetId = doc.activeLayerId ?? doc.layers[doc.layers.length - 1].id;
+              // 组行不接调色（画布与导出两侧都不渲染组级 adjust），这里兜底直写
+              // ——2026-10-26 用户实测"拖调色滑杆没反应"的根因之一
+              const target = doc.layers.find(l => l.id === targetId);
+              if (!target || target.kind === 'group') return {};
               return {
                 editorDocument: {
                   ...doc,

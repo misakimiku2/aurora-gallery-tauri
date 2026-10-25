@@ -388,6 +388,7 @@ dependencies = [
  "color-thief",
  "crossbeam-channel",
  "csv",
+ "editor-engine",
  "fast_image_resize",
  "ffmpeg-sidecar",
  "flate2",
@@ -1581,6 +1582,18 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "editor-engine"
+version = "0.1.0"
+dependencies = [
+ "aurora-core",
+ "image 0.24.9",
+ "photocraft-color",
+ "photocraft-geom",
+ "photocraft-raster",
+ "serde",
+]
 
 [[package]]
 name = "either"
@@ -4401,6 +4414,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher 1.0.1",
+]
+
+[[package]]
+name = "photocraft-cms"
+version = "0.15.1"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
+name = "photocraft-color"
+version = "0.15.1"
+dependencies = [
+ "photocraft-cms",
+ "serde",
+]
+
+[[package]]
+name = "photocraft-geom"
+version = "0.15.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "photocraft-raster"
+version = "0.15.1"
+dependencies = [
+ "photocraft-color",
+ "photocraft-geom",
+ "rayon",
+ "serde",
 ]
 
 [[package]]

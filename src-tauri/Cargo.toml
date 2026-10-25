@@ -22,6 +22,7 @@ tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
 aurora-core = { path = "../core" }
+editor-engine = { path = "../editor-engine" }
 tauri = { version = "2.0", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

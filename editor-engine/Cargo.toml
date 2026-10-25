@@ -1,0 +1,16 @@
+[package]
+name = "editor-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Aurora 编辑器的 Rust 合成核心（管线换血阶段 1）：文档状态 → 合成帧。桌面专用，不进 aurora-core（安卓 UniFFI 不拖这些依赖）"
+
+[dependencies]
+aurora-core = { path = "../core" }
+photocraft-geom = { path = "../third-party/photocraft/geom" }
+photocraft-color = { path = "../third-party/photocraft/color" }
+photocraft-raster = { path = "../third-party/photocraft/raster" }
+serde = { version = "1", features = ["derive"] }
+image = { version = "0.24", default-features = false }
+
+[dev-dependencies]
+serde_json = "1"

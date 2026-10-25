@@ -26,6 +26,8 @@ interface EditorStatusBarProps {
   height: number;
   /** 空格是否按住（临时抓手） */
   spaceHeld?: boolean;
+  /** 引擎显示开关（管线换血 M3 的双路切换，验收期可见；阶段 3 删除） */
+  engineDisplay?: { on: boolean; onToggle: () => void };
 }
 
 export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
@@ -34,6 +36,7 @@ export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
   width,
   height,
   spaceHeld,
+  engineDisplay,
 }) => {
   const def = getEditorTool(tool);
   // 超过 100% 是原图的插值放大——不是"分辨率不足"，所以只陈述事实、不用警告色
@@ -64,6 +67,20 @@ export const EditorStatusBar: React.FC<EditorStatusBarProps> = ({
 
       {isUpscaled && (
         <span className="text-neutral-400 dark:text-neutral-500">放大显示（插值）</span>
+      )}
+      {engineDisplay && (
+        <button
+          type="button"
+          onClick={engineDisplay.onToggle}
+          title="管线换血 M3：Rust 引擎显示（出问题点它切回 DOM 显示）"
+          className={`px-1.5 h-4 rounded text-[10px] border cursor-pointer ${
+            engineDisplay.on
+              ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+              : 'border-neutral-300 dark:border-neutral-600 text-neutral-400 dark:text-neutral-500'
+          }`}
+        >
+          引擎{engineDisplay.on ? '开' : '关'}
+        </button>
       )}
       <span className="tabular-nums">
         画布 {width}×{height}
