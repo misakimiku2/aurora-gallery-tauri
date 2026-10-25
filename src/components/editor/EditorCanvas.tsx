@@ -86,6 +86,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
   /** 套索拖拽中(上游 lasso_ui 口径:每个 pointer 事件采一点、实线预览、<3 点=取消选择)。 */
   const lassoRef = useRef<{ points: number[][]; mods: DragMods } | null>(null);
+  /** 裁剪框(文档坐标;null=未触碰默认框=整幅画布,提交无操作)。 */
+  const cropRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  /** 裁剪拖画新框中。 */
+  const cropDragRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -195,6 +199,36 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
       // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
     }
+    // overlay:裁剪框(上游 crop 口径简化版):框外 50% 遮罩 + 白边 + 三分线 + 角柄
+    if (s.tool === 'crop') {
+      const frame = cropDragRef.current ? marqueeRect(cropDragRef.current, cropDragRef.current.mods) : cropRef.current;
+      if (frame) {
+        const fx = frame.x * v.scale + v.ox;
+        const fy = frame.y * v.scale + v.oy;
+        const fw = frame.w * v.scale;
+        const fh = frame.h * v.scale;
+        octx.save();
+        octx.fillStyle = 'rgba(0,0,0,0.5)';
+        octx.fillRect(v.ox, v.oy, dw, fy - v.oy);
+        octx.fillRect(v.ox, fy + fh, dw, v.oy + dh - (fy + fh));
+        octx.fillRect(v.ox, fy, fx - v.ox, fh);
+        octx.fillRect(fx + fw, fy, v.ox + dw - (fx + fw), fh);
+        octx.strokeStyle = '#ffffff';
+        octx.lineWidth = 1;
+        octx.strokeRect(fx + 0.5, fy + 0.5, fw - 1, fh - 1);
+        octx.strokeStyle = 'rgba(255,255,255,0.45)';
+        octx.beginPath();
+        for (let i = 1; i <= 2; i++) {
+          octx.moveTo(fx + (fw * i) / 3, fy);
+          octx.lineTo(fx + (fw * i) / 3, fy + fh);
+          octx.moveTo(fx, fy + (fh * i) / 3);
+          octx.lineTo(fx + fw, fy + (fh * i) / 3);
+        }
+        octx.stroke();
+        octx.restore();
+      }
+    }
+
     // overlay:套索拖拽实线预览(上游 tool_feedback::draw_solid_path:白晕 3px + 黑线 1px,
     // 开放路径不闭合,点取整到像素中心保持 1px 线锐利)
     if (lassoRef.current) {
@@ -495,6 +529,49 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId]);
 
+  /** 裁剪提交(上游 commit_crop 口径;image.crop,历史 "Crop",选区随裁剪清除):
+   * 未触碰默认框/整幅框=无操作;框钳进画布(画布外扩展留待办)。 */
+  const commitCrop = useCallback(() => {
+    const s = getSession(tabId);
+    if (!s?.state) return;
+    const c = cropRef.current;
+    cropRef.current = null;
+    cropDragRef.current = null;
+    if (!c) {
+      scheduleDraw();
+      return;
+    }
+    const x = Math.max(0, c.x);
+    const y = Math.max(0, c.y);
+    const w = Math.min(s.state.width, c.w - Math.max(0, -c.x));
+    const h = Math.min(s.state.height, c.h - Math.max(0, -c.y));
+    if (w < 1 || h < 1 || (x <= 0 && y <= 0 && w >= s.state.width && h >= s.state.height)) {
+      scheduleDraw();
+      return;
+    }
+    void runCommand(tabId, 'image.crop', { x, y, width: Math.round(w), height: Math.round(h) })
+      .catch((err) => logError('[editor] image.crop 失败', err));
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
+
+  const cancelCrop = useCallback(() => {
+    cropRef.current = null;
+    cropDragRef.current = null;
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  // 注册裁剪回调(选项条 ✓/⊘ 用,与 requestDraw 同机制)
+  useEffect(() => {
+    const s = getSession(tabId);
+    if (!s) return;
+    s.runtime.cropCommit = commitCrop;
+    s.runtime.cropCancel = cancelCrop;
+    return () => {
+      if (s.runtime.cropCommit === commitCrop) s.runtime.cropCommit = null;
+      if (s.runtime.cropCancel === cancelCrop) s.runtime.cropCancel = null;
+    };
+  }, [tabId, commitCrop, cancelCrop]);
+
   // 订阅 store(tool/revision/docId/state 变化):驱动 React 更新 + 调度一帧画布重绘。
   // 重绘不能只靠 requestDraw 注册(挂载时 session 常未建好)或位图 effect(只在
   // revision 变化时画,画时 state 还没到):draw 直读 store,任何命令落地(选区/
@@ -610,9 +687,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         console.log(`[editor] brush size ${next}px`);
         return;
       }
-      // Enter:套索进行中=提交轮廓(上游 Enter 提交);否则落定浮动选区(select.drop;无浮动时引擎空转)
+      // Enter:裁剪=提交(上游双提交键之一);套索进行中=提交轮廓;否则落定浮动选区
       if (e.key === 'Enter') {
         e.preventDefault();
+        if (s.tool === 'crop') {
+          commitCrop();
+          return;
+        }
         const ls = lassoRef.current;
         const st = getSession(tabId);
         if (ls && st?.state) {
@@ -630,11 +711,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         return;
       }
-      // Esc:取消进行中的套索(不提交任何命令,上游口径)
-      if (e.key === 'Escape' && lassoRef.current) {
-        lassoRef.current = null;
-        scheduleDraw();
-        return;
+      // Esc:取消进行中的裁剪框/套索轮廓(不提交任何命令,上游口径)
+      if (e.key === 'Escape') {
+        if (s.tool === 'crop' && (cropRef.current || cropDragRef.current)) {
+          cancelCrop();
+          return;
+        }
+        if (lassoRef.current) {
+          lassoRef.current = null;
+          scheduleDraw();
+          return;
+        }
       }
       // 方向键微移(上游 arrow_keys 口径:1px / Shift 10px):
       // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate
@@ -776,6 +863,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 套索:按下即起笔(上游绕过拖拽阈值口径),首点入列
       lassoRef.current = { points: [[dx, dy]], mods: initialMods(e.shiftKey, e.altKey) };
       scheduleDraw();
+    } else if (s.tool === 'crop' && e.button === 0 && s.state) {
+      // 裁剪:拖画新框(约束同选框:Shift 正方形 / Alt 从中心)
+      cropDragRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
+      scheduleDraw();
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -832,6 +923,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const last = ls.points[ls.points.length - 1];
         if (x !== last[0] || y !== last[1]) ls.points.push([x, y]);
       }
+      scheduleDraw();
+      return;
+    }
+    const cd = cropDragRef.current;
+    if (cd) {
+      cd.x1 = dx;
+      cd.y1 = dy;
+      cd.mods = trackMods(cd.mods, e.shiftKey, e.altKey);
       scheduleDraw();
       return;
     }
@@ -908,6 +1007,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const m = marqueeRef.current;
     marqueeRef.current = null;
     eyedropRef.current = null;
+    const cd = cropDragRef.current;
+    cropDragRef.current = null;
+    if (s && cd && s.state) {
+      const r = marqueeRect(cd, cd.mods);
+      // 拖出的框成为裁剪框(即使等于整幅——commit 时判无操作);近零位移保留原框
+      if (r) cropRef.current = r;
+      scheduleDraw();
+    }
     const ls = lassoRef.current;
     lassoRef.current = null;
     if (s && ls && s.state) {
@@ -961,6 +1068,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     moveDragRef.current = null;
     lassoRef.current = null;
+    cropDragRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;
@@ -995,6 +1103,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}
+      onDoubleClick={() => {
+        // 裁剪:框内双击提交(上游口径)
+        if (getSession(tabId)?.tool === 'crop') commitCrop();
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <canvas ref={displayRef} className="absolute inset-0" />

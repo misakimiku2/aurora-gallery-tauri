@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
-import { Square, PlusSquare, MinusSquare, XSquare } from 'lucide-react';
+import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
   move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
@@ -139,6 +139,24 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               ? '按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心'
               : '拖拽圈选;<3 点提交=取消选择;Esc 取消轮廓;按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交'}
           </span>
+        </>
+      ) : s.tool === 'crop' ? (
+        <>
+          <span className="text-neutral-400 dark:text-neutral-500">拖画裁剪框;Enter / 双击提交,Esc 取消</span>
+          <button
+            title="提交裁剪 (Enter)"
+            onClick={() => s.runtime.cropCommit?.()}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-sky-600 text-white text-[11px] hover:bg-sky-500"
+          >
+            <Check size={12} />裁剪
+          </button>
+          <button
+            title="取消裁剪 (Esc)"
+            onClick={() => s.runtime.cropCancel?.()}
+            className="flex items-center gap-1 px-2 py-0.5 rounded border border-black/15 dark:border-white/15 text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <CircleOff size={12} />取消
+          </button>
         </>
       ) : CROSSHAIR_HINT[s.tool] ? (
         <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>

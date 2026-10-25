@@ -46,6 +46,9 @@ export interface EditorRuntime {
   outlineFetching: string;
   /** 蚂蚁线相位(动画帧推进,画布直写不走订阅)。 */
   antsPhase: number;
+  /** 裁剪框提交/取消(画布注册,选项条 ✓/⊘ 调用)。 */
+  cropCommit: (() => void) | null;
+  cropCancel: (() => void) | null;
 }
 
 export interface EditorSession {
@@ -101,7 +104,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       marqueeShape: 'rect',
       selectionMode: 'replace',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0 },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null },
   };
   sessions.set(tabId, s);
   return s;
