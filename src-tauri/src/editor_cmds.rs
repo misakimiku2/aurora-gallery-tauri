@@ -15,7 +15,7 @@ impl Default for EditorState {
     }
 }
 
-fn lock(s: &State<EditorState>) -> Result<std::sync::MutexGuard<'_, EditorManager>, String> {
+fn lock<'a>(s: &'a State<'_, EditorState>) -> Result<std::sync::MutexGuard<'a, EditorManager>, String> {
     s.0.lock().map_err(|_| "editor lock poisoned".to_string())
 }
 

@@ -354,16 +354,15 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Sparkles size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
         )}
-        {/* 编辑器 v3:单图进编辑器(桌面端) */}
+        {/* 编辑器 v3:单图进编辑器(桌面端)。与比较块同源:以选中集为准 */}
         {contextMenu.type === 'file-single' && !isAndroidSync() && handleOpenEditorTab && (() => {
-          const id = contextMenu.targetId || activeTab.lastSelectedId;
-          const file = id ? files[id] : undefined;
-          if (!id || file?.type !== FileType.IMAGE) return null;
+          const imageIds = activeTab.selectedFileIds.filter(id => files[id]?.type === FileType.IMAGE);
+          if (imageIds.length !== 1) return null;
           return (
             <div
               className={menuItemClass}
               style={menuItemStyle}
-              onClick={() => { handleOpenEditorTab(id); closeContextMenu(); }}
+              onClick={() => { handleOpenEditorTab(imageIds[0]); closeContextMenu(); }}
             >
               <Brush size={iconSize} className="mr-2 opacity-70" />
               {t('context.editImage') || '编辑图片'}
