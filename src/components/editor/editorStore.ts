@@ -45,10 +45,15 @@ export interface EditorSession {
   tool: EditorTool;
   options: ToolOptions;
   runtime: EditorRuntime;
-  listeners: Set<() => void>;
 }
 
 const sessions = new Map<string, EditorSession>();
+/** 模块级监听器注册表:子组件的订阅可能早于父组件 ensureSession(React 子 effect 先跑)。 */
+const listeners = new Map<string, Set<() => void>>();
+
+function notify(tabId: string): void {
+  listeners.get(tabId)?.forEach((fn) => fn());
+}
 
 export function getSession(tabId: string): EditorSession | undefined {
   return sessions.get(tabId);
@@ -79,7 +84,6 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       gradientStyle: 'linear',
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null },
-    listeners: new Set(),
   };
   sessions.set(tabId, s);
   return s;
@@ -89,28 +93,31 @@ export function updateSession(tabId: string, patch: Partial<EditorSession>): voi
   const s = sessions.get(tabId);
   if (!s) return;
   Object.assign(s, patch);
-  s.listeners.forEach((fn) => fn());
+  notify(tabId);
 }
 
 export function setTool(tabId: string, tool: EditorTool): void {
   const s = sessions.get(tabId);
   if (!s || s.tool === tool) return;
   s.tool = tool;
-  s.listeners.forEach((fn) => fn());
+  notify(tabId);
 }
 
 export function setOptions(tabId: string, patch: Partial<ToolOptions>): void {
   const s = sessions.get(tabId);
   if (!s) return;
   Object.assign(s.options, patch);
-  s.listeners.forEach((fn) => fn());
+  notify(tabId);
 }
 
 export function subscribeSession(tabId: string, fn: () => void): () => void {
-  const s = sessions.get(tabId);
-  if (!s) return () => undefined;
-  s.listeners.add(fn);
-  return () => s.listeners.delete(fn);
+  let set = listeners.get(tabId);
+  if (!set) {
+    set = new Set();
+    listeners.set(tabId, set);
+  }
+  set.add(fn);
+  return () => set.delete(fn);
 }
 
 /** 跑引擎命令:推进 revision,并总是拉一份状态快照(工具态命令不推进 revision)。 */
@@ -138,6 +145,7 @@ export function disposeSession(tabId: string): void {
   const s = sessions.get(tabId);
   if (!s) return;
   sessions.delete(tabId);
+  listeners.delete(tabId);
   if (s.docId != null) {
     void editorClose(s.docId).catch(() => undefined);
   }

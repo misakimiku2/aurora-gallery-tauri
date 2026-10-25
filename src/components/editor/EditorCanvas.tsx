@@ -40,6 +40,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
+  /** 首幅位图落地后做一次 fit(viewW 在 draw 里就会被写非零,不能靠 ResizeObserver 判首次)。 */
+  const fittedRef = useRef(false);
 
   const session = (sessionRef.current = getSession(tabId));
 
@@ -181,6 +183,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
         s.runtime.rasterScale = rs;
+        if (!fittedRef.current && wrapRef.current && wrapRef.current.clientWidth > 0) {
+          s.runtime.view = fitToView(s.state!.width, s.state!.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
+          fittedRef.current = true;
+        }
         scheduleDraw();
       } catch (e) {
         if (!cancelled) console.error('[editor] render failed', e);
@@ -197,9 +203,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (!wrap) return undefined;
     const ro = new ResizeObserver(() => {
       const s = getSession(tabId);
-      if (s && s.state && s.runtime.viewW === 0) {
-        // 首次有尺寸:适配视口
+      if (s && s.state && !fittedRef.current && wrap.clientWidth > 0) {
         s.runtime.view = fitToView(s.state.width, s.state.height, wrap.clientWidth, wrap.clientHeight);
+        fittedRef.current = true;
       }
       scheduleDraw();
     });
