@@ -2144,6 +2144,7 @@ pub fn run() {
         editor_cmds::editor_export_as,
         editor_cmds::editor_save_as,
         editor_cmds::editor_mask_snapshot,
+        editor_cmds::editor_layer_thumbnail,
         editor_cmds::editor_close
     ]);
 

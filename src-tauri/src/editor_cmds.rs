@@ -191,3 +191,16 @@ pub fn editor_mask_snapshot(s: State<EditorState>, doc: u64, layer: u64, maxW: u
     bytes.extend_from_slice(&img.pixels);
     Ok(Response::new(bytes))
 }
+
+/// 图层内容缩略图(图层自身像素,内容边界裁剪,最长边 ≤maxSide,透明 straight alpha)。
+/// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
+#[tauri::command]
+pub fn editor_layer_thumbnail(s: State<EditorState>, doc: u64, layer: u64, maxSide: u32) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let img = m.layer_thumbnail(doc, layer, maxSide).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(8 + img.pixels.len());
+    bytes.extend_from_slice(&(img.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(img.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&img.pixels);
+    Ok(Response::new(bytes))
+}

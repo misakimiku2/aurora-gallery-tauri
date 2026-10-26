@@ -574,6 +574,48 @@ impl EditorManager {
         Ok(Rendered { width: ow, height: oh, pixels: px })
     }
 
+    /// 图层内容缩略图:图层自身像素(不含蒙版/混合,PS 口径——蒙版有自己的缩略图),
+    /// 帧取内容边界∩画布(空内容回退整幅画布),最长边采样 ≤maxSide;透明区 straight alpha。
+    /// 非像素层(调整/编组/文字等无 raster surface)报错,前端按 kind 显示图标。
+    pub fn layer_thumbnail(&mut self, doc: u64, layer: u64, max_side: u32) -> Result<Rendered> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let l = find_layer(&st.doc.layers, layer)
+            .ok_or_else(|| EditorError(format!("no layer {layer}")))?;
+        let surface = l
+            .surface()
+            .ok_or_else(|| EditorError(format!("layer {layer} has no raster content")))?;
+        let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
+        let bounds = surface.content_bounds().intersect(&canvas);
+        let frame = if bounds.is_empty() { canvas } else { bounds };
+        let side = i64::from(max_side.max(8));
+        let fw = i64::from(frame.width().max(1));
+        let fh = i64::from(frame.height().max(1));
+        // i64::div_ceil 在本工具链仍属 unstable(签名整除走手写;全为正数)
+        let ceil = |a: i64, b: i64| (a + b - 1) / b;
+        let k = ceil(fw.max(fh), side).max(1);
+        let ow = (ceil(fw, k)).max(1) as u32;
+        let oh = (ceil(fh, k)).max(1) as u32;
+        let n = surface.channels();
+        let fmt = surface.format();
+        let mut px = vec![0f32; n];
+        let mut out = vec![0u8; (ow * oh * 4) as usize];
+        for ty in 0..oh {
+            let y = frame.y0 + (i64::from(ty) * k).min(fh - 1) as i32;
+            for tx in 0..ow {
+                let x = frame.x0 + (i64::from(tx) * k).min(fw - 1) as i32;
+                surface.read_pixel(x, y, &mut px);
+                let [r, g, b, a] = photocraft_raster::to_rgba(&fmt, &px[..n]);
+                let o = ((ty * ow + tx) * 4) as usize;
+                out[o] = (r * 255.0).round() as u8;
+                out[o + 1] = (g * 255.0).round() as u8;
+                out[o + 2] = (b * 255.0).round() as u8;
+                out[o + 3] = (a * 255.0).round() as u8;
+            }
+        }
+        Ok(Rendered { width: ow, height: oh, pixels: out })
+    }
+
     /// 打开中的文档 id 列表。
     pub fn documents(&self) -> Vec<u64> {
         self.session.documents().iter().map(|d| d.doc.id.0).collect()

@@ -119,3 +119,35 @@ fn mask_snapshot_target_stroke_and_state() {
     let comp = m.render_full(doc).unwrap();
     assert_eq!(at(&comp, 8, 8)[3], 255, "disabled mask reveals everything");
 }
+
+/// M3 图层内容缩略图:图层自身像素(不含蒙版),内容边界裁剪,非像素层报错。
+#[test]
+fn layer_thumbnail_own_pixels_content_bounds() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+
+    // 新透明像素层画一笔红;再给它加全黑蒙版——缩略图必须不含蒙版效果(PS 口径)
+    m.run(doc, "layer.new.layer", json!({})).unwrap();
+    let layer = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "tools.setColors", json!({ "foreground": "#ff0000" })).unwrap();
+    m.run(doc, "paint.stroke", json!({ "points": [[24, 24, 1.0], [40, 40, 1.0]], "size": 8 })).unwrap();
+    m.run(doc, "layer.layerMask.hideAll", json!({ "layer": layer })).unwrap();
+
+    let thumb = m.layer_thumbnail(doc, layer, 64).unwrap();
+    assert!(thumb.width <= 64 && thumb.height <= 64, "fits max side: {}x{}", thumb.width, thumb.height);
+    let at = |img: &Rendered, x: usize, y: usize| {
+        let i = (y * img.width as usize + x) * 4;
+        [img.pixels[i], img.pixels[i + 1], img.pixels[i + 2], img.pixels[i + 3]]
+    };
+    let (cx, cy) = (thumb.width as usize / 2, thumb.height as usize / 2);
+    let c = at(&thumb, cx, cy);
+    assert!(c[0] > 200 && c[1] < 80 && c[2] < 80 && c[3] == 255, "stroke center is red in own-pixel thumb, got {c:?}");
+    // 蒙版全黑会隐藏整层,但缩略图仍显示图层自身像素(帧角在笔画外 → 透明)
+    let corner = at(&thumb, 0, 0);
+    assert_eq!(corner[3], 0, "outside the stroke the thumb is transparent (mask not applied)");
+
+    // 调整层无 raster surface:报错(前端按 kind 出图标)
+    m.run(doc, "layer.newAdjustmentLayer.invert", json!({})).unwrap();
+    let adj = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    assert!(m.layer_thumbnail(doc, adj, 64).is_err());
+}

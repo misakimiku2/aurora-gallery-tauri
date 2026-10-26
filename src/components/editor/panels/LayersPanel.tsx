@@ -1,8 +1,8 @@
-/** 图层面板:混合模式/不透明度(当前层)、行(眼睛/蒙版缩略图/名称/选中)、增删复制/排列/添加蒙版。 */
+/** 图层面板:混合模式/不透明度(当前层)、行(眼睛/图层缩略图/链条/蒙版缩略图/名称/选中)、增删复制/排列/添加蒙版。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2Off } from 'lucide-react';
+import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { runCommand, getSession, subscribeSession } from '../editorStore';
-import { editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
+import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 
 /** 引擎英文标签 → 中文(混合模式,PS 中文版口径)。 */
@@ -20,13 +20,114 @@ const KIND_ZH: Record<string, string> = {
   Pixel: '像素', Group: '编组', Adjustment: '调整', Fill: '填充', Type: '文字', Shape: '形状', 'Smart Object': '智能对象',
 };
 
-/** 蒙版快照缓存(docId:layerId:revision → 位图):行内缩略图共用,revision 前移自然过期。 */
-const maskThumbCache = new Map<string, RenderedBitmap>();
-const MASK_THUMB_CACHE_MAX = 200;
+/** 缩略图快照缓存(前缀 L=图层内容/M=蒙版;docId:layerId:revision → 位图),revision 前移自然过期。 */
+const thumbCache = new Map<string, RenderedBitmap>();
+const THUMB_CACHE_MAX = 400;
+function cachePut(key: string, bmp: RenderedBitmap): void {
+  thumbCache.set(key, bmp);
+  if (thumbCache.size > THUMB_CACHE_MAX) {
+    const first = thumbCache.keys().next().value;
+    if (first !== undefined) thumbCache.delete(first);
+  }
+}
+
+/** 把快照画进缩略图画布(等比缩到 box 内);禁用蒙版的红叉由调用方接着画。 */
+function drawThumb(cv: HTMLCanvasElement, bmp: RenderedBitmap): void {
+  cv.width = bmp.width;
+  cv.height = bmp.height;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
+}
+
+/** 非像素层的类型图标(上游 layer_thumb 的图标口径)。 */
+const KIND_ICONS: Record<string, LucideIcon> = {
+  Adjustment: Contrast,
+  Group: Folder,
+  Fill: Droplet,
+  Type: Type,
+  Shape: Shapes,
+  'Smart Object': Box,
+};
+const KindIcon: React.FC<{ kind: string }> = ({ kind }) => {
+  const Icon = KIND_ICONS[kind] ?? ImageIcon;
+  return <Icon size={12} />;
+};
+
+/**
+ * 图层内容缩略图(PS 口径):像素层=图层自身像素快照(内容边界裁剪,不含蒙版);
+ * 其他 kind=类型图标(上游 adjustments/groups 同为图标,不出像素)。点击=选中该层并
+ * 把编辑目标切回合成像素(与蒙版缩略图点击相对,PS 的缩略图点击切换口径);
+ * 灰度查看激活时顺带关闭(view 状态,不入历史)。
+ */
+const LayerThumb: React.FC<{
+  tabId: string;
+  docId: number;
+  layer: EditorLayer;
+  revision: number;
+  targeted: boolean;
+}> = ({ tabId, docId, layer, revision, targeted }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  const run = (cmd: string, params: Record<string, unknown> = {}) =>
+    runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
+
+  const isPixel = layer.kind === 'Pixel';
+  useEffect(() => {
+    if (!isPixel) return;
+    const key = `L${docId}:${layer.id}:${revision}`;
+    const cached = thumbCache.get(key);
+    if (cached) {
+      const cv = canvasRef.current;
+      if (cv) drawThumb(cv, cached);
+      return;
+    }
+    let cancelled = false;
+    void editorLayerThumbnail(docId, layer.id, 64)
+      .then((bmp) => {
+        if (cancelled) return;
+        cachePut(key, bmp);
+        const cv = canvasRef.current;
+        if (cv) drawThumb(cv, bmp);
+        forceUpdate((n) => n + 1);
+      })
+      .catch((e) => console.error('[editor] 图层缩略图失败', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, layer.id, revision, isPixel]);
+
+  const bmp = isPixel ? thumbCache.get(`L${docId}:${layer.id}:${revision}`) : undefined;
+  const h = 18;
+  const w = bmp ? Math.max(6, Math.round((bmp.width / Math.max(bmp.width, bmp.height)) * h)) : h;
+
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        void run('layer.select', { layer: layer.id });
+        void run('channel.target', { channel: 'composite' });
+        if (getSession(tabId)?.state?.layerMaskView) {
+          void run('view.layerMask', { layer: layer.id, mode: 'off' });
+        }
+      }}
+      title="图层内容(点=编辑图层像素)"
+      className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
+      style={{ width: w + 2, height: h + 2 }}
+    >
+      {isPixel ? (
+        <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
+      ) : (
+        <KindIcon kind={layer.kind} />
+      )}
+    </button>
+  );
+};
 
 /**
  * 蒙版缩略图(PS 口径):灰度快照(白=显示);点击=编辑蒙版 / Shift+点=停用或启用 /
- * Alt+点=灰度查看 / Ctrl+点=载入选区;禁用蒙版红叉;未链接角标(点它解链/复链)。
+ * Alt+点=灰度查看 / Ctrl+点=载入选区;禁用蒙版红叉。链接态由行内的链条图标表达。
  */
 const MaskThumb: React.FC<{
   tabId: string;
@@ -43,30 +144,29 @@ const MaskThumb: React.FC<{
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
 
   useEffect(() => {
-    const key = `${docId}:${layer.id}:${revision}`;
+    const key = `M${docId}:${layer.id}:${revision}`;
     const draw = (bmp: RenderedBitmap) => {
       const cv = canvasRef.current;
       if (!cv) return;
-      cv.width = bmp.width;
-      cv.height = bmp.height;
-      const ctx = cv.getContext('2d');
-      if (!ctx) return;
-      ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
+      drawThumb(cv, bmp);
       if (info && !info.enabled) {
         // 禁用蒙版:PS 式红叉
-        const lw = Math.max(2, cv.width / 12);
-        ctx.strokeStyle = '#ff3b30';
-        ctx.lineWidth = lw;
-        ctx.beginPath();
-        ctx.moveTo(lw / 2, lw / 2);
-        ctx.lineTo(cv.width - lw / 2, cv.height - lw / 2);
-        ctx.moveTo(cv.width - lw / 2, lw / 2);
-        ctx.lineTo(lw / 2, cv.height - lw / 2);
-        ctx.stroke();
+        const ctx = cv.getContext('2d');
+        if (ctx) {
+          const lw = Math.max(2, cv.width / 12);
+          ctx.strokeStyle = '#ff3b30';
+          ctx.lineWidth = lw;
+          ctx.beginPath();
+          ctx.moveTo(lw / 2, lw / 2);
+          ctx.lineTo(cv.width - lw / 2, cv.height - lw / 2);
+          ctx.moveTo(cv.width - lw / 2, lw / 2);
+          ctx.lineTo(lw / 2, cv.height - lw / 2);
+          ctx.stroke();
+        }
       }
       forceUpdate((n) => n + 1);
     };
-    const cached = maskThumbCache.get(key);
+    const cached = thumbCache.get(key);
     if (cached) {
       draw(cached);
       return;
@@ -75,11 +175,7 @@ const MaskThumb: React.FC<{
     void editorMaskSnapshot(docId, layer.id, 64, 64)
       .then((bmp) => {
         if (cancelled) return;
-        maskThumbCache.set(key, bmp);
-        if (maskThumbCache.size > MASK_THUMB_CACHE_MAX) {
-          const first = maskThumbCache.keys().next().value;
-          if (first !== undefined) maskThumbCache.delete(first);
-        }
+        cachePut(key, bmp);
         draw(bmp);
       })
       .catch((e) => console.error('[editor] 蒙版快照失败', e));
@@ -88,48 +184,35 @@ const MaskThumb: React.FC<{
     };
   }, [docId, layer.id, revision, info?.enabled]);
 
-  const bmp = maskThumbCache.get(`${docId}:${layer.id}:${revision}`);
+  const bmp = thumbCache.get(`M${docId}:${layer.id}:${revision}`);
   const h = 18;
   const w = bmp ? Math.max(6, Math.round((bmp.width / Math.max(bmp.width, bmp.height)) * h)) : h;
 
   return (
-    <span className="relative shrink-0 inline-flex items-center">
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          if (e.shiftKey) {
-            void run('layer.layerMask.enabled', { layer: layer.id });
-            return;
-          }
-          if (e.altKey) {
-            void run('view.layerMask', { layer: layer.id, mode: 'toggleGray' });
-            return;
-          }
-          if (e.ctrlKey || e.metaKey) {
-            void run('select.loadSelection', { channel: 'mask', layer: layer.id });
-            return;
-          }
-          void run('layer.select', { layer: layer.id });
-          void run('channel.target', { channel: 'mask' });
-        }}
-        title="图层蒙版(点=编辑蒙版 / Shift+点=停用或启用 / Alt+点=灰度查看 / Ctrl+点=载入选区)"
-        className={`shrink-0 p-px rounded-[3px] ${targeted ? 'ring-1 ring-sky-500' : ''}`}
-      >
-        <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block rounded-[2px]" />
-      </button>
-      {info && !info.linked && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            void run('layer.layerMask.linked', { layer: layer.id });
-          }}
-          title="蒙版未链接(点此重新链接;移动图层时蒙版不跟随)"
-          className="absolute -right-1 -bottom-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-        >
-          <Link2Off size={8} />
-        </button>
-      )}
-    </span>
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        if (e.shiftKey) {
+          void run('layer.layerMask.enabled', { layer: layer.id });
+          return;
+        }
+        if (e.altKey) {
+          void run('view.layerMask', { layer: layer.id, mode: 'toggleGray' });
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) {
+          void run('select.loadSelection', { channel: 'mask', layer: layer.id });
+          return;
+        }
+        void run('layer.select', { layer: layer.id });
+        void run('channel.target', { channel: 'mask' });
+      }}
+      title="图层蒙版(点=编辑蒙版 / Shift+点=停用或启用 / Alt+点=灰度查看 / Ctrl+点=载入选区)"
+      className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
+      style={{ width: w + 2, height: h + 2 }}
+    >
+      <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
+    </button>
   );
 };
 
@@ -153,7 +236,7 @@ const Row: React.FC<{
   return (
     <div
       onClick={() => void run('layer.select', { layer: layer.id })}
-      className={`group flex items-center gap-1.5 px-1.5 h-7 rounded cursor-default text-xs ${
+      className={`group flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
         layer.selected ? 'bg-sky-600/25 text-neutral-900 dark:text-neutral-100' : 'text-gray-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
       }`}
       style={{ paddingLeft: 6 + depth * 12 }}
@@ -168,15 +251,33 @@ const Row: React.FC<{
       >
         {layer.visible ? <Eye size={13} /> : <EyeOff size={13} />}
       </button>
+      {/* PS 行布局:图层内容缩略图 + 链条(链接态) + 蒙版缩略图;点缩略图切编辑目标 */}
+      <LayerThumb tabId={tabId} docId={docId} layer={layer} revision={revision} targeted={layer.selected && !maskTargeted} />
       {layer.hasMask && (
-        <MaskThumb
-          tabId={tabId}
-          docId={docId}
-          layer={layer}
-          revision={revision}
-          info={maskInfo?.[String(layer.id)]}
-          targeted={maskTargeted && layer.selected}
-        />
+        <>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              void run('layer.layerMask.linked', { layer: layer.id });
+            }}
+            title={(maskInfo?.[String(layer.id)]?.linked ?? true) ? '已链接蒙版(点此解链:移动图层时蒙版不跟随)' : '未链接蒙版(点此重新链接)'}
+            className={`shrink-0 ${
+              (maskInfo?.[String(layer.id)]?.linked ?? true)
+                ? 'text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100'
+                : 'text-amber-600 dark:text-amber-400 hover:text-amber-500'
+            }`}
+          >
+            {(maskInfo?.[String(layer.id)]?.linked ?? true) ? <Link2 size={10} /> : <Link2Off size={10} />}
+          </button>
+          <MaskThumb
+            tabId={tabId}
+            docId={docId}
+            layer={layer}
+            revision={revision}
+            info={maskInfo?.[String(layer.id)]}
+            targeted={layer.selected && maskTargeted}
+          />
+        </>
       )}
       {layer.clipped && <span className="shrink-0 text-[9px] text-gray-500 dark:text-neutral-400" title="剪贴蒙版">↳</span>}
       {editing ? (
