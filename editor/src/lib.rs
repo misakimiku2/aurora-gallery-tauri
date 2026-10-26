@@ -120,6 +120,8 @@ struct LiveStrokeState {
     /// 已返回给前端的帧矩形之并——commit 的 fromLive 帧只需补未送达的部分
     /// (dab 族收尾 dab 只写进 live 文档,不经 push 返回;点击式点画同理)。
     returned: Rect,
+    /// 灰度查看中画蒙版:帧取蒙版表面灰度而非合成(前端请求),值为 begin 时的活动图层 id。
+    frame_mask: Option<u64>,
 }
 
 pub struct EditorManager {
@@ -250,10 +252,49 @@ impl EditorManager {
         Ok(StrokeFrame { x: r.x0, y: r.y0, width: img.width, height: img.height, pixels: img.pixels })
     }
 
+    /// live 文档(克隆)上取目标图层**蒙版表面**的灰度帧(灰度查看中画蒙版的逐笔预览):
+    /// 合成帧对灰度画布是错误内容(会把合成像素贴进灰度位图),改为直接采样蒙版表面,
+    /// 白=显示 黑=隐藏,与 mask_snapshot/灰度查看同一语义。图层丢失/无蒙版 → 空帧。
+    fn live_mask_frame(kind: &LiveKind, size: (u32, u32), dmg: Rect, layer: u64) -> Result<StrokeFrame> {
+        let full = Rect::from_xywh(0, 0, size.0, size.1);
+        Self::live_mask_frame_layer(kind.doc(), dmg.intersect(&full), layer)
+    }
+
+    /// 同上,但从指定文档取(commit 补差帧从提交后的正式文档取,live 帧从克隆取)。
+    fn live_mask_frame_layer(doc: &photocraft_engine::doc::Document, r: Rect, layer: u64) -> Result<StrokeFrame> {
+        if r.is_empty() {
+            return Ok(StrokeFrame::empty());
+        }
+        let Some(l) = find_layer(doc.layers.as_slice(), layer) else {
+            return Ok(StrokeFrame::empty());
+        };
+        let Some(mask) = l.mask.as_ref() else {
+            return Ok(StrokeFrame::empty());
+        };
+        let w = r.width() as usize;
+        let h = r.height() as usize;
+        let mut row = vec![0f32; w];
+        let mut px = vec![0u8; w * h * 4];
+        for j in 0..h {
+            mask.surface.sample_row_strided(r.y0 + j as i32, r.x0, 1, 0, &mut row);
+            for (i, v) in row.iter().enumerate() {
+                let g = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let o = (j * w + i) * 4;
+                px[o] = g;
+                px[o + 1] = g;
+                px[o + 2] = g;
+                px[o + 3] = 255;
+            }
+        }
+        Ok(StrokeFrame { x: r.x0, y: r.y0, width: r.width(), height: r.height(), pixels: px })
+    }
+
     /// 落笔:按命令族创建 live 描边并渲染首点。`params` 须含 `points`(首点起),
     /// 参数原样留存,commit 时回放。命令族:`paint.stroke`(画笔/橡皮,erase 参数)、
     /// `paint.pencil`;`paint.blur` / `paint.sharpen` / `paint.smudge`(顺序 dab 工具)。
-    pub fn stroke_begin(&mut self, doc: u64, cmd: &str, params: Value) -> Result<StrokeFrame> {
+    /// `mask_frames`:灰度查看中画蒙版——帧取活动图层蒙版表面灰度(逐笔预览),
+    /// 合成帧对灰度画布是错误内容。
+    pub fn stroke_begin(&mut self, doc: u64, cmd: &str, params: Value, mask_frames: bool) -> Result<StrokeFrame> {
         self.activate(doc)?;
         if self.live.is_some() {
             // 上一笔被前端遗弃(异常路径未走到 commit/cancel)。描边协议本身是严格串行的
@@ -277,7 +318,16 @@ impl EditorManager {
             other => return Err(EditorError(format!("{other}: not a live-stroke command"))),
         };
         let size = self.doc_size()?;
-        let frame = Self::live_frame(&kind, size, kind.bounds())?;
+        // 灰度帧的蒙版取 begin 时的活动图层(live 克隆上的同一 id)
+        let frame_mask = if mask_frames {
+            self.session.active().and_then(|st| st.active_layer).map(|id| id.0)
+        } else {
+            None
+        };
+        let frame = match frame_mask {
+            Some(layer) => Self::live_mask_frame(&kind, size, kind.bounds(), layer)?,
+            None => Self::live_frame(&kind, size, kind.bounds())?,
+        };
         let returned = Rect::from_xywh(frame.x, frame.y, frame.width, frame.height);
         self.live = Some(LiveStrokeState {
             kind,
@@ -285,6 +335,7 @@ impl EditorManager {
             params,
             points,
             returned: if frame.width > 0 { returned } else { Rect::EMPTY },
+            frame_mask,
         });
         Ok(frame)
     }
@@ -303,7 +354,10 @@ impl EditorManager {
         for c in flat.chunks_exact(3) {
             st.points.push([c[0], c[1], c[2]]);
         }
-        let frame = Self::live_frame(&st.kind, size, dmg)?;
+        let frame = match st.frame_mask {
+            Some(layer) => Self::live_mask_frame(&st.kind, size, dmg, layer)?,
+            None => Self::live_frame(&st.kind, size, dmg)?,
+        };
         if frame.width > 0 {
             st.returned = st.returned.union(&Rect::from_xywh(frame.x, frame.y, frame.width, frame.height));
         }
@@ -354,8 +408,14 @@ impl EditorManager {
             StrokeFrame::empty()
         } else {
             let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
-            let img = photocraft_compose::render(&st.doc, missing).to_rgba8();
-            StrokeFrame { x: missing.x0, y: missing.y0, width: img.width, height: img.height, pixels: img.pixels }
+            // 灰度查看中画蒙版:补差帧同样取蒙版表面灰度(正式文档,提交后的终态)
+            match live.frame_mask {
+                Some(layer) => Self::live_mask_frame_layer(&st.doc, missing, layer)?,
+                None => {
+                    let img = photocraft_compose::render(&st.doc, missing).to_rgba8();
+                    StrokeFrame { x: missing.x0, y: missing.y0, width: img.width, height: img.height, pixels: img.pixels }
+                }
+            }
         };
         Ok((outcome, frame))
     }

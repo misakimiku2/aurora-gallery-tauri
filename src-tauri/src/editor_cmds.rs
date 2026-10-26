@@ -92,14 +92,16 @@ fn stroke_frame_bytes(f: aurora_editor::StrokeFrame) -> Response {
 
 /// 落笔:按命令族创建 live 描边(paint.stroke/paint.pencil 走 LiveStroke,
 /// paint.blur|sharpen|smudge 走 LiveDab),渲染首点并返回增量帧。
+/// maskFrames=灰度查看中画蒙版:帧取活动图层蒙版表面灰度(而非合成)。
 #[tauri::command]
-pub fn editor_stroke_begin(s: State<EditorState>, doc: u64, cmd: String, params: Value) -> Result<Response, String> {
+pub fn editor_stroke_begin(s: State<EditorState>, doc: u64, cmd: String, params: Value, maskFrames: Option<bool>) -> Result<Response, String> {
     let mut m = lock(&s)?;
-    let f = m.stroke_begin(doc, &cmd, params).map_err(|e| e.to_string())?;
+    let f = m.stroke_begin(doc, &cmd, params, maskFrames.unwrap_or(false)).map_err(|e| e.to_string())?;
     Ok(stroke_frame_bytes(f))
 }
 
 /// 拖动中投点(三元组 [x,y,pressure,…] 平铺),返回本批点改变区域的增量帧。
+/// 帧模式(合成/蒙版灰度)记录在 begin 的 live 状态里,push/commit 沿用,无需重复传。
 #[tauri::command]
 pub fn editor_stroke_push(s: State<EditorState>, doc: u64, points: Vec<f64>) -> Result<Response, String> {
     let mut m = lock(&s)?;

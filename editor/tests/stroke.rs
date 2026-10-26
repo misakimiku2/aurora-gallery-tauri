@@ -40,7 +40,7 @@ fn brush_live_stroke_commits_from_live() {
     let base = m.run(doc, "document.inspect", json!({})).unwrap().revision;
 
     // 落笔:首点帧覆盖起点,且是红色笔画(文档克隆上的真像素)
-    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[20, 32, 1.0]]), "#ff0000", false)).unwrap();
+    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[20, 32, 1.0]]), "#ff0000", false), false).unwrap();
     assert!(f0.width > 0 && f0.height > 0, "begin renders the first dab: {f0:?}");
     assert!(in_frame(&f0, 20, 32));
     let c = px(&f0, (20 - f0.x) as usize, (32 - f0.y) as usize);
@@ -82,7 +82,7 @@ fn eraser_is_paint_stroke_with_erase() {
     assert!(full_px(&mut m, doc, 32, 32)[0] < 80, "black line painted");
     let base = m.run(doc, "document.inspect", json!({})).unwrap().revision;
 
-    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[16, 32, 1.0]]), "#ff0000", true)).unwrap();
+    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[16, 32, 1.0]]), "#ff0000", true), false).unwrap();
     assert!(f0.width > 0);
     let _ = m.stroke_push(doc, &[32.0, 32.0, 1.0, 48.0, 32.0, 1.0]).unwrap();
     let (out, _) = m.stroke_commit(doc).unwrap();
@@ -109,7 +109,7 @@ fn dab_tools_live_then_commit() {
         "size": 20.0, "hardness": 80, "opacity": 100, "flow": 100, "spacing": 25,
         "strength": 80,
     });
-    let _ = m.stroke_begin(doc, "paint.blur", p).unwrap();
+    let _ = m.stroke_begin(doc, "paint.blur", p, false).unwrap();
     let f1 = m.stroke_push(doc, &[32.0, 32.0, 1.0, 48.0, 32.0, 1.0]).unwrap();
     assert!(f1.width > 0 && f1.height > 0);
     let (out, tail) = m.stroke_commit(doc).unwrap();
@@ -155,7 +155,7 @@ fn dab_tap_dot_is_delivered() {
         "points": [[32, 40, 1.0]],
         "size": 16.0, "hardness": 80, "opacity": 100, "flow": 100, "spacing": 25, "strength": 90,
     });
-    let f0 = m.stroke_begin(doc, "paint.blur", p).unwrap();
+    let f0 = m.stroke_begin(doc, "paint.blur", p, false).unwrap();
     let (out, tail) = m.stroke_commit(doc).unwrap();
     assert_eq!(out.result.get("fromLive"), Some(&json!(true)));
     if f0.width == 0 {
@@ -175,8 +175,8 @@ fn stroke_begin_recovers_from_abandoned_live() {
     // 而不是永久 "a stroke is already active"(用户实测:十余笔后画笔/橡皮全失灵)
     let mut m = EditorManager::new();
     let doc = m.new_document(64, 64, "white").unwrap();
-    let _ = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[8, 8, 1.0]]), "#ff0000", false)).unwrap();
-    let f1 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[40, 40, 1.0]]), "#0000ff", false)).unwrap();
+    let _ = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[8, 8, 1.0]]), "#ff0000", false), false).unwrap();
+    let f1 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[40, 40, 1.0]]), "#0000ff", false), false).unwrap();
     assert!(f1.width > 0, "second begin recovers");
     let (out, _) = m.stroke_commit(doc).unwrap();
     assert_eq!(out.result.get("fromLive"), Some(&json!(true)));
@@ -405,13 +405,13 @@ fn stroke_error_paths() {
     let base = m.run(doc, "document.inspect", json!({})).unwrap().revision;
 
     // 未知命令族 / 缺 points / 无描边时 push/commit
-    assert!(m.stroke_begin(doc, "select.rect", json!({"points": [[1, 1, 1]]})).is_err());
-    assert!(m.stroke_begin(doc, "paint.stroke", json!({})).is_err());
+    assert!(m.stroke_begin(doc, "select.rect", json!({"points": [[1, 1, 1]]}), false).is_err());
+    assert!(m.stroke_begin(doc, "paint.stroke", json!({}), false).is_err());
     assert!(m.stroke_push(doc, &[1.0, 1.0, 1.0]).is_err());
     assert!(m.stroke_commit(doc).is_err());
 
     // 非法坐标:整批拒绝(引擎 check_coords),描边仍在,可正常提交
-    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[5, 5, 1.0]]), "#ff0000", false)).unwrap();
+    let f0 = m.stroke_begin(doc, "paint.stroke", brush_params(json!([[5, 5, 1.0]]), "#ff0000", false), false).unwrap();
     assert!(f0.width > 0);
     assert!(m.stroke_push(doc, &[6.0, 6.0, 1.0, 1e9, 1e9, 1.0]).is_err());
 

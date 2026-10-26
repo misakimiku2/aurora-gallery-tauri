@@ -67,6 +67,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     /** 待投点 [x,y,pressure,…] 平铺。 */
     pending: number[];
     beginPromise: Promise<void>;
+    /** 灰度查看中画蒙版:begin 起帧就是蒙版灰度(引擎侧记录模式),applyStrokeFrame 不得跳过。 */
+    maskFrames: boolean;
   } | null>(null);
   /** 增量帧上屏的中转画布(整幅 putImageData 只支持原点,先入 scratch 再缩放贴图)。 */
   const scratchRef = useRef<HTMLCanvasElement | null>(null);
@@ -363,11 +365,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [tabId]);
 
   /** live 描边增量帧 → 离屏位图局部贴图(文档坐标矩形,rasterScale<1 时缩放绘制)。
-   * 蒙版灰度查看期间跳过:增量帧是合成像素,贴进灰度位图会花屏;提交后 revision
-   * 前移触发灰度快照整幅重拉(代价:灰度查看中描边无逐笔预览)。 */
-  const applyStrokeFrame = useCallback((s: EditorSession | undefined, f: StrokeFrame) => {
+   * 蒙版灰度查看期间默认跳过(移动预览等合成帧会花屏);灰度描边(begin 起 maskFrames)
+   * 的帧本身就是蒙版灰度,force=true 放行——这就是灰度查看中的逐笔预览。 */
+  const applyStrokeFrame = useCallback((s: EditorSession | undefined, f: StrokeFrame, force = false) => {
     if (!s || !f.width || !f.height) return;
-    if (s.state?.layerMaskView?.mode === 'gray') return;
+    if (s.state?.layerMaskView?.mode === 'gray' && !force) return;
     const off = s.runtime.offscreen;
     if (!off) return;
     let scratch = scratchRef.current;
@@ -412,10 +414,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         st.pending = [];
         if (batch.length) {
           const frame = await editorStrokePush(st.docId, batch);
-          applyStrokeFrame(getSession(tabId), frame);
+          applyStrokeFrame(getSession(tabId), frame, st.maskFrames);
         } else if (st.ended) {
           const { outcome, frame } = await editorStrokeCommit(st.docId);
-          applyStrokeFrame(getSession(tabId), frame);
+          applyStrokeFrame(getSession(tabId), frame, st.maskFrames);
           strokeRef.current = null;
           if ((outcome.result as { fromLive?: boolean } | null)?.fromLive === true) {
             // 增量帧(+补差帧)已把提交后的像素画进离屏位图:抬位 bitmapKey,
@@ -430,7 +432,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           const p = s?.runtime.pointerDoc;
           if (s && p) {
             const frame = await editorStrokePush(st.docId, [p.x, p.y, 1]);
-            applyStrokeFrame(s, frame);
+            applyStrokeFrame(s, frame, st.maskFrames);
           }
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         }
@@ -455,6 +457,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       tool, docId, started: false, failed: false, ended: false, pumping: false,
       pending: [] as number[],
       beginPromise: Promise.resolve(),
+      // 灰度查看中编辑蒙版:begin 起向引擎要蒙版灰度帧(逐笔预览),否则合成帧
+      maskFrames: isMaskTarget(s.state) && s.state?.layerMaskView?.mode === 'gray',
     };
     strokeRef.current = st;
     // 蒙版编辑目标(live 描边走桥层直通,不经引擎 routed 注入,必须显式带 target)
@@ -462,9 +466,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     params.points = [[x, y, 1]];
     st.beginPromise = (async () => {
       try {
-        const frame = await editorStrokeBegin(docId, strokeCommand(tool), params);
+        const frame = await editorStrokeBegin(docId, strokeCommand(tool), params, st.maskFrames);
         st.started = true;
-        applyStrokeFrame(s, frame);
+        applyStrokeFrame(s, frame, st.maskFrames);
       } catch (err) {
         // 隐藏层/无图层等引擎拒绝:无副作用,取消本地状态即可(日志可查)。
         // 失败也可能发生在引擎 begin 成功之后(帧解析/上屏抛错)——补发 cancel,

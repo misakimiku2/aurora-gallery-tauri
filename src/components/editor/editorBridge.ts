@@ -57,9 +57,10 @@ function parseStrokeFrame(buf: ArrayBuffer, offset = 0): StrokeFrame {
   return { x, y, width, height, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + offset + 16, width * height * 4) };
 }
 
-/** 落笔:创建 live 描边并渲染首点(paint.stroke / paint.pencil / paint.blur|sharpen|smudge)。 */
-export async function editorStrokeBegin(doc: number, cmd: string, params: Record<string, unknown>): Promise<StrokeFrame> {
-  const buf = await invoke<ArrayBuffer>('editor_stroke_begin', { doc, cmd, params });
+/** 落笔:创建 live 描边并渲染首点(paint.stroke / paint.pencil / paint.blur|sharpen|smudge)。
+ * maskFrames=灰度查看中画蒙版:帧取活动图层蒙版表面灰度(而非合成像素)。 */
+export async function editorStrokeBegin(doc: number, cmd: string, params: Record<string, unknown>, maskFrames = false): Promise<StrokeFrame> {
+  const buf = await invoke<ArrayBuffer>('editor_stroke_begin', { doc, cmd, params, maskFrames });
   return parseStrokeFrame(buf);
 }
 

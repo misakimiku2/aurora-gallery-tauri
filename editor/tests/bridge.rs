@@ -151,3 +151,46 @@ fn layer_thumbnail_own_pixels_content_bounds() {
     let adj = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
     assert!(m.layer_thumbnail(doc, adj, 64).is_err());
 }
+
+/// 灰度查看中画蒙版的逐笔预览:mask_frames=true 时 begin/push/补差帧取蒙版表面灰度
+/// (此前是合成帧,贴进灰度位图是错误内容,只能等提交后整幅重拉)。
+#[test]
+fn mask_gray_stroke_frames_live_preview() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "layer.new.layer", json!({})).unwrap();
+    let layer = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "layer.layerMask.revealAll", json!({ "layer": layer })).unwrap();
+    m.run(doc, "tools.setColors", json!({ "foreground": "#000000" })).unwrap();
+    m.run(doc, "channel.target", json!({ "channel": "mask" })).unwrap();
+    m.run(doc, "view.layerMask", json!({ "layer": layer, "mode": "gray" })).unwrap();
+
+    let at = |f: &aurora_editor::StrokeFrame, x: i32, y: i32| {
+        let i = ((y - f.y) * f.width as i32 + (x - f.x)) as usize * 4;
+        [f.pixels[i], f.pixels[i + 1], f.pixels[i + 2], f.pixels[i + 3]]
+    };
+
+    // begin(mask_frames=true):首帧即蒙版灰度——笔画中心黑(画黑隐藏),四角 alpha 恒 255(灰度图非透明)
+    let f0 = m.stroke_begin(
+        doc,
+        "paint.stroke",
+        json!({ "points": [[32, 32, 1.0]], "size": 12, "color": "#000000", "target": "mask" }),
+        true,
+    )
+    .unwrap();
+    assert!(f0.width > 0 && f0.height > 0, "begin frame has content");
+    assert_eq!(at(&f0, 32, 32), [0, 0, 0, 255], "stroke point is black in the GRAY mask frame");
+
+    // push:新点处同样灰度
+    let f1 = m.stroke_push(doc, &[44.0, 32.0, 1.0]).unwrap();
+    if f1.width > 0 {
+        assert_eq!(at(&f1, 44, 32), [0, 0, 0, 255], "push frame is gray mask content");
+    }
+
+    // commit:历史推进;正式文档的蒙版快照在笔画处为黑
+    let (out, _tail) = m.stroke_commit(doc).unwrap();
+    assert!(out.revision > 0);
+    let snap = m.mask_snapshot(doc, layer, 64, 64).unwrap();
+    let idx = (32 * snap.width as usize + 32) * 4;
+    assert_eq!(&snap.pixels[idx..idx + 3], &[0, 0, 0], "committed mask is black at the stroke");
+}
