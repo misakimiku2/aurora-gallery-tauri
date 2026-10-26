@@ -109,9 +109,13 @@ M0 集成测试 `editor/tests/bridge.rs`:new → setColors → select.rect → p
 ### 5.2 M3 进度
 
 - **保存链路(1676b63,2026-10-26)**:✅ 一期终验链路全通。`editor_save` = 平面导出覆盖原图(引擎 `apply_file_encoding` 按原编码质量回写 + `atomic_write` 原子写)+ 同目录 `<stem>.psd` 分层伴生;`open_path` 伴生探测优先(重开恢复图层,标题保持原图名);前端 Ctrl+S/保存按钮 → `aurora-editor-saved` 窗口事件 → App 清缩略图内存缓存(invalidateThumbnailCaches)+ 重扫当前视图。Rust 单测 + 一次性副本真机实测(原图覆盖/.psd 8.5MB/同秒重扫)。
-- 待做:调整层/蒙版基础/快捷键补全;`editor_export_as` 已入库(前端 UI 后接)。
+- 待做:levels/curves/gradientMap 编辑器/快捷键补全;`editor_export_as` 已入库(前端 UI 后接)。
 - **另存为 + 状态点(ff4ce61,2026-10-27)**:✅ `editor_save_as` 按新扩展名**真重编码**(jpg→png 产物是真 PNG,魔数测试钉死);PS 口径文档改绑新路径(此后 Ctrl+S 写新文件),平面格式自动带 .psd 伴生,psd 目标不重复写伴生;文件信息栏三段布局(文件名居中 + 状态圆点 橙=未保存/绿=已保存,引擎 dirty=revision>saved_revision);格式过滤器 PNG/JPEG/WebP/TIFF/PSD。
 - **保存体验补全(db93bc0,2026-10-27)**:✅ 另存为快捷键 Ctrl+Shift+S;tooltip 精简;**未保存警告弹窗**(应用自有样式,保存/不保存/取消 右下角横排)——关 dirty 编辑器标签(guardedCloseTab)与退出应用(X 关窗/关闭确认"退出程序"/托盘 quit 改发事件由前端拦截)三链路生效;编辑器标签页内屏蔽 Ctrl+W/Ctrl+T(防误触),Ctrl+Tab 保留。
+- **图层蒙版基础(2026-10-27)**:✅ 引擎命令全现成,前端接线为主。桥层 `state()` 补 `maskInfo`(每带蒙版图层的 enabled/linked,inspect 只有 hasMask 布尔)+ 新增 `mask_snapshot`(蒙版灰度 RGBA,k 步长采样降采样,`Surface::sample_row_strided` 按行跨步只触落点 tile);蒙版缩略图(行内,64px 快照缓存按 docId:layerId:revision 过期,禁用红叉/未链接角标/目标高亮)+ 交互照上游蒙版缩略图口径:点=编辑目标(`channel.target {channel:"mask"}`)、Shift+点=启停、Alt+点=灰度查看(`view.layerMask toggleGray`,位图管线切蒙版快照)、Ctrl+点=载入选区(`select.loadSelection channel:"mask"`);添加蒙版按钮(有选区→revealSelection,Alt→hide 系,永不替换已有);**画笔/橡皮/修描/油漆桶/渐变落蒙版**——live 描边走桥层直通不经引擎 routed 注入,**必须前端显式带 `target:"mask"`**(strokeParams/bucketParams/gradientParams 带目标位);选项条蒙版目标徽章(点击返回合成;当前层无蒙版时红色警示);蒙版灰度查看期间跳过合成增量帧(花屏防御,代价=灰度中无逐笔预览,提交后整幅快照重拉);快捷键 Ctrl+\=蒙版目标、Ctrl+2=合成;**删除单入口蒙版优先**(用户拍板:带蒙版先删蒙版,再按删图层)。蒙版目标下引擎自动换黑白前/背景对(tools.target_mask 成对记忆),D 键=恢复白/黑。
+- **调整面板(2026-10-27)**:✅ 调整页 16 种调整层一键网格(上游 adjustments_grid 顺序+图标映射 lucide,`layer.newAdjustmentLayer.<kind>` 添加后自动切属性页);属性页按 kind 参数编辑器,**本切片 13 种标量类**:亮度/对比度(含 legacy)、曝光度、自然饱和度、色相/饱和度(全图+6 色范围+着色)、色彩平衡(三调+保持明度)、黑白(6 权重+着色)、照片滤镜(20 预设回显按颜色匹配+自定义色+浓度)、通道混合器(输出通道+单色)、可选颜色(9 范围 CMYK+相对/绝对)、色调分离、阈值、反相(无参数)、颜色查找(8 内置 LUT+插值+抖动;LUT 回显本地记忆,引擎 to_params 不回显);色阶/曲线/渐变映射的直方图/曲线点/渐变停靠点编辑器下一切片。编辑走 `layer.setAdjustment`(引擎给出键合并+钳制),100ms 节流补丁累积 + `coalesce:"properties-adjustment:<id>"` 把拖动合成一步历史(上游 Properties 同口径);控件本地态跟手(引擎回包滞后不顶滑杆);剪贴到下方图层(`layer.setProps clipped`)+ 重置默认(空参数=重置)。
+- **另存为标签名跟随(2026-10-27)**:✅ save_as 改绑后广播 `aurora-editor-renamed {tabId,name}`,App 监听更新 tab.sessionName(小瑕疵清零)。
+- 待做:levels/curves/gradientMap 完整编辑器;`editor_export_as` 前端 UI(导出为对话框);蒙版右键菜单(应用蒙版/蒙版选项);快捷键继续补全(PS 键位按需);移动工具 Auto-Select/链接层扩散/Alt 复制;裁剪旋转/拉直/比例;多边形/磁性套索;渐变 Live 图层。
 
 ## 6. 风险与对策
 
