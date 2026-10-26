@@ -93,14 +93,14 @@ export const EditorShell: React.FC<{
             <Redo2 size={15} />
           </button>
           <button
-            title="保存 (Ctrl+S) — 覆盖原图 + 同名 .psd 分层伴生"
+            title="保存 (Ctrl+S)"
             onClick={() => void saveSession(tabId).catch((e) => console.error('[editor] 保存失败', e))}
             className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded"
           >
             <Save size={15} />
           </button>
           <button
-            title="另存为… — 选择格式与位置(按所选格式真重编码,文档改绑新文件)"
+            title="另存为 (Ctrl+Shift+S)"
             onClick={() => void saveAsSession(tabId).catch((e) => console.error('[editor] 另存为失败', e))}
             className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded"
           >

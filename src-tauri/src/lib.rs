@@ -2292,7 +2292,10 @@ pub fn run() {
                                 }
                             }
                             "quit" => {
-                                app.exit(0);
+                                // 退出前给前端一个拦截机会(编辑器有未保存修改时弹确认,
+                                // 前端确认后走 exit_app;无 dirty 时前端直接 exitApp)。
+                                // 全限定调用:Emitter 的 use 导入是 android-gated 的。
+                                let _ = tauri::Emitter::emit(app, "app-quit-requested", ());
                             }
                             _ => {}
                         }

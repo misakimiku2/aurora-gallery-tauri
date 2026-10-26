@@ -38,10 +38,15 @@ export function useKeyboardShortcuts(opts: Opts) {
         return;
       }
 
+      // 编辑器标签页:屏蔽 Ctrl+W(关标签)/Ctrl+T(新建标签),防误触丢编辑上下文;
+      // Ctrl+Tab 切标签保留(上方分支不受影响)
+      const activeTab = tabs?.find(t => t.id === activeTabId);
+      const inEditor = activeTab?.isEditorMode === true;
+
       // Ctrl+W: Close current tab (disabled in reference mode)
       if (e.ctrlKey && e.key === 'w') {
         e.preventDefault();
-        if (isReferenceMode) return;
+        if (isReferenceMode || inEditor) return;
         if (tabs && tabs.length > 1) {
           onCloseTab(e as any, activeTabId);
         }
@@ -51,7 +56,7 @@ export function useKeyboardShortcuts(opts: Opts) {
       // Ctrl+T: New tab (disabled in reference mode)
       if (e.ctrlKey && e.key === 't') {
         e.preventDefault();
-        if (isReferenceMode) return;
+        if (isReferenceMode || inEditor) return;
         onNewTab();
         return;
       }

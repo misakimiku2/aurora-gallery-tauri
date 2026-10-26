@@ -181,6 +181,29 @@ export async function applyRunOutcome(tabId: string, out: RunOutcome, pullState:
   }
 }
 
+/** 有未保存修改的编辑器会话(状态点同一水位:revision>saved_revision)。 */
+export interface DirtySessionInfo {
+  tabId: string;
+  name: string;
+}
+
+/** 列出全部有未保存修改的会话(关闭标签/退出应用前的拦截查询)。 */
+export function listDirtySessions(): DirtySessionInfo[] {
+  const out: DirtySessionInfo[] = [];
+  sessions.forEach((s) => {
+    if (s.docId != null && s.state?.dirty) {
+      out.push({ tabId: s.tabId, name: s.state?.name ?? s.path ?? '未命名' });
+    }
+  });
+  return out;
+}
+
+/** 指定 Tab 的编辑器会话是否有未保存修改(无会话=false)。 */
+export function isSessionDirty(tabId: string): boolean {
+  const s = sessions.get(tabId);
+  return !!(s && s.docId != null && s.state?.dirty);
+}
+
 /** 关闭会话(引擎文档释放),Tab 卸载时调用。 */
 export function disposeSession(tabId: string): void {
   const s = sessions.get(tabId);

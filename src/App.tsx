@@ -60,6 +60,7 @@ import { RightPanel } from './components/app/RightPanel';
 import { isTauriEnvironment } from './utils/environment';
 import { getInitialLayout } from './utils/layoutSettings';
 import { getSourceUrls, toSourceUrlFields } from './utils/sourceUrls';
+import { listDirtySessions, saveSession } from './components/editor/editorStore';
 
 // 扩展 Window 接口：声明全局颜色更新函数
 declare global {
@@ -289,8 +290,18 @@ export const App: React.FC = () => {
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
+  // 编辑器未保存警告:关闭 dirty 的编辑器标签 / 退出应用前拦截(应用自有弹窗)。
+  const [unsavedEditor, setUnsavedEditor] = useState<{ mode: 'tab' | 'exit'; tabId?: string; name: string; count: number } | null>(null);
   const { handleExitConfirm, handleCloseConfirmation } = useWindowLifecycle({
     state, setState, exitActionRef, isLoading, setShowCloseConfirmation, rememberExitChoice,
+    interceptExit: () => {
+      const dirty = listDirtySessions();
+      if (dirty.length) {
+        setUnsavedEditor({ mode: 'exit', name: dirty[0].name, count: dirty.length });
+        return true;
+      }
+      return false;
+    },
   });
   // State for reference mode - controls TabBar visibility with hover detection
   const [isReferenceMode, setIsReferenceMode] = useState(false);
@@ -767,6 +778,72 @@ export const App: React.FC = () => {
     handleOpenCompareInNewTab,
     setNavigationTimestamp
   } = useNavigation(state, setState, { selectionRef, activeTabRef }, setGroupBy);
+
+  // 关标签守卫:dirty 编辑器标签 → 弹未保存警告而不是直接关(标签 X 与编程关闭同入口)
+  const guardedCloseTab = useCallback((e: any, id: string) => {
+    const tab = state.tabs.find(t => t.id === id);
+    if (tab?.isEditorMode) {
+      const dirty = listDirtySessions().find(d => d.tabId === id);
+      if (dirty) {
+        setUnsavedEditor({ mode: 'tab', tabId: id, name: dirty.name, count: 1 });
+        return;
+      }
+    }
+    handleCloseTab(e, id);
+  }, [state.tabs, handleCloseTab]);
+  // 弹窗"保存":保存后继续原操作(关标签 / 保存全部 dirty 后退出)
+  const handleUnsavedSave = useCallback(async () => {
+    if (!unsavedEditor) return;
+    try {
+      if (unsavedEditor.mode === 'tab' && unsavedEditor.tabId != null) {
+        await saveSession(unsavedEditor.tabId);
+        handleCloseTab(null, unsavedEditor.tabId);
+      } else {
+        for (const d of listDirtySessions()) {
+          await saveSession(d.tabId);
+        }
+        await exitApp();
+      }
+    } catch (err) {
+      // 保存失败(磁盘错误等):留在编辑器,弹窗关掉让用户看到错误日志
+      console.error('[app] 保存失败,已取消关闭/退出', err);
+    }
+    setUnsavedEditor(null);
+  }, [unsavedEditor, handleCloseTab]);
+  // 弹窗"不保存":丢弃修改继续原操作
+  const handleUnsavedDiscard = useCallback(() => {
+    if (!unsavedEditor) return;
+    if (unsavedEditor.mode === 'tab' && unsavedEditor.tabId != null) {
+      handleCloseTab(null, unsavedEditor.tabId);
+    } else {
+      void exitApp();
+    }
+    setUnsavedEditor(null);
+  }, [unsavedEditor, handleCloseTab]);
+  // 退出拦截器(X 关窗 / 关闭确认弹窗"退出"/ 托盘退出 共用):有 dirty 会话 → 弹警告
+  const interceptExit = useCallback(() => {
+    const dirty = listDirtySessions();
+    if (dirty.length) {
+      setUnsavedEditor({ mode: 'exit', name: dirty[0].name, count: dirty.length });
+      return true;
+    }
+    return false;
+  }, []);
+  // 托盘"退出":Rust 改发事件,由前端做 dirty 拦截后再真正退出
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen('app-quit-requested', () => {
+          if (!interceptExit()) void exitApp();
+        });
+      } catch (err) {
+        console.warn('[app] quit listener unavailable', err);
+      }
+    })();
+    return () => { unlisten?.(); };
+  }, [interceptExit]);
 
   // LAN 客户端同步（连接恢复/根目录加载/重试/心跳/浏览/刷新/上传）
   const {
@@ -2104,7 +2181,7 @@ export const App: React.FC = () => {
     tabs: state.tabs,
     activeTabId: state.activeTabId,
     onSwitchTab: handleSwitchTab,
-    onCloseTab: handleCloseTab,
+    onCloseTab: guardedCloseTab,
     onNewTab: handleNewTab,
     onRefresh: handleRefreshAnySource,
     onRequestDelete: requestDelete,
@@ -2674,7 +2751,7 @@ export const App: React.FC = () => {
         topics={state.topics}
         people={peopleWithDisplayCounts}
         onSwitchTab={handleSwitchTab}
-        onCloseTab={handleCloseTab}
+        onCloseTab={guardedCloseTab}
         onNewTab={handleNewTab}
         onContextMenu={handleContextMenu}
         t={t}
@@ -2759,7 +2836,7 @@ export const App: React.FC = () => {
             handleOpenCompareAndClearSelection={handleOpenCompareAndClearSelection}
             handleAddToCompareCanvas={handleAddToCompareCanvas}
             updateTabById={updateTabById}
-            handleCloseTab={handleCloseTab}
+            handleCloseTab={guardedCloseTab}
             setIsReferenceMode={setIsReferenceMode}
             handleReferenceModeChange={handleReferenceModeChange}
             isReferenceMode={isReferenceMode}
@@ -3017,6 +3094,10 @@ export const App: React.FC = () => {
         handleOpenKnownPath={openKnownPath}
         scanProgress={state.scanProgress}
         showCloseConfirmation={showCloseConfirmation}
+        unsavedEditor={unsavedEditor}
+        onUnsavedSave={() => void handleUnsavedSave()}
+        onUnsavedDiscard={handleUnsavedDiscard}
+        onUnsavedCancel={() => setUnsavedEditor(null)}
         setShowCloseConfirmation={setShowCloseConfirmation}
         handleCloseConfirmation={handleCloseConfirmation}
         updateInfo={updateInfo}
@@ -3072,7 +3153,7 @@ export const App: React.FC = () => {
         handleSetAvatar={handleSetAvatar}
         handleCreatePerson={handleCreatePerson}
         handleCreateTopic={() => setState(s => ({ ...s, activeModal: { type: 'create-topic', data: { parentId: null } } }))}
-        handleCloseTab={handleCloseTab}
+        handleCloseTab={guardedCloseTab}
         handleCloseOtherTabs={handleCloseOtherTabs}
         handleCloseAllTabs={handleCloseAllTabs}
         handleRefresh={handleRefreshAnySource}

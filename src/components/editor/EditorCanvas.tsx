@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, getSession, refreshSelectionOutline, runCommand, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
+import { applyRunOutcome, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -797,12 +797,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
             void runCommand(tabId, 'edit.redo', {}).catch(console.error);
           }
         } else if (k2 === 's') {
-          // Ctrl+S 保存(拍板:覆盖原图 + 同名 .psd 分层伴生;引擎原子写)。
-          // 落盘后 saveSession 广播 aurora-editor-saved,App 监听刷新图库。
           e.preventDefault();
-          void saveSession(tabId).then((r) => {
-            if (!r) console.warn('[editor] 保存跳过:会话未打开或文档无路径');
-          }).catch((err) => logError('[editor] Ctrl+S 保存失败', err));
+          if (e.shiftKey) {
+            // Ctrl+Shift+S 另存为(格式对话框,文档改绑新文件)
+            void saveAsSession(tabId).then((r) => {
+              if (!r) console.warn('[editor] 另存为跳过:会话未打开或文档无路径');
+            }).catch((err) => logError('[editor] 另存为失败', err));
+          } else {
+            // Ctrl+S 保存(拍板:覆盖原图 + 同名 .psd 分层伴生;引擎原子写)。
+            // 落盘后 saveSession 广播 aurora-editor-saved,App 监听刷新图库。
+            void saveSession(tabId).then((r) => {
+              if (!r) console.warn('[editor] 保存跳过:会话未打开或文档无路径');
+            }).catch((err) => logError('[editor] Ctrl+S 保存失败', err));
+          }
         } else if (k === 'd') {
           e.preventDefault();
           void runCommand(tabId, 'select.deselect', {}).catch(console.error);

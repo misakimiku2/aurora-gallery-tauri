@@ -16,6 +16,7 @@ import { setAndroidStatusBar, isAndroidPlatformCached } from '../api/tauri-bridg
 // Import from their original locations
 import { SettingsModal as SettingsModalComp } from './SettingsModal';
 import { CloseConfirmationModal as CloseConfirmationModalComp } from './CloseConfirmationModal';
+import { EditorUnsavedModal } from './editor/EditorUnsavedModal';
 import { WelcomeModal as WelcomeModalComp } from './modals/WelcomeModal';
 import { AlertModal as AlertModalComp } from './modals/AlertModal';
 import { ConfirmModal as ConfirmModalComp } from './modals/ConfirmModal';
@@ -87,6 +88,11 @@ interface AppModalsProps {
   isScanning?: boolean;
   // Close confirmation
   showCloseConfirmation: boolean;
+  /** 编辑器未保存警告(ff4ce61 后接):非 null 时弹出三选一弹窗。 */
+  unsavedEditor: { mode: 'tab' | 'exit'; name: string; count: number } | null;
+  onUnsavedSave: () => void;
+  onUnsavedDiscard: () => void;
+  onUnsavedCancel: () => void;
   setShowCloseConfirmation: (val: boolean) => void;
   handleCloseConfirmation: (action: 'minimize' | 'exit', alwaysAsk: boolean) => void | Promise<void>;
   // Update modal
@@ -154,6 +160,10 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleOpenFolder,
   handleOpenKnownPath,
   showCloseConfirmation,
+  unsavedEditor,
+  onUnsavedSave,
+  onUnsavedDiscard,
+  onUnsavedCancel,
   setShowCloseConfirmation,
   handleCloseConfirmation,
   isScanning = false,
@@ -634,6 +644,18 @@ export const AppModals: React.FC<AppModalsProps> = ({
           onClose={() => setShowCloseConfirmation(false)}
           onAction={handleCloseConfirmation}
           t={t}
+        />
+      )}
+
+      {/* 编辑器未保存警告(关 dirty 标签/退出应用) */}
+      {unsavedEditor && (
+        <EditorUnsavedModal
+          mode={unsavedEditor.mode}
+          name={unsavedEditor.name}
+          count={unsavedEditor.count}
+          onSave={onUnsavedSave}
+          onDiscard={onUnsavedDiscard}
+          onCancel={onUnsavedCancel}
         />
       )}
 
