@@ -285,6 +285,60 @@ fn layer_drag_preview_and_translate() {
 }
 
 #[test]
+fn save_overwrites_image_and_psd_companion_restores_layers() {
+    // M3 保存链路(拍板:Ctrl+S 覆盖原图 + 同名 .psd 分层伴生,重开优先伴生):
+    // 造白 PNG → 打开 → 新层画红 → save(原图平面导出 + .psd)→ 重开 = 2 层(PSD 伴生恢复)
+    let dir = std::env::temp_dir().join(format!("aurora-save-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = dir.join("t.png");
+    let psd = dir.join("t.psd");
+    let img_s = img.to_string_lossy().into_owned();
+    let _ = std::fs::remove_file(&img);
+    let _ = std::fs::remove_file(&psd);
+
+    let mut m = EditorManager::new();
+    let doc = m.new_document(32, 24, "white").unwrap();
+    m.export_as(doc, &img_s).unwrap();
+    assert!(img.is_file(), "export_as wrote the flat png");
+    assert!(!psd.exists(), "export_as writes no companion");
+
+    let doc2 = m.open_path(&img_s).unwrap();
+    assert_eq!(m.run(doc2, "document.inspect", json!({})).unwrap().result["layers"].as_array().unwrap().len(), 1);
+
+    // 新层画红笔(分层证据:平面图上只有一个 Background)
+    m.run(doc2, "layer.new.layer", json!({})).unwrap();
+    m.run(doc2, "tools.setColors", json!({"foreground": "#ff0000"})).unwrap();
+    m.run(doc2, "paint.stroke", brush_params(json!([[8, 12, 1.0], [24, 12, 1.0]]), "#ff0000", false)).unwrap();
+
+    // 保存:原图被覆盖 + .psd 伴生新建
+    let out = m.save(doc2).unwrap();
+    assert_eq!(out["imagePath"], json!(img_s));
+    assert_eq!(out["psdPath"], json!(psd.to_string_lossy().into_owned()));
+    assert_eq!(out["psdExisted"], json!(false));
+    assert!(psd.is_file(), "psd companion written");
+    assert!(m.render_full(doc2).is_ok());
+
+    // 重开:伴生 PSD 优先 → 两层(平面 png 只能还原出一层 Background)
+    let doc3 = m.open_path(&img_s).unwrap();
+    let st = m.run(doc3, "document.inspect", json!({})).unwrap().result;
+    let layers = st["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 2, "psd companion restores layers, got {}", st["layers"]);
+    // 合成里红笔可见(重开即所见)
+    let c = full_px(&mut m, doc3, 16, 12);
+    assert!(c[0] > 200 && c[1] < 80, "stroke visible after reopen, got {c:?}");
+
+    // 二次保存:psdExisted=true
+    let out2 = m.save(doc3).unwrap();
+    assert_eq!(out2["psdExisted"], json!(true));
+
+    // 无路径文档(剪贴板新建)报错
+    let doc4 = m.new_document(8, 8, "white").unwrap();
+    assert!(m.save(doc4).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn stroke_error_paths() {
     let mut m = EditorManager::new();
     let doc = m.new_document(32, 32, "white").unwrap();

@@ -307,6 +307,21 @@ function resolveThumbCachePath(rootPath: string | undefined, override?: string):
 }
 
 /**
+ * 清空两层按 path 键的内存缩略图缓存(LRU + pathCache)。
+ * 编辑器覆盖原图保存后必须调用:mtime 已变、磁盘缓存键(含 mtime)自然失效,
+ * 但这两层内存缓存还持有旧 URL,不清则图库卡片继续显示旧图。
+ */
+export function invalidateThumbnailCaches(): void {
+  try {
+    getGlobalCache().clear();
+    const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+    pathCache?.clear?.();
+  } catch (e) {
+    console.warn('[thumbnail] invalidate caches failed', e);
+  }
+}
+
+/**
  * 获取图片缩略图
  * @param filePath 图片文件路径
  * @param modified 文件修改时间（可选，用于缓存）

@@ -156,3 +156,18 @@ pub fn editor_close(s: State<EditorState>, doc: u64) -> Result<(), String> {
     let mut m = lock(&s)?;
     m.close(doc).map_err(|e| e.to_string())
 }
+
+/// 保存(拍板:Ctrl+S 覆盖原图 + 同名 .psd 分层伴生;引擎原子写,失败不毁旧文件)。
+#[tauri::command]
+pub fn editor_save(s: State<EditorState>, doc: u64) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.save(doc).map_err(|e| e.to_string())
+}
+
+/// 导出为指定路径的平面文件(不动会话路径、不写伴生)。
+#[tauri::command]
+pub fn editor_export_as(s: State<EditorState>, doc: u64, path: String) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    let n = m.export_as(doc, &path).map_err(|e| e.to_string())?;
+    Ok(json!({ "bytes": n }))
+}

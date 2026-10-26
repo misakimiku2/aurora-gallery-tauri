@@ -5,9 +5,9 @@
  * 四组面板渲染在应用 RightPanel 槽位(RightPanel → EditorRightPanels)。
  */
 import React, { useEffect, useState } from 'react';
-import { Undo2, Redo2, Sidebar, PanelRight } from 'lucide-react';
+import { Undo2, Redo2, Save, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
-import { disposeSession, ensureSession, getSession, runCommand, subscribeSession, updateSession } from './editorStore';
+import { disposeSession, ensureSession, getSession, runCommand, saveSession, subscribeSession, updateSession } from './editorStore';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorCanvas } from './EditorCanvas';
@@ -89,6 +89,13 @@ export const EditorShell: React.FC<{
           className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded disabled:opacity-30"
         >
           <Redo2 size={15} />
+        </button>
+        <button
+          title="保存 (Ctrl+S) — 覆盖原图 + 同名 .psd 分层伴生"
+          onClick={() => void saveSession(tabId).catch((e) => console.error('[editor] 保存失败', e))}
+          className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded"
+        >
+          <Save size={15} />
         </button>
         <span className="ml-2 text-neutral-500 dark:text-neutral-400 truncate max-w-[280px]" title={s?.state?.name ?? filePath}>
           {s?.state?.name ?? '…'}

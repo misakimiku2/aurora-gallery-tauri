@@ -8,7 +8,7 @@ import { reloadPeople, reloadTopics } from './utils/peopleTopics';
 import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, getVideoCover, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
+import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, getVideoCover, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState, invalidateThumbnailCaches } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection, SettingsCategory } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
@@ -1483,6 +1483,23 @@ export const App: React.FC = () => {
     }
     await handleRefresh(folderId);
   }, [handleRefresh, activeTab.folderId, state.files, reloadCurrentAndroidFolder, reloadCurrentLanFolder]);
+
+  // 编辑器 v3 保存(Ctrl+S 覆盖原图+PSD 伴生)后的图库刷新:缩略图两层内存缓存
+  // 必须先清(mtime 已变,磁盘缓存键自然失效,但内存里还是旧 URL),再重扫当前视图。
+  // 同 lan-share 模式:ref 持最新逻辑,window 事件只注册一次(编辑器不耦合 App 内部)。
+  const editorSavedReloadRef = useRef<() => Promise<void>>(async () => {});
+  editorSavedReloadRef.current = async () => {
+    invalidateThumbnailCaches();
+    await handleRefreshAnySource();
+  };
+  useEffect(() => {
+    const onEditorSaved = (e: Event) => {
+      console.log('[app] editor saved, refreshing gallery', (e as CustomEvent).detail);
+      void editorSavedReloadRef.current();
+    };
+    window.addEventListener('aurora-editor-saved', onEditorSaved);
+    return () => window.removeEventListener('aurora-editor-saved', onEditorSaved);
+  }, []);
 
   // M6a 阶段 2：服务端写操作后的数据失效事件（Android 客户端在线写入 → Rust 广播
   // `lan-share-data-changed`，payload 仅 {kind}，无大数据——收到后按 kind 回拉，

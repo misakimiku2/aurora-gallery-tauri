@@ -162,10 +162,25 @@ impl EditorManager {
         self.active_id()
     }
 
-    /// 从路径打开(同目录存在 `<stem>.psd` 伴生时由调用方先尝试 PSD)。
+    /// 从路径打开。**同名 .psd 分层伴生优先**(拍板:编辑过的图重开恢复图层):
+    /// `foo.jpg` 旁存在 `foo.psd` 时打开 PSD 字节,但会话路径仍记原图——
+    /// [`Self::save`] 继续配对「原图平面导出 + .psd 伴生」。
     pub fn open_path(&mut self, path: &str) -> Result<u64> {
+        let p = std::path::Path::new(path);
+        let psd = p.with_extension("psd");
+        if psd != p && psd.is_file() {
+            let bytes = std::fs::read(&psd)?;
+            let psd_name = psd.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "companion.psd".into());
+            file_cmds::open_bytes_as(&mut self.session, &psd_name, &bytes, None, Some(path.to_string()))?;
+            // 文档主身份是原图:标题与图库对应关系都按原图名
+            if let Some(st) = self.session.active_mut() {
+                let doc = std::sync::Arc::make_mut(&mut st.doc);
+                doc.name = p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or(psd_name);
+            }
+            return self.active_id();
+        }
         let bytes = std::fs::read(path)?;
-        let name = std::path::Path::new(path)
+        let name = p
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string());
@@ -404,6 +419,51 @@ impl EditorManager {
         let h = ((st.doc.size.height as f64 * scale).round() as u32).max(1);
         let img = photocraft_compose::render_reduced(&st.doc, w, h).to_rgba8();
         Ok(Rendered { width: img.width, height: img.height, pixels: img.pixels })
+    }
+
+    /// 保存(拍板:Ctrl+S **覆盖原图 + 同名 .psd 分层伴生**):
+    /// ① 平面导出覆盖原图——不传 quality,引擎 `apply_file_encoding` 按打开时的
+    ///    编码质量回写(PS Save 口径);`photocraft_format::atomic_write` 原子写,
+    ///    失败不毁旧文件;
+    /// ② 同目录 `<stem>.psd` 分层伴生(maximize compatibility,PS 默认)。
+    /// 无路径文档(剪贴板新建等)报错。返回 `{imagePath, psdPath, psdExisted}`。
+    pub fn save(&mut self, doc: u64) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let path = st.path.clone().ok_or_else(|| EditorError("document has no file path".into()))?;
+        let opts = Self::save_opts(&st.doc);
+        let image = photocraft_io::export(&st.doc, &path, &opts)
+            .map_err(|e| EditorError(format!("encode {path}: {e}")))?;
+        photocraft_format::atomic_write(std::path::Path::new(&path), &image.bytes)
+            .map_err(|e| EditorError(format!("write {path}: {e}")))?;
+        let psd_path = std::path::Path::new(&path).with_extension("psd");
+        let psd_existed = psd_path.is_file();
+        let psd_str = psd_path.to_string_lossy().into_owned();
+        let psd = photocraft_io::export(&st.doc, &psd_str, &opts)
+            .map_err(|e| EditorError(format!("encode {psd_str}: {e}")))?;
+        photocraft_format::atomic_write(&psd_path, &psd.bytes)
+            .map_err(|e| EditorError(format!("write {psd_str}: {e}")))?;
+        Ok(json!({ "imagePath": path, "psdPath": psd_str, "psdExisted": psd_existed }))
+    }
+
+    /// 导出为指定路径的平面文件(M3 的"导出为";不动会话路径、不写 .psd 伴生)。
+    /// 返回字节数。
+    pub fn export_as(&mut self, doc: u64, path: &str) -> Result<usize> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let r = photocraft_io::export(&st.doc, path, &Self::save_opts(&st.doc))
+            .map_err(|e| EditorError(format!("encode {path}: {e}")))?;
+        photocraft_format::atomic_write(std::path::Path::new(path), &r.bytes)
+            .map_err(|e| EditorError(format!("write {path}: {e}")))?;
+        Ok(r.bytes.len())
+    }
+
+    /// 保存/导出共用的编码选项:平面格式按打开时的编码质量回写(PS Save 口径),
+    /// PSD 侧取默认(image previews + maximize compatibility 均开,同 PS Always Save)。
+    fn save_opts(doc: &photocraft_engine::doc::Document) -> photocraft_io::ExportOptions {
+        let mut opts = photocraft_io::ExportOptions::default();
+        photocraft_io::apply_file_encoding(doc, &mut opts.encode);
+        opts
     }
 
     /// 状态自省:图层树/历史/选区/通道,透传引擎 `document.inspect`,

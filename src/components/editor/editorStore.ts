@@ -4,7 +4,7 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorRun, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorRun, editorSave, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
 import type { ViewTransform } from './viewMath';
 
@@ -189,6 +189,20 @@ export function disposeSession(tabId: string): void {
   if (s.docId != null) {
     void editorClose(s.docId).catch(() => undefined);
   }
+}
+
+/**
+ * Ctrl+S 保存(拍板:覆盖原图 + 同名 .psd 分层伴生;引擎原子写)。
+ * 落盘后广播 `aurora-editor-saved` 窗口事件——App 监听后做单文件重扫 +
+ * 缩略图内存缓存失效(编辑器不耦合图库内部状态)。返回 null=无可存(未打开/无路径)。
+ */
+export async function saveSession(tabId: string): Promise<{ imagePath: string; psdPath: string } | null> {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null || !s.path) return null;
+  const r = await editorSave(s.docId);
+  console.log(`[editor] 已保存 ${r.imagePath} (+${r.psdExisted ? '更新' : '新建'}伴生 ${r.psdPath})`);
+  window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: r.imagePath, psdPath: r.psdPath } }));
+  return { imagePath: r.imagePath, psdPath: r.psdPath };
 }
 
 /**

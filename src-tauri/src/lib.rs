@@ -2140,6 +2140,8 @@ pub fn run() {
         editor_cmds::editor_stroke_commit,
         editor_cmds::editor_stroke_cancel,
         editor_cmds::editor_move_frame,
+        editor_cmds::editor_save,
+        editor_cmds::editor_export_as,
         editor_cmds::editor_close
     ]);
 

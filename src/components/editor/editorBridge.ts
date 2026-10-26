@@ -93,6 +93,23 @@ export async function editorStrokeCancel(doc: number): Promise<void> {
   return invoke<void>('editor_stroke_cancel', { doc });
 }
 
+/** 保存结果:原图路径 + .psd 伴生路径(拍板:Ctrl+S 覆盖原图 + 分层伴生)。 */
+export interface EditorSaveResult {
+  imagePath: string;
+  psdPath: string;
+  psdExisted: boolean;
+}
+
+/** 保存:覆盖原图(按原编码质量)+ 同名 .psd 分层伴生(引擎原子写)。 */
+export async function editorSave(doc: number): Promise<EditorSaveResult> {
+  return invoke<EditorSaveResult>('editor_save', { doc });
+}
+
+/** 导出为指定路径的平面文件(不动会话路径、不写伴生)。 */
+export async function editorExportAs(doc: number, path: string): Promise<{ bytes: number }> {
+  return invoke<{ bytes: number }>('editor_export_as', { doc, path });
+}
+
 /**
  * 移动工具拖拽预览帧(photocraft move_ui 口径:拖动中纯函数合成,提交才一条命令)。
  * target="float":选区像素浮动,dx/dy 为自最近一次已提交偏移以来的增量;
