@@ -310,12 +310,14 @@ fn save_overwrites_image_and_psd_companion_restores_layers() {
     m.run(doc2, "tools.setColors", json!({"foreground": "#ff0000"})).unwrap();
     m.run(doc2, "paint.stroke", brush_params(json!([[8, 12, 1.0], [24, 12, 1.0]]), "#ff0000", false)).unwrap();
 
-    // 保存:原图被覆盖 + .psd 伴生新建
+    // 保存:原图被覆盖 + .psd 伴生新建;已存水位推进(状态点变绿)
+    assert_eq!(m.state(doc2).unwrap()["dirty"], json!(true), "edits mark dirty");
     let out = m.save(doc2).unwrap();
     assert_eq!(out["imagePath"], json!(img_s));
     assert_eq!(out["psdPath"], json!(psd.to_string_lossy().into_owned()));
     assert_eq!(out["psdExisted"], json!(false));
     assert!(psd.is_file(), "psd companion written");
+    assert_eq!(m.state(doc2).unwrap()["dirty"], json!(false), "save clears dirty");
     assert!(m.render_full(doc2).is_ok());
 
     // 重开:伴生 PSD 优先 → 两层(平面 png 只能还原出一层 Background)
@@ -334,6 +336,64 @@ fn save_overwrites_image_and_psd_companion_restores_layers() {
     // 无路径文档(剪贴板新建)报错
     let doc4 = m.new_document(8, 8, "white").unwrap();
     assert!(m.save(doc4).is_err());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn save_as_reencodes_to_chosen_format_and_rebinds() {
+    // 另存为(用户口径:打开 jpg 另存 png,产物必须是真 PNG 而非改后缀):
+    // photocraft_io::export 按目标扩展名走对应编码器 → 魔数断言;文档改绑新路径
+    let dir = std::env::temp_dir().join(format!("aurora-saveas-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let jpg = dir.join("src.jpg");
+    let png = dir.join("dst.png");
+    let webp = dir.join("dst.webp");
+    let jpg_s = jpg.to_string_lossy().into_owned();
+    let png_s = png.to_string_lossy().into_owned();
+    let webp_s = webp.to_string_lossy().into_owned();
+    let _ = std::fs::remove_file(&jpg);
+    let _ = std::fs::remove_file(&png);
+    let _ = std::fs::remove_file(&webp);
+
+    let mut m = EditorManager::new();
+    let doc = m.new_document(32, 24, "white").unwrap();
+    m.export_as(doc, &jpg_s).unwrap();
+    assert_eq!(std::fs::read(&jpg).unwrap()[..3], [0xFF, 0xD8, 0xFF], "source is a real jpeg");
+
+    let doc2 = m.open_path(&jpg_s).unwrap();
+    m.run(doc2, "paint.stroke", brush_params(json!([[8, 12, 1.0], [24, 12, 1.0]]), "#ff0000", false)).unwrap();
+
+    // 另存为 PNG:真 PNG 魔数 + 文档改绑(随后的 save 写 png 而非原 jpg)
+    let out = m.save_as(doc2, &png_s).unwrap();
+    assert_eq!(out["imagePath"], json!(png_s));
+    assert_eq!(out["psdPath"], json!(dir.join("dst.psd").to_string_lossy().into_owned()), "flat save-as writes a companion");
+    assert_eq!(std::fs::read(&png).unwrap()[..4], [0x89, b'P', b'N', b'G'], "save-as png is a real png, not a renamed jpeg");
+    assert_eq!(m.state(doc2).unwrap()["dirty"], json!(false));
+
+    // 改绑验证:再画一笔 → Ctrl+S 语义的 save() 写的是新文件(dst.png 被重写,src.jpg 不动)
+    let jpg_before = std::fs::metadata(&jpg).unwrap().modified().unwrap();
+    let png_before = std::fs::metadata(&png).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    m.run(doc2, "paint.stroke", brush_params(json!([[12, 8, 1.0], [20, 16, 1.0]]), "#0000ff", false)).unwrap();
+    assert_eq!(m.state(doc2).unwrap()["dirty"], json!(true));
+    m.save(doc2).unwrap();
+    assert_ne!(std::fs::metadata(&png).unwrap().modified().unwrap(), png_before, "png rewritten after rebind");
+    assert_eq!(std::fs::metadata(&jpg).unwrap().modified().unwrap(), jpg_before, "original jpg untouched after save-as rebind");
+    // dst.psd 伴生也在第二次保存时更新
+    assert!(dir.join("dst.psd").is_file());
+
+    // 另存为 WebP:真 WebP(RIFF....WEBP)
+    m.save_as(doc2, &webp_s).unwrap();
+    let w = std::fs::read(&webp).unwrap();
+    assert_eq!(&w[..4], b"RIFF", "webp riff header");
+    assert_eq!(&w[8..12], b"WEBP", "webp magic");
+
+    // 另存为 .psd:分层保存且无重复伴生(psdPath 缺省)
+    let psd_target = dir.join("layered.psd");
+    let out2 = m.save_as(doc2, &psd_target.to_string_lossy()).unwrap();
+    assert_eq!(out2["psdPath"], json!(null), "psd target writes no extra companion");
+    assert!(psd_target.is_file());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

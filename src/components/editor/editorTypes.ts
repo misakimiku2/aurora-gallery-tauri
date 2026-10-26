@@ -39,6 +39,8 @@ export interface EditorDocState {
   background: number[];
   /** 图层混合模式显示标签(引擎 LAYER_MODES)。 */
   blendModes?: string[];
+  /** 有未保存修改(revision 超过已存水位);文件信息栏状态点 橙=未存 / 绿=已存。 */
+  dirty?: boolean;
 }
 
 export interface EditorOpenInfo {

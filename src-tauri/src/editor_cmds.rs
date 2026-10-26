@@ -171,3 +171,10 @@ pub fn editor_export_as(s: State<EditorState>, doc: u64, path: String) -> Result
     let n = m.export_as(doc, &path).map_err(|e| e.to_string())?;
     Ok(json!({ "bytes": n }))
 }
+
+/// 另存为(PS 口径:按新扩展名真重编码;文档改绑新路径;平面格式带 .psd 伴生)。
+#[tauri::command]
+pub fn editor_save_as(s: State<EditorState>, doc: u64, path: String) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.save_as(doc, &path).map_err(|e| e.to_string())
+}

@@ -4,8 +4,9 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorRun, editorSave, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
 
 export interface ToolOptions {
@@ -202,7 +203,44 @@ export async function saveSession(tabId: string): Promise<{ imagePath: string; p
   const r = await editorSave(s.docId);
   console.log(`[editor] 已保存 ${r.imagePath} (+${r.psdExisted ? '更新' : '新建'}伴生 ${r.psdPath})`);
   window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: r.imagePath, psdPath: r.psdPath } }));
+  // 已存水位在引擎侧推进:拉一份状态让状态点立即变绿
+  try {
+    updateSession(tabId, { state: await editorState(s.docId) });
+  } catch { /* 文档已关 */ }
   return { imagePath: r.imagePath, psdPath: r.psdPath };
+}
+
+/** 另存为对话框的格式清单(引擎 photocraft_io 依扩展名真重编码的全集的用户向子集)。 */
+const SAVE_FORMATS = [
+  { name: 'PNG 图片', extensions: ['png'] },
+  { name: 'JPEG 图片', extensions: ['jpg', 'jpeg'] },
+  { name: 'WebP 图片', extensions: ['webp'] },
+  { name: 'TIFF 图片', extensions: ['tif', 'tiff'] },
+  { name: 'Photoshop 分层文档', extensions: ['psd'] },
+];
+
+/**
+ * 另存为(PS 口径):格式对话框(按扩展名真重编码,不是改后缀)→ 落盘 →
+ * 文档改绑新路径(此后 Ctrl+S 写新文件;平面格式自动带 .psd 伴生)。
+ * 取消对话框返回 null。
+ */
+export async function saveAsSession(tabId: string): Promise<{ imagePath: string; psdPath: string | null } | null> {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null || !s.path) return null;
+  const target = await saveDialog({
+    title: '另存为',
+    defaultPath: s.path,
+    filters: SAVE_FORMATS,
+  });
+  if (!target || typeof target !== 'string') return null;
+  const r = await editorSaveAs(s.docId, target);
+  console.log(`[editor] 已另存为 ${r.imagePath}${r.psdPath ? ` (+伴生 ${r.psdPath})` : '(分层 psd)'}`);
+  window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: r.imagePath, psdPath: r.psdPath } }));
+  // 文档已改绑新路径:更新会话 path + 拉状态(状态点变绿)
+  try {
+    updateSession(tabId, { path: r.imagePath, state: await editorState(s.docId) });
+  } catch { /* 文档已关 */ }
+  return r;
 }
 
 /**

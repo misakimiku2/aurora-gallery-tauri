@@ -443,7 +443,46 @@ impl EditorManager {
             .map_err(|e| EditorError(format!("encode {psd_str}: {e}")))?;
         photocraft_format::atomic_write(&psd_path, &psd.bytes)
             .map_err(|e| EditorError(format!("write {psd_str}: {e}")))?;
+        // PS 口径:保存完成 → 已存水位推到当前 revision(前端状态点变绿)
+        if let Some(st) = self.session.active_mut() {
+            st.saved_to(path.clone());
+        }
         Ok(json!({ "imagePath": path, "psdPath": psd_str, "psdExisted": psd_existed }))
+    }
+
+    /// 另存为(PS 口径:**文档改绑新路径**,此后 Ctrl+S 写新文件):
+    /// 选 `.psd`/`.psb` = 分层保存(无伴生);其他扩展名 = 平面导出 + 同目录
+    /// `<stem>.psd` 分层伴生。**按新扩展名真重编码**(photocraft_io::export
+    /// 依扩展名走对应编码器,不是改后缀)。返回 `{imagePath, psdPath?}`。
+    pub fn save_as(&mut self, doc: u64, path: &str) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        let layered = matches!(ext.as_str(), "psd" | "psb");
+        let opts = Self::save_opts(&st.doc);
+        let r = photocraft_io::export(&st.doc, path, &opts)
+            .map_err(|e| EditorError(format!("encode {path}: {e}")))?;
+        photocraft_format::atomic_write(std::path::Path::new(path), &r.bytes)
+            .map_err(|e| EditorError(format!("write {path}: {e}")))?;
+        let psd_path = if layered {
+            None
+        } else {
+            let p = std::path::Path::new(path).with_extension("psd");
+            let psd_str = p.to_string_lossy().into_owned();
+            let psd = photocraft_io::export(&st.doc, &psd_str, &opts)
+                .map_err(|e| EditorError(format!("encode {psd_str}: {e}")))?;
+            photocraft_format::atomic_write(&p, &psd.bytes)
+                .map_err(|e| EditorError(format!("write {psd_str}: {e}")))?;
+            Some(psd_str)
+        };
+        if let Some(st) = self.session.active_mut() {
+            st.saved_to(path.to_string());
+        }
+        Ok(json!({ "imagePath": path, "psdPath": psd_path }))
     }
 
     /// 导出为指定路径的平面文件(M3 的"导出为";不动会话路径、不写 .psd 伴生)。
@@ -481,6 +520,8 @@ impl EditorManager {
             // 历史面板的"当前状态"下标(document.inspect 未含;entries = 过去 + 当前 + 可重做)
             if let Some(st) = self.session.active() {
                 obj.insert("historyCurrent".into(), json!(st.history.past_len()));
+                // 编辑器状态点:revision 超过已存水位 = 有未保存修改(view-only 不算)
+                obj.insert("dirty".into(), json!(st.revision > st.saved_revision));
             }
             // 图层面板的混合模式下拉(layer_modes 的显示标签,与 setProps 的 blend 参数同源)
             if !obj.contains_key("blendModes") {

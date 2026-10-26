@@ -105,6 +105,17 @@ export async function editorSave(doc: number): Promise<EditorSaveResult> {
   return invoke<EditorSaveResult>('editor_save', { doc });
 }
 
+/** 另存为结果:新路径 + 平面格式时的 .psd 伴生(选 psd 目标则无伴生)。 */
+export interface EditorSaveAsResult {
+  imagePath: string;
+  psdPath: string | null;
+}
+
+/** 另存为:按新扩展名真重编码(photocraft_io 依扩展名走对应编码器),文档改绑新路径。 */
+export async function editorSaveAs(doc: number, path: string): Promise<EditorSaveAsResult> {
+  return invoke<EditorSaveAsResult>('editor_save_as', { doc, path });
+}
+
 /** 导出为指定路径的平面文件(不动会话路径、不写伴生)。 */
 export async function editorExportAs(doc: number, path: string): Promise<{ bytes: number }> {
   return invoke<{ bytes: number }>('editor_export_as', { doc, path });
