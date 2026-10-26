@@ -106,6 +106,11 @@ M0 集成测试 `editor/tests/bridge.rs`:new → setColors → select.rect → p
 
 **M2 已知裁剪(后续补)**:移动工具 Auto-Select/链接层扩散/Alt 复制移动;裁剪旋转/拉直/比例预设/画布外扩展;多边形/磁性套索;渐变 Live 图层模式;上游 G 键渐变/油漆桶同组循环(本版按 PS 惯例 K=油漆桶)。
 
+### 5.2 M3 进度
+
+- **保存链路(1676b63,2026-10-26)**:✅ 一期终验链路全通。`editor_save` = 平面导出覆盖原图(引擎 `apply_file_encoding` 按原编码质量回写 + `atomic_write` 原子写)+ 同目录 `<stem>.psd` 分层伴生;`open_path` 伴生探测优先(重开恢复图层,标题保持原图名);前端 Ctrl+S/保存按钮 → `aurora-editor-saved` 窗口事件 → App 清缩略图内存缓存(invalidateThumbnailCaches)+ 重扫当前视图。Rust 单测 + 一次性副本真机实测(原图覆盖/.psd 8.5MB/同秒重扫)。
+- 待做:调整层/蒙版基础/快捷键补全;`editor_export_as` 已入库(前端 UI 后接)。
+
 ## 6. 风险与对策
 
 | 风险 | 对策 |
