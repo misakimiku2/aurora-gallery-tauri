@@ -14,6 +14,13 @@ export interface EditorLayer {
   selected: boolean;
   children?: EditorLayer[];
   expanded?: boolean;
+  /** 调整层(inspect 附加字段):kind 与 layer.setAdjustment/newAdjustmentLayer 同口径。 */
+  adjustment?: {
+    kind: string;
+    params: Record<string, unknown>;
+    unsupported?: boolean;
+    psdKey?: string;
+  };
 }
 
 export interface EditorDocState {
@@ -41,6 +48,14 @@ export interface EditorDocState {
   blendModes?: string[];
   /** 有未保存修改(revision 超过已存水位);文件信息栏状态点 橙=未存 / 绿=已存。 */
   dirty?: boolean;
+  /** 通道视图状态(编辑目标等,不入历史):target.kind = composite|layerMask|vectorMask|color|alpha。 */
+  channels?: {
+    target?: { kind: string; index?: number };
+  };
+  /** 图层蒙版灰度查看(view.layerMask,Alt+点蒙版缩略图):null=正常合成视图。 */
+  layerMaskView?: { layer: number; mode: 'gray' | 'overlay' } | null;
+  /** 带像素蒙版图层的蒙版态(桥层补充,inspect 只有 hasMask 布尔):layerId → enabled/linked。 */
+  maskInfo?: Record<string, { enabled: boolean; linked: boolean }>;
 }
 
 export interface EditorOpenInfo {

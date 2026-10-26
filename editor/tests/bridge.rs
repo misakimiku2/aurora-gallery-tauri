@@ -64,3 +64,58 @@ fn bitmap_roundtrip() {
     assert!(m.documents().is_empty());
     assert!(m.render_full(doc).is_err());
 }
+
+/// M3 蒙版基础:加蒙版 → 蒙版目标上画黑 → 快照/合成/状态自省一致;启停与灰度视图的自省。
+#[test]
+fn mask_snapshot_target_stroke_and_state() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(32, 32, "white").unwrap();
+
+    let layer_id = m.state(doc).unwrap()["layers"][0]["id"].as_u64().unwrap();
+
+    // 无蒙版:快照报错,inspect 无 maskInfo 条目
+    assert!(m.mask_snapshot(doc, layer_id, 16, 16).is_err());
+
+    // 加全白蒙版:快照未触碰区域 = 默认值(白=显示)
+    m.run(doc, "layer.layerMask.revealAll", json!({ "layer": layer_id })).unwrap();
+    let snap = m.mask_snapshot(doc, layer_id, 16, 16).unwrap();
+    assert_eq!((snap.width, snap.height), (16, 16));
+    assert_eq!(&snap.pixels[0..4], &[255, 255, 255, 255]);
+
+    // state():maskInfo(enabled/linked)+ channels.target
+    let st = m.state(doc).unwrap();
+    let info = &st["maskInfo"][layer_id.to_string()];
+    assert_eq!(info["enabled"], json!(true));
+    assert_eq!(info["linked"], json!(true));
+
+    // 蒙版编辑目标 + 黑笔(target:"mask"):蒙版变黑处像素被隐藏(合成 alpha=0)
+    m.run(doc, "channel.target", json!({ "channel": "mask" })).unwrap();
+    m.run(doc, "tools.setColors", json!({ "foreground": "#000000" })).unwrap();
+    m.run(doc, "paint.stroke", json!({ "points": [[8, 8, 1.0], [24, 24, 1.0]], "size": 8, "color": "#000000", "target": "mask" })).unwrap();
+
+    let snap = m.mask_snapshot(doc, layer_id, 16, 16).unwrap();
+    let at = |img: &Rendered, x: usize, y: usize| {
+        let i = (y * img.width as usize + x) * 4;
+        [img.pixels[i], img.pixels[i + 1], img.pixels[i + 2], img.pixels[i + 3]]
+    };
+    assert_eq!(at(&snap, 8, 8), [0, 0, 0, 255], "stroke path is black in the mask");
+    assert_eq!(at(&snap, 0, 0), [255, 255, 255, 255], "outside stroke stays white");
+
+    let comp = m.render_full(doc).unwrap();
+    assert_eq!(at(&comp, 8, 8)[3], 0, "hidden by mask: alpha 0");
+    assert_eq!(at(&comp, 30, 30)[3], 255, "outside stroke stays opaque");
+
+    // 自省跟随目标与灰度视图(view-state 不入历史)
+    let st = m.state(doc).unwrap();
+    assert_eq!(st["channels"]["target"]["kind"], json!("layerMask"));
+    m.run(doc, "view.layerMask", json!({ "layer": layer_id, "mode": "gray" })).unwrap();
+    let st = m.state(doc).unwrap();
+    assert_eq!(st["layerMaskView"]["mode"], json!("gray"));
+
+    // 停用蒙版:maskInfo.enabled 翻转,合成恢复不透明(蒙版禁用=全显)
+    m.run(doc, "layer.layerMask.enabled", json!({ "layer": layer_id, "enabled": false })).unwrap();
+    let st = m.state(doc).unwrap();
+    assert_eq!(st["maskInfo"][layer_id.to_string()]["enabled"], json!(false));
+    let comp = m.render_full(doc).unwrap();
+    assert_eq!(at(&comp, 8, 8)[3], 255, "disabled mask reveals everything");
+}

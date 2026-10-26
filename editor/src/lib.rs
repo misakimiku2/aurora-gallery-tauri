@@ -530,8 +530,48 @@ impl EditorManager {
                     json!(photocraft_color::blend::BlendMode::layer_modes().map(|m| m.label()).collect::<Vec<_>>()),
                 );
             }
+            // 图层面板的蒙版徽标态(inspect 的 hasMask 只是布尔):layerId → enabled/linked
+            if let Some(st) = self.session.active() {
+                let mut info = serde_json::Map::new();
+                collect_mask_info(&st.doc.layers, &mut info);
+                obj.insert("maskInfo".into(), Value::Object(info));
+            }
         }
         Ok(v)
+    }
+
+    /// 蒙版快照:指定图层的像素蒙版灰度 RGBA(白=显示 黑=隐藏),整幅文档范围,
+    /// k 步长采样使输出不超过 maxW×maxH(图层蒙版缩略图与灰度查看共用)。
+    /// 蒙版是稀疏 tile 表面,按行跨步采样只触落到样本的 tile;未触碰区域=默认值。
+    pub fn mask_snapshot(&mut self, doc: u64, layer: u64, max_w: u32, max_h: u32) -> Result<Rendered> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let l = find_layer(&st.doc.layers, layer)
+            .ok_or_else(|| EditorError(format!("no layer {layer}")))?;
+        let mask = l
+            .mask
+            .as_ref()
+            .ok_or_else(|| EditorError(format!("layer {layer} has no layer mask")))?;
+        let (w, h) = (st.doc.size.width.max(1), st.doc.size.height.max(1));
+        let k: u32 = 1
+            .max(w.div_ceil(max_w.max(1)))
+            .max(h.div_ceil(max_h.max(1)));
+        let ow = w.div_ceil(k);
+        let oh = h.div_ceil(k);
+        let mut row = vec![0f32; ow as usize];
+        let mut px = vec![0u8; (ow * oh * 4) as usize];
+        for j in 0..oh {
+            mask.surface.sample_row_strided((j * k) as i32, 0, k as i32, 0, &mut row);
+            for (i, v) in row.iter().enumerate() {
+                let g = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                let o = ((j * ow) as usize + i) * 4;
+                px[o] = g;
+                px[o + 1] = g;
+                px[o + 2] = g;
+                px[o + 3] = 255;
+            }
+        }
+        Ok(Rendered { width: ow, height: oh, pixels: px })
     }
 
     /// 打开中的文档 id 列表。
@@ -555,5 +595,32 @@ impl EditorManager {
         let segs = outline::outline_scaled(sel, bounds, step);
         let flat: Vec<[i32; 4]> = segs.iter().map(|(a, b)| [a[0], a[1], b[0], b[1]]).collect();
         Ok(Some(json!({ "step": step, "segments": flat })))
+    }
+}
+
+/// 按 id 在图层树(含编组子层)里找图层。
+fn find_layer(layers: &[photocraft_engine::doc::Layer], id: u64) -> Option<&photocraft_engine::doc::Layer> {
+    for l in layers {
+        if l.id.0 == id {
+            return Some(l);
+        }
+        if let photocraft_engine::doc::LayerContent::Group(g) = &l.content {
+            if let Some(found) = find_layer(&g.children, id) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// 收集带像素蒙版的图层的 enabled/linked(图层面板徽标态),含编组子层。
+fn collect_mask_info(layers: &[photocraft_engine::doc::Layer], out: &mut serde_json::Map<String, Value>) {
+    for l in layers {
+        if let Some(m) = &l.mask {
+            out.insert(l.id.0.to_string(), json!({ "enabled": m.enabled, "linked": m.linked }));
+        }
+        if let photocraft_engine::doc::LayerContent::Group(g) = &l.content {
+            collect_mask_info(&g.children, out);
+        }
     }
 }

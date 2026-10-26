@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainSquare,
-  docToRaster, effectiveMode, gradientParams, initialMods, lassoParams, marqueeParams, marqueeRect,
+  docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
   moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape, normalizeRect, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -154,19 +154,19 @@ describe('画笔族 live 描边参数(photocraft spec 口径)', () => {
     expect(strokeCommand('smudge')).toBe('paint.smudge');
   });
   it('brush:小数单位(size/hardness/opacity/flow 0..1)+ 前景色 + zoom', () => {
-    const p = strokeParams('brush', OPTS, '#3366cc', 2.5);
+    const p = strokeParams('brush', OPTS, '#3366cc', 2.5, false);
     expect(p).toEqual({
       size: 24, hardness: 0.8, opacity: 1, flow: 1,
       spacing: 0.25, smoothing: 0.1, color: '#3366cc', erase: false, zoom: 2.5,
     });
   });
   it('eraser:同管线,只多 erase:true', () => {
-    const p = strokeParams('eraser', OPTS, '#3366cc', 1) as Record<string, unknown>;
+    const p = strokeParams('eraser', OPTS, '#3366cc', 1, false) as Record<string, unknown>;
     expect(p.erase).toBe(true);
     expect(p.size).toBe(24);
   });
   it('retouch 族:hardness/opacity/flow/spacing 换算百分数,强度走 strength', () => {
-    const p = strokeParams('blur', OPTS, '#000000', 1) as Record<string, unknown>;
+    const p = strokeParams('blur', OPTS, '#000000', 1, false) as Record<string, unknown>;
     expect(p.size).toBe(24);
     expect(p.hardness).toBe(80); // 0.8 → 80
     expect(p.opacity).toBe(100); // 1 → 100
@@ -176,8 +176,21 @@ describe('画笔族 live 描边参数(photocraft spec 口径)', () => {
     expect('erase' in p).toBe(false);
   });
   it('retouch 不透明度下限 1(引擎 clamp 1..100)', () => {
-    const p = strokeParams('smudge', { ...OPTS, brushOpacity: 0.005 }, '#000000', 1) as Record<string, unknown>;
+    const p = strokeParams('smudge', { ...OPTS, brushOpacity: 0.005 }, '#000000', 1, false) as Record<string, unknown>;
     expect(p.opacity).toBe(1);
+  });
+  it('蒙版目标:strokeParams 带上 target:"mask"(live 描边走桥层直通,必须显式带)', () => {
+    expect(strokeParams('brush', OPTS, '#ffffff', 1, true).target).toBe('mask');
+    expect(strokeParams('eraser', OPTS, '#ffffff', 1, true).target).toBe('mask');
+    expect(strokeParams('smudge', OPTS, '#ffffff', 1, true).target).toBe('mask');
+    expect(strokeParams('brush', OPTS, '#ffffff', 1, false)).not.toHaveProperty('target');
+  });
+  it('isMaskTarget:channels.target.kind === layerMask(引擎 ChannelTarget 序列化)', () => {
+    expect(isMaskTarget({ channels: { target: { kind: 'layerMask' } } })).toBe(true);
+    expect(isMaskTarget({ channels: { target: { kind: 'composite' } } })).toBe(false);
+    expect(isMaskTarget({})).toBe(false);
+    expect(isMaskTarget(null)).toBe(false);
+    expect(isMaskTarget(undefined)).toBe(false);
   });
 });
 
@@ -273,6 +286,12 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     });
     expect(bucketParams(0, 0, { ...OPTS, tolerance: 999 }, '#000000').tolerance).toBe(255);
     expect(bucketParams(0, 0, { ...OPTS, tolerance: -5 }, '#000000').tolerance).toBe(0);
+  });
+  it('蒙版目标:bucket/gradient 带 target:"mask"(引擎 routed 注入也认显式参数)', () => {
+    expect(bucketParams(0, 0, OPTS, '#000000', true).target).toBe('mask');
+    expect(bucketParams(0, 0, OPTS, '#000000', false)).not.toHaveProperty('target');
+    expect(gradientParams([0, 0], [5, 5], OPTS, true).target).toBe('mask');
+    expect(gradientParams([0, 0], [5, 5], OPTS)).not.toHaveProperty('target');
   });
 });
 

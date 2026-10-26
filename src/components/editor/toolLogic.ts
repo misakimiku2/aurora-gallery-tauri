@@ -168,6 +168,7 @@ export function gradientParams(
   from: [number, number],
   to: [number, number],
   opts: ToolOptions,
+  targetMask = false,
 ): Record<string, unknown> {
   return {
     from: [Math.round(from[0]), Math.round(from[1])],
@@ -175,6 +176,7 @@ export function gradientParams(
     style: opts.gradientStyle,
     opacity: Math.max(1, Math.min(100, Math.round(opts.brushOpacity * 100))),
     dither: true,
+    ...(targetMask ? { target: 'mask' } : {}),
   };
 }
 
@@ -184,6 +186,7 @@ export function bucketParams(
   y: number,
   opts: ToolOptions,
   foregroundHex: string,
+  targetMask = false,
 ): Record<string, unknown> {
   return {
     x: Math.floor(x),
@@ -194,6 +197,7 @@ export function bucketParams(
     contents: 'foreground',
     color: foregroundHex,
     opacity: Math.max(1, Math.min(100, Math.round(opts.brushOpacity * 100))),
+    ...(targetMask ? { target: 'mask' } : {}),
   };
 }
 
@@ -248,6 +252,15 @@ export function strokeCommand(tool: BrushFamilyTool): string {
 }
 
 /**
+ * 当前编辑目标是否为活动图层的像素蒙版(引擎 channels.target;channel.target.layerMask /
+ * channel.target.composite 切换,⌥-点蒙版缩略图同效)。蒙版目标下画笔/橡皮/修描/油漆桶/
+ * 渐变都落进蒙版(引擎 routed 注入;live 描边走桥层直通不经注入,必须前端显式带 target)。
+ */
+export function isMaskTarget(state: { channels?: { target?: { kind?: string } } } | null | undefined): boolean {
+  return state?.channels?.target?.kind === 'layerMask';
+}
+
+/**
  * 画笔族落笔参数(photocraft spec 口径;begin 原样传,commit 由桥层原样回放):
  * - brush/eraser → paint.stroke:橡皮 = erase:true(同一引擎管线);spacing 为小数(0.25=25%),
  *   平滑 0.1(上游各工具初始值,PS 口径);
@@ -259,7 +272,9 @@ export function strokeParams(
   opts: ToolOptions,
   foregroundHex: string,
   zoom: number,
+  targetMask: boolean,
 ): Record<string, unknown> {
+  const target = targetMask ? { target: 'mask' } : {};
   if (tool === 'brush' || tool === 'eraser') {
     return {
       size: opts.brushSize,
@@ -271,6 +286,7 @@ export function strokeParams(
       color: foregroundHex,
       erase: tool === 'eraser',
       zoom,
+      ...target,
     };
   }
   return {
@@ -280,6 +296,7 @@ export function strokeParams(
     flow: 100,
     spacing: 25,
     strength: opts.retouchStrength,
+    ...target,
   };
 }
 

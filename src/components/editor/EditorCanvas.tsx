@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorMaskSnapshot, editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
@@ -16,7 +16,7 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, effectiveMode, gradientParams, initialMods,
-  lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape,
+  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
@@ -362,9 +362,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId]);
 
-  /** live 描边增量帧 → 离屏位图局部贴图(文档坐标矩形,rasterScale<1 时缩放绘制)。 */
+  /** live 描边增量帧 → 离屏位图局部贴图(文档坐标矩形,rasterScale<1 时缩放绘制)。
+   * 蒙版灰度查看期间跳过:增量帧是合成像素,贴进灰度位图会花屏;提交后 revision
+   * 前移触发灰度快照整幅重拉(代价:灰度查看中描边无逐笔预览)。 */
   const applyStrokeFrame = useCallback((s: EditorSession | undefined, f: StrokeFrame) => {
     if (!s || !f.width || !f.height) return;
+    if (s.state?.layerMaskView?.mode === 'gray') return;
     const off = s.runtime.offscreen;
     if (!off) return;
     let scratch = scratchRef.current;
@@ -454,7 +457,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       beginPromise: Promise.resolve(),
     };
     strokeRef.current = st;
-    const params = strokeParams(tool, s.options, rgbToHex(s.state?.foreground), s.runtime.view.scale);
+    // 蒙版编辑目标(live 描边走桥层直通,不经引擎 routed 注入,必须显式带 target)
+    const params = strokeParams(tool, s.options, rgbToHex(s.state?.foreground), s.runtime.view.scale, isMaskTarget(s.state));
     params.points = [[x, y, 1]];
     st.beginPromise = (async () => {
       try {
@@ -640,10 +644,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const stateReady = session?.state != null;
   const docW = session?.state?.width ?? 0;
   const docH = session?.state?.height ?? 0;
+  // 蒙版灰度查看(view.layerMask,视图态不推 revision):key 带上它,视图开合/换层都会重拉
+  const maskViewKey = session?.state?.layerMaskView ? `${session.state.layerMaskView.layer}:${session.state.layerMaskView.mode}` : '';
   useEffect(() => {
     const s = getSession(tabId);
     if (!s || s.docId == null || !s.state) return;
-    const key = `${s.docId}:${s.revision}`;
+    const key = `${s.docId}:${s.revision}:${maskViewKey}`;
     if (bitmapKeyRef.current === key) return;
     bitmapKeyRef.current = key;
     let cancelled = false;
@@ -651,7 +657,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       try {
         const docPx = s.state!.width * s.state!.height;
         const rs = docPx > RASTER_PIXEL_BUDGET ? Math.sqrt(RASTER_PIXEL_BUDGET / docPx) : 1;
-        const bmp = await editorRender(s.docId!, rs < 1 ? Math.round(s.state!.width * rs) : undefined, rs < 1 ? Math.round(s.state!.height * rs) : undefined);
+        const maxW = rs < 1 ? Math.round(s.state!.width * rs) : undefined;
+        const maxH = rs < 1 ? Math.round(s.state!.height * rs) : undefined;
+        // 灰度查看:位图换蒙版快照(灰度 RGBA,同一 rasterScale 管线);正常:合成渲染
+        const gray = s.state!.layerMaskView?.mode === 'gray'
+          ? s.state!.layerMaskView.layer
+          : null;
+        const bmp = gray != null
+          ? await editorMaskSnapshot(s.docId!, gray, maxW ?? s.state!.width, maxH ?? s.state!.height)
+          : await editorRender(s.docId!, maxW, maxH);
         if (cancelled) return;
         let canvas = s.runtime.offscreen;
         if (!canvas || canvas.width !== bmp.width || canvas.height !== bmp.height) {
@@ -662,7 +676,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
-        s.runtime.rasterScale = rs;
+        // 从实际位图宽反推(蒙版快照按 k 步长取整,与请求的 maxW 有 ±1 差)
+        s.runtime.rasterScale = bmp.width / s.state!.width;
         if (!fittedRef.current && wrapRef.current && wrapRef.current.clientWidth > 0) {
           s.runtime.view = fitToView(s.state!.width, s.state!.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
           fittedRef.current = true;
@@ -676,7 +691,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, docIdForBitmap, revisionForBitmap, stateReady, docW, docH]);
+  }, [tabId, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey]);
 
   // 容器尺寸观察
   useEffect(() => {
@@ -819,6 +834,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         } else if (e.shiftKey && k === 'i') {
           e.preventDefault();
           void runCommand(tabId, 'select.inverse', {}).catch(console.error);
+        } else if (k === '\\') {
+          // Ctrl+\ = 编辑目标切到活动图层的蒙版(上游 Cmd+\;无蒙版时引擎拒绝,静默)
+          e.preventDefault();
+          void runCommand(tabId, 'channel.target.layerMask', {}).catch(() => undefined);
+        } else if (k === '2') {
+          // Ctrl+2 = 回合成编辑目标(上游 Cmd+2)
+          e.preventDefault();
+          void runCommand(tabId, 'channel.target.composite', {}).catch(console.error);
         }
         return;
       }
@@ -925,7 +948,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         eyedropRef.current = { last: performance.now() };
         pickColor(s);
       } else {
-        void runCommand(tabId, 'paint.bucket', bucketParams(dx, dy, s.options, rgbToHex(s.state.foreground)))
+        void runCommand(tabId, 'paint.bucket', bucketParams(dx, dy, s.options, rgbToHex(s.state.foreground), isMaskTarget(s.state)))
           .catch((err) => logError('[editor] paint.bucket 失败', err));
       }
     } else if (s.tool === 'marquee' && e.button === 0) {
@@ -1084,7 +1107,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 上游口径:曼哈顿距离 <2px = 无操作;Shift 吸附 45° 方向
       const to: [number, number] = gr.mods.liveShift ? constrain45([gr.x0, gr.y0], [gr.x1, gr.y1]) : [gr.x1, gr.y1];
       if (Math.abs(gr.x1 - gr.x0) + Math.abs(gr.y1 - gr.y0) >= 2) {
-        void runCommand(tabId, 'paint.gradient', gradientParams([gr.x0, gr.y0], to, s.options))
+        void runCommand(tabId, 'paint.gradient', gradientParams([gr.x0, gr.y0], to, s.options, isMaskTarget(s.state)))
           .catch((err) => logError('[editor] paint.gradient 失败', err));
       }
       scheduleDraw();

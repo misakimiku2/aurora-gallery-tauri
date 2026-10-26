@@ -1578,6 +1578,18 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('aurora-editor-saved', onEditorSaved);
   }, []);
 
+  // 编辑器另存为后标签标题跟随新文件名(编辑器不持有 tabs 状态,广播改名)
+  const updateTabByIdRef = useRef(updateTabById);
+  updateTabByIdRef.current = updateTabById;
+  useEffect(() => {
+    const onEditorRenamed = (e: Event) => {
+      const { tabId, name } = (e as CustomEvent).detail as { tabId: string; name: string };
+      updateTabByIdRef.current(tabId, { sessionName: name });
+    };
+    window.addEventListener('aurora-editor-renamed', onEditorRenamed);
+    return () => window.removeEventListener('aurora-editor-renamed', onEditorRenamed);
+  }, []);
+
   // M6a 阶段 2：服务端写操作后的数据失效事件（Android 客户端在线写入 → Rust 广播
   // `lan-share-data-changed`，payload 仅 {kind}，无大数据——收到后按 kind 回拉，
   // 用数据库/磁盘上的新行整体替换内存旧行，后续桌面整行 upsert 才会带上远端改动）。

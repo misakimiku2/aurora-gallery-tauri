@@ -178,3 +178,16 @@ pub fn editor_save_as(s: State<EditorState>, doc: u64, path: String) -> Result<V
     let mut m = lock(&s)?;
     m.save_as(doc, &path).map_err(|e| e.to_string())
 }
+
+/// 蒙版快照(灰度 RGBA,文档坐标范围,按 maxW/maxH 降采样):图层蒙版缩略图与灰度查看共用。
+/// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
+#[tauri::command]
+pub fn editor_mask_snapshot(s: State<EditorState>, doc: u64, layer: u64, maxW: u32, maxH: u32) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let img = m.mask_snapshot(doc, layer, maxW, maxH).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(8 + img.pixels.len());
+    bytes.extend_from_slice(&(img.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(img.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&img.pixels);
+    Ok(Response::new(bytes))
+}

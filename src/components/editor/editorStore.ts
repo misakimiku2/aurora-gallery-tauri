@@ -147,7 +147,7 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
   const s = sessions.get(tabId);
   if (!s || s.docId == null) throw new Error('editor session not open');
   const out = await editorRun(s.docId, cmd, params);
-  await applyRunOutcome(tabId, out, out.revision > 0 || cmd.startsWith('tools.'));
+  await applyRunOutcome(tabId, out, out.revision > 0 || /^(tools|view|channel)\./.test(cmd));
   return out.result;
 }
 
@@ -259,7 +259,10 @@ export async function saveAsSession(tabId: string): Promise<{ imagePath: string;
   const r = await editorSaveAs(s.docId, target);
   console.log(`[editor] 已另存为 ${r.imagePath}${r.psdPath ? ` (+伴生 ${r.psdPath})` : '(分层 psd)'}`);
   window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: r.imagePath, psdPath: r.psdPath } }));
-  // 文档已改绑新路径:更新会话 path + 拉状态(状态点变绿)
+  // 文档已改绑新路径:更新会话 path + 拉状态(状态点变绿);
+  // 标签名跟随新文件名(广播给 App 改 tab.sessionName,编辑器不持有 tabs 状态)
+  const newName = r.imagePath.replace(/[\\/]+$/, '').split(/[\\/]/).pop()?.replace(/\.[^.]+$/, '') ?? null;
+  if (newName) window.dispatchEvent(new CustomEvent('aurora-editor-renamed', { detail: { tabId, name: newName } }));
   try {
     updateSession(tabId, { path: r.imagePath, state: await editorState(s.docId) });
   } catch { /* 文档已关 */ }

@@ -138,6 +138,15 @@ export async function editorSelectionOutline(doc: number, step: number): Promise
   return invoke<{ step: number; segments: number[][] } | null>('editor_selection_outline', { doc, step });
 }
 
+/** 蒙版快照(灰度 RGBA,文档坐标范围,降采样到 maxW×maxH 内):蒙版缩略图/灰度查看共用。 */
+export async function editorMaskSnapshot(doc: number, layer: number, maxW: number, maxH: number): Promise<RenderedBitmap> {
+  const buf = await invoke<ArrayBuffer>('editor_mask_snapshot', { doc, layer, maxW, maxH });
+  const u8 = new Uint8Array(buf);
+  const w = (u8[0] | (u8[1] << 8) | (u8[2] << 16) | (u8[3] << 24)) >>> 0;
+  const h = (u8[4] | (u8[5] << 8) | (u8[6] << 16) | (u8[7] << 24)) >>> 0;
+  return { width: w, height: h, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + 8) };
+}
+
 export async function editorClose(doc: number): Promise<void> {
   return invoke<void>('editor_close', { doc });
 }
