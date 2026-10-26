@@ -110,6 +110,7 @@ M0 集成测试 `editor/tests/bridge.rs`:new → setColors → select.rect → p
 
 - **保存链路(1676b63,2026-10-26)**:✅ 一期终验链路全通。`editor_save` = 平面导出覆盖原图(引擎 `apply_file_encoding` 按原编码质量回写 + `atomic_write` 原子写)+ 同目录 `<stem>.psd` 分层伴生;`open_path` 伴生探测优先(重开恢复图层,标题保持原图名);前端 Ctrl+S/保存按钮 → `aurora-editor-saved` 窗口事件 → App 清缩略图内存缓存(invalidateThumbnailCaches)+ 重扫当前视图。Rust 单测 + 一次性副本真机实测(原图覆盖/.psd 8.5MB/同秒重扫)。
 - 待做:调整层/蒙版基础/快捷键补全;`editor_export_as` 已入库(前端 UI 后接)。
+- **另存为 + 状态点(ff4ce61,2026-10-27)**:✅ `editor_save_as` 按新扩展名**真重编码**(jpg→png 产物是真 PNG,魔数测试钉死);PS 口径文档改绑新路径(此后 Ctrl+S 写新文件),平面格式自动带 .psd 伴生,psd 目标不重复写伴生;文件信息栏三段布局(文件名居中 + 状态圆点 橙=未保存/绿=已保存,引擎 dirty=revision>saved_revision);格式过滤器 PNG/JPEG/WebP/TIFF/PSD。
 
 ## 6. 风险与对策
 
