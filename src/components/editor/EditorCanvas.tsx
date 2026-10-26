@@ -388,6 +388,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (!octx) return;
     const rs = s.runtime.rasterScale;
     octx.imageSmoothingEnabled = rs < 1;
+    // 先清后贴:drawImage 是 source-over,擦不掉已有像素——帧里变透明的区域
+    // (蒙版画出透明/擦除/移动走出的区域)必须 clearRect 才能落出透明与棋盘格,
+    // 否则旧的不透明像素留在离屏位图上,要等提交整幅重渲才消失。
+    octx.clearRect(f.x * rs, f.y * rs, f.width * rs, f.height * rs);
     octx.drawImage(scratch, 0, 0, f.width, f.height, f.x * rs, f.y * rs, f.width * rs, f.height * rs);
     scheduleDraw();
   }, [scheduleDraw]);

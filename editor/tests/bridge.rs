@@ -194,3 +194,58 @@ fn mask_gray_stroke_frames_live_preview() {
     let idx = (32 * snap.width as usize + 32) * 4;
     assert_eq!(&snap.pixels[idx..idx + 3], &[0, 0, 0], "committed mask is black at the stroke");
 }
+
+
+/// 判定性测试:底层图层有蒙版洞(透明),在上层蒙版上画笔跨到洞上方——
+/// live 合成增量帧里洞区必须 alpha=0(帧内容正确;此前显示 bug 是前端
+/// source-over 贴帧擦不掉旧像素,非帧内容错误)。
+#[test]
+fn composite_frames_keep_lower_layer_mask_holes() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+
+    // L1(底):蓝竖条,蒙版洞出 x<16(左侧透明)
+    m.run(doc, "tools.setColors", json!({ "foreground": "#0000ff" })).unwrap();
+    m.run(doc, "paint.stroke", json!({ "points": [[8, 8, 1.0], [8, 56, 1.0]], "size": 12 })).unwrap();
+    m.run(doc, "select.rect", json!({ "x": 0, "y": 0, "width": 16, "height": 64 })).unwrap();
+    let l1 = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "layer.layerMask.hideSelection", json!({ "layer": l1 })).unwrap();
+
+    // L2(顶):红斑(x≈28..44,不在洞内),加全白蒙版
+    m.run(doc, "layer.new.layer", json!({})).unwrap();
+    let l2 = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "tools.setColors", json!({ "foreground": "#ff0000" })).unwrap();
+    m.run(doc, "paint.stroke", json!({ "points": [[28, 28, 1.0], [44, 28, 1.0]], "size": 16 })).unwrap();
+    m.run(doc, "layer.layerMask.revealAll", json!({ "layer": l2 })).unwrap();
+
+    // 在 L2 的蒙版上画黑:从 (36,28) 推进到 (12,32) —— 跨过洞边界,帧覆盖两区
+    m.run(doc, "channel.target", json!({ "channel": "mask" })).unwrap();
+    m.run(doc, "tools.setColors", json!({ "foreground": "#000000" })).unwrap();
+    let f0 = m.stroke_begin(
+        doc,
+        "paint.stroke",
+        json!({ "points": [[36, 28, 1.0]], "size": 10, "color": "#000000", "target": "mask" }),
+        false,
+    )
+    .unwrap();
+    let f1 = m.stroke_push(doc, &[12.0, 32.0, 1.0]).unwrap();
+    let frame = if f1.width > 0 { &f1 } else { &f0 };
+    assert!(frame.width > 0, "live frame has content");
+    let at = |f: &aurora_editor::StrokeFrame, x: i32, y: i32| {
+        let i = ((y - f.y) as usize * f.width as usize + (x - f.x) as usize) * 4;
+        [f.pixels[i], f.pixels[i + 1], f.pixels[i + 2], f.pixels[i + 3]]
+    };
+    // 帧范围内找洞区样本(x<16):L2 蒙版已画黑 + L1 洞 → 双层都透明 → alpha 必须 0
+    let mut hole_alpha_checked = false;
+    for dx in [1i32, 3, 8] {
+        let x = frame.x + dx;
+        if dx < frame.width as i32 && x < 16 {
+            let c = at(frame, x, 32);
+            assert_eq!(c[3], 0, "hole region in live frame must be transparent, got {c:?} at {x}");
+            hole_alpha_checked = true;
+        }
+    }
+    assert!(hole_alpha_checked, "frame should cover part of the hole region");
+    let (out, _tail) = m.stroke_commit(doc).unwrap();
+    assert!(out.revision > 0);
+}
