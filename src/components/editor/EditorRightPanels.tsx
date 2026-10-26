@@ -14,8 +14,10 @@ import { ColorPanel } from './panels/ColorPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { NavigatorInfoPanel } from './panels/NavigatorInfoPanel';
 import { LayersPanel } from './panels/LayersPanel';
+import { AdjustmentGrid } from './panels/AdjustmentGrid';
+import { AdjustmentProps } from './panels/AdjustmentProps';
 
-/** 属性/调整/历史 组(历史可用,属性·调整 M3 填充)。 */
+/** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。 */
 const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [tab, setTab] = useState<'props' | 'adjust' | 'history'>('history');
   return (
@@ -33,8 +35,8 @@ const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
       </div>
       <div className="flex-1 min-h-0 flex flex-col">
         {tab === 'history' && <HistoryPanel tabId={tabId} />}
-        {tab === 'props' && <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">文档属性/蒙版属性(M3)</div>}
-        {tab === 'adjust' && <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">16 种调整层(M3)</div>}
+        {tab === 'props' && <AdjustmentProps tabId={tabId} />}
+        {tab === 'adjust' && <AdjustmentGrid tabId={tabId} onAdded={() => setTab('props')} />}
       </div>
     </div>
   );
