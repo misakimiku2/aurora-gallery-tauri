@@ -130,6 +130,8 @@ const LayerThumb: React.FC<{
  * 蒙版缩略图右键菜单(上游 layer_menu_ui.rs show_mask 口径):
  * 停用/启用(按态切换)/删除/应用 | 蒙版载入选区三种运算。删除立即执行不确认
  * (上游口径:确认只拦垃圾桶删图层);"蒙版选项…"(显示红罩)与 Select and Mask 留待办。
+ * 样式与图库右键菜单(ContextMenu.tsx)同一设计语言:毛玻璃/圆角/软阴影/蓝色 hover,
+ * 宽度自适应内容(无图标,不留空)。
  */
 const MaskMenu: React.FC<{
   tabId: string;
@@ -153,31 +155,51 @@ const MaskMenu: React.FC<{
   const loadSel = (operation: 'add' | 'subtract' | 'intersect') => {
     void run('select.loadSelection', { channel: 'mask', layer: layerId, operation });
   };
-  const x = Math.min(pos.x, window.innerWidth - 200);
-  const y = Math.min(pos.y, window.innerHeight - 210);
-  const itemCls =
-    'w-full text-left px-3 py-1.5 text-[11px] text-gray-700 dark:text-neutral-300 hover:bg-sky-600/15 dark:hover:bg-white/10 whitespace-nowrap';
+  const itemCls = 'mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px]';
+  const items: { label: string; run: () => void }[] = [
+    { label: enabled ? '禁用图层蒙版' : '启用图层蒙版', run: () => void run('layer.layerMask.enabled', { layer: layerId }) },
+    { label: '删除图层蒙版', run: () => void run('layer.layerMask.delete', { layer: layerId }) },
+    { label: '应用图层蒙版', run: () => void run('layer.layerMask.apply', { layer: layerId }) },
+    { label: '添加蒙版到选区', run: () => loadSel('add') },
+    { label: '从选区中减去蒙版', run: () => loadSel('subtract') },
+    { label: '蒙版与选区交叉', run: () => loadSel('intersect') },
+  ];
   // portal 到 body:面板祖先带过渡/变换会把 fixed 劫持成相对定位(菜单飞出视口)
   return createPortal(
     <div
-      className="fixed z-50 rounded-md border border-black/10 dark:border-white/15 bg-surface shadow-lg py-1"
-      style={{ left: x, top: y, minWidth: 180 }}
+      className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max max-h-[80vh] overflow-y-auto"
+      style={{ left: 0, top: 0 }}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
+      ref={(el) => {
+        if (!el) return;
+        // 按实际尺寸钳进视口(应用 ContextMenu 同款)
+        const r = el.getBoundingClientRect();
+        const x = Math.max(4, Math.min(pos.x, window.innerWidth - r.width - 4));
+        const y = Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4));
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+      }}
     >
-      <button className={itemCls} onClick={() => { void run('layer.layerMask.enabled', { layer: layerId }); onClose(); }}>
-        {enabled ? '禁用图层蒙版' : '启用图层蒙版'}
-      </button>
-      <button className={itemCls} onClick={() => { void run('layer.layerMask.delete', { layer: layerId }); onClose(); }}>
-        删除图层蒙版
-      </button>
-      <button className={itemCls} onClick={() => { void run('layer.layerMask.apply', { layer: layerId }); onClose(); }}>
-        应用图层蒙版
-      </button>
-      <div className="my-1 border-t border-black/10 dark:border-white/10" />
-      <button className={itemCls} onClick={() => { loadSel('add'); onClose(); }}>添加蒙版到选区</button>
-      <button className={itemCls} onClick={() => { loadSel('subtract'); onClose(); }}>从选区中减去蒙版</button>
-      <button className={itemCls} onClick={() => { loadSel('intersect'); onClose(); }}>蒙版与选区交叉</button>
+      {items.slice(0, 3).map((it) => (
+        <div
+          key={it.label}
+          className={itemCls}
+          onClick={() => { it.run(); onClose(); }}
+        >
+          {it.label}
+        </div>
+      ))}
+      <div className="border-t border-black/5 dark:border-white/10 my-1" />
+      {items.slice(3).map((it) => (
+        <div
+          key={it.label}
+          className={itemCls}
+          onClick={() => { it.run(); onClose(); }}
+        >
+          {it.label}
+        </div>
+      ))}
     </div>,
     document.body,
   );
