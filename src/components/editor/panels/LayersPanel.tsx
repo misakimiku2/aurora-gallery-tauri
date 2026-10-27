@@ -524,12 +524,11 @@ const Row: React.FC<{
         e.stopPropagation();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
-      className={`group relative flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
+      className={`group flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
         layer.selected ? 'bg-sky-600/25 text-neutral-900 dark:text-neutral-100' : 'text-gray-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
       }`}
       style={{ paddingLeft: 6 + depth * 12 }}
     >
-      {label?.eye && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[22px] rounded-l" style={{ background: label.eye }} />}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -604,6 +603,14 @@ const Row: React.FC<{
         >
           {layer.name}
         </span>
+      )}
+      {/* 图层颜色标记(用户拍板:圆点放"像素"标签左侧,不占行首) */}
+      {label?.swatch && (
+        <span
+          className="shrink-0 w-2 h-2 rounded-full ring-1 ring-black/10 dark:ring-white/20"
+          style={{ background: label.swatch }}
+          title={`图层颜色:${label.label}`}
+        />
       )}
       <span className="shrink-0 text-[9px] text-gray-400 dark:text-neutral-600 uppercase">{KIND_ZH[layer.kind] ?? layer.kind}</span>
       <span className="shrink-0 text-[9px] text-gray-400 dark:text-neutral-600">{Math.round(layer.opacity * 100)}%</span>
