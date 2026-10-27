@@ -1,5 +1,5 @@
 /** 图层面板:混合模式/不透明度(当前层)、行(眼睛/图层缩略图/链条/蒙版缩略图/名称/选中)、增删复制/排列/添加蒙版。 */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../editorStore';
@@ -362,6 +362,7 @@ const LayerContextMenu: React.FC<{
     void run('layer.select', { layer: layer.id }).then(() => run(cmd, params));
   };
   const [colorOpen, setColorOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('mousedown', close);
@@ -371,6 +372,15 @@ const LayerContextMenu: React.FC<{
       window.removeEventListener('blur', close);
     };
   }, [onClose]);
+  // 按实际尺寸钳进视口(useLayoutEffect 在首帧绘制前与颜色子列表切换后都跑;
+  // 渲染期按估算钳制会被实际更高的菜单底部溢出)
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${Math.max(4, Math.min(pos.x, window.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4))}px`;
+  }, [pos.x, pos.y, colorOpen]);
 
   type Item = { label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
   const items: (Item | 'sep')[] = [
@@ -407,14 +417,13 @@ const LayerContextMenu: React.FC<{
     { label: '颜色', run: () => setColorOpen((v) => !v), keepOpen: true },
   ];
 
-  const x = Math.min(pos.x, window.innerWidth - 210);
-  const y = Math.min(pos.y, window.innerHeight - 300);
   const itemCls = 'mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px]';
 
   return createPortal(
     <div
+      ref={menuRef}
       className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max max-h-[80vh] overflow-y-auto"
-      style={{ left: x, top: y }}
+      style={{ left: 0, top: 0 }}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
