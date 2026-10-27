@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { editorMaskSnapshot, editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, exportAsSession, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
+import { applyRunOutcome, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -835,10 +835,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           }
         } else if (k2 === 'e' && e.shiftKey) {
           e.preventDefault();
-          // Ctrl+Shift+E 导出为(平面导出副本,不改绑会话路径)
-          void exportAsSession(tabId).then((r) => {
-            if (!r) console.warn('[editor] 导出为跳过:会话未打开');
-          }).catch((err) => logError('[editor] 导出为失败', err));
+          // Ctrl+Shift+E 快速导出当前图层为 PNG(单层文档,不入历史)
+          void exportLayerAsPng(tabId).then((r) => {
+            if (!r) console.warn('[editor] 快速导出跳过:会话未打开或无活动图层');
+          }).catch((err) => logError('[editor] 快速导出失败', err));
         } else if (k === 'd') {
           e.preventDefault();
           void runCommand(tabId, 'select.deselect', {}).catch(console.error);

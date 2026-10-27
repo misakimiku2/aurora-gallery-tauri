@@ -122,6 +122,11 @@ export async function editorExportAs(doc: number, path: string): Promise<{ bytes
   return invoke<{ bytes: number }>('editor_export_as', { doc, path });
 }
 
+/** 快速导出当前图层为 PNG(单层文档:内容边界裁剪+蒙版应用;不入历史)。 */
+export async function editorExportLayerPng(doc: number, layer: number, path: string): Promise<{ path: string; bytes: number; width: number; height: number }> {
+  return invoke<{ path: string; bytes: number; width: number; height: number }>('editor_export_layer_png', { doc, layer, path });
+}
+
 /**
  * 移动工具拖拽预览帧(photocraft move_ui 口径:拖动中纯函数合成,提交才一条命令)。
  * target="float":选区像素浮动,dx/dy 为自最近一次已提交偏移以来的增量;

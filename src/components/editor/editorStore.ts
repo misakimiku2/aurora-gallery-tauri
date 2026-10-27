@@ -4,7 +4,7 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorExportAs, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
@@ -274,24 +274,38 @@ export async function saveAsSession(tabId: string): Promise<{ imagePath: string;
 }
 
 /**
- * 导出为(M3 的"导出为",PS 口径:平面导出副本,**不动会话路径**——此后 Ctrl+S
- * 仍写原文件;不写 .psd 伴生;按扩展名真重编码,质量按打开时的编码)。
+ * 快速导出当前图层为 PNG(上游 Layer▸Quick Export as PNG 桌面路径):
+ * 单层独立文档(内容边界裁剪、蒙版已应用、编组=整组合成、透明背景)→ 保存对话框
+ * (默认文件名=图层名)→ 落盘。**不动会话路径、不入历史、dirty 不变**。
  * 取消对话框返回 null。
  */
-export async function exportAsSession(tabId: string): Promise<{ bytes: number } | null> {
+export async function exportLayerAsPng(tabId: string): Promise<{ path: string; bytes: number } | null> {
   const s = sessions.get(tabId);
-  if (!s || s.docId == null) return null;
+  if (!s || s.docId == null || !s.state?.activeLayer) return null;
+  const layerId = s.state.activeLayer;
+  const layerName = s.state.layers.find((l) => l.id === layerId)?.name ?? 'layer';
   const target = await saveDialog({
-    title: '导出为',
-    defaultPath: s.path ?? undefined,
-    filters: SAVE_FORMATS,
+    title: '快速导出为 PNG',
+    defaultPath: (s.path ? s.path.replace(/[^\\/]+$/, '') : '') + `${exportLayerName(layerName)}.png`,
+    filters: [{ name: 'PNG 图片', extensions: ['png'] }],
   });
   if (!target || typeof target !== 'string') return null;
-  const r = await editorExportAs(s.docId, target);
-  console.log(`[editor] 已导出 ${target} (${r.bytes} 字节)`);
-  // 单文件重扫:导出目标常在图库目录内,让新文件立即可见(与保存同款信号)
+  const r = await editorExportLayerPng(s.docId, layerId, target);
+  console.log(`[editor] 已快速导出图层 "${layerName}" → ${target} (${r.bytes} 字节, ${r.width}x${r.height})`);
+  // 单文件重扫:导出目标在图库目录内时新文件立即可见(与保存同款信号)
   window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: target } }));
-  return r;
+  return { path: r.path, bytes: r.bytes };
+}
+
+/** 图层导出的默认文件名(上游 export_name:非法字符→_,80 字上限,空名回退 layer)。 */
+function exportLayerName(name: string): string {
+  const cleaned = Array.from(name.slice(0, 80))
+    .map((c) => (/[\x00-\x1f<>:"/\\|?*]/.test(c) ? '_' : c))
+    .join('')
+    .trim()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '');
+  return cleaned || 'layer';
 }
 
 /**

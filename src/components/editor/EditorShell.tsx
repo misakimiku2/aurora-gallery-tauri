@@ -5,9 +5,9 @@
  * 四组面板渲染在应用 RightPanel 槽位(RightPanel → EditorRightPanels)。
  */
 import React, { useEffect, useState } from 'react';
-import { Undo2, Redo2, Save, SaveAll, Download, Sidebar, PanelRight } from 'lucide-react';
+import { Undo2, Redo2, Save, SaveAll, FileOutput, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
-import { disposeSession, ensureSession, exportAsSession, getSession, runCommand, saveAsSession, saveSession, subscribeSession, updateSession } from './editorStore';
+import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeSession, updateSession } from './editorStore';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { EditorCanvas } from './EditorCanvas';
@@ -107,11 +107,12 @@ export const EditorShell: React.FC<{
             <SaveAll size={15} />
           </button>
           <button
-            title="导出为 (Ctrl+Shift+E):导出平面副本,不影响当前文档的保存目标"
-            onClick={() => void exportAsSession(tabId).catch((e) => console.error('[editor] 导出为失败', e))}
-            className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded"
+            title="快速导出当前图层为 PNG (Ctrl+Shift+E):按图层内容裁剪、蒙版已应用、透明背景"
+            disabled={!s?.state?.activeLayer || s.state.layers.find((l) => l.id === s.state?.activeLayer)?.kind === 'Adjustment'}
+            onClick={() => void exportLayerAsPng(tabId).catch((e) => console.error('[editor] 导出图层失败', e))}
+            className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded disabled:opacity-30"
           >
-            <Download size={15} />
+            <FileOutput size={15} />
           </button>
         </div>
         {/* 中簇:状态点 + 文件名(真居中) */}

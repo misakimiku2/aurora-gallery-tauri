@@ -174,6 +174,13 @@ pub fn editor_export_as(s: State<EditorState>, doc: u64, path: String) -> Result
     Ok(json!({ "bytes": n }))
 }
 
+/// 快速导出当前图层为 PNG(单层文档:内容边界裁剪+蒙版应用;不入历史;仅 .png)。
+#[tauri::command]
+pub fn editor_export_layer_png(s: State<EditorState>, doc: u64, layer: u64, path: String) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.export_layer_png(doc, layer, &path).map_err(|e| e.to_string())
+}
+
 /// 另存为(PS 口径:按新扩展名真重编码;文档改绑新路径;平面格式带 .psd 伴生)。
 #[tauri::command]
 pub fn editor_save_as(s: State<EditorState>, doc: u64, path: String) -> Result<Value, String> {

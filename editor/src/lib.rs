@@ -558,6 +558,25 @@ impl EditorManager {
         Ok(r.bytes.len())
     }
 
+    /// 快速导出图层为 PNG(上游 Layer▸Quick Export as PNG 的桌面路径):
+    /// [`layer_document`] 把单层抽成独立文档——内容边界裁剪、蒙版已应用、
+    /// 编组=整组合成、编组外混合一律 Normal、透明背景;**不推 revision、不入历史**
+    /// (上游口径:A layer's export isn't recorded)。仅写 .png。
+    pub fn export_layer_png(&mut self, doc: u64, layer: u64, path: &str) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        if !path.to_ascii_lowercase().ends_with(".png") {
+            return Err(EditorError("Quick Export as PNG writes .png files".into()));
+        }
+        let ldoc = photocraft_engine::layer_menu_cmds::layer_document(&st.doc, photocraft_engine::doc::LayerId(layer))
+            .map_err(|e| EditorError(format!("export layer: {e}")))?;
+        let r = photocraft_io::export(&ldoc, path, &Self::save_opts(&ldoc))
+            .map_err(|e| EditorError(format!("encode {path}: {e}")))?;
+        photocraft_format::atomic_write(std::path::Path::new(path), &r.bytes)
+            .map_err(|e| EditorError(format!("write {path}: {e}")))?;
+        Ok(json!({ "path": path, "bytes": r.bytes.len(), "width": ldoc.size.width, "height": ldoc.size.height }))
+    }
+
     /// 保存/导出共用的编码选项:平面格式按打开时的编码质量回写(PS Save 口径),
     /// PSD 侧取默认(image previews + maximize compatibility 均开,同 PS Always Save)。
     fn save_opts(doc: &photocraft_engine::doc::Document) -> photocraft_io::ExportOptions {
