@@ -4,7 +4,7 @@
  * 其余工具占位。
  */
 import React, { useEffect, useState } from 'react';
-import { getSession, runCommand, setOptions, subscribeSession } from './editorStore';
+import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff } from 'lucide-react';
@@ -53,25 +53,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   if (!s) return null;
 
   const isBrush = BRUSH_FAMILY.has(s.tool);
-  const maskTargeted = s.state?.channels?.target?.kind === 'layerMask';
-  const activeHasMask = !!s.state?.layers.find((l) => l.id === s.state?.activeLayer)?.hasMask;
 
   return (
     <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
       <span className="font-medium text-neutral-700 dark:text-neutral-200">{TOOL_NAMES[s.tool]}</span>
-      {maskTargeted && (
-        <button
-          onClick={() => void runCommand(tabId, 'channel.target.composite', {}).catch(console.error)}
-          title="正在编辑活动图层的蒙版;点击回到像素编辑(Ctrl+2)"
-          className={`px-1.5 py-0.5 rounded ${
-            activeHasMask
-              ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
-              : 'bg-red-500/15 text-red-600 dark:text-red-400 hover:bg-red-500/25'
-          }`}
-        >
-          {activeHasMask ? '● 编辑图层蒙版(点击返回)' : '⚠ 编辑蒙版:当前层无蒙版(点击返回)'}
-        </button>
-      )}
       {isBrush ? (
         <>
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
