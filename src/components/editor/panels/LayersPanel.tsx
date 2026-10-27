@@ -1,7 +1,7 @@
 /** 图层面板:混合模式/不透明度(当前层)、行(眼睛/图层缩略图/链条/蒙版缩略图/名称/选中)、增删复制/排列/添加蒙版。 */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
+import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, ChevronRight, Check, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
@@ -362,6 +362,9 @@ const LayerContextMenu: React.FC<{
     void run('layer.select', { layer: layer.id }).then(() => run(cmd, params));
   };
   const [colorOpen, setColorOpen] = useState(false);
+  const [colorAnchor, setColorAnchor] = useState({ left: 0, right: 0, top: 0 });
+  const colorItemRef = useRef<HTMLDivElement | null>(null);
+  const colorSubRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const close = () => onClose();
@@ -381,6 +384,16 @@ const LayerContextMenu: React.FC<{
     el.style.left = `${Math.max(4, Math.min(pos.x, window.innerWidth - r.width - 4))}px`;
     el.style.top = `${Math.max(4, Math.min(pos.y, window.innerHeight - r.height - 4))}px`;
   }, [pos.x, pos.y, colorOpen]);
+  // 颜色二级弹层定位:默认在"颜色"项右侧,右缘放不下翻到主菜单左侧;上下钳进视口
+  useLayoutEffect(() => {
+    if (!colorOpen) return;
+    const el = colorSubRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const flip = colorAnchor.right + 4 + r.width > window.innerWidth;
+    el.style.left = `${Math.max(4, flip ? colorAnchor.left - r.width - 4 : colorAnchor.right + 4)}px`;
+    el.style.top = `${Math.max(4, Math.min(colorAnchor.top, window.innerHeight - r.height - 4))}px`;
+  }, [colorOpen, colorAnchor]);
 
   type Item = { label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
   const items: (Item | 'sep')[] = [
@@ -414,47 +427,68 @@ const LayerContextMenu: React.FC<{
       : []),
     'sep',
     { label: '重命名图层…', run: onRename },
-    { label: '颜色', run: () => setColorOpen((v) => !v), keepOpen: true },
+    { label: '颜色', run: () => {
+        const r = colorItemRef.current?.getBoundingClientRect();
+        if (r) setColorAnchor({ left: r.left, right: r.right, top: r.top });
+        setColorOpen((v) => !v);
+      }, keepOpen: true },
   ];
 
   const itemCls = 'mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px]';
 
   return createPortal(
-    <div
-      ref={menuRef}
-      className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max max-h-[80vh] overflow-y-auto"
-      style={{ left: 0, top: 0 }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {items.map((it, i) =>
-        it === 'sep' ? (
-          <div key={`s${i}`} className="border-t border-black/5 dark:border-white/10 my-1" />
-        ) : (
-          <div key={it.label} className={itemCls} onClick={() => { it.run(); if (!it.keepOpen) onClose(); }}>
-            {it.label}
-          </div>
-        ),
-      )}
+    <>
+      <div
+        ref={menuRef}
+        className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max max-h-[80vh] overflow-y-auto"
+        style={{ left: 0, top: 0 }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {items.map((it, i) =>
+          it === 'sep' ? (
+            <div key={`s${i}`} className="border-t border-black/5 dark:border-white/10 my-1" />
+          ) : (
+            <div
+              key={it.label}
+              ref={it.label === '颜色' ? colorItemRef : undefined}
+              className={`${itemCls} flex items-center justify-between gap-3`}
+              onClick={() => { it.run(); if (!it.keepOpen) onClose(); }}
+            >
+              {it.label}
+              {it.label === '颜色' && <ChevronRight size={12} className="opacity-60" />}
+            </div>
+          ),
+        )}
+      </div>
+      {/* 颜色二级弹层(PS/上游 Color ▸ 口径:右侧弹出;不受主菜单底部空间影响) */}
       {colorOpen && (
-        <div className="border-t border-black/5 dark:border-white/10 my-1 pt-1">
-          <div className="grid grid-cols-4 gap-1 px-3 pb-1">
-            {LAYER_LABEL_COLORS.map((c) => (
-              <button
-                key={c.id}
-                title={c.label}
-                onClick={() => { run('layer.setLabelColor', { layer: layer.id, color: c.id }); onClose(); }}
-                className="h-5 rounded border border-black/10 dark:border-white/20 flex items-center justify-center"
+        <div
+          ref={colorSubRef}
+          className="fixed z-[1001] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max"
+          style={{ left: 0, top: 0 }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {LAYER_LABEL_COLORS.map((c) => (
+            <div
+              key={c.id}
+              className={`${itemCls} flex items-center gap-2`}
+              onClick={() => { run('layer.setLabelColor', { layer: layer.id, color: c.id }); onClose(); }}
+            >
+              <span
+                className="w-4 h-4 rounded-sm border border-black/15 dark:border-white/25 flex items-center justify-center shrink-0"
                 style={{ background: c.id === 'none' ? 'transparent' : c.swatch }}
               >
-                {c.id === 'none' && <span className="text-[10px] text-gray-500 dark:text-neutral-400">无</span>}
-                {layer.labelColor === c.id && <span className="w-1.5 h-1.5 rounded-full bg-white shadow" />}
-              </button>
-            ))}
-          </div>
+                {c.id === 'none' && <span className="text-[9px] leading-none text-gray-500 dark:text-neutral-400">无</span>}
+              </span>
+              {c.label}
+              {layer.labelColor === c.id && <Check size={12} className="ml-auto opacity-80" />}
+            </div>
+          ))}
         </div>
       )}
-    </div>,
+    </>,
     document.body,
   );
 };
@@ -479,9 +513,8 @@ const Row: React.FC<{
   const run = (cmd: string, params: Record<string, unknown> = {}) =>
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
 
-  // 图层颜色标记染色(PS 行底色口径;选中行保持选中高亮优先)
+  // 图层颜色标记(上游口径:染行左侧"眼睛列"竖色条,与选中高亮共存——选中行设色也立即可见)
   const label = LAYER_LABEL_COLORS.find((c) => c.id === layer.labelColor);
-  const rowBg = !layer.selected && label?.eye ? `${label.eye}38` : undefined;
 
   return (
     <div
@@ -491,11 +524,12 @@ const Row: React.FC<{
         e.stopPropagation();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
-      className={`group flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
+      className={`group relative flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
         layer.selected ? 'bg-sky-600/25 text-neutral-900 dark:text-neutral-100' : 'text-gray-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
       }`}
-      style={{ paddingLeft: 6 + depth * 12, backgroundColor: rowBg }}
+      style={{ paddingLeft: 6 + depth * 12 }}
     >
+      {label?.eye && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[22px] rounded-l" style={{ background: label.eye }} />}
       <button
         onClick={(e) => {
           e.stopPropagation();
