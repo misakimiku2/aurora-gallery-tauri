@@ -734,11 +734,14 @@ fn find_layer(layers: &[photocraft_engine::doc::Layer], id: u64) -> Option<&phot
     None
 }
 
-/// 收集带像素蒙版的图层的 enabled/linked(图层面板徽标态),含编组子层。
+/// 收集带像素蒙版的图层的蒙版态(图层面板徽标/属性面板蒙版区段),含编组子层。
 fn collect_mask_info(layers: &[photocraft_engine::doc::Layer], out: &mut serde_json::Map<String, Value>) {
     for l in layers {
         if let Some(m) = &l.mask {
-            out.insert(l.id.0.to_string(), json!({ "enabled": m.enabled, "linked": m.linked }));
+            out.insert(
+                l.id.0.to_string(),
+                json!({ "enabled": m.enabled, "linked": m.linked, "density": m.density, "feather": m.feather }),
+            );
         }
         if let photocraft_engine::doc::LayerContent::Group(g) = &l.content {
             collect_mask_info(&g.children, out);

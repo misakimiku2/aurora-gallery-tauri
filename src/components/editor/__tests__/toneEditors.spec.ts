@@ -9,6 +9,7 @@ import {
 } from '../panels/curvePoints';
 import { autoLevels, gammaFromPos, gammaPos, nearestHandle, readLevels, writeLevels } from '../panels/levelsMath';
 import { moveMapStop, sampleStops, stopsFromParams, stopsToParams, widestGapMid } from '../panels/gradientStops';
+import { featherFromPos, featherToPos } from '../panels/AdjustmentProps';
 
 const line = (): [number, number][] => [[0, 0], [255, 255]];
 
@@ -142,5 +143,20 @@ describe('渐变映射停靠点(上游 gradient_map 口径)', () => {
   it('Add Stop = 最宽间隙中点', () => {
     expect(widestGapMid(stopsFromParams([[0, '#000000'], [1, '#ffffff']]))).toBe(0.5);
     expect(widestGapMid(stopsFromParams([[0, '#000000'], [0.8, '#808080'], [1, '#ffffff']]))).toBeCloseTo(0.4);
+  });
+});
+
+describe('蒙版羽化轨道(上游 #6545 x³ 曲线)', () => {
+  it('位置→值:0/1 端点、低段精细(半程只到 ~12.6%)', () => {
+    expect(featherFromPos(0)).toBe(0);
+    expect(featherFromPos(1)).toBe(1000);
+    expect(featherFromPos(0.5)).toBe(125); // 0.5³ = 0.125
+    expect(featherFromPos(0.2)).toBe(8);
+  });
+  it('值→位置 与 位置→值 互逆', () => {
+    for (const v of [0, 1, 8, 125, 500, 999, 1000]) {
+      expect(featherFromPos(featherToPos(v))).toBe(v);
+    }
+    expect(featherToPos(125)).toBeCloseTo(0.5, 5);
   });
 });

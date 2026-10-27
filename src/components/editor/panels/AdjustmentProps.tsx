@@ -406,8 +406,106 @@ const ColorLookupEditor: React.FC<EditorProps> = ({ params, emit }) => {
   );
 };
 
-const EDITORS: Record<string, React.FC<EditorProps>> = {
-  brightnessContrast: BrightnessContrastEditor,
+/** 蒙版羽化的轨道曲线(上游 #6545:滑杆位置 p∈0..1 → 值 p³×max,低段精细)。 */
+export function featherFromPos(pos01: number, max = 1000): number {
+  const t = Math.min(1, Math.max(0, pos01));
+  return Math.round(t * t * t * max);
+}
+export function featherToPos(value: number, max = 1000): number {
+  const x = Math.min(max, Math.max(0, value)) / max;
+  return Math.cbrt(x);
+}
+
+/**
+ * 图层蒙版属性区段(上游 mask_props_ui 口径,双击蒙版缩略图进入):
+ * 浓度 0..100%、羽化 0..1000px(x³ 轨道)、反相(target:"mask")。
+ * 走 layer.layerMask.edit(至少一项参数;100ms 节流+coalesce 合一步历史),
+ * 本地态跟手,自己提交的在途回包(300ms)不回吸——与调整编辑器同款防回跳。
+ */
+const MaskPropsSection: React.FC<{
+  tabId: string;
+  docId: number | null;
+  layerId: number;
+  enabled: boolean;
+  density: number; // 0..100(%)
+  feather: number; // 0..1000 px
+}> = ({ tabId, docId, layerId, enabled, density, feather }) => {
+  const [local, setLocal] = useState({ density, feather });
+  const dragging = useRef(false);
+  const lastEmit = useRef(0);
+  const timer = useRef<number | null>(null);
+  const pending = useRef<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    if (!dragging.current && Date.now() - lastEmit.current >= 300) setLocal({ density, feather });
+  }, [density, feather]);
+  const flush = useCallback(() => {
+    const p = pending.current;
+    if (!p) return;
+    pending.current = null;
+    void runCommand(tabId, 'layer.layerMask.edit', { document: docId, layer: layerId, coalesce: `pixel-mask:${docId}:${layerId}`, ...p })
+      .catch((e) => console.error('[editor] layerMask.edit', e));
+  }, [tabId, docId, layerId]);
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
+  useEffect(() => () => {
+    if (timer.current != null) window.clearTimeout(timer.current);
+    flushRef.current();
+  }, []);
+  const emitField = (field: 'density' | 'feather', value: number) => {
+    lastEmit.current = Date.now();
+    pending.current = { ...(pending.current ?? {}), [field]: value };
+    setLocal((prev) => ({ ...prev, [field]: value }));
+    if (timer.current == null) {
+      timer.current = window.setTimeout(() => {
+        timer.current = null;
+        flushRef.current();
+      }, 100);
+    }
+  };
+  const slider = (field: 'density' | 'feather', label: string, max: number, unit: string, curve: boolean) => {
+    const toPos = (v: number) => (curve ? featherToPos(v, max) : v / max) * 1000;
+    const toVal = (pos: number) => (curve ? featherFromPos(pos / 1000, max) : Math.round((pos / 1000) * max));
+    return (
+      <label className="flex items-center gap-1.5 py-0.5">
+        <span className="w-16 shrink-0 text-[10px] text-gray-500 dark:text-neutral-400 truncate" title={label}>{label}</span>
+        <input
+          type="range"
+          min={0}
+          max={1000}
+          value={Math.round(toPos(local[field]))}
+          onPointerDown={() => { dragging.current = true; }}
+          onPointerUp={() => { dragging.current = false; flushRef.current(); }}
+          onPointerCancel={() => { dragging.current = false; flushRef.current(); }}
+          onChange={(e) => emitField(field, toVal(Number(e.target.value)))}
+          className="flex-1 min-w-0 accent-sky-600"
+        />
+        <span className="w-12 shrink-0 text-right tabular-nums text-[10px] text-neutral-700 dark:text-neutral-300">
+          {Math.round(local[field])}{unit}
+        </span>
+      </label>
+    );
+  };
+  return (
+    <div className="rounded border border-black/10 dark:border-white/15 bg-black/[0.03] dark:bg-white/[0.04] px-1.5 py-1 mb-1.5">
+      <div className="flex items-center gap-2 pb-0.5">
+        <span className="font-medium text-neutral-800 dark:text-neutral-200">图层蒙版</span>
+        {!enabled && <span className="text-[10px] text-amber-600 dark:text-amber-400">已停用</span>}
+        <div className="flex-1" />
+        <button
+          title="反相蒙版(黑白互换;作用于蒙版通道)"
+          onClick={() => void runCommand(tabId, 'image.adjustments.invert', { target: 'mask' }).catch((e) => console.error('[editor] invert mask', e))}
+          className="p-1 text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          <RotateCcw size={12} />
+        </button>
+      </div>
+      {slider('density', '浓度', 100, '%', false)}
+      {slider('feather', '羽化', 1000, ' px', true)}
+    </div>
+  );
+};
+
+const EDITORS: Record<string, React.FC<EditorProps>> = {  brightnessContrast: BrightnessContrastEditor,
   exposure: ExposureEditor,
   vibrance: VibranceEditor,
   hueSaturation: HueSaturationEditor,
@@ -445,10 +543,25 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
   if (!active) {
     return <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">选中一个图层以查看其属性。</div>;
   }
+  // 蒙版目标+该层有蒙版:属性页顶部显示蒙版区段(浓度/羽化;上游双击蒙版缩略图进入)
+  const maskSection =
+    st.channels?.target?.kind === 'layerMask' && active.hasMask ? (
+      <MaskPropsSection
+        tabId={tabId}
+        docId={s.docId ?? null}
+        layerId={active.id}
+        enabled={st.maskInfo?.[String(active.id)]?.enabled ?? true}
+        density={(st.maskInfo?.[String(active.id)]?.density ?? 1) * 100}
+        feather={st.maskInfo?.[String(active.id)]?.feather ?? 0}
+      />
+    ) : null;
   if (active.kind !== 'Adjustment') {
     return (
-      <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">
-        当前层是{active.name}(非调整层)。在「调整」页添加调整图层,或选中一个调整层编辑其参数。
+      <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto min-h-0">
+        {maskSection}
+        <div className="text-neutral-500 dark:text-neutral-400">
+          当前层是{active.name}(非调整层)。在「调整」页添加调整图层,或选中一个调整层编辑其参数。
+        </div>
       </div>
     );
   }
@@ -481,6 +594,7 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
           <RotateCcw size={12} />
         </button>
       </div>
+      {maskSection}
       {ready && Editor ? (
         <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} lastEmitRef={lastEmitRef} flushNow={() => flushNowRef.current()} />
       ) : (

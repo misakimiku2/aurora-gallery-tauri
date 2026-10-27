@@ -1,5 +1,6 @@
 /** 图层面板:混合模式/不透明度(当前层)、行(眼睛/图层缩略图/链条/蒙版缩略图/名称/选中)、增删复制/排列/添加蒙版。 */
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
 import { runCommand, getSession, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
@@ -126,19 +127,78 @@ const LayerThumb: React.FC<{
 };
 
 /**
+ * 蒙版缩略图右键菜单(上游 layer_menu_ui.rs show_mask 口径):
+ * 停用/启用(按态切换)/删除/应用 | 蒙版载入选区三种运算。删除立即执行不确认
+ * (上游口径:确认只拦垃圾桶删图层);"蒙版选项…"(显示红罩)与 Select and Mask 留待办。
+ */
+const MaskMenu: React.FC<{
+  tabId: string;
+  layerId: number;
+  enabled: boolean;
+  pos: { x: number; y: number };
+  onClose: () => void;
+}> = ({ tabId, layerId, enabled, pos, onClose }) => {
+  const run = (cmd: string, params: Record<string, unknown> = {}) =>
+    runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
+  useEffect(() => {
+    const close = () => onClose();
+    // mousedown 在窗口层关闭;菜单项内部 stopPropagation
+    window.addEventListener('mousedown', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [onClose]);
+  const loadSel = (operation: 'add' | 'subtract' | 'intersect') => {
+    void run('select.loadSelection', { channel: 'mask', layer: layerId, operation });
+  };
+  const x = Math.min(pos.x, window.innerWidth - 200);
+  const y = Math.min(pos.y, window.innerHeight - 210);
+  const itemCls =
+    'w-full text-left px-3 py-1.5 text-[11px] text-gray-700 dark:text-neutral-300 hover:bg-sky-600/15 dark:hover:bg-white/10 whitespace-nowrap';
+  // portal 到 body:面板祖先带过渡/变换会把 fixed 劫持成相对定位(菜单飞出视口)
+  return createPortal(
+    <div
+      className="fixed z-50 rounded-md border border-black/10 dark:border-white/15 bg-surface shadow-lg py-1"
+      style={{ left: x, top: y, minWidth: 180 }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button className={itemCls} onClick={() => { void run('layer.layerMask.enabled', { layer: layerId }); onClose(); }}>
+        {enabled ? '禁用图层蒙版' : '启用图层蒙版'}
+      </button>
+      <button className={itemCls} onClick={() => { void run('layer.layerMask.delete', { layer: layerId }); onClose(); }}>
+        删除图层蒙版
+      </button>
+      <button className={itemCls} onClick={() => { void run('layer.layerMask.apply', { layer: layerId }); onClose(); }}>
+        应用图层蒙版
+      </button>
+      <div className="my-1 border-t border-black/10 dark:border-white/10" />
+      <button className={itemCls} onClick={() => { loadSel('add'); onClose(); }}>添加蒙版到选区</button>
+      <button className={itemCls} onClick={() => { loadSel('subtract'); onClose(); }}>从选区中减去蒙版</button>
+      <button className={itemCls} onClick={() => { loadSel('intersect'); onClose(); }}>蒙版与选区交叉</button>
+    </div>,
+    document.body,
+  );
+};
+
+/**
  * 蒙版缩略图(PS 口径):灰度快照(白=显示);点击=编辑蒙版 / Shift+点=停用或启用 /
- * Alt+点=灰度查看 / Ctrl+点=载入选区;禁用蒙版红叉。链接态由行内的链条图标表达。
+ * Alt+点=灰度查看 / Ctrl+点=载入选区;右键=蒙版菜单;双击=编辑蒙版+属性页(密度/羽化);
+ * 禁用蒙版红叉。链接态由行内的链条图标表达。
  */
 const MaskThumb: React.FC<{
   tabId: string;
   docId: number;
   layer: EditorLayer;
   revision: number;
-  info?: { enabled: boolean; linked: boolean };
+  info?: { enabled: boolean; linked: boolean; density?: number; feather?: number };
   targeted: boolean;
 }> = ({ tabId, docId, layer, revision, info, targeted }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [, forceUpdate] = useState(0);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const run = (cmd: string, params: Record<string, unknown> = {}) =>
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
@@ -189,30 +249,53 @@ const MaskThumb: React.FC<{
   const w = bmp ? Math.max(6, Math.round((bmp.width / Math.max(bmp.width, bmp.height)) * h)) : h;
 
   return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        if (e.shiftKey) {
-          void run('layer.layerMask.enabled', { layer: layer.id });
-          return;
-        }
-        if (e.altKey) {
-          void run('view.layerMask', { layer: layer.id, mode: 'toggleGray' });
-          return;
-        }
-        if (e.ctrlKey || e.metaKey) {
-          void run('select.loadSelection', { channel: 'mask', layer: layer.id });
-          return;
-        }
-        void run('layer.select', { layer: layer.id });
-        void run('channel.target', { channel: 'mask' });
-      }}
-      title="图层蒙版(点=编辑蒙版 / Shift+点=停用或启用 / Alt+点=灰度查看 / Ctrl+点=载入选区)"
-      className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
-      style={{ width: w + 2, height: h + 2 }}
-    >
-      <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
-    </button>
+    <>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.shiftKey) {
+            void run('layer.layerMask.enabled', { layer: layer.id });
+            return;
+          }
+          if (e.altKey) {
+            void run('view.layerMask', { layer: layer.id, mode: 'toggleGray' });
+            return;
+          }
+          if (e.ctrlKey || e.metaKey) {
+            void run('select.loadSelection', { channel: 'mask', layer: layer.id });
+            return;
+          }
+          void run('layer.select', { layer: layer.id });
+          void run('channel.target', { channel: 'mask' });
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          // 上游双击蒙版=切蒙版编辑目标+打开属性面板(密度/羽化在那里)
+          void run('layer.select', { layer: layer.id });
+          void run('channel.target', { channel: 'mask' });
+          window.dispatchEvent(new CustomEvent('aurora-editor-panel', { detail: { tabId, tab: 'props' } }));
+        }}
+        title="图层蒙版(点=编辑蒙版 / Shift+点=停用或启用 / Alt+点=灰度查看 / Ctrl+点=载入选区 / 右键=蒙版菜单 / 双击=属性)"
+        className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
+        style={{ width: w + 2, height: h + 2 }}
+      >
+        <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
+      </button>
+      {menu && (
+        <MaskMenu
+          tabId={tabId}
+          layerId={layer.id}
+          enabled={info?.enabled ?? true}
+          pos={menu}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </>
   );
 };
 
@@ -222,7 +305,7 @@ const Row: React.FC<{
   depth: number;
   docId: number;
   revision: number;
-  maskInfo?: Record<string, { enabled: boolean; linked: boolean }>;
+  maskInfo?: Record<string, { enabled: boolean; linked: boolean; density?: number; feather?: number }>;
   maskTargeted: boolean;
 }> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted }) => {
   const [, forceUpdate] = useState(0);

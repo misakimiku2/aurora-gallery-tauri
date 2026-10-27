@@ -54,8 +54,8 @@ export interface EditorDocState {
   };
   /** 图层蒙版灰度查看(view.layerMask,Alt+点蒙版缩略图):null=正常合成视图。 */
   layerMaskView?: { layer: number; mode: 'gray' | 'overlay' } | null;
-  /** 带像素蒙版图层的蒙版态(桥层补充,inspect 只有 hasMask 布尔):layerId → enabled/linked。 */
-  maskInfo?: Record<string, { enabled: boolean; linked: boolean }>;
+  /** 带像素蒙版图层的蒙版态(桥层补充,inspect 只有 hasMask 布尔):layerId → 蒙版态(密度 0..1/羽化 px 供属性面板回显)。 */
+  maskInfo?: Record<string, { enabled: boolean; linked: boolean; density?: number; feather?: number }>;
 }
 
 export interface EditorOpenInfo {

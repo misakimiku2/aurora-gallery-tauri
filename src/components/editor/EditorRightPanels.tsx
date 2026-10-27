@@ -17,9 +17,18 @@ import { LayersPanel } from './panels/LayersPanel';
 import { AdjustmentGrid } from './panels/AdjustmentGrid';
 import { AdjustmentProps } from './panels/AdjustmentProps';
 
-/** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。 */
+/** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。
+ * 双击蒙版缩略图等入口经 `aurora-editor-panel` 窗口事件请求切页(与 aurora-editor-saved 同款跨组件信号)。 */
 const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [tab, setTab] = useState<'props' | 'adjust' | 'history'>('history');
+  useEffect(() => {
+    const onPanel = (e: Event) => {
+      const d = (e as CustomEvent<{ tabId?: string; tab?: 'props' | 'adjust' | 'history' }>).detail;
+      if (d && (d.tabId == null || d.tabId === tabId) && d.tab) setTab(d.tab);
+    };
+    window.addEventListener('aurora-editor-panel', onPanel);
+    return () => window.removeEventListener('aurora-editor-panel', onPanel);
+  }, [tabId]);
   return (
     <div className="h-full min-h-0 flex flex-col">
       <div className="flex shrink-0 border-b border-black/10 dark:border-white/10">
