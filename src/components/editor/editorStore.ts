@@ -160,7 +160,8 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
 export async function applyRunOutcome(tabId: string, out: RunOutcome, pullState: boolean): Promise<void> {
   const s = sessions.get(tabId);
   if (!s || s.docId == null) return;
-  if (out.revision > 0 && out.revision !== s.revision) {
+  // revision 单调前进:快速连发时命令响应可能乱序,晚到的旧响应不回退水位
+  if (out.revision > 0 && out.revision > s.revision) {
     updateSession(tabId, { revision: out.revision });
   }
   if (pullState) {
@@ -168,6 +169,9 @@ export async function applyRunOutcome(tabId: string, out: RunOutcome, pullState:
     // revision 但改了会话级前/背景色,芯片读 state,所以也要拉。
     try {
       const st = await editorState(s.docId);
+      // 快速连发命令时多个 state 请求在途,响应可能乱序:晚到的旧快照会把 revision
+      // 连同 params/图层一起回退(表现:色阶手柄松手后回跳),按 revision 丢弃
+      if (typeof st.revision === 'number' && st.revision < s.revision) return;
       updateSession(tabId, { state: st });
       // 选区一变就同步拉轮廓:与 state 同帧到达,首帧即真实形状(椭圆不会先闪外接矩形);
       // 内部按 key 防抖,选区没变的命令不发请求。

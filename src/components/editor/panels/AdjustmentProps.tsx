@@ -101,11 +101,16 @@ const ColorRow: React.FC<{ label: string; color: string; onChange: (hex: string)
 /**
  * 调整参数提交器:100ms 节流 + 补丁累积(合并),经 coalesce 让引擎把拖动中的
  * 连续 setAdjustment 合成一步历史;卸载/换层时把未发的补丁冲掉。
- * lastEmitRef 供直方图 keep-after-commit 判断(本层提交导致的 revision 前进不重拉)。
+ * lastEmitRef 供直方图 keep-after-commit 与编辑器回包静默窗口判断
+ * (本层提交导致的 params/revision 变化不应回吸引擎旧值);flushNow 供抬手立即发送。
  */
 function useAdjustEmitter(
   tabId: string, layerId: number,
-): { emit: (patch: Record<string, unknown>) => void; lastEmitRef: React.MutableRefObject<number> } {
+): {
+  emit: (patch: Record<string, unknown>) => void;
+  flushNow: () => void;
+  lastEmitRef: React.MutableRefObject<number>;
+} {
   const pending = useRef<Record<string, unknown> | null>(null);
   const timer = useRef<number | null>(null);
   const lastSent = useRef(0);
@@ -137,13 +142,24 @@ function useAdjustEmitter(
       }, 100 - gap);
     }
   }, [flush]);
-  return { emit, lastEmitRef };
+  const flushNow = useCallback(() => {
+    if (timer.current != null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    flushRef.current();
+  }, []);
+  return { emit, flushNow, lastEmitRef };
 }
 
 type EditorProps = {
   params: Record<string, unknown>;
   emit: (patch: Record<string, unknown>) => void;
   hist?: RgbHistograms | null;
+  /** 最近一次参数提交的时刻(Date.now);编辑器用它跳过自己提交的在途回包。 */
+  lastEmitRef?: React.MutableRefObject<number>;
+  /** 抬手立即发送节流中的补丁(手势结束尽快落地,缩小在途回包窗口)。 */
+  flushNow?: () => void;
 };
 
 const BrightnessContrastEditor: React.FC<EditorProps> = ({ params, emit }) => {
@@ -414,9 +430,11 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
   const s = getSession(tabId);
   const active: EditorLayer | null = s?.state?.layers.find((l) => l.id === s.state?.activeLayer) ?? null;
   const layerId = active?.id ?? 0;
-  const { emit, lastEmitRef } = useAdjustEmitter(tabId, layerId);
+  const { emit, flushNow, lastEmitRef } = useAdjustEmitter(tabId, layerId);
   const emitRef = useRef(emit);
   emitRef.current = emit;
+  const flushNowRef = useRef(flushNow);
+  flushNowRef.current = flushNow;
   // 色阶/曲线的直方图数据(调整层下方合成;keep-after-commit:本层提交不重拉)
   const needsHist = active?.adjustment?.kind === 'levels' || active?.adjustment?.kind === 'curves';
   const hist = useHistogram(tabId, s?.docId ?? null, layerId, s?.revision ?? 0, !!needsHist, lastEmitRef);
@@ -464,7 +482,7 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
         </button>
       </div>
       {ready && Editor ? (
-        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} />
+        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} lastEmitRef={lastEmitRef} flushNow={() => flushNowRef.current()} />
       ) : (
         <div className="text-neutral-500 dark:text-neutral-400 py-1">
           {kindLabel}暂无专属编辑器;重置与剪贴已可用。

@@ -127,16 +127,23 @@ export const HistogramCanvas: React.FC<{
   return <canvas ref={ref} className={className} />;
 };
 
-/** 倒三角滑杆手柄(上游 handle:顶点朝上,宽 11px 高 9px)。 */
-const Handle: React.FC<{ pct: number; fill: string; title?: string }> = ({ pct, fill, title }) => (
-  <div
-    className="pointer-events-none absolute top-0 -translate-x-1/2"
-    style={{ left: `${Math.min(100, Math.max(0, pct))}%` }}
-    title={title}
-  >
-    <div style={{ width: 0, height: 0, borderLeft: '5.5px solid transparent', borderRight: '5.5px solid transparent', borderTop: `9px solid ${fill}` }} />
-  </div>
-);
+/** 倒三角滑杆手柄(上游 handle:顶点朝上,宽 11px 高 9px,1px 描边)。
+ * 描边+轻投影让白场手柄在浅色主题、黑场手柄在深色主题下都可辨。 */
+const Handle: React.FC<{ pct: number; fill: string; title?: string }> = ({ pct, fill, title }) => {
+  const dark = useDarkTheme();
+  const stroke = dark ? 'rgba(225,225,225,0.75)' : 'rgba(45,45,45,0.65)';
+  return (
+    <div
+      className="pointer-events-none absolute top-0 -translate-x-1/2"
+      style={{ left: `${Math.min(100, Math.max(0, pct))}%`, filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.35))' }}
+      title={title}
+    >
+      <svg width="12" height="10" viewBox="0 0 12 10">
+        <polygon points="6,0.5 11.5,9.5 0.5,9.5" fill={fill} stroke={stroke} strokeWidth="1" />
+      </svg>
+    </div>
+  );
+};
 
 const fieldCls =
   'w-full bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200 tabular-nums';
@@ -167,14 +174,20 @@ export const LevelsEditor: React.FC<{
   params: Record<string, unknown>;
   emit: (patch: Record<string, unknown>) => void;
   hist?: RgbHistograms | null;
-}> = ({ params, emit, hist }) => {
+  lastEmitRef?: React.MutableRefObject<number>;
+  flushNow?: () => void;
+}> = ({ params, emit, hist, lastEmitRef, flushNow }) => {
   const [ch, setCh] = useState(0);
   const key = LEVEL_CHANS[ch]?.key ?? '';
   const [l, setL] = useState<[number, number, number, number, number]>(() => readLevels(params, key));
   const dragging = useRef(false);
   useEffect(() => {
-    if (!dragging.current) setL(readLevels(params, key));
-  }, [params, key]);
+    // 拖动中跟手不回吸;自己提交的在途回包(emit 后 300ms 内到达的 params)也不回吸——
+    // 快速松手再拖时,旧回包晚到会把手柄往回拉,以本地值为准,引擎值最终一致
+    if (!dragging.current && (!lastEmitRef || Date.now() - lastEmitRef.current >= 300)) {
+      setL(readLevels(params, key));
+    }
+  }, [params, key, lastEmitRef]);
 
   const apply = useCallback(
     (next: [number, number, number, number, number]) => {
@@ -225,7 +238,9 @@ export const LevelsEditor: React.FC<{
   };
   const onTrackUp = () => {
     grip.current = null;
+    outGrip.current = null;
     dragging.current = false;
+    flushNow?.();
   };
 
   const chanColor = channelColor(key);
@@ -344,7 +359,9 @@ export const CurvesEditor: React.FC<{
   params: Record<string, unknown>;
   emit: (patch: Record<string, unknown>) => void;
   hist?: RgbHistograms | null;
-}> = ({ params, emit, hist }) => {
+  lastEmitRef?: React.MutableRefObject<number>;
+  flushNow?: () => void;
+}> = ({ params, emit, hist, lastEmitRef, flushNow }) => {
   const [ch, setCh] = useState(0);
   const key = curveKey(LEVEL_CHANS[ch]?.key ?? '');
   const [pts, setPts] = useState<CurvePoint[]>(() => curveFromParams(params[key]));
@@ -355,11 +372,12 @@ export const CurvesEditor: React.FC<{
   const drag = useRef<{ index: number | null; offset: [number, number]; removed: boolean } | null>(null);
 
   useEffect(() => {
-    if (!dragging.current) {
-      setPts(curveFromParams(params[key]));
-      setSelected((s) => (s != null && s < curveFromParams(params[key]).length ? s : null));
-    }
-  }, [params, key]);
+    // 同色阶:拖动中与自己提交的在途回包(300ms 内)不回吸,防止快速松-按时曲线回跳
+    if (dragging.current || (lastEmitRef && Date.now() - lastEmitRef.current < 300)) return;
+    const next = curveFromParams(params[key]);
+    setPts(next);
+    setSelected((s) => (s != null && s < next.length ? s : null));
+  }, [params, key, lastEmitRef]);
 
   const push = useCallback(
     (next: CurvePoint[]) => {
@@ -466,6 +484,7 @@ export const CurvesEditor: React.FC<{
   const onPointerUp = () => {
     dragging.current = false;
     drag.current = null;
+    flushNow?.();
   };
 
   // 键盘:Delete/Backspace 删选中点;方向键微调(Shift ×10)——都立即提交
@@ -669,16 +688,21 @@ export const CurvesEditor: React.FC<{
 export const GradientMapEditor: React.FC<{
   params: Record<string, unknown>;
   emit: (patch: Record<string, unknown>) => void;
-}> = ({ params, emit }) => {
+  lastEmitRef?: React.MutableRefObject<number>;
+  flushNow?: () => void;
+}> = ({ params, emit, lastEmitRef, flushNow }) => {
   const [stops, setStops] = useState<GradStop[]>(() => stopsFromParams(params.stops));
   const [selected, setSelected] = useState(0);
+  const dark = useDarkTheme();
   const dragging = useRef(false);
   const drag = useRef<{ index: number; offset: number } | null>(null);
   const barRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!dragging.current) setStops(stopsFromParams(params.stops));
-  }, [params]);
+    // 同色阶:拖动中与自己提交的在途回包(300ms 内)不回吸
+    if (dragging.current || (lastEmitRef && Date.now() - lastEmitRef.current < 300)) return;
+    setStops(stopsFromParams(params.stops));
+  }, [params, lastEmitRef]);
 
   const sel = Math.min(selected, stops.length - 1);
   const push = useCallback(
@@ -741,6 +765,7 @@ export const GradientMapEditor: React.FC<{
   const onUp = () => {
     dragging.current = false;
     drag.current = null;
+    flushNow?.();
   };
 
   const cssGradient = useMemo(() => {
@@ -761,21 +786,24 @@ export const GradientMapEditor: React.FC<{
         onPointerCancel={onUp}
       >
         <div ref={barRef} className="h-[24px] w-full rounded-sm border border-black/15 dark:border-white/20" style={{ background: cssGradient }} />
-        {stops.map((s, i) => (
-          <div key={i} className="pointer-events-none absolute -translate-x-1/2" style={{ left: `${s.at * 100}%`, top: 26 }}>
-            <div
-              className="mx-auto"
-              style={{
-                width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-                borderTop: `5px solid ${i === sel ? 'rgb(2,132,199)' : 'rgba(128,128,128,0.9)'}`,
-              }}
-            />
-            <div
-              className="mx-auto h-[10px] w-[10px] border"
-              style={{ background: s.color, borderColor: i === sel ? 'rgb(2,132,199)' : 'rgba(128,128,128,0.9)' }}
-            />
-          </div>
-        ))}
+        {stops.map((s, i) => {
+          const border = i === sel ? 'rgb(2,132,199)' : (dark ? 'rgba(215,215,215,0.85)' : 'rgba(55,55,55,0.75)');
+          return (
+            <div key={i} className="pointer-events-none absolute -translate-x-1/2" style={{ left: `${s.at * 100}%`, top: 26, filter: 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))' }}>
+              <div
+                className="mx-auto"
+                style={{
+                  width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+                  borderTop: `5px solid ${border}`,
+                }}
+              />
+              <div
+                className="mx-auto h-[10px] w-[10px] border"
+                style={{ background: s.color, borderColor: border }}
+              />
+            </div>
+          );
+        })}
       </div>
       {stops[sel] && (
         <>
