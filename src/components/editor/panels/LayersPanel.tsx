@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { runCommand, getSession, subscribeSession } from '../editorStore';
+import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 
@@ -321,6 +321,135 @@ const MaskThumb: React.FC<{
   );
 };
 
+/** 图层颜色标记(引擎 LabelColor::ALL 顺序;色值照上游 theme.rs layer_label_colors 的双主题 swatch/eye)。 */
+const LAYER_LABEL_COLORS: { id: string; label: string; swatch: string; eye: string }[] = [
+  { id: 'none', label: '无颜色', swatch: '', eye: '' },
+  { id: 'red', label: '红', swatch: '#FC5D5B', eye: '#9F2F30' },
+  { id: 'orange', label: '橙', swatch: '#F79744', eye: '#934F0C' },
+  { id: 'yellow', label: '黄', swatch: '#DCD64B', eye: '#99780C' },
+  { id: 'green', label: '绿', swatch: '#85DC6A', eye: '#4E712E' },
+  { id: 'seafoam', label: '海沫绿', swatch: '#1C8488', eye: '#0B544F' },
+  { id: 'blue', label: '蓝', swatch: '#78ADF6', eye: '#415B87' },
+  { id: 'indigo', label: '靛蓝', swatch: '#544BE7', eye: '#36348E' },
+  { id: 'magenta', label: '洋红', swatch: '#CC1A7E', eye: '#981B51' },
+  { id: 'fuchsia', label: '紫红', swatch: '#B014C0', eye: '#710F74' },
+  { id: 'violet', label: '紫罗兰', swatch: '#9176D5', eye: '#5D3F8E' },
+  { id: 'gray', label: '灰', swatch: '#9C9C9C', eye: '#575757' },
+];
+
+/**
+ * 图层行右键菜单(上游 layer_menu_ui.rs show 的移植子集;样式同图库 ContextMenu 设计语言):
+ * 复制/删除/从图层创建组 | 快速导出为 PNG | 蒙版区(应用/禁启/删除 或 添加) | 剪贴蒙版 |
+ * 链接图层 | 合并族 | 重命名 | 颜色(12 色子列表)。
+ * 智能对象/图层样式/画板/帧/栅格化依赖未实现的大功能,砍(上游 items() 同款特性裁剪)。
+ * 口径:非选区右键时每项先 layer.select 再发命令(上游 on_set=false 流程);
+ * 删除不弹确认(确认只属于垃圾桶)。
+ */
+const LayerContextMenu: React.FC<{
+  tabId: string;
+  layer: EditorLayer;
+  hasSelection: boolean;
+  docHasMultipleLayers: boolean;
+  maskEnabled: boolean;
+  pos: { x: number; y: number };
+  onClose: () => void;
+  onRename: () => void;
+}> = ({ tabId, layer, hasSelection, docHasMultipleLayers, maskEnabled, pos, onClose, onRename }) => {
+  const run = (cmd: string, params: Record<string, unknown> = {}) =>
+    runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
+  // 上游口径:右键非激活层时,每项先 select 该层再发命令(命令作用于激活层)
+  const act = (cmd: string, params: Record<string, unknown> = {}) => {
+    void run('layer.select', { layer: layer.id }).then(() => run(cmd, params));
+  };
+  const [colorOpen, setColorOpen] = useState(false);
+  useEffect(() => {
+    const close = () => onClose();
+    window.addEventListener('mousedown', close);
+    window.addEventListener('blur', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [onClose]);
+
+  type Item = { label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
+  const items: (Item | 'sep')[] = [
+    { label: '复制图层', run: () => act('layer.duplicate') },
+    { label: '删除图层', run: () => act('layer.delete'), danger: true },
+    { label: '从图层创建组', run: () => act('layer.groupLayers') },
+    'sep',
+    { label: '快速导出为 PNG', run: () => { void run('layer.select', { layer: layer.id }).then(() => exportLayerAsPng(tabId)); } },
+    'sep',
+    ...(layer.hasMask
+      ? ([
+          { label: maskEnabled ? '禁用图层蒙版' : '启用图层蒙版', run: () => run('layer.layerMask.enabled', { layer: layer.id }) },
+          { label: '应用图层蒙版', run: () => run('layer.layerMask.apply', { layer: layer.id }) },
+          { label: '删除图层蒙版', run: () => run('layer.layerMask.delete', { layer: layer.id }) },
+        ] as (Item | 'sep')[])
+      : ([
+          { label: hasSelection ? '添加图层蒙版(从选区显露)' : '添加图层蒙版', run: () => run(hasSelection ? 'layer.layerMask.revealSelection' : 'layer.layerMask.revealAll', { layer: layer.id }) },
+        ] as (Item | 'sep')[])),
+    { label: layer.clipped ? '释放剪贴蒙版' : '创建剪贴蒙版', run: () => act(layer.clipped ? 'layer.releaseClippingMask' : 'layer.createClippingMask') },
+    'sep',
+    { label: '链接图层', run: () => act('layer.linkLayers') },
+    'sep',
+    ...(layer.kind === 'Group'
+      ? ([{ label: '合并组', run: () => act('layer.mergeGroup') }] as (Item | 'sep')[])
+      : ([{ label: '向下合并', run: () => act('layer.mergeDown') }] as (Item | 'sep')[])),
+    ...(docHasMultipleLayers
+      ? ([
+          { label: '合并可见图层', run: () => act('layer.mergeVisible') },
+          { label: '拼合图像', run: () => act('layer.flattenImage') },
+        ] as (Item | 'sep')[])
+      : []),
+    'sep',
+    { label: '重命名图层…', run: onRename },
+    { label: '颜色', run: () => setColorOpen((v) => !v), keepOpen: true },
+  ];
+
+  const x = Math.min(pos.x, window.innerWidth - 210);
+  const y = Math.min(pos.y, window.innerHeight - 300);
+  const itemCls = 'mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px]';
+
+  return createPortal(
+    <div
+      className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max max-h-[80vh] overflow-y-auto"
+      style={{ left: x, top: y }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {items.map((it, i) =>
+        it === 'sep' ? (
+          <div key={`s${i}`} className="border-t border-black/5 dark:border-white/10 my-1" />
+        ) : (
+          <div key={it.label} className={itemCls} onClick={() => { it.run(); if (!it.keepOpen) onClose(); }}>
+            {it.label}
+          </div>
+        ),
+      )}
+      {colorOpen && (
+        <div className="border-t border-black/5 dark:border-white/10 my-1 pt-1">
+          <div className="grid grid-cols-4 gap-1 px-3 pb-1">
+            {LAYER_LABEL_COLORS.map((c) => (
+              <button
+                key={c.id}
+                title={c.label}
+                onClick={() => { run('layer.setLabelColor', { layer: layer.id, color: c.id }); onClose(); }}
+                className="h-5 rounded border border-black/10 dark:border-white/20 flex items-center justify-center"
+                style={{ background: c.id === 'none' ? 'transparent' : c.swatch }}
+              >
+                {c.id === 'none' && <span className="text-[10px] text-gray-500 dark:text-neutral-400">无</span>}
+                {layer.labelColor === c.id && <span className="w-1.5 h-1.5 rounded-full bg-white shadow" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>,
+    document.body,
+  );
+};
+
 const Row: React.FC<{
   tabId: string;
   layer: EditorLayer;
@@ -329,22 +458,34 @@ const Row: React.FC<{
   revision: number;
   maskInfo?: Record<string, { enabled: boolean; linked: boolean; density?: number; feather?: number }>;
   maskTargeted: boolean;
-}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted }) => {
+  hasSelection: boolean;
+  docHasMultipleLayers: boolean;
+}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted, hasSelection, docHasMultipleLayers }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(layer.name);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
 
   const run = (cmd: string, params: Record<string, unknown> = {}) =>
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
 
+  // 图层颜色标记染色(PS 行底色口径;选中行保持选中高亮优先)
+  const label = LAYER_LABEL_COLORS.find((c) => c.id === layer.labelColor);
+  const rowBg = !layer.selected && label?.eye ? `${label.eye}38` : undefined;
+
   return (
     <div
       onClick={() => void run('layer.select', { layer: layer.id })}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
       className={`group flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
         layer.selected ? 'bg-sky-600/25 text-neutral-900 dark:text-neutral-100' : 'text-gray-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
       }`}
-      style={{ paddingLeft: 6 + depth * 12 }}
+      style={{ paddingLeft: 6 + depth * 12, backgroundColor: rowBg }}
     >
       <button
         onClick={(e) => {
@@ -423,6 +564,18 @@ const Row: React.FC<{
       )}
       <span className="shrink-0 text-[9px] text-gray-400 dark:text-neutral-600 uppercase">{KIND_ZH[layer.kind] ?? layer.kind}</span>
       <span className="shrink-0 text-[9px] text-gray-400 dark:text-neutral-600">{Math.round(layer.opacity * 100)}%</span>
+      {menu && (
+        <LayerContextMenu
+          tabId={tabId}
+          layer={layer}
+          hasSelection={hasSelection}
+          docHasMultipleLayers={docHasMultipleLayers}
+          maskEnabled={maskInfo?.[String(layer.id)]?.enabled ?? true}
+          pos={menu}
+          onClose={() => setMenu(null)}
+          onRename={() => { setName(layer.name); setEditing(true); }}
+        />
+      )}
     </div>
   );
 };
@@ -468,6 +621,8 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           revision={s.revision}
           maskInfo={st.maskInfo}
           maskTargeted={maskTargeted}
+          hasSelection={st.hasSelection}
+          docHasMultipleLayers={st.layers.length > 1 || st.layers.some((x) => x.children?.length)}
         />
         {l.children && l.expanded !== false && renderRows(l.children, depth + 1)}
       </React.Fragment>

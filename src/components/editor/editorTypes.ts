@@ -12,6 +12,8 @@ export interface EditorLayer {
   hasMask: boolean;
   bounds: [number, number, number, number] | null;
   selected: boolean;
+  /** 图层颜色标记(inspect labelColor;none/red/.../gray,PS 行染色口径)。 */
+  labelColor?: string;
   children?: EditorLayer[];
   expanded?: boolean;
   /** 调整层(inspect 附加字段):kind 与 layer.setAdjustment/newAdjustmentLayer 同口径。 */
