@@ -4,7 +4,7 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorExportAs, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
@@ -270,6 +270,27 @@ export async function saveAsSession(tabId: string): Promise<{ imagePath: string;
   try {
     updateSession(tabId, { path: r.imagePath, state: await editorState(s.docId) });
   } catch { /* 文档已关 */ }
+  return r;
+}
+
+/**
+ * 导出为(M3 的"导出为",PS 口径:平面导出副本,**不动会话路径**——此后 Ctrl+S
+ * 仍写原文件;不写 .psd 伴生;按扩展名真重编码,质量按打开时的编码)。
+ * 取消对话框返回 null。
+ */
+export async function exportAsSession(tabId: string): Promise<{ bytes: number } | null> {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null) return null;
+  const target = await saveDialog({
+    title: '导出为',
+    defaultPath: s.path ?? undefined,
+    filters: SAVE_FORMATS,
+  });
+  if (!target || typeof target !== 'string') return null;
+  const r = await editorExportAs(s.docId, target);
+  console.log(`[editor] 已导出 ${target} (${r.bytes} 字节)`);
+  // 单文件重扫:导出目标常在图库目录内,让新文件立即可见(与保存同款信号)
+  window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: target } }));
   return r;
 }
 
