@@ -249,3 +249,30 @@ fn composite_frames_keep_lower_layer_mask_holes() {
     let (out, _tail) = m.stroke_commit(doc).unwrap();
     assert!(out.revision > 0);
 }
+
+/// 直方图桥(levels/curves 编辑器数据源):below=true 看调整层下方合成(调整收到的输入),
+/// channels=4 组 256-bin(复合+R/G/B);below=false 只看该层自身(调整层无像素→全 0)。
+#[test]
+fn histogram_below_layer_and_layer_sources() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "layer.newAdjustmentLayer.invert", json!({})).unwrap();
+    let layer = m.state(doc).unwrap()["activeLayer"].as_u64().expect("active layer id");
+
+    let below = m.histogram(doc, layer, true).unwrap();
+    let ch = below.get("channels").and_then(|v| v.as_array()).expect("channels array");
+    assert_eq!(ch.len(), 4, "composite + R + G + B");
+    for c in ch {
+        let bins = c.as_array().unwrap();
+        assert_eq!(bins.len(), 256);
+        let white = bins[255].as_u64().unwrap();
+        let black = bins[0].as_u64().unwrap();
+        assert!(white > 0, "white image below the invert layer");
+        assert_eq!(black, 0, "no black: the histogram sees the input, not the inverted result");
+    }
+
+    // 单层源:调整层自身没有像素,全 0
+    let own = m.histogram(doc, layer, false).unwrap();
+    let own0 = own["channels"][0].as_array().unwrap();
+    assert!(own0.iter().all(|v| v.as_u64().unwrap() == 0), "an adjustment layer has no own pixels");
+}

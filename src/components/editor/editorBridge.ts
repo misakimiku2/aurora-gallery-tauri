@@ -157,6 +157,12 @@ export async function editorLayerThumbnail(doc: number, layer: number, maxSide: 
   return { width: w, height: h, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + 8) };
 }
 
+/** 直方图(levels/curves 编辑器背景):below=true 看调整层下方合成,否则单层自身;
+ * channels[0]=复合 (R+G+B)/3,1..3=R/G/B,各 256-bin。 */
+export async function editorHistogram(doc: number, layer: number, below: boolean): Promise<{ channels: number[][] }> {
+  return invoke<{ channels: number[][] }>('editor_histogram', { doc, layer, below });
+}
+
 export async function editorClose(doc: number): Promise<void> {
   return invoke<void>('editor_close', { doc });
 }

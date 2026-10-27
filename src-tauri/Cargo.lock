@@ -412,6 +412,7 @@ dependencies = [
  "photocraft-geom",
  "photocraft-io",
  "photocraft-raster",
+ "rayon",
  "serde_json",
 ]
 

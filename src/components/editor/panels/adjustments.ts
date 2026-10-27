@@ -30,10 +30,11 @@ export const ADJUST_LABEL_ZH: Record<string, string> = Object.fromEntries(
   ADJUSTMENT_KINDS.map((k) => [k.kind, k.label]),
 );
 
-/** 本切片有参数编辑器的 kind;levels/curves/gradientMap(直方图/曲线点/渐变停靠点)下一切片。 */
+/** 有参数编辑器的 kind(levels/curves/gradientMap 走 ToneEditors 的完整编辑器)。 */
 export const EDITOR_READY_KINDS: ReadonlySet<string> = new Set([
   'brightnessContrast', 'exposure', 'vibrance', 'hueSaturation', 'colorBalance', 'blackWhite',
   'photoFilter', 'channelMixer', 'invert', 'posterize', 'threshold', 'selectiveColor', 'colorLookup',
+  'levels', 'curves', 'gradientMap',
 ]);
 
 /** 色相/饱和度 六色范围(引擎 HUE_RANGES)。 */

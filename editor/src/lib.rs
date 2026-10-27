@@ -15,6 +15,7 @@ use photocraft_engine::{file_cmds, Session};
 use photocraft_geom::Rect;
 use serde_json::{json, Value};
 
+pub mod histogram;
 pub mod outline;
 
 #[derive(Debug)]
@@ -674,6 +675,24 @@ impl EditorManager {
             }
         }
         Ok(Rendered { width: ow, height: oh, pixels: out })
+    }
+
+    /// 直方图(levels/curves 编辑器的背景):`below=true` 看调整层下方的合成
+    /// (调整实际收到的输入),否则只看该图层自身。RGB 空间 4 组 256-bin:
+    /// 复合 (R+G+B)/3 + R/G/B。计算在调用线程同步做(前端异步拉取+显示旧数据,
+    /// keep-after-commit 口径:编辑器自己提交导致的 revision 前进不重拉)。
+    pub fn histogram(&mut self, doc: u64, layer: u64, below: bool) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let source = if below {
+            histogram::HistSource::BelowLayer(photocraft_engine::doc::LayerId(layer))
+        } else {
+            histogram::HistSource::Layer(photocraft_engine::doc::LayerId(layer))
+        };
+        let h = histogram::compute_histograms(&st.doc, source);
+        // [u32; 256] 超出 serde 数组序列化实现上限,转嵌套 Vec
+        let channels: Vec<Vec<u32>> = h.into_iter().map(|c| c.to_vec()).collect();
+        Ok(json!({ "channels": channels }))
     }
 
     /// 打开中的文档 id 列表。

@@ -14,11 +14,11 @@ describe('调整层清单(上游 adjustments_grid 口径)', () => {
     ]);
     expect(new Set(ADJUSTMENT_KINDS.map((k) => k.kind)).size).toBe(16);
   });
-  it('13 种有本切片参数编辑器;levels/curves/gradientMap 留待下一切片', () => {
-    expect(EDITOR_READY_KINDS.size).toBe(13);
-    expect(EDITOR_READY_KINDS.has('levels')).toBe(false);
-    expect(EDITOR_READY_KINDS.has('curves')).toBe(false);
-    expect(EDITOR_READY_KINDS.has('gradientMap')).toBe(false);
+  it('16 种 kind 全部有参数编辑器(levels/curves/gradientMap 在 ToneEditors)', () => {
+    expect(EDITOR_READY_KINDS.size).toBe(16);
+    expect(EDITOR_READY_KINDS.has('levels')).toBe(true);
+    expect(EDITOR_READY_KINDS.has('curves')).toBe(true);
+    expect(EDITOR_READY_KINDS.has('gradientMap')).toBe(true);
     expect(EDITOR_READY_KINDS.has('invert')).toBe(true);
   });
   it('照片滤镜 20 预设 / 颜色查找 8 内置 / 色相 6 范围 / 可选颜色 9 范围', () => {

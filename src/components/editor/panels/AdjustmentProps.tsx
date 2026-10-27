@@ -2,12 +2,13 @@
  * 调整层属性编辑器(属性 tab):活动层是调整层时按 kind 渲染参数控件。
  * 编辑经 layer.setAdjustment(引擎合并语义:只写给出的键)+ coalesce 把拖动中
  * 的连续修改合成一步历史(上游 Properties 面板同口径 "properties-adjustment:<id>")。
- * levels/curves/gradientMap 的完整编辑器(直方图/曲线点/渐变停靠点)下一切片。
+ * levels/curves/gradientMap 的完整编辑器(直方图/曲线点/渐变停靠点)在 ToneEditors.tsx。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { getSession, runCommand, subscribeSession } from '../editorStore';
 import type { EditorLayer } from '../editorTypes';
+import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
 import {
   ADJUST_LABEL_ZH, COLOR_LOOKUP_BUILTINS, EDITOR_READY_KINDS, HUE_RANGES, PHOTO_FILTERS,
   SELECTIVE_RANGES, bool, num, photoFilterPresetFor, withArrayIndex, withRangeField,
@@ -100,11 +101,15 @@ const ColorRow: React.FC<{ label: string; color: string; onChange: (hex: string)
 /**
  * 调整参数提交器:100ms 节流 + 补丁累积(合并),经 coalesce 让引擎把拖动中的
  * 连续 setAdjustment 合成一步历史;卸载/换层时把未发的补丁冲掉。
+ * lastEmitRef 供直方图 keep-after-commit 判断(本层提交导致的 revision 前进不重拉)。
  */
-function useAdjustEmitter(tabId: string, layerId: number): (patch: Record<string, unknown>) => void {
+function useAdjustEmitter(
+  tabId: string, layerId: number,
+): { emit: (patch: Record<string, unknown>) => void; lastEmitRef: React.MutableRefObject<number> } {
   const pending = useRef<Record<string, unknown> | null>(null);
   const timer = useRef<number | null>(null);
   const lastSent = useRef(0);
+  const lastEmitRef = useRef(0);
   const flush = useCallback(() => {
     const p = pending.current;
     if (!p) return;
@@ -119,7 +124,8 @@ function useAdjustEmitter(tabId: string, layerId: number): (patch: Record<string
     if (timer.current != null) window.clearTimeout(timer.current);
     flushRef.current();
   }, []);
-  return useCallback((patch: Record<string, unknown>) => {
+  const emit = useCallback((patch: Record<string, unknown>) => {
+    lastEmitRef.current = Date.now();
     pending.current = { ...(pending.current ?? {}), ...patch };
     const gap = performance.now() - lastSent.current;
     if (gap >= 100) {
@@ -131,9 +137,14 @@ function useAdjustEmitter(tabId: string, layerId: number): (patch: Record<string
       }, 100 - gap);
     }
   }, [flush]);
+  return { emit, lastEmitRef };
 }
 
-type EditorProps = { params: Record<string, unknown>; emit: (patch: Record<string, unknown>) => void };
+type EditorProps = {
+  params: Record<string, unknown>;
+  emit: (patch: Record<string, unknown>) => void;
+  hist?: RgbHistograms | null;
+};
 
 const BrightnessContrastEditor: React.FC<EditorProps> = ({ params, emit }) => {
   const legacy = bool(params, 'legacy');
@@ -392,6 +403,9 @@ const EDITORS: Record<string, React.FC<EditorProps>> = {
   posterize: PosterizeEditor,
   threshold: ThresholdEditor,
   colorLookup: ColorLookupEditor,
+  levels: LevelsEditor,
+  curves: CurvesEditor,
+  gradientMap: GradientMapEditor,
 };
 
 export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
@@ -400,9 +414,12 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
   const s = getSession(tabId);
   const active: EditorLayer | null = s?.state?.layers.find((l) => l.id === s.state?.activeLayer) ?? null;
   const layerId = active?.id ?? 0;
-  const emit = useAdjustEmitter(tabId, layerId);
+  const { emit, lastEmitRef } = useAdjustEmitter(tabId, layerId);
   const emitRef = useRef(emit);
   emitRef.current = emit;
+  // 色阶/曲线的直方图数据(调整层下方合成;keep-after-commit:本层提交不重拉)
+  const needsHist = active?.adjustment?.kind === 'levels' || active?.adjustment?.kind === 'curves';
+  const hist = useHistogram(tabId, s?.docId ?? null, layerId, s?.revision ?? 0, !!needsHist, lastEmitRef);
 
   if (!s?.state) return <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">属性</div>;
   const st = s.state;
@@ -447,10 +464,10 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
         </button>
       </div>
       {ready && Editor ? (
-        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} />
+        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} />
       ) : (
         <div className="text-neutral-500 dark:text-neutral-400 py-1">
-          {kindLabel}的完整编辑器(直方图/曲线点/渐变停靠点)在下一切片接入;重置与剪贴已可用。
+          {kindLabel}暂无专属编辑器;重置与剪贴已可用。
         </div>
       )}
       {/* 本地预演合并(与引擎 layer.setAdjustment 的合并语义一致的回显来源注释):

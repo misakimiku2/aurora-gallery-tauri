@@ -206,3 +206,11 @@ pub fn editor_layer_thumbnail(s: State<EditorState>, doc: u64, layer: u64, maxSi
     bytes.extend_from_slice(&img.pixels);
     Ok(Response::new(bytes))
 }
+
+/// 直方图(levels/curves 编辑器背景):`below` = 调整层下方合成(调整实际收到的输入),
+/// 否则单层自身;RGB 空间 4 组 256-bin JSON(channels[0]=复合,1..3=R/G/B)。
+#[tauri::command]
+pub fn editor_histogram(s: State<EditorState>, doc: u64, layer: u64, below: bool) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.histogram(doc, layer, below).map_err(|e| e.to_string())
+}
