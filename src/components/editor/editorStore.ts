@@ -28,6 +28,8 @@ export interface ToolOptions {
   moveAutoSelect: boolean;
   /** Auto-Select 的拾取目标(PS 选项条 图层/组 下拉;组=最外层编组)。 */
   moveTarget: 'layer' | 'group';
+  /** 裁剪比例预设(上游 crop_ratio key):''=自由/original=原始比例/1:1/4:5/5:7/2:3/16:9。 */
+  cropRatio: string;
 }
 
 export interface EditorRuntime {
@@ -56,6 +58,12 @@ export interface EditorRuntime {
   cropCancel: (() => void) | null;
   /** 上一笔的终点(⇧+点击直线连接用;上游 last_stroke_end,按文档区分)。 */
   lastStrokeEnd: { docId: number; x: number; y: number; pressure: number } | null;
+  /** 裁剪拉直模式 armed(选项条标尺按钮;画完一条线自动解除)。 */
+  cropStraightenArmed: boolean;
+  /** 拉直线拖画中(文档坐标;null=未在画)。 */
+  cropStraightenLine: { x0: number; y0: number; x1: number; y1: number } | null;
+  /** 比例预设套用到当前裁剪框(选项条下拉 onChange 调;画布注册)。 */
+  cropFitRatio: (() => void) | null;
 }
 
 export interface EditorSession {
@@ -112,8 +120,9 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       selectionMode: 'replace',
       moveAutoSelect: true,
       moveTarget: 'layer',
+      cropRatio: '',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null },
   };
   sessions.set(tabId, s);
   return s;

@@ -360,6 +360,213 @@ export function constrainStrokePoint(
   return { p: a.dir ? projectOn(a.origin, a.dir, p) : a.origin, axis: a };
 }
 
+// ---- 裁剪工具(上游 crop_ui.rs / crop_straighten.rs 移植)----
+//
+// 框模型:[x0,y0,x1,y1](文档 px,未转矩形)+ angle(屏幕顺时针度数,绕框中心);
+// 提交 = 一条 image.crop {x,y,width,height,angle?},显式矩形允许超出画布,带角度时
+// 引擎在一步内完成"逆时针转图→框转正→裁到框"。这里的几何全部是纯函数。
+
+/** 裁剪框最小边(文档 px);松手时不满足则回退手势前矩形。 */
+export const CROP_MIN_FRAME = 1.0;
+/** 把手命中半径(屏幕 px);容差=HANDLE_PX/zoom。 */
+export const CROP_HANDLE_PX = 8.0;
+/** 拉直线最短长度(屏幕 px),短于则无效果。 */
+export const CROP_MIN_LINE_PX = 3.0;
+
+export type CropRect = [number, number, number, number];
+export type CropHit = { kind: 'handle'; hx: -1 | 0 | 1; hy: -1 | 0 | 1 } | { kind: 'inside' } | { kind: 'outside' };
+
+/** 正置框命中(上游 hit):距边 ≤tol 为把手(hx/hy=所在边 -1/0/1;框内侧容差收缩到
+ * 边距的 1/4,小框仍可移动整框);严格在框内为 inside,否则 outside。 */
+export function cropHit(r: CropRect, p: [number, number], tol: number): CropHit {
+  const axis = (lo: number, hi: number, v: number, otherIn: boolean): -1 | 0 | 1 => {
+    const t = Math.min(tol, (hi - lo) / 4.0);
+    const near = (e: number, outward: number) => (v - e) * outward <= tol && (e - v) * outward <= t;
+    if (!otherIn) return 0;
+    if (near(lo, -1) && near(hi, 1)) return Math.abs(v - lo) <= Math.abs(v - hi) ? -1 : 1;
+    if (near(lo, -1)) return -1;
+    if (near(hi, 1)) return 1;
+    return 0;
+  };
+  const inX = p[0] >= r[0] - tol && p[0] <= r[2] + tol;
+  const inY = p[1] >= r[1] - tol && p[1] <= r[3] + tol;
+  const hx = axis(r[0], r[2], p[0], inY);
+  const hy = axis(r[1], r[3], p[1], inX);
+  if (hx !== 0 || hy !== 0) return { kind: 'handle', hx, hy };
+  if (p[0] > r[0] && p[0] < r[2] && p[1] > r[1] && p[1] < r[3]) return { kind: 'inside' };
+  return { kind: 'outside' };
+}
+
+/** p 绕 c 顺时针转 deg 度(屏幕 y 向下;上游 turn)。 */
+export function cropTurn(p: [number, number], c: [number, number], deg: number): [number, number] {
+  const rad = (deg * Math.PI) / 180;
+  const s = Math.sin(rad);
+  const k = Math.cos(rad);
+  const dx = p[0] - c[0];
+  const dy = p[1] - c[1];
+  return [c[0] + k * dx - s * dy, c[1] + s * dx + k * dy];
+}
+
+/** 框 r 转 deg 度后的四角:正置框的 左上/右上/右下/左下(上游 corners)。 */
+export function cropCorners(r: CropRect, deg: number): [[number, number], [number, number], [number, number], [number, number]] {
+  const c: [number, number] = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  return [
+    cropTurn([r[0], r[1]], c, deg),
+    cropTurn([r[2], r[1]], c, deg),
+    cropTurn([r[2], r[3]], c, deg),
+    cropTurn([r[0], r[3]], c, deg),
+  ];
+}
+
+/** 框 r 转 deg 度后的轴对齐外接矩形(上游 turned_bounds)。 */
+export function cropTurnedBounds(r: CropRect, deg: number): CropRect {
+  if (deg === 0) return r;
+  const cs = cropCorners(r, deg);
+  const xs = cs.map((p) => p[0]);
+  const ys = cs.map((p) => p[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+/** 斜置框命中:点反转 -deg 到正置空间后按正置框判定(上游 hit_turned)。 */
+export function cropHitTurned(r: CropRect, deg: number, p: [number, number], tol: number): CropHit {
+  if (deg === 0) return cropHit(r, p, tol);
+  const c: [number, number] = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  return cropHit(r, cropTurn(p, c, -deg), tol);
+}
+
+/** 角度归一到 (-180,180];非有限=0(上游 normalized_angle)。 */
+export function cropNormalizedAngle(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  const a = ((deg % 360) + 360) % 360;
+  return a > 180 ? a - 360 : a;
+}
+
+/** 框从 from 度被指针绕 c 扫过 grab→p 后的新角度;⇧ 吸附 15°(上游 turned_angle)。 */
+export function cropTurnedAngle(c: [number, number], grab: number, from: number, p: [number, number], snap: boolean): number {
+  const now = Math.atan2(p[1] - c[1], p[0] - c[0]);
+  const a = from + ((now - grab) * 180) / Math.PI;
+  return cropNormalizedAngle(snap ? Math.round(a / 15) * 15 : a);
+}
+
+/** [x0,y0,x1,y1] 规范化(x0≤x1, y0≤y1)。 */
+function cropNormalize(a: [number, number], b: [number, number]): CropRect {
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+
+/** 新画的框(上游 drawn + chrome_ui::marquee_end):有 ratio 固定比例(较大的延伸方向为
+ * 主轴,另一轴按比例),无 ratio 时 ⇧ 正方形;alt=从锚点向两侧。 */
+export function cropDrawn(anchor: [number, number], cur: [number, number], ratio: number | null, shift: boolean, alt: boolean): CropRect {
+  const dx = cur[0] - anchor[0];
+  const dy = cur[1] - anchor[1];
+  const sx = dx < 0 ? -1 : 1;
+  const sy = dy < 0 ? -1 : 1;
+  let e: [number, number];
+  if (ratio != null && Number.isFinite(ratio) && ratio > 0) {
+    const k = Math.max(Math.abs(dx) / ratio, Math.abs(dy));
+    e = [anchor[0] + sx * k * ratio, anchor[1] + sy * k];
+  } else if (shift) {
+    const m = Math.max(Math.abs(dx), Math.abs(dy));
+    e = [anchor[0] + sx * m, anchor[1] + sy * m];
+  } else {
+    e = [cur[0], cur[1]];
+  }
+  if (alt) return cropNormalize([2 * anchor[0] - e[0], 2 * anchor[1] - e[1]], e);
+  return cropNormalize(anchor, e);
+}
+
+/** 正置框把手调整(上游 resized):被拖边移动、对边固定;alt=绕中心;ratio(width/height)
+ * 保持比例——角把手取"相对伸缩更大者"为主轴,边把手由另一轴推导。 */
+export function cropResized(r: CropRect, hx: -1 | 0 | 1, hy: -1 | 0 | 1, d: [number, number], ratio: number | null, alt: boolean): CropRect {
+  const axis = (lo: number, hi: number, h: -1 | 0 | 1, dv: number): [number, number, boolean] => {
+    const c = (lo + hi) / 2;
+    if (h === 1 && alt) return [c, hi + dv - c, true];
+    if (h === 1) return [lo, hi + dv - lo, false];
+    if (h === -1 && alt) return [c, lo + dv - c, true];
+    if (h === -1) return [hi, lo + dv - hi, false];
+    return [c, (hi - lo) / 2, true];
+  };
+  const [fx, ex0, cx] = axis(r[0], r[2], hx, d[0]);
+  const [fy, ey0, cy] = axis(r[1], r[3], hy, d[1]);
+  let ex = ex0;
+  let ey = ey0;
+  if (ratio != null && Number.isFinite(ratio) && ratio > 0) {
+    const full = (e: number, c: boolean) => Math.abs(e) * (c ? 2 : 1);
+    const w = full(ex, cx);
+    const h = full(ey, cy);
+    let sized: [number, number];
+    if (hx !== 0 && hy !== 0) {
+      const s = Math.max(w / ratio, h); // 角把手:相对伸缩更大者为主轴
+      sized = [s * ratio, s];
+    } else if (hx !== 0) {
+      sized = [w, w / ratio];
+    } else if (hy !== 0) {
+      sized = [h * ratio, h];
+    } else {
+      sized = [w, h];
+    }
+    const back = (e: number, len: number, c: boolean) => (e < 0 ? -1 : 1) * (c ? len / 2 : len);
+    ex = back(ex, sized[0], cx);
+    ey = back(ey, sized[1], cy);
+  }
+  const span = (f: number, e: number, c: boolean): [number, number] => (c ? [f - e, f + e] : [f, f + e]);
+  const [ax0, ax1] = span(fx, ex, cx);
+  const [ay0, ay1] = span(fy, ey, cy);
+  return cropNormalize([ax0, ay0], [ax1, ay1]);
+}
+
+/** 斜置框把手调整(上游 resized_turned):把手沿框自身轴移动、对边在页面上保持原位。 */
+export function cropResizedTurned(r: CropRect, deg: number, hx: -1 | 0 | 1, hy: -1 | 0 | 1, d: [number, number], ratio: number | null, alt: boolean): CropRect {
+  if (deg === 0) return cropResized(r, hx, hy, d, ratio, alt);
+  const c: [number, number] = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  const n = cropResized(r, hx, hy, cropTurn(d, [0, 0], -deg), ratio, alt);
+  const nc = cropTurn([(n[0] + n[2]) / 2, (n[1] + n[3]) / 2], c, deg);
+  const hw = (n[2] - n[0]) / 2;
+  const hh = (n[3] - n[1]) / 2;
+  return [nc[0] - hw, nc[1] - hh, nc[0] + hw, nc[1] + hh];
+}
+
+/** 最大居中、比例 width/height 的矩形,内含于当前框(只减不增;上游 fitted_ratio)。 */
+export function cropFittedRatio(r: CropRect, ratio: number): CropRect | null {
+  const w = r[2] - r[0];
+  const h = r[3] - r[1];
+  if (![...r, w, h].every(Number.isFinite) || w <= 0 || h <= 0 || !Number.isFinite(ratio) || ratio <= 0) return null;
+  if (Math.abs(w / h / ratio - 1) < 1e-12) return r;
+  const c: [number, number] = [r[0] + w / 2, r[1] + h / 2];
+  const [fw, fh] = w / h > ratio ? [h * ratio, h] : [w, w / ratio];
+  const fitted: CropRect = [c[0] - fw / 2, c[1] - fh / 2, c[0] + fw / 2, c[1] + fh / 2];
+  return fitted.every(Number.isFinite) && fitted[2] > fitted[0] && fitted[3] > fitted[1] ? fitted : null;
+}
+
+/** 顺时针度数:把标尺线转到最近的水平/垂直轴(引擎 analysis_cmds::straighten_angle)。 */
+export function cropStraightenAngle(dx: number, dy: number): number {
+  const a = (Math.atan2(-dy, dx) * 180) / Math.PI;
+  return a - 90 * Math.round(a / 90);
+}
+
+/** 拉直后框应转的角度(屏幕顺时针):线转平/转竖需要图像转 -rot(上游 frame_angle)。 */
+export function cropFrameAngle(a: [number, number], b: [number, number], minLen: number): number | null {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy);
+  if (!Number.isFinite(len) || len < Math.max(minLen, Number.MIN_VALUE)) return null;
+  return cropNormalizedAngle(-cropStraightenAngle(dx, dy));
+}
+
+/** 比例 w×h、转 deg 度后仍完全内含于 cw×ch 画布的最大居中框(上游 crop_straighten::fitted)。 */
+export function cropFitted(w: number, h: number, cw: number, ch: number, deg: number): CropRect | null {
+  if (![w, h, cw, ch, deg].every(Number.isFinite) || w <= 0 || h <= 0 || cw <= 0 || ch <= 0) return null;
+  const rad = (deg * Math.PI) / 180;
+  const s = Math.abs(Math.sin(rad));
+  const c = Math.abs(Math.cos(rad));
+  const k = Math.min(cw / (w * c + h * s), ch / (w * s + h * c));
+  if (!Number.isFinite(k) || k <= 0) return null;
+  const hw = (w * k) / 2;
+  const hh = (h * k) / 2;
+  const cx = cw / 2;
+  const cy = ch / 2;
+  return [cx - hw, cy - hh, cx + hw, cy + hh];
+}
+
 /**
  * 移动拖拽的 ⇧ 约束(上游 move_mods::constrain 原样移植):
  * - `dirs=4`(整层):锁到水平/垂直主轴;`dirs=8`(浮动选区像素):轴 + 45° 斜向;

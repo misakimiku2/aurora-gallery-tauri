@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
-import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff } from 'lucide-react';
+import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
   move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
@@ -152,7 +152,41 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'crop' ? (
         <>
-          <span className="text-neutral-400 dark:text-neutral-500">拖画裁剪框;Enter / 双击提交,Esc 取消</span>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="比例预设:选定后当前框按比例内缩适配;拖画与调把手时保持该比例">
+            比例
+            <select
+              value={s.options.cropRatio}
+              onChange={(e) => {
+                setOptions(tabId, { cropRatio: e.target.value });
+                if (e.target.value) s.runtime.cropFitRatio?.();
+              }}
+              className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
+            >
+              <option value="">自由</option>
+              <option value="original">原始比例</option>
+              <option value="1:1">1 : 1</option>
+              <option value="4:5">4 : 5</option>
+              <option value="5:7">5 : 7</option>
+              <option value="2:3">2 : 3</option>
+              <option value="16:9">16 : 9</option>
+            </select>
+          </label>
+          <button
+            title="拉直:沿图里应水平(或应竖直)的线画一条线,自动转正并取最大内接框;再点一次解除"
+            onClick={() => {
+              s.runtime.cropStraightenArmed = !s.runtime.cropStraightenArmed;
+              s.runtime.cropStraightenLine = null;
+              forceUpdate((n) => n + 1);
+            }}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border ${
+              s.runtime.cropStraightenArmed
+                ? 'bg-sky-600/20 text-sky-700 dark:text-sky-300 border-sky-500/50'
+                : 'border-black/15 dark:border-white/15 text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+            }`}
+          >
+            <Ruler size={12} />拉直
+          </button>
+          <span className="text-neutral-400 dark:text-neutral-500">拖画/移动/把手调整;框外拖=旋转(⇧ 15° 步进);Enter / 双击提交,Esc 取消</span>
           <button
             title="提交裁剪 (Enter)"
             onClick={() => s.runtime.cropCommit?.()}

@@ -15,17 +15,31 @@ import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainStrokePoint, effectiveMode, gradientParams, initialMods,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainStrokePoint, cropCorners, cropDrawn,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropResizedTurned, cropTurnedAngle, effectiveMode, gradientParams, initialMods,
   isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
-  type BrushFamilyTool, type DragPoint, type DragMods, type StrokeAxis,
+  CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
+  type BrushFamilyTool, type CropRect, type DragPoint, type DragMods, type StrokeAxis,
 } from './toolLogic';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
+
+/** 裁剪手势的回退快照(press 时的框;尺寸不满足/取消时恢复)。 */
+type CropRestore = { rect: CropRect; angle: number; edited: boolean };
+
+/** 裁剪比例预设 key → width/height(上游 chrome_ui::crop_ratio;'original'=文档尺寸)。 */
+function cropPresetRatioOf(key: string, docW: number, docH: number): number | null {
+  if (!key) return null;
+  const [w, h] = key === 'original' ? [docW, docH] : key.split(':').map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  const k = w / h;
+  return Number.isFinite(k) && k > 0 ? k : null;
+}
 
 function makeCheckerPattern(ctx: CanvasRenderingContext2D, dark: boolean): CanvasPattern | null {
   const c = document.createElement('canvas');
@@ -111,10 +125,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
   /** 套索拖拽中(上游 lasso_ui 口径:每个 pointer 事件采一点、实线预览、<3 点=取消选择)。 */
   const lassoRef = useRef<{ points: number[][]; mods: DragMods } | null>(null);
-  /** 裁剪框(文档坐标;null=未触碰默认框=整幅画布,提交无操作)。 */
-  const cropRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
-  /** 裁剪拖画新框中。 */
-  const cropDragRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
+  /** 裁剪框(上游 crop_ui):未转矩形文档 px [x0,y0,x1,y1] + angle(屏幕顺时针度数)+
+   * edited(是否被编辑过;未动默认框=离开丢弃/提交无操作)。null=未建框(draw 懒建)。 */
+  const cropRef = useRef<{ rect: [number, number, number, number]; angle: number; edited: boolean } | null>(null);
+  /** 裁剪手势(上游 CropDrag):press 快照 + restore(松手不满足最小尺寸时回退)。 */
+  const cropDragRef = useRef<
+    | { kind: 'draw'; anchor: [number, number]; restore: CropRestore }
+    | { kind: 'move'; grab: [number, number]; restore: CropRestore }
+    | { kind: 'resize'; hx: -1 | 0 | 1; hy: -1 | 0 | 1; press: [number, number]; keepRatio: number; restore: CropRestore }
+    | { kind: 'rotate'; center: [number, number]; grab: number; from: number; restore: CropRestore }
+    | null>(null);
+  /** 裁剪把手的光标(指针命中变化时更新并触发重渲染)。 */
+  const cropCursorRef = useRef<string | null>(null);
+  /** 上一次的工具(离开裁剪工具时:未动默认框丢弃、已编辑框静默提交,#3368)。 */
+  const prevToolRef = useRef<string | null>(null);
   /** 渐变拖线中(上游 classic 口径:拖方向线,松手一条命令)。 */
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
@@ -140,6 +164,18 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const overlay = overlayRef.current;
     const wrap = wrapRef.current;
     if (!s || !display || !overlay || !wrap) return;
+    // 工具切换检测:离开裁剪工具时未动默认框丢弃、已编辑框静默提交(上游 #3368 commit_on_leave)
+    if (prevToolRef.current !== s.tool) {
+      const leavingCrop = prevToolRef.current === 'crop' && s.tool !== 'crop';
+      prevToolRef.current = s.tool;
+      if (leavingCrop) {
+        const f = cropRef.current;
+        cropRef.current = null;
+        cropDragRef.current = null;
+        cropCursorRef.current = null;
+        if (f?.edited) s.runtime.cropCommit?.();
+      }
+    }
     const dpr = window.devicePixelRatio || 1;
     const cssW = wrap.clientWidth;
     const cssH = wrap.clientHeight;
@@ -166,6 +202,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     dctx.clearRect(0, 0, cssW, cssH);
     octx.clearRect(0, 0, cssW, cssH);
     if (!s.state || !s.runtime.offscreen) return;
+    if (s.tool === 'crop') ensureCropFrame(s);
 
     const docW = s.state.width;
     const docH = s.state.height;
@@ -257,32 +294,78 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.restore();
     }
 
-    // overlay:裁剪框(上游 crop 口径简化版):框外 50% 遮罩 + 白边 + 三分线 + 角柄
-    if (s.tool === 'crop') {
-      const frame = cropDragRef.current ? marqueeRect(cropDragRef.current, cropDragRef.current.mods) : cropRef.current;
-      if (frame) {
-        const fx = frame.x * v.scale + v.ox;
-        const fy = frame.y * v.scale + v.oy;
-        const fw = frame.w * v.scale;
-        const fh = frame.h * v.scale;
-        octx.save();
-        octx.fillStyle = 'rgba(0,0,0,0.5)';
-        octx.fillRect(v.ox, v.oy, dw, fy - v.oy);
-        octx.fillRect(v.ox, fy + fh, dw, v.oy + dh - (fy + fh));
-        octx.fillRect(v.ox, fy, fx - v.ox, fh);
-        octx.fillRect(fx + fw, fy, v.ox + dw - (fx + fw), fh);
-        octx.strokeStyle = '#ffffff';
-        octx.lineWidth = 1;
-        octx.strokeRect(fx + 0.5, fy + 0.5, fw - 1, fh - 1);
-        octx.strokeStyle = 'rgba(255,255,255,0.45)';
+    // overlay:裁剪框(上游 crop_ui):框外遮罩(even-odd 挖洞,正置/斜置同一实现)+
+    // 白边 + 三分线(框边线性插值,斜置跟随)+ 8 把手 + 拉直线 + 旋转角度 readout
+    if (s.tool === 'crop' && cropRef.current) {
+      const f = cropRef.current;
+      const toS = (p: [number, number]): [number, number] => [p[0] * v.scale + v.ox, p[1] * v.scale + v.oy];
+      const sc = cropCorners(f.rect, f.angle).map(toS);
+      const lerp = (a: [number, number], b: [number, number], t: number): [number, number] => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      octx.save();
+      octx.beginPath();
+      octx.rect(0, 0, cssW, cssH);
+      octx.moveTo(sc[3][0], sc[3][1]);
+      for (let i = 0; i < 4; i++) octx.lineTo(sc[i][0], sc[i][1]);
+      octx.closePath();
+      octx.fillStyle = 'rgba(0,0,0,0.5)';
+      octx.fill('evenodd');
+      octx.restore();
+      octx.save();
+      octx.strokeStyle = '#ffffff';
+      octx.lineWidth = 1;
+      octx.beginPath();
+      sc.forEach(([px, py], i) => (i === 0 ? octx.moveTo(px, py) : octx.lineTo(px, py)));
+      octx.closePath();
+      octx.stroke();
+      for (let i = 1; i <= 2; i++) {
+        const t = i / 3;
+        const top = lerp(sc[0], sc[1], t);
+        const bottom = lerp(sc[3], sc[2], t);
         octx.beginPath();
-        for (let i = 1; i <= 2; i++) {
-          octx.moveTo(fx + (fw * i) / 3, fy);
-          octx.lineTo(fx + (fw * i) / 3, fy + fh);
-          octx.moveTo(fx, fy + (fh * i) / 3);
-          octx.lineTo(fx + fw, fy + (fh * i) / 3);
-        }
+        octx.moveTo(top[0], top[1]);
+        octx.lineTo(bottom[0], bottom[1]);
         octx.stroke();
+        const left = lerp(sc[0], sc[3], t);
+        const right = lerp(sc[1], sc[2], t);
+        octx.beginPath();
+        octx.moveTo(left[0], left[1]);
+        octx.lineTo(right[0], right[1]);
+        octx.stroke();
+      }
+      // 8 把手(四角+边中点;小方块不随框转,小尺寸下不可辨)
+      octx.fillStyle = '#ffffff';
+      const mid = (a: [number, number], b: [number, number]): [number, number] => lerp(a, b, 0.5);
+      for (const hp of [sc[0], mid(sc[0], sc[1]), sc[1], mid(sc[1], sc[2]), sc[2], mid(sc[2], sc[3]), sc[3], mid(sc[3], sc[0])]) {
+        octx.fillRect(hp[0] - 3.5, hp[1] - 3.5, 7, 7);
+      }
+      octx.restore();
+      // 拉直线拖画中(上游 crop_straighten:3px 阴影 + 1px 高亮)
+      const line = s.runtime.cropStraightenLine;
+      if (line) {
+        const a = toS([line.x0, line.y0]);
+        const b = toS([line.x1, line.y1]);
+        octx.save();
+        octx.lineCap = 'round';
+        for (const [w, c] of [[3, 'rgba(0,0,0,0.55)'], [1, '#ffffff']] as const) {
+          octx.beginPath();
+          octx.moveTo(a[0], a[1]);
+          octx.lineTo(b[0], b[1]);
+          octx.strokeStyle = c;
+          octx.lineWidth = w;
+          octx.stroke();
+        }
+        octx.restore();
+      }
+      // 旋转中的角度 readout(指针旁;上游 draw_value_readout)
+      if (cropDragRef.current?.kind === 'rotate' && s.runtime.pointerDoc) {
+        const px = s.runtime.pointerDoc.x * v.scale + v.ox + 14;
+        const py = s.runtime.pointerDoc.y * v.scale + v.oy - 10;
+        octx.save();
+        octx.font = '11px ui-sans-serif, system-ui';
+        octx.fillStyle = 'rgba(0,0,0,0.6)';
+        octx.fillText(`${f.angle.toFixed(1)}°`, px + 1, py + 1);
+        octx.fillStyle = '#ffffff';
+        octx.fillText(`${f.angle.toFixed(1)}°`, px, py);
         octx.restore();
       }
     }
@@ -724,62 +807,120 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     })();
   }, [tabId, startMoveDrag, beginLayerBox]);
 
-  /** 裁剪提交(上游 commit_crop 口径;image.crop,历史 "Crop",选区随裁剪清除):
-   * 未触碰默认框/整幅框=无操作;框钳进画布(画布外扩展留待办)。 */
+  /** 进入裁剪工具/提交或取消后的默认框:选区 bounds ∩ 画布,否则整画布(上游 ensure_frame)。 */
+  const ensureCropFrame = (s: EditorSession) => {
+    if (cropRef.current || !s.state) return;
+    const sel = s.state.selectionBounds;
+    let rect: CropRect = sel
+      ? [Math.max(0, sel[0]), Math.max(0, sel[1]), Math.min(s.state.width, sel[0] + sel[2]), Math.min(s.state.height, sel[1] + sel[3])]
+      : [0, 0, s.state.width, s.state.height];
+    if (rect[2] - rect[0] < 1 || rect[3] - rect[1] < 1) rect = [0, 0, s.state.width, s.state.height];
+    cropRef.current = { rect, angle: 0, edited: false };
+  };
+
+  /** 裁剪提交(上游 commit_crop):一条 image.crop——显式矩形允许超出画布(扩展区按背景色
+   * 填充),带 angle 时引擎一步完成"转正+裁剪";x/y round,w/h round 后 ≥1。未动默认框
+   * (=整画布)无操作;提交成功后适配视图(上游 fit_pending);被拒恢复框。 */
   const commitCrop = useCallback(() => {
     const s = getSession(tabId);
-    if (!s?.state) return;
-    const c = cropRef.current;
+    const f = cropRef.current;
     cropRef.current = null;
     cropDragRef.current = null;
-    if (!c) {
+    if (s) {
+      s.runtime.cropStraightenArmed = false;
+      s.runtime.cropStraightenLine = null;
+    }
+    if (!f || !s?.state) {
       scheduleDraw();
       return;
     }
-    const x = Math.max(0, c.x);
-    const y = Math.max(0, c.y);
-    const w = Math.min(s.state.width, c.w - Math.max(0, -c.x));
-    const h = Math.min(s.state.height, c.h - Math.max(0, -c.y));
-    if (w < 1 || h < 1 || (x <= 0 && y <= 0 && w >= s.state.width && h >= s.state.height)) {
+    const whole = f.rect[0] <= 0 && f.rect[1] <= 0 && f.rect[2] >= s.state.width && f.rect[3] >= s.state.height;
+    if (!f.edited && whole) {
       scheduleDraw();
       return;
     }
-    void runCommand(tabId, 'image.crop', { x, y, width: Math.round(w), height: Math.round(h) })
-      .catch((err) => logError('[editor] image.crop 失败', err));
+    const params: Record<string, unknown> = {
+      x: Math.round(f.rect[0]),
+      y: Math.round(f.rect[1]),
+      width: Math.max(1, Math.round(f.rect[2] - f.rect[0])),
+      height: Math.max(1, Math.round(f.rect[3] - f.rect[1])),
+    };
+    if (Math.abs(f.angle) > 1e-9) params.angle = f.angle;
+    void runCommand(tabId, 'image.crop', params)
+      .then(() => {
+        // 裁剪后适配视图(上游 fit_pending)
+        const s2 = getSession(tabId);
+        if (s2?.state && wrapRef.current && wrapRef.current.clientWidth > 0) {
+          s2.runtime.view = fitToView(s2.state.width, s2.state.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
+        }
+        console.log(`[editor] 已裁剪 ${params.width}x${params.height}${params.angle ? ` @${f.angle.toFixed(1)}°` : ''}`);
+      })
+      .catch((err) => {
+        logError('[editor] image.crop 失败', err);
+        cropRef.current = f; // 被拒:保持框(上游 keep/restore)
+      });
     scheduleDraw();
   }, [tabId, scheduleDraw]);
 
   const cancelCrop = useCallback(() => {
     cropRef.current = null;
     cropDragRef.current = null;
+    const s = getSession(tabId);
+    if (s) {
+      s.runtime.cropStraightenArmed = false;
+      s.runtime.cropStraightenLine = null;
+    }
     scheduleDraw();
   }, [scheduleDraw]);
 
-  // 注册裁剪回调(选项条 ✓/⊘ 用,与 requestDraw 同机制)
-  useEffect(() => {
-    const s = getSession(tabId);
-    if (!s) return;
-    s.runtime.cropCommit = commitCrop;
-    s.runtime.cropCancel = cancelCrop;
-    return () => {
-      if (s.runtime.cropCommit === commitCrop) s.runtime.cropCommit = null;
-      if (s.runtime.cropCancel === cancelCrop) s.runtime.cropCancel = null;
-    };
-  }, [tabId, commitCrop, cancelCrop]);
+  /** 比例预设套用到当前框(选项条下拉 onChange;保中心只减不增,默认框适配不算编辑)。 */
+  const cropFitRatio = useCallback(() => {
+    const st = getSession(tabId);
+    if (!st?.state) return;
+    if (!cropRef.current) {
+      const sel = st.state.selectionBounds;
+      let rect: CropRect = sel
+        ? [Math.max(0, sel[0]), Math.max(0, sel[1]), Math.min(st.state.width, sel[0] + sel[2]), Math.min(st.state.height, sel[1] + sel[3])]
+        : [0, 0, st.state.width, st.state.height];
+      if (rect[2] - rect[0] < 1 || rect[3] - rect[1] < 1) rect = [0, 0, st.state.width, st.state.height];
+      cropRef.current = { rect, angle: 0, edited: false };
+    }
+    const f = cropRef.current;
+    const preset = cropPresetRatioOf(st.options.cropRatio, st.state.width, st.state.height);
+    if (f && preset != null) {
+      const fitted = cropFittedRatio(f.rect, preset);
+      if (fitted) cropRef.current = { ...f, rect: fitted };
+    }
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
 
-  // 订阅 store(tool/revision/docId/state 变化):驱动 React 更新 + 调度一帧画布重绘。
-  // 重绘不能只靠 requestDraw 注册(挂载时 session 常未建好)或位图 effect(只在
-  // revision 变化时画,画时 state 还没到):draw 直读 store,任何命令落地(选区/
-  // 取色/图层)都当帧可见。这才是"提交后立即显示"的保证。
+  // 注册裁剪回调(选项条 ✓/⊘/比例 用)。会话可能在画布挂载后才创建:除挂载时注册外,
+  // 订阅回调里每次通知补注册(requestDraw 同款模式),卸载时清掉。
   useEffect(() => {
+    const register = (s: EditorSession) => {
+      if (s.runtime.cropCommit !== commitCrop) s.runtime.cropCommit = commitCrop;
+      if (s.runtime.cropCancel !== cancelCrop) s.runtime.cropCancel = cancelCrop;
+      if (s.runtime.cropFitRatio !== cropFitRatio) s.runtime.cropFitRatio = cropFitRatio;
+    };
+    const s0 = getSession(tabId);
+    if (s0) register(s0);
     const un = subscribeSession(tabId, () => {
       const s = getSession(tabId);
-      if (s && s.runtime.requestDraw !== scheduleDraw) s.runtime.requestDraw = scheduleDraw;
+      if (!s) return;
+      if (s.runtime.requestDraw !== scheduleDraw) s.runtime.requestDraw = scheduleDraw;
+      register(s);
       forceUpdate((n) => n + 1);
       scheduleDraw();
     });
-    return un;
-  }, [tabId, scheduleDraw]);
+    return () => {
+      un();
+      const s = getSession(tabId);
+      if (!s) return;
+      if (s.runtime.cropCommit === commitCrop) s.runtime.cropCommit = null;
+      if (s.runtime.cropCancel === cancelCrop) s.runtime.cropCancel = null;
+      if (s.runtime.cropFitRatio === cropFitRatio) s.runtime.cropFitRatio = null;
+    };
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio]);
 
   // 注册重绘请求 + 初始适配
   useEffect(() => {
@@ -934,6 +1075,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           scheduleDraw();
           return;
         }
+      }
+      // 裁剪框方向键微移(上游 arrow keys:1px / ⇧ 10px)
+      if (s.tool === 'crop' && cropRef.current && !cropDragRef.current) {
+        e.preventDefault();
+        const d = e.shiftKey ? 10 : 1;
+        const ddx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0;
+        const ddy = e.key === 'ArrowUp' ? -d : e.key === 'ArrowDown' ? d : 0;
+        const f = cropRef.current;
+        cropRef.current = { rect: [f.rect[0] + ddx, f.rect[1] + ddy, f.rect[2] + ddx, f.rect[3] + ddy], angle: f.angle, edited: true };
+        scheduleDraw();
+        return;
       }
       // 方向键微移(上游 arrow_keys/move_mods::nudge 口径:1px / Shift 10px):
       // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate;
@@ -1164,8 +1316,35 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       lassoRef.current = { points: [[dx, dy]], mods: initialMods(e.shiftKey, e.altKey) };
       scheduleDraw();
     } else if (s.tool === 'crop' && e.button === 0 && s.state) {
-      // 裁剪:拖画新框(约束同选框:Shift 正方形 / Alt 从中心)
-      cropDragRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
+      // 拉直 armed:按下拖画标尺线(松手按长度生效,一次性)
+      if (s.runtime.cropStraightenArmed) {
+        s.runtime.cropStraightenLine = { x0: dx, y0: dy, x1: dx, y1: dy };
+        scheduleDraw();
+        return;
+      }
+      ensureCropFrame(s);
+      const f = cropRef.current!;
+      const restore: CropRestore = { rect: f.rect, angle: f.angle, edited: f.edited };
+      const tol = CROP_HANDLE_PX / s.runtime.view.scale;
+      const hit = cropHitTurned(f.rect, f.angle, [dx, dy], tol);
+      if (hit.kind === 'handle') {
+        // 把手:沿框自身轴调整(斜置=对边页面固定),对边/对角固定
+        cropDragRef.current = {
+          kind: 'resize', hx: hit.hx, hy: hit.hy, press: [dx, dy],
+          keepRatio: (f.rect[2] - f.rect[0]) / (f.rect[3] - f.rect[1]), restore,
+        };
+      } else if (hit.kind === 'inside' && f.edited) {
+        // 已编辑框内部:移动整框(纯平移,保持角度)
+        cropDragRef.current = { kind: 'move', grab: [dx, dy], restore };
+      } else if (hit.kind === 'inside') {
+        // 未动默认框内部:拖画新框(#4461 口径)
+        cropDragRef.current = { kind: 'draw', anchor: [dx, dy], restore };
+      } else {
+        // 框外:绕框中心旋转(⇧ 15° 吸附)
+        const cx = (f.rect[0] + f.rect[2]) / 2;
+        const cy = (f.rect[1] + f.rect[3]) / 2;
+        cropDragRef.current = { kind: 'rotate', center: [cx, cy], grab: Math.atan2(dy - cy, dx - cx), from: f.angle, restore };
+      }
       scheduleDraw();
     } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
       // 渐变:拖方向线(Shift 吸附 45°;松手 ≥2px 才发命令)
@@ -1254,11 +1433,45 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const cd = cropDragRef.current;
     if (cd) {
-      cd.x1 = dx;
-      cd.y1 = dy;
-      cd.mods = trackMods(cd.mods, e.shiftKey, e.altKey);
+      const f = cropRef.current!;
+      const preset = cropPresetRatioOf(s.options.cropRatio, s.state.width, s.state.height);
+      if (cd.kind === 'draw') {
+        cropRef.current = { rect: cropDrawn(cd.anchor, [dx, dy], preset, e.shiftKey, e.altKey), angle: 0, edited: true };
+      } else if (cd.kind === 'move') {
+        const ddx = dx - cd.grab[0];
+        const ddy = dy - cd.grab[1];
+        cropRef.current = { rect: [cd.restore.rect[0] + ddx, cd.restore.rect[1] + ddy, cd.restore.rect[2] + ddx, cd.restore.rect[3] + ddy], angle: f.angle, edited: true };
+      } else if (cd.kind === 'resize') {
+        // ratio 语义(上游 resize_ratio):预设始终生效;无预设时 ⇧=保持按下时框的比例
+        const ratio = preset ?? (e.shiftKey ? cd.keepRatio : null);
+        cropRef.current = {
+          rect: cropResizedTurned(cd.restore.rect, f.angle, cd.hx, cd.hy, [dx - cd.press[0], dy - cd.press[1]], ratio, e.altKey),
+          angle: f.angle,
+          edited: true,
+        };
+      } else {
+        cropRef.current = { rect: cd.restore.rect, angle: cropTurnedAngle(cd.center, cd.grab, cd.from, [dx, dy], e.shiftKey), edited: true };
+      }
       scheduleDraw();
       return;
+    }
+    if (s.tool === 'crop' && s.runtime.cropStraightenLine) {
+      const line = s.runtime.cropStraightenLine;
+      s.runtime.cropStraightenLine = { ...line, x1: dx, y1: dy };
+      scheduleDraw();
+      return;
+    }
+    // 裁剪悬停光标:把手=对应缩放箭头,已编辑框内部=move,其余 crosshair
+    if (s.tool === 'crop' && cropRef.current && cropDragRef.current === null) {
+      const f = cropRef.current;
+      const hit = cropHitTurned(f.rect, f.angle, [dx, dy], CROP_HANDLE_PX / s.runtime.view.scale);
+      const cur = hit.kind === 'handle'
+        ? hit.hx !== 0 && hit.hy !== 0 ? (hit.hx * hit.hy > 0 ? 'nwse-resize' : 'nesw-resize') : hit.hx !== 0 ? 'ew-resize' : 'ns-resize'
+        : hit.kind === 'inside' && f.edited ? 'move' : 'crosshair';
+      if (cropCursorRef.current !== cur) {
+        cropCursorRef.current = cur;
+        forceUpdate((n) => n + 1);
+      }
     }
     const gr = gradientRef.current;
     if (gr) {
@@ -1395,9 +1608,29 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
     }
     if (s && cd && s.state) {
-      const r = marqueeRect(cd, cd.mods);
-      // 拖出的框成为裁剪框(即使等于整幅——commit 时判无操作);近零位移保留原框
-      if (r) cropRef.current = r;
+      const f = cropRef.current!;
+      if (cd.kind === 'draw' || cd.kind === 'resize') {
+        // 松手时不满足最小尺寸 → 回退到手势前矩形(上游 size_ok)
+        const ok = f.rect[2] - f.rect[0] >= CROP_MIN_FRAME && f.rect[3] - f.rect[1] >= CROP_MIN_FRAME;
+        if (!ok) cropRef.current = { rect: cd.restore.rect, angle: cd.restore.angle, edited: cd.restore.edited };
+        else cropRef.current = { ...f, edited: true };
+      }
+      scheduleDraw();
+    }
+    const sline = s?.runtime.cropStraightenLine;
+    if (s && sline && s.state) {
+      s.runtime.cropStraightenLine = null;
+      // 线长 ≥3 屏幕像素才生效(上游 MIN_LINE_PX):角度=标尺线转到最近水平/垂直轴
+      const deg = cropFrameAngle([sline.x0, sline.y0], [sline.x1, sline.y1], CROP_MIN_LINE_PX / s.runtime.view.scale);
+      if (deg != null) {
+        // 框保持自身比例(无框=画布比例),求旋转 deg 后仍完全内含于画布的最大居中框
+        const frame = cropRef.current;
+        const w = frame ? frame.rect[2] - frame.rect[0] : s.state.width;
+        const h = frame ? frame.rect[3] - frame.rect[1] : s.state.height;
+        const fitted = cropFitted(w, h, s.state.width, s.state.height, deg);
+        if (fitted) cropRef.current = { rect: fitted, angle: deg, edited: true };
+      }
+      s.runtime.cropStraightenArmed = false; // 一次性:画完一条线自动解除(上游 toggle 口径)
       scheduleDraw();
     }
     const ls = lassoRef.current;
@@ -1462,7 +1695,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     layerBoxRef.current = null;
     moveSeqRef.current += 1;
     lassoRef.current = null;
+    // 裁剪手势中断:回退到手势前矩形;拉直线丢弃(armed 保持,可重画)
+    const cdp = cropDragRef.current;
+    if (cdp) cropRef.current = { rect: cdp.restore.rect, angle: cdp.restore.angle, edited: cdp.restore.edited };
     cropDragRef.current = null;
+    const s0 = getSession(tabId);
+    if (s0) s0.runtime.cropStraightenLine = null;
     gradientRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
@@ -1480,13 +1718,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   if (!session) return null;
-  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'crop', 'eyedropper', 'gradient', 'bucket']);
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'eyedropper', 'gradient', 'bucket']);
   const cursor =
     session.tool === 'hand' || spaceRef.current ? 'grab'
       : session.tool === 'zoom' ? 'zoom-in'
         : BRUSH_TOOLS.has(session.tool) ? 'none'
-          : CROSSHAIR_TOOLS.has(session.tool) ? 'crosshair'
-            : 'default';
+          : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')
+            : CROSSHAIR_TOOLS.has(session.tool) ? 'crosshair'
+              : 'default';
 
   return (
     <div
@@ -1498,9 +1737,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}
-      onDoubleClick={() => {
-        // 裁剪:框内双击提交(上游口径)
-        if (getSession(tabId)?.tool === 'crop') commitCrop();
+      onDoubleClick={(e) => {
+        // 裁剪:框内部双击提交(上游 commits_at:把手/框外不算);doc 坐标取双击位置
+        const s = getSession(tabId);
+        const f = cropRef.current;
+        if (s?.tool !== 'crop' || !s.state || !f) return;
+        const rect = wrapRef.current!.getBoundingClientRect();
+        const [px, py] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+        const hit = cropHitTurned(f.rect, f.angle, [px, py], 0);
+        if (hit.kind === 'inside') commitCrop();
       }}
       onContextMenu={(e) => e.preventDefault()}
     >

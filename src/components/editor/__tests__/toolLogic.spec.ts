@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainStrokePoint, constrainSquare,
-  docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
+  cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
+  cropTurnedAngle, docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
   moveBounds, moveDirtyRect, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snappedDir, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -12,7 +13,7 @@ import type { ToolOptions } from '../editorStore';
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
-  selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer',
+  selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '',
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -321,6 +322,82 @@ describe('画笔 ⇧ 直线约束(上游 stroke_constraint.rs 口径)', () => {
     expect(Math.abs(d[0] - d[1])).toBeLessThan(1e-9);             // 近 45°
     expect(snappedDir([10, 10], [10, 10])).toBeNull();            // 重合:无方向
     expect(projectOn([0, 0], [1, 0], [30, 12])).toEqual([30, 0]); // 投影
+  });
+});
+
+describe('裁剪工具几何(上游 crop_ui / crop_straighten 口径)', () => {
+  it('cropHit:边=把手(小框内侧容差收缩)、内部=inside、框外=outside', () => {
+    const r: [number, number, number, number] = [0, 0, 100, 50];
+    expect(cropHit(r, [0, 0], 8)).toEqual({ kind: 'handle', hx: -1, hy: -1 });       // 左上角
+    expect(cropHit(r, [50, 0], 8)).toEqual({ kind: 'handle', hx: 0, hy: -1 });       // 上边中点
+    expect(cropHit(r, [95, 45], 8)).toEqual({ kind: 'handle', hx: 1, hy: 1 });       // 右下角(同时近两边)
+    expect(cropHit(r, [95, 40], 8)).toEqual({ kind: 'handle', hx: 1, hy: 0 });       // 只近右缘
+    expect(cropHit(r, [50, 25], 8)).toEqual({ kind: 'inside' });
+    expect(cropHit(r, [200, 200], 8)).toEqual({ kind: 'outside' });
+    // 小框:内侧容差收缩到边距 1/4,整框仍可移动
+    const small: [number, number, number, number] = [0, 0, 4, 4];
+    expect(cropHit(small, [2, 2], 8)).toEqual({ kind: 'inside' });
+  });
+  it('cropDrawn:ratio 固定比例(大延伸方向赢)、无 ratio ⇧ 正方形、alt 从中心', () => {
+    // fixedRatio w:h = 2:1:dx=10, dy=30 → k = max(10/2, 30/1) = 30 → (60, 30)(上游测试同款)
+    expect(cropDrawn([0, 0], [10, 30], 2, false, false)).toEqual([0, 0, 60, 30]);
+    // dx=10, dy=3 → k = max(10/2, 3/1) = 5 → (10, 5)
+    expect(cropDrawn([0, 0], [10, 3], 2, false, false)).toEqual([0, 0, 10, 5]);
+    expect(cropDrawn([0, 0], [30, 20], null, true, false)).toEqual([0, 0, 30, 30]);  // ⇧ 正方形
+    expect(cropDrawn([0, 0], [30, 20], null, false, false)).toEqual([0, 0, 30, 20]); // 自由
+    expect(cropDrawn([10, 10], [30, 20], null, false, true)).toEqual([-10, 0, 30, 20]); // alt 从中心
+  });
+  it('cropResized:被拖边移动对边固定;ratio 两轴联动(角把手取相对伸缩更大者);alt 绕中心', () => {
+    const r: [number, number, number, number] = [0, 0, 100, 50];
+    // 右下角把手 d=(20,10):两轴都动,对边固定
+    expect(cropResized(r, 1, 1, [20, 10], null, false)).toEqual([0, 0, 120, 60]);
+    // 左边把手 d=(-20,0):右边缘固定
+    expect(cropResized(r, -1, 0, [-20, 0], null, false)).toEqual([-20, 0, 100, 50]);
+    // ratio 2:1 角把手:相对伸缩 w/2=60 vs h=60 → 相等,结果 120x60
+    expect(cropResized(r, 1, 1, [20, 10], 2, false)).toEqual([0, 0, 120, 60]);
+    // ratio 2:1 只拖上边(h=60):宽随比例联动=120,两轴都变(上游 resized 同款)
+    expect(cropResized(r, 0, -1, [0, -10], 2, false)).toEqual([-10, -10, 110, 50]);
+    // alt 绕中心:对边对称移动
+    expect(cropResized(r, 1, 0, [20, 0], null, true)).toEqual([-20, 0, 120, 50]);
+  });
+  it('cropHitTurned/cropCorners:斜置框命中在其自身轴上;扫角/15° 吸附', () => {
+    const r: [number, number, number, number] = [10, 10, 50, 30]; // 中心 (30,20)
+    // 正置右上 (50,10) 绕中心转 90°(屏幕顺时针):dx=20,dy=-10 → (30+10, 20+20)=(40,40)
+    const cs = cropCorners(r, 90);
+    expect(cs[1][0]).toBeCloseTo(40);
+    expect(cs[1][1]).toBeCloseTo(40);
+    // 点在斜置框的自身轴上才能命中把手:局部右上角在页面 (40,40)
+    expect(cropHitTurned(r, 90, [40, 40], 2).kind).toBe('handle');
+    expect(cropHitTurned(r, 90, [30, 20], 2).kind).toBe('inside');
+    expect(cropHitTurned(r, 90, [0, 0], 2).kind).toBe('outside');
+    // grab=指向左(π),指针扫到上方(-π/2):归一化扫角 = +90
+    expect(cropTurnedAngle([30, 20], Math.PI, 0, [30, 5], false)).toBeCloseTo(90);
+    expect(cropTurnedAngle([0, 0], 0, 0, [10, 1], true)).toBeCloseTo(0);            // ⇧ 15° 吸附
+  });
+  it('cropFittedRatio:保中心只减不增;cropFitted:旋转后内含于画布的最大居中框', () => {
+    const r: [number, number, number, number] = [0, 0, 100, 50];
+    // 已是 2:1 → 原样;16:9(h·ratio=88.9 < w)→ 宽受限内缩、高不变
+    expect(cropFittedRatio(r, 2)).toEqual(r);
+    const f16 = cropFittedRatio(r, 16 / 9)!;
+    expect(f16[2] - f16[0]).toBeCloseTo(800 / 9);
+    expect(f16[3] - f16[1]).toBeCloseTo(50);
+    expect((f16[0] + f16[2]) / 2).toBeCloseTo(50);
+    // 拉直 fitted:200x100 框转 45° 内含于 1000x800:k = min(1000/(150√2), 800/(150√2)) = 800/(150√2)
+    const fitted = cropFitted(200, 100, 1000, 800, 45)!;
+    const k = 800 / (150 * Math.SQRT2);
+    expect(fitted[2] - fitted[0]).toBeCloseTo(200 * k);
+    expect(fitted[3] - fitted[1]).toBeCloseTo(100 * k);
+    expect((fitted[0] + fitted[2]) / 2).toBeCloseTo(500);
+    expect((fitted[1] + fitted[3]) / 2).toBeCloseTo(400);
+    expect(cropFitted(0, 100, 1000, 800, 45)).toBeNull();
+  });
+  it('cropStraightenAngle/cropFrameAngle:近水平/近竖直线转到最近轴(引擎 straighten_angle)', () => {
+    expect(cropStraightenAngle(100, 8.7)).toBeCloseTo(-(Math.atan(8.7 / 100) * 180) / Math.PI, 9); // 线向右下倾 atan(0.087)°
+    expect(cropStraightenAngle(100, -8.7)).toBeCloseTo((Math.atan(8.7 / 100) * 180) / Math.PI, 9);
+    expect(cropStraightenAngle(8.7, 100)).toBeCloseTo(5, 1);      // 近竖直 → 转到竖直
+    // 线向右上倾 5°:图像顺时针转 5° 转平 → 框相对图像逆时针 5°(frame=-rot)
+    expect(cropFrameAngle([0, 0], [100, -8.7], 1)).toBeCloseTo(-(Math.atan(8.7 / 100) * 180) / Math.PI, 9);
+    expect(cropFrameAngle([0, 0], [1, 0], 10)).toBeNull();     // 线长不足
   });
 });
 
