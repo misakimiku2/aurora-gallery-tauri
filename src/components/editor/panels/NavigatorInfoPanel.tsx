@@ -173,7 +173,9 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
   );
 };
 
-export const NavigatorInfoPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
+export const NavigatorInfoPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => void }> = ({
+  tabId, collapsed, onToggle,
+}) => {
   const [tab, setTab] = useState<'nav' | 'info'>('nav');
   return (
     <div className="h-full overflow-y-auto shrink-0">
@@ -181,14 +183,19 @@ export const NavigatorInfoPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
         {([['nav', '导航器'], ['info', '信息']] as const).map(([k, label]) => (
           <button
             key={k}
-            onClick={() => setTab(k)}
+            onClick={() => {
+              // 折叠口径同属性组:点已激活页签=收起/展开;折叠中点任意页签=展开并切换
+              if (collapsed) { setTab(k); onToggle?.(); return; }
+              if (tab === k) onToggle?.();
+              else setTab(k);
+            }}
             className={`px-3 py-1 text-[11px] ${tab === k ? 'text-sky-700 dark:text-neutral-100 border-b-2 border-sky-500' : 'text-gray-500 dark:text-neutral-400 hover:text-gray-700 dark:text-neutral-300'}`}
           >
             {label}
           </button>
         ))}
       </div>
-      {tab === 'nav' ? <NavigatorTab tabId={tabId} /> : <InfoTab tabId={tabId} />}
+      {!collapsed && (tab === 'nav' ? <NavigatorTab tabId={tabId} /> : <InfoTab tabId={tabId} />)}
     </div>
   );
 };

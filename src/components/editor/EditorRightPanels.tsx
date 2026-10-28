@@ -9,7 +9,7 @@
  *   此后容器尺寸再变化(窗口缩放等),按比例缩放各组并保持总高恰好填满。
  * - 容器高到低于各组 minHeight 之和时改为可滚动,页脚仍可达而不是被裁没。
  */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ColorPanel } from './panels/ColorPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { NavigatorInfoPanel } from './panels/NavigatorInfoPanel';
@@ -18,13 +18,23 @@ import { AdjustmentGrid } from './panels/AdjustmentGrid';
 import { AdjustmentProps } from './panels/AdjustmentProps';
 
 /** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。
- * 双击蒙版缩略图等入口经 `aurora-editor-panel` 窗口事件请求切页(与 aurora-editor-saved 同款跨组件信号)。 */
-const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
+ * 双击蒙版缩略图等入口经 `aurora-editor-panel` 窗口事件请求切页(与 aurora-editor-saved 同款跨组件信号)。
+ * 折叠口径:点已激活页签=收起/展开本组内容;折叠中点任意页签=展开并切换。 */
+const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => void }> = ({
+  tabId, collapsed, onToggle,
+}) => {
   const [tab, setTab] = useState<'props' | 'adjust' | 'history'>('history');
+  const collapsedRef = useRef(!!collapsed);
+  collapsedRef.current = !!collapsed;
+  const toggleRef = useRef(onToggle);
+  toggleRef.current = onToggle;
   useEffect(() => {
     const onPanel = (e: Event) => {
       const d = (e as CustomEvent<{ tabId?: string; tab?: 'props' | 'adjust' | 'history' }>).detail;
-      if (d && (d.tabId == null || d.tabId === tabId) && d.tab) setTab(d.tab);
+      if (d && (d.tabId == null || d.tabId === tabId) && d.tab) {
+        setTab(d.tab);
+        if (collapsedRef.current) toggleRef.current?.(); // 折叠中收到切页信号=顺带展开
+      }
     };
     window.addEventListener('aurora-editor-panel', onPanel);
     return () => window.removeEventListener('aurora-editor-panel', onPanel);
@@ -35,18 +45,24 @@ const MidPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
         {([['props', '属性'], ['adjust', '调整'], ['history', '历史记录']] as const).map(([k, label]) => (
           <button
             key={k}
-            onClick={() => setTab(k)}
+            onClick={() => {
+              if (collapsed) { setTab(k); onToggle?.(); return; }
+              if (tab === k) onToggle?.();
+              else setTab(k);
+            }}
             className={`px-2.5 py-1 text-[11px] ${tab === k ? 'text-sky-700 dark:text-neutral-100 border-b-2 border-sky-500' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-300'}`}
           >
             {label}
           </button>
         ))}
       </div>
-      <div className="flex-1 min-h-0 flex flex-col">
-        {tab === 'history' && <HistoryPanel tabId={tabId} />}
-        {tab === 'props' && <AdjustmentProps tabId={tabId} />}
-        {tab === 'adjust' && <AdjustmentGrid tabId={tabId} onAdded={() => setTab('props')} />}
-      </div>
+      {!collapsed && (
+        <div className="flex-1 min-h-0 flex flex-col">
+          {tab === 'history' && <HistoryPanel tabId={tabId} />}
+          {tab === 'props' && <AdjustmentProps tabId={tabId} />}
+          {tab === 'adjust' && <AdjustmentGrid tabId={tabId} onAdded={() => setTab('props')} />}
+        </div>
+      )}
     </div>
   );
 };
@@ -59,12 +75,16 @@ const GROUP_TITLES = ['颜色', '属性 · 调整 · 历史记录', '导航器 �
 /** 分隔条高度(px)。 */
 const DIVIDER_H = 10;
 
-/** 把已定格的各组高度按新可用高缩放:比例保持、钳到各自最小值、误差补进末组,总高恒等于 avail。 */
-const rescale = (prev: number[], avail: number): number[] => {
-  const total = prev.reduce((a, b) => a + b, 0);
-  if (total <= 0 || avail <= 0) return prev;
-  const next = prev.map((h, i) => Math.max(MIN_H[i], (h / total) * avail));
-  next[3] = Math.max(MIN_H[3], next[3] + (avail - next.reduce((a, b) => a + b, 0)));
+/** 把已定格的展开组高度按新可用高缩放:比例保持、钳到各自最小值、误差补进末个展开组;
+ * 折叠组不参与(只占页签条高,bar 由调用方实测扣除),总高恒等于 avail。 */
+const rescale = (prev: number[], expanded: number[], avail: number): number[] => {
+  if (!expanded.length || avail <= 0) return prev;
+  const next = [...prev];
+  const total = expanded.reduce((a, i) => a + prev[i], 0);
+  if (total > 0) for (const i of expanded) next[i] = Math.max(MIN_H[i], (prev[i] / total) * avail);
+  else for (const i of expanded) next[i] = Math.max(MIN_H[i], avail / expanded.length);
+  const last = expanded[expanded.length - 1];
+  next[last] = Math.max(MIN_H[last], next[last] + (avail - expanded.reduce((a, i) => a + next[i], 0)));
   return next;
 };
 
@@ -75,19 +95,41 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [heights, setHeights] = useState<number[] | null>(null);
   const heightsRef = useRef<number[] | null>(null);
   heightsRef.current = heights;
+  /** 组折叠(内容收起只留页签条);点已激活页签切换,再点任意页签展开。 */
+  const [collapsed, setCollapsed] = useState<boolean[]>([false, false, false, false]);
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
+
+  const toggleCollapse = (i: number) => setCollapsed((prev) => prev.map((c, j) => (j === i ? !c : c)));
+
+  // 展开组重新填满(折叠组页签条高按当前 DOM 实测扣除):容器尺寸变化与折叠切换时调用
+  const rescaleExpanded = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setHeights((prev) => {
+      if (!prev) return prev;
+      const bars = collapsedRef.current.reduce(
+        (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
+      );
+      const avail = el.clientHeight - 3 * DIVIDER_H - bars;
+      const expanded = [0, 1, 2, 3].filter((i) => !collapsedRef.current[i]);
+      return rescale(prev, expanded, avail);
+    });
+  }, []);
 
   // 拖动定格后容器高度变化:等比缩放各组,保持恰好填满
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(() => {
-      if (!heightsRef.current) return;
-      const avail = el.clientHeight - 3 * DIVIDER_H;
-      setHeights((prev) => (prev ? rescale(prev, avail) : prev));
-    });
+    const ro = new ResizeObserver(rescaleExpanded);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [rescaleExpanded]);
+
+  // 折叠/展开切换:展开组立即重填(DOM 已按折叠态布局,页签条高可实测)
+  useEffect(() => {
+    rescaleExpanded();
+  }, [collapsed, rescaleExpanded]);
 
   const onDividerDown = (i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
@@ -118,10 +160,19 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   const groups: React.ReactNode[] = [
     <ColorPanel key="color" tabId={tabId} />,
-    <MidPanel key="mid" tabId={tabId} />,
-    <NavigatorInfoPanel key="nav" tabId={tabId} />,
+    <MidPanel key="mid" tabId={tabId} collapsed={collapsed[1]} onToggle={() => toggleCollapse(1)} />,
+    <NavigatorInfoPanel
+      key="nav"
+      tabId={tabId}
+      collapsed={collapsed[2]}
+      onToggle={() => toggleCollapse(2)}
+    />,
     <LayersPanel key="layers" tabId={tabId} />,
   ];
+
+  // 权重模式按展开组归一化:flex 分配是 grow×剩余空间(不除以 Σgrow),GROW 原设计四组之和=1,
+  // 折叠一组后剩余权重不足 1 会底部留空,须把收起组的份额摊给展开组
+  const growSum = GROW.reduce((a, g, i) => a + (collapsed[i] ? 0 : g), 0) || 1;
 
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-panel overflow-y-auto overflow-x-hidden">
@@ -131,9 +182,11 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
             ref={(el) => { groupRefs.current[i] = el; }}
             className="overflow-hidden"
             style={
-              heights
-                ? { height: heights[i], flexShrink: 0, minHeight: MIN_H[i] }
-                : { flexGrow: GROW[i], flexBasis: 0, flexShrink: 1, minHeight: MIN_H[i] }
+              collapsed[i]
+                ? { flexShrink: 0 } // 折叠:只占页签条自然高,不参与权重/定格分配
+                : heights
+                  ? { height: heights[i], flexShrink: 0, minHeight: MIN_H[i] }
+                  : { flexGrow: GROW[i] / growSum, flexBasis: 0, flexShrink: 1, minHeight: MIN_H[i] }
             }
             title={GROUP_TITLES[i]}
           >
