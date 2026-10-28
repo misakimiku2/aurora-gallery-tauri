@@ -505,7 +505,9 @@ const Row: React.FC<{
   maskTargeted: boolean;
   hasSelection: boolean;
   docHasMultipleLayers: boolean;
-}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted, hasSelection, docHasMultipleLayers }) => {
+  /** 链接组 → 全组成员名(链接标识的悬停提示;面板层摊平一次算好)。 */
+  linkPeers?: Map<number, string[]>;
+}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted, hasSelection, docHasMultipleLayers, linkPeers }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const [editing, setEditing] = useState(false);
@@ -612,6 +614,16 @@ const Row: React.FC<{
           {layer.name}
         </span>
       )}
+      {/* 图层间链接标识(上游 layer_row_ui Indicator::Link:link-2 淡色小图标,行右侧指示区;
+          与眼睛旁的"蒙版链接"链条不同——这个表示与其他图层链接,悬停显示同组成员) */}
+      {layer.linkGroup != null && (
+        <span
+          className="shrink-0 text-gray-400 dark:text-neutral-600"
+          title={`已链接图层:${(linkPeers?.get(layer.linkGroup) ?? []).filter((n) => n !== layer.name).join('、') || '单独链接组'}`}
+        >
+          <Link2 size={11} />
+        </span>
+      )}
       {/* 图层颜色标记(用户拍板:圆点放"像素"标签左侧,不占行首) */}
       {label?.swatch && (
         <span
@@ -668,6 +680,20 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
     void run(cmd, { layer: active.id });
   };
 
+  // 链接组 → 全组成员名(行上链接标识的悬停提示):摊平图层树一次算好
+  const linkPeers = new Map<number, string[]>();
+  const collectPeers = (ls: EditorLayer[]): void => {
+    for (const l of ls) {
+      if (l.linkGroup != null) {
+        const arr = linkPeers.get(l.linkGroup);
+        if (arr) arr.push(l.name);
+        else linkPeers.set(l.linkGroup, [l.name]);
+      }
+      if (l.children) collectPeers(l.children);
+    }
+  };
+  collectPeers(st.layers);
+
   const renderRows = (layers: EditorLayer[], depth = 0): React.ReactNode =>
     layers.map((l) => (
       <React.Fragment key={l.id}>
@@ -681,6 +707,7 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           maskTargeted={maskTargeted}
           hasSelection={st.hasSelection}
           docHasMultipleLayers={st.layers.length > 1 || st.layers.some((x) => x.children?.length)}
+          linkPeers={linkPeers}
         />
         {l.children && l.expanded !== false && renderRows(l.children, depth + 1)}
       </React.Fragment>
