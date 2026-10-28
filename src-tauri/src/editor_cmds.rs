@@ -151,6 +151,14 @@ pub fn editor_move_frame(
     Ok(stroke_frame_bytes(f))
 }
 
+/// Alt 复制移动(上游 move_mods 口径):in place 复制选中层并平移,
+/// 历史折叠成一步 "Duplicate + Move"。返回 {revision, layers}。
+#[tauri::command]
+pub fn editor_duplicate_move(s: State<EditorState>, doc: u64, dx: i32, dy: i32) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.duplicate_move(doc, dx, dy).map_err(|e| e.to_string())
+}
+
 
 /// 关闭文档(未保存修改直接丢弃,保存流程由前端先行决定)。
 #[tauri::command]

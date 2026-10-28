@@ -459,13 +459,47 @@ impl EditorManager {
         Ok(StrokeFrame { x: rect.x0, y: rect.y0, width: img.width, height: img.height, pixels: img.pixels })
     }
 
-    /// 移动目标:全部选中层,否则活动层(上游 move_targets 的简化:不含链接层扩散)。
-    fn move_targets(st: &photocraft_engine::DocState) -> Vec<photocraft_engine::doc::LayerId> {
-        if !st.selected_layers.is_empty() {
-            st.selected_layers.clone()
+    /// Alt 复制移动(上游 move_mods:⌥-drag / ⌥-nudge 的整层路径):in place 复制选中层
+    /// (副本成为选中),整体平移 (dx,dy),再把复制与移动折叠成一步 "Duplicate + Move"
+    /// 历史(上游 fold_history:purge_last 回到复制前 + set_current_label)。
+    /// 预览期间前端画的是原图层在动;落笔这一步原子落地,像素相同故无视觉跳变。
+    pub fn duplicate_move(&mut self, doc: u64, dx: i32, dy: i32) -> Result<Value> {
+        self.activate(doc)?;
+        let before = self
+            .session
+            .active()
+            .ok_or_else(|| EditorError("no active document".into()))?
+            .history
+            .past_len();
+        self.session.execute("layer.duplicate", json!({ "inPlace": true }))?;
+        self.session.execute("layer.translate", json!({ "dx": dx, "dy": dy }))?;
+        if let Some(st) = self.session.active_mut() {
+            // 折叠(上游 fold_history 原样):purge_last 只删 undo 栈不动画素——
+            // 弹掉「复制后」的中间状态,一步 Undo 直达复制前;translate 零位移
+            // 不入史时同样落到 before+1,复制步被改名(上游同款边缘)
+            while st.history.past_len() > before + 1 {
+                if !st.history.purge_last() {
+                    break;
+                }
+            }
+            if st.history.past_len() == before + 1 {
+                st.history.set_current_label("Duplicate + Move");
+            }
+            Ok(json!({ "revision": st.revision, "layers": st.selected_layers.iter().map(|id| id.0).collect::<Vec<_>>() }))
         } else {
-            st.active_layer.into_iter().collect()
+            Err(EditorError("no active document".into()))
         }
+    }
+
+    /// 移动目标:全部选中层,否则活动层;**含链接层扩散**(引擎 move_targets =
+    /// with_links + top_level,与 layer.translate 的提交口径一致)。
+    fn move_targets(st: &photocraft_engine::DocState) -> Vec<photocraft_engine::doc::LayerId> {
+        let roots: Vec<_> = if st.selected_layers.is_empty() {
+            st.active_layer.into_iter().collect()
+        } else {
+            st.selected_layers.clone()
+        };
+        photocraft_engine::layer_multi_cmds::move_targets(&st.doc, &roots)
     }
 
 
@@ -587,9 +621,15 @@ impl EditorManager {
 
     /// 状态自省:图层树/历史/选区/通道,透传引擎 `document.inspect`,
     /// 并补上会话级的前/背景色(`inspect::session` 的字段,前端要一轮拿全)。
+    /// **inspect 直调不经 dispatch**:`before_command` 会把浮动选区先落地(上游 UI
+    /// 直读 DocState 不走命令,没这个问题;我们若经命令跑 inspect,每次状态拉取
+    /// 都会掉浮动件,移动工具的浮动预览帧就全废了)。
     pub fn state(&mut self, doc: u64) -> Result<Value> {
         self.activate(doc)?;
-        let mut v = self.session.execute("document.inspect", json!({}))?;
+        let Some(st) = self.session.active() else {
+            return Err(EditorError("no active document".into()));
+        };
+        let mut v = photocraft_engine::inspect::document(st);
         let session = photocraft_engine::inspect::session(&self.session);
         if let Some(obj) = v.as_object_mut() {
             for key in ["foreground", "background"] {
@@ -615,6 +655,12 @@ impl EditorManager {
                 let mut info = serde_json::Map::new();
                 collect_mask_info(&st.doc.layers, &mut info);
                 obj.insert("maskInfo".into(), Value::Object(info));
+                // 锁定态(移动工具 Auto-Select 按下探测:锁定层/背景命中=拖出层选框)
+                let mut locks = serde_json::Map::new();
+                collect_lock_info(&st.doc, &st.doc.layers, &mut locks);
+                obj.insert("lockInfo".into(), Value::Object(locks));
+                // 是否有浮动选区(select.float 进行中;移动工具 Alt 微移分支要用)
+                obj.insert("floating".into(), json!(st.floating.is_some()));
             }
         }
         Ok(v)
@@ -764,6 +810,21 @@ fn collect_mask_info(layers: &[photocraft_engine::doc::Layer], out: &mut serde_j
         }
         if let photocraft_engine::doc::LayerContent::Group(g) = &l.content {
             collect_mask_info(&g.children, out);
+        }
+    }
+}
+
+/// 收集图层锁定态(移动工具 Auto-Select 的按下探测:position/all 锁或背景层的命中
+/// =拖出层选框而非报错,上游 #4058;effective_locks 已含编组继承)。
+fn collect_lock_info(doc: &photocraft_engine::doc::Document, layers: &[photocraft_engine::doc::Layer], out: &mut serde_json::Map<String, Value>) {
+    for l in layers {
+        let locks = doc.effective_locks(l.id);
+        out.insert(
+            l.id.0.to_string(),
+            json!({ "position": locks.position, "all": locks.all, "background": doc.is_background(l.id) }),
+        );
+        if let photocraft_engine::doc::LayerContent::Group(g) = &l.content {
+            collect_lock_info(doc, &g.children, out);
         }
     }
 }

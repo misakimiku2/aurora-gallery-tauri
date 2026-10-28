@@ -210,6 +210,30 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           </label>
           <span className="text-neutral-400 dark:text-neutral-500">点击填充(前景色);Alt+点击=取色</span>
         </>
+      ) : s.tool === 'move' ? (
+        <>
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="按下时拾取光标下的图层(命中空白/锁定层=拖框选层);按住 Ctrl 临时反转">
+            <input
+              type="checkbox" checked={s.options.moveAutoSelect}
+              onChange={(e) => setOptions(tabId, { moveAutoSelect: e.target.checked })}
+              className="accent-sky-600"
+            />
+            自动选择
+          </label>
+          <select
+            value={s.options.moveTarget}
+            disabled={!s.options.moveAutoSelect}
+            onChange={(e) => setOptions(tabId, { moveTarget: e.target.value as ToolOptions['moveTarget'] })}
+            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300 disabled:opacity-40"
+            title="Auto-Select 的拾取目标:图层 / 最外层编组"
+          >
+            <option value="layer">图层</option>
+            <option value="group">组</option>
+          </select>
+          <span className="text-neutral-400 dark:text-neutral-500">
+            拖动移动图层/选区像素;Alt 拖动=复制移动;Alt+方向键=复制微移;Shift 锁轴;Enter 落定浮动
+          </span>
+        </>
       ) : CROSSHAIR_HINT[s.tool] ? (
         <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>
       ) : (

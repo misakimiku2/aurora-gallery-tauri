@@ -4,7 +4,7 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorDuplicateMove, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
@@ -24,6 +24,10 @@ export interface ToolOptions {
   marqueeShape: 'rect' | 'ellipse' | 'row' | 'column';
   /** 选区四态(选项条显式模式,上游 selection_mode):无修饰键时用;修饰键优先。 */
   selectionMode: 'replace' | 'add' | 'subtract' | 'intersect';
+  /** 移动工具 Auto-Select(上游 move_auto_select,默认开):按下时拾取光标下的图层;Ctrl 临时反转。 */
+  moveAutoSelect: boolean;
+  /** Auto-Select 的拾取目标(PS 选项条 图层/组 下拉;组=最外层编组)。 */
+  moveTarget: 'layer' | 'group';
 }
 
 export interface EditorRuntime {
@@ -104,6 +108,8 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       gradientStyle: 'linear',
       marqueeShape: 'rect',
       selectionMode: 'replace',
+      moveAutoSelect: true,
+      moveTarget: 'layer',
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null },
   };
@@ -147,7 +153,9 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
   const s = sessions.get(tabId);
   if (!s || s.docId == null) throw new Error('editor session not open');
   const out = await editorRun(s.docId, cmd, params);
-  await applyRunOutcome(tabId, out, out.revision > 0 || /^(tools|view|channel)\./.test(cmd));
+  // layer.pickAt/selectInRect 只改图层选择(不入史不推进 revision),选择一变面板就要跟上
+  const pull = out.revision > 0 || /^(tools|view|channel)\./.test(cmd) || /^layer\.(pickAt|selectInRect)$/.test(cmd);
+  await applyRunOutcome(tabId, out, pull);
   return out.result;
 }
 
@@ -306,6 +314,19 @@ function exportLayerName(name: string): string {
     .replace(/^\.+/, '')
     .replace(/\.+$/, '');
   return cleaned || 'layer';
+}
+
+/**
+ * Alt 复制移动(上游 move_mods 的整层路径,桥层原子三步):in place 复制选中层
+ * (副本成为选中)→ 平移 → 历史折叠一步 "Duplicate + Move"。走 applyRunOutcome
+ * 的公共收尾(状态/轮廓/重绘),fabricated outcome 只带 revision。
+ */
+export async function duplicateMove(tabId: string, dx: number, dy: number): Promise<{ revision: number; layers: number[] }> {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null) throw new Error('editor session not open');
+  const r = await editorDuplicateMove(s.docId, dx, dy);
+  await applyRunOutcome(tabId, { revision: r.revision, viewRevision: 0, damage: null, result: r }, true);
+  return r;
 }
 
 /**

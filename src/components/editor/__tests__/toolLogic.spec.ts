@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainSquare,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainSquare,
   docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape, normalizeRect, reflectFromCenter,
+  moveBounds, moveDirtyRect, nextMarqueeShape, normalizeRect, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
@@ -11,7 +11,7 @@ import type { ToolOptions } from '../editorStore';
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
-  selectionMode: 'replace',
+  selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer',
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -295,12 +295,28 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
   });
 });
 
-describe('移动工具纯函数(photocraft move_ui 口径)', () => {
-  it('moveDelta:取整;Shift 约束到主轴', () => {
-    expect(moveDelta(10.4, -3.6, false)).toEqual({ dx: 10, dy: -4 });
-    expect(moveDelta(15, 3, true)).toEqual({ dx: 15, dy: 0 }); // 水平为主
-    expect(moveDelta(3, 15, true)).toEqual({ dx: 0, dy: 15 }); // 垂直为主
-    expect(moveDelta(-8, -2, true)).toEqual({ dx: -8, dy: 0 });
+describe('移动工具纯函数(photocraft move_ui/move_mods 口径)', () => {
+  it('constrainMove:无 Shift 原样取整;4 方向锁主轴;8 方向锁 45°(投影长度)', () => {
+    expect(constrainMove([10.4, -3.6], null, 0)).toEqual({ dx: 10, dy: -4 });
+    // 整层(4 方向):水平为主锁 x 轴,投影长度=|dx|
+    expect(constrainMove([15, 3], null, 4)).toEqual({ dx: 15, dy: 0 });
+    expect(constrainMove([3, 15], null, 4)).toEqual({ dx: 0, dy: 15 });
+    expect(constrainMove([-8, -2], null, 4)).toEqual({ dx: -8, dy: 0 });
+    // 浮动像素(8 方向):[14,12] 40.6° → 最近 45° 方向,投影长度 18.38 → (13,13)(上游测试同款)
+    expect(constrainMove([14, 12], null, 8)).toEqual({ dx: 13, dy: 13 });
+    // 恰在 45° 方向上的偏移保持不变;5.7° 偏差的会被吸到 180° 轴上
+    expect(constrainMove([10, 10], null, 8)).toEqual({ dx: 10, dy: 10 });
+    expect(constrainMove([-10, -1], null, 8)).toEqual({ dx: -10, dy: 0 });
+  });
+  it('constrainMove:8° 迟滞——未越过半程线+8° 前保持上一方向', () => {
+    // 45° 已锁定(prev),新偏移 30°(差 15°):半程 22.5°+8°=30.5° > 15° → 保持 45°
+    const prev: [number, number] = [13, 13];
+    const locked = constrainMove([17.3, 10], prev, 8);
+    expect(locked.dx !== 0 && locked.dx === locked.dy).toBe(true); // 仍在 45° 线
+    // 新偏移 0°(与 45° 差 45° > 30.5°)→ 切换到水平轴
+    expect(constrainMove([20, 0], prev, 8)).toEqual({ dx: 20, dy: 0 });
+    // prev 零向量不参与迟滞
+    expect(constrainMove([0, 9], [0, 0], 4)).toEqual({ dx: 0, dy: 9 });
   });
   it('moveDirtyRect:上一帧 ∪ 当前帧偏移下的 bounds,再钳进画布', () => {
     // (10,10,20,20) 从 offset(0,0) 挪到 (5,5):并集 (10,10)-(35,35)
@@ -324,5 +340,17 @@ describe('移动工具纯函数(photocraft move_ui 口径)', () => {
     expect(moveBounds(layers.map((l) => ({ ...l, selected: false })), 4, 64, 64)).toEqual([0, 0, 64, 64]);
     expect(moveBounds(layers.map((l) => ({ ...l, selected: false })), 1, 64, 64)).toEqual([5, 5, 10, 10]);
     expect(moveBounds([], null, 64, 64)).toBeNull();
+  });
+  it('moveBounds:链接层扩散——与根层同 linkGroup 的层并入脏矩形(引擎 with_links 口径)', () => {
+    const layers = [
+      { id: 1, bounds: [0, 0, 10, 10] as [number, number, number, number] | null, selected: false, linkGroup: 1 },
+      { id: 2, bounds: [30, 30, 10, 10] as [number, number, number, number] | null, selected: true, linkGroup: 1 },
+      { id: 3, bounds: [50, 0, 5, 5] as [number, number, number, number] | null, selected: false, linkGroup: 2 },
+      { id: 4, bounds: [8, 8, 4, 4] as [number, number, number, number] | null, selected: false, linkGroup: null },
+    ];
+    // 选中 2(链组 1):1 一起动 → 并集 (0,0)-(40,40);3(组 2)与未链接的 4 不动
+    expect(moveBounds(layers, null, 64, 64)).toEqual([0, 0, 40, 40]);
+    // 无链接组:保持原并集行为
+    expect(moveBounds([layers[3]], 4, 64, 64)).toEqual([8, 8, 4, 4]);
   });
 });

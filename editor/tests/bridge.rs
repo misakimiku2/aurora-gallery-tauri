@@ -276,3 +276,110 @@ fn histogram_below_layer_and_layer_sources() {
     let own0 = own["channels"][0].as_array().unwrap();
     assert!(own0.iter().all(|v| v.as_u64().unwrap() == 0), "an adjustment layer has no own pixels");
 }
+
+/// Alt 复制移动(上游 move_mods 口径):in place 复制 + 平移,历史折叠成一步
+/// "Duplicate + Move";原图层不动,副本成为选中并落在偏移处。
+#[test]
+fn duplicate_move_folds_history_into_one_step() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "layer.new.layer", json!({"name": "A"})).unwrap();
+    m.run(doc, "select.rect", json!({"x": 8, "y": 8, "width": 16, "height": 16})).unwrap();
+    m.run(doc, "edit.fill", json!({"color": "#ff0000"})).unwrap();
+    m.run(doc, "select.deselect", json!({})).unwrap();
+    let a = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    let steps = m.state(doc).unwrap()["history"].as_array().unwrap().len();
+
+    let r = m.duplicate_move(doc, 10, 5).unwrap();
+    let st = m.state(doc).unwrap();
+    let hist = st["history"].as_array().unwrap();
+    assert_eq!(hist.len(), steps + 1, "copy and move fold into one step: {hist:?}");
+    assert_eq!(hist.last().unwrap(), "Duplicate + Move");
+    assert_eq!(r["revision"].as_u64().unwrap(), st["revision"].as_u64().unwrap(), "reported revision matches");
+
+    // 副本成为选中(含 activeLayer);原图层像素原地不动
+    let layers = st["layers"].as_array().unwrap();
+    assert_eq!(layers.len(), 3, "background + A + copy");
+    let copy = st["activeLayer"].as_u64().unwrap();
+    assert_ne!(copy, a);
+    let r2 = m.render_full(doc).unwrap();
+    assert_eq!(px(&r2, 10, 10), [255, 0, 0], "original red square stays at (8..24)");
+    assert_eq!(px(&r2, 24, 19), [255, 0, 0], "the copy sits at (18..34)x(13..29)");
+    assert_eq!(px(&r2, 10, 29), [255, 255, 255], "nothing painted below the original");
+}
+
+/// 移动预览帧含链接层扩散(桥 move_targets 换引擎 with_links 口径):
+/// 链接的两层在预览里一起动,未链接的不动。
+#[test]
+fn move_frame_preview_includes_linked_layers() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "layer.new.layer", json!({"name": "A"})).unwrap();
+    let a = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "select.rect", json!({"x": 4, "y": 4, "width": 8, "height": 8})).unwrap();
+    m.run(doc, "edit.fill", json!({"color": "#ff0000"})).unwrap();
+    m.run(doc, "layer.new.layer", json!({"name": "B"})).unwrap();
+    let b = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "select.rect", json!({"x": 30, "y": 30, "width": 8, "height": 8})).unwrap();
+    m.run(doc, "edit.fill", json!({"color": "#0000ff"})).unwrap();
+    m.run(doc, "select.deselect", json!({})).unwrap();
+    // 链接 A、B(两者选中时 layer.linkLayers 建组),然后只选 A
+    m.run(doc, "layer.select", json!({"layer": a})).unwrap();
+    m.run(doc, "layer.select", json!({"layer": b, "mode": "add"})).unwrap();
+    m.run(doc, "layer.linkLayers", json!({})).unwrap();
+    m.run(doc, "layer.select", json!({"layer": a})).unwrap();
+    let st = m.state(doc).unwrap();
+    let by_id = |st: &serde_json::Value, id: u64| {
+        st["layers"].as_array().unwrap().iter().find(|l| l["id"].as_u64() == Some(id)).cloned().unwrap()
+    };
+    assert_eq!(by_id(&st, a)["linkGroup"], by_id(&st, b)["linkGroup"], "linked layers share a link group");
+    assert!(by_id(&st, a)["linkGroup"].as_u64().is_some(), "linkGroup comes through inspect");
+
+    // 预览帧覆盖两层:移动 10px 后 A 的红方块与 B 的蓝方块都应出现在新位置
+    let f = m.move_frame(doc, "layer", 10, 0, 0, 0, 48, 48).unwrap();
+    let at = |f: &aurora_editor::StrokeFrame, x: i32, y: i32| -> [u8; 3] {
+        let i = (((y - f.y) as usize) * f.width as usize + (x - f.x) as usize) * 4;
+        [f.pixels[i], f.pixels[i + 1], f.pixels[i + 2]]
+    };
+    assert_eq!(at(&f, 16, 8), [255, 0, 0], "linked A moves in the preview");
+    assert_eq!(at(&f, 42, 34), [0, 0, 255], "linked B moves with it");
+    assert_eq!(at(&f, 8, 8), [255, 255, 255], "old A spot is empty in the preview");
+
+    // 未链接时 B 不随 A 动
+    m.run(doc, "layer.linkLayers", json!({})).unwrap(); // toggle = 解链(同组再点)
+    let f = m.move_frame(doc, "layer", 10, 0, 0, 0, 48, 48).unwrap();
+    let at = |f: &aurora_editor::StrokeFrame, x: i32, y: i32| -> [u8; 3] {
+        let i = (((y - f.y) as usize) * f.width as usize + (x - f.x) as usize) * 4;
+        [f.pixels[i], f.pixels[i + 1], f.pixels[i + 2]]
+    };
+    assert_eq!(at(&f, 16, 8), [255, 0, 0], "A still moves");
+    assert_eq!(at(&f, 32, 32), [0, 0, 255], "unlinked B stays");
+}
+
+/// 状态自省补充:lockInfo(锁定/背景,Auto-Select 按下探测用)与 floating(浮动选区)。
+#[test]
+fn state_lock_info_and_floating() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(32, 32, "white").unwrap();
+    let bg = m.state(doc).unwrap()["layers"][0]["id"].as_u64().unwrap();
+    m.run(doc, "layer.new.layer", json!({"name": "A"})).unwrap();
+    let a = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    m.run(doc, "layer.lockLayers", json!({"all": true, "layer": a})).unwrap();
+
+    let st = m.state(doc).unwrap();
+    let locks = st["lockInfo"].as_object().expect("lockInfo object");
+    let bg_locks = &locks[&bg.to_string()];
+    assert_eq!(bg_locks["background"], serde_json::Value::Bool(true), "the Background reports itself");
+    let a_locks = &locks[&a.to_string()];
+    assert_eq!(a_locks["all"], serde_json::Value::Bool(true), "lock all shows up");
+
+    // 浮动选区:select.float 切割后 floating=true,drop 后 false(空层切不出浮动件,先填像素)
+    m.run(doc, "layer.lockLayers", json!({"all": false, "layer": a})).unwrap();
+    m.run(doc, "select.rect", json!({"x": 4, "y": 4, "width": 8, "height": 8})).unwrap();
+    m.run(doc, "edit.fill", json!({"color": "#00ff00"})).unwrap();
+    m.run(doc, "select.rect", json!({"x": 4, "y": 4, "width": 8, "height": 8})).unwrap();
+    m.run(doc, "select.float", json!({"dx": 0, "dy": 0})).unwrap();
+    assert_eq!(m.state(doc).unwrap()["floating"], serde_json::Value::Bool(true));
+    m.run(doc, "select.drop", json!({})).unwrap();
+    assert_eq!(m.state(doc).unwrap()["floating"], serde_json::Value::Bool(false));
+}

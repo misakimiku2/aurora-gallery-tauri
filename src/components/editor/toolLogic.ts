@@ -306,12 +306,36 @@ export function brushSizeStep(size: number, dir: 1 | -1): number {
   return Math.min(500, Math.max(1, Math.round(size + dir * step)));
 }
 
-/** 移动拖拽的位移取整;Shift 按住时约束到主轴(上游 constrain 的简化:无 8° 迟滞)。 */
-export function moveDelta(dx: number, dy: number, shift: boolean): { dx: number; dy: number } {
-  const rdx = Math.round(dx);
-  const rdy = Math.round(dy);
-  if (!shift) return { dx: rdx, dy: rdy };
-  return Math.abs(rdx) >= Math.abs(rdy) ? { dx: rdx, dy: 0 } : { dx: 0, dy: rdy };
+/**
+ * 移动拖拽的 ⇧ 约束(上游 move_mods::constrain 原样移植):
+ * - `dirs=4`(整层):锁到水平/垂直主轴;`dirs=8`(浮动选区像素):轴 + 45° 斜向;
+ * - 迟滞 8°:上一帧锁定的方向在指针越过半程线再多 8° 前不切换(防对角线附近抖动);
+ * - 结果精确落在锁定方向上(投影长度取模,浮点噪声钳 0)。
+ * 无 ⇧(dirs=0)原样返回并取整。
+ */
+export function constrainMove(
+  d: [number, number], prev: [number, number] | null, dirs: 0 | 4 | 8,
+): { dx: number; dy: number } {
+  const len = Math.hypot(d[0], d[1]);
+  let [x, y] = d;
+  if (dirs !== 0 && Number.isFinite(len) && len > 0) {
+    const step = (Math.PI * 2) / dirs;
+    const a = Math.atan2(d[1], d[0]);
+    let k = Math.round(a / step);
+    const p = prev && Math.hypot(prev[0], prev[1]) > 0 ? prev : null;
+    if (p) {
+      const kp = Math.round(Math.atan2(p[1], p[0]) / step);
+      // 与上一方向的角度差,折到 [0, 2π);未过半程线+8° 迟滞则保持原方向
+      const off = ((a - kp * step) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      if (off < step / 2 + (8 * Math.PI) / 180) k = kp;
+    }
+    const [s, c] = [Math.sin(k * step), Math.cos(k * step)];
+    const t = Math.max(0, d[0] * c + d[1] * s);
+    const clean = (v: number) => (Math.abs(v) < 1e-9 ? 0 : v);
+    x = clean(t * c);
+    y = clean(t * s);
+  }
+  return { dx: Math.round(x), dy: Math.round(y) };
 }
 
 /**
@@ -337,22 +361,43 @@ export function moveDirtyRect(
   return { x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0 };
 }
 
-/** 活动层(或选中层并集)的外接框,文档坐标;无 bounds(如空层)回退整幅画布。 */
+/** 活动层(或选中层并集)**连同链接层**的外接框,文档坐标;无 bounds(如空层)回退整幅画布。
+ * 链接扩散 = 引擎 move_targets 的 with_links 口径:与任一根层同 linkGroup 的层一起动,
+ * 脏矩形必须并上它们的 bounds,否则链接层拖出残影。 */
 export function moveBounds(
-  layers: { id: number; bounds: [number, number, number, number] | null; selected: boolean }[],
+  layers: { id: number; bounds: [number, number, number, number] | null; selected: boolean; linkGroup?: number | null }[],
   activeLayer: number | null,
   docW: number,
   docH: number,
 ): [number, number, number, number] | null {
   const ids = new Set(layers.filter((l) => l.selected).map((l) => l.id));
-  const moving = layers.filter((l) => ids.size > 0 ? ids.has(l.id) : l.id === activeLayer);
-  if (!moving.length) return null;
+  const roots = layers.filter((l) => (ids.size > 0 ? ids.has(l.id) : l.id === activeLayer));
+  if (!roots.length) return null;
+  const groups = new Set(roots.map((l) => l.linkGroup).filter((g): g is number => g != null));
+  const moving = groups.size
+    ? layers.filter((l) => roots.includes(l) || (l.linkGroup != null && groups.has(l.linkGroup)))
+    : roots;
   const boxes = moving.map((l) => l.bounds ?? [0, 0, docW, docH]);
   const x0 = Math.min(...boxes.map((b) => b[0]));
   const y0 = Math.min(...boxes.map((b) => b[1]));
   const x1 = Math.max(...boxes.map((b) => b[0] + b[2]));
   const y1 = Math.max(...boxes.map((b) => b[1] + b[3]));
   return [x0, y0, x1 - x0, y1 - y0];
+}
+
+/** Auto-Select 按下探测参数(layer.pickAt select:false;上游 canvas.rs 按下分发口径)。 */
+export function movePickParams(
+  x: number, y: number, opts: { moveTarget: 'layer' | 'group' }, select: boolean,
+  mode: 'replace' | 'add' | 'toggle' = 'replace',
+): Record<string, unknown> {
+  return { x, y, target: opts.moveTarget, select, mode };
+}
+
+/** 层选框提交参数(layer.selectInRect;空白处拖框选层,引擎按需钳负宽高)。 */
+export function moveSelectRectParams(
+  start: [number, number], w: number, h: number, opts: { moveTarget: 'layer' | 'group' }, add: boolean,
+): Record<string, unknown> {
+  return { x: start[0], y: start[1], width: w, height: h, target: opts.moveTarget, mode: add ? 'add' : 'replace' };
 }
 
 /**

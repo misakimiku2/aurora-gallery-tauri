@@ -139,6 +139,11 @@ export async function editorMoveFrame(
   return parseStrokeFrame(buf);
 }
 
+/** Alt 复制移动(上游 move_mods 口径):in place 复制选中层并平移,历史折叠一步 "Duplicate + Move"。 */
+export async function editorDuplicateMove(doc: number, dx: number, dy: number): Promise<{ revision: number; layers: number[] }> {
+  return invoke<{ revision: number; layers: number[] }>('editor_duplicate_move', { doc, dx, dy });
+}
+
 /** 选区真实轮廓(边界线段 [x0,y0,x1,y1],文档像素坐标;蚂蚁线数据源)。无选区为 null。 */
 export async function editorSelectionOutline(doc: number, step: number): Promise<{ step: number; segments: number[][] } | null> {
   return invoke<{ step: number; segments: number[][] } | null>('editor_selection_outline', { doc, step });

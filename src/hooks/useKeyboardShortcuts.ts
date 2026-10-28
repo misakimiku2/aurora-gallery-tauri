@@ -72,6 +72,8 @@ export function useKeyboardShortcuts(opts: Opts) {
       if (e.key === 'Delete') {
         // 在输入框里删字符不该顺手删文件（查看器开着时右侧面板就是可编辑的）
         if (e.isComposing || isTextEditingTarget(e.target)) return;
+        // 编辑器标签页:Delete/Backspace 是清除/填充像素的 PS 键位,不删图库文件
+        if (inEditor) return;
         if (selectedFileIds && selectedFileIds.length > 0) {
           e.preventDefault();
           onRequestDelete(selectedFileIds);

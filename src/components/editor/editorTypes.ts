@@ -14,6 +14,8 @@ export interface EditorLayer {
   selected: boolean;
   /** 图层颜色标记(inspect labelColor;none/red/.../gray,PS 行染色口径)。 */
   labelColor?: string;
+  /** 链接组 id(inspect linkGroup;同组图层随移动工具一起动,引擎 with_links 口径)。 */
+  linkGroup?: number | null;
   children?: EditorLayer[];
   expanded?: boolean;
   /** 调整层(inspect 附加字段):kind 与 layer.setAdjustment/newAdjustmentLayer 同口径。 */
@@ -58,6 +60,10 @@ export interface EditorDocState {
   layerMaskView?: { layer: number; mode: 'gray' | 'overlay' } | null;
   /** 带像素蒙版图层的蒙版态(桥层补充,inspect 只有 hasMask 布尔):layerId → 蒙版态(密度 0..1/羽化 px 供属性面板回显)。 */
   maskInfo?: Record<string, { enabled: boolean; linked: boolean; density?: number; feather?: number }>;
+  /** 图层锁定态(桥层补充;移动工具 Auto-Select 按下探测:锁定层/背景命中=拖出层选框)。 */
+  lockInfo?: Record<string, { position: boolean; all: boolean; background: boolean }>;
+  /** 是否有浮动选区(select.float 进行中;移动工具 Alt+方向键的复制微移分支要用)。 */
+  floating?: boolean;
 }
 
 export interface EditorOpenInfo {

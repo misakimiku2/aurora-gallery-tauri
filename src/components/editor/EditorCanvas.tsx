@@ -8,15 +8,15 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorMaskSnapshot, editorMoveFrame, editorRender, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorMaskSnapshot, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
+import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, effectiveMode, gradientParams, initialMods,
-  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDelta, moveDirtyRect, nextMarqueeShape,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, effectiveMode, gradientParams, initialMods,
+  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   type BrushFamilyTool, type DragPoint, type DragMods,
@@ -79,12 +79,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     bounds: [number, number, number, number] | null;
     lastDx: number;
     lastDy: number;
+    /** ⇧ 约束的上一帧锁定偏移(8° 迟滞保持方向稳定,上游 move_mods.last)。 */
+    lastConstrain: [number, number] | null;
+    /** Alt 按下(整层路径:抬笔走 duplicate_move 原子复制+移动;浮动态在 begin 已带 copy)。 */
+    alt: boolean;
     /** rAF 语义的合帧:待发送的最新指针位置。 */
     pending: { x: number; y: number; shift: boolean } | null;
     flushing: boolean;
     /** float 模式:按下切割(select.float)完成后才可预览;失败则降级 layer。 */
     ready: Promise<void>;
   } | null>(null);
+  /** 按下代次:pointerdown/up 各自递增;Auto-Select 的异步 pick 链靠它核对按下是否已被抬起/替换。 */
+  const moveSeqRef = useRef(0);
+  /** 层选框(move_box 口径:Auto-Select 命中空白/锁定层,拖框选层,松手 selectInRect)。 */
+  const layerBoxRef = useRef<{ start: [number, number]; end: [number, number]; add: boolean } | null>(null);
   /** 浮动件已提交偏移(select.float 结果回读;脏矩形计算用,选区/revision 变了作废)。 */
   const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
   /** 套索拖拽中(上游 lasso_ui 口径:每个 pointer 事件采一点、实线预览、<3 点=取消选择)。 */
@@ -341,6 +349,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
     }
 
+    // overlay:层选框(移动工具 Auto-Select 命中空白/锁定层时按下拖框选层;
+    // 上游 move_box::draw 口径 = 蚂蚁线矩形)
+    if (layerBoxRef.current) {
+      const lb = layerBoxRef.current;
+      const lx = Math.min(lb.start[0], lb.end[0]) * v.scale + v.ox;
+      const ly = Math.min(lb.start[1], lb.end[1]) * v.scale + v.oy;
+      const lw = Math.abs(lb.end[0] - lb.start[0]) * v.scale;
+      const lh = Math.abs(lb.end[1] - lb.start[1]) * v.scale;
+      drawAnts((c) => {
+        c.beginPath();
+        c.rect(lx, ly, lw, lh);
+      });
+    }
+
     // overlay:笔刷圆环光标(画笔族)
     if (BRUSH_TOOLS.has(s.tool) && s.runtime.pointerDoc) {
       const r = Math.max(1, (s.options.brushSize / 2) * v.scale);
@@ -358,7 +380,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
     // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位(≈15px/s,近 photocraft 上游 10);
     // 选区消失后本循环自然停
-    if (s.state.hasSelection || marqueeRef.current) {
+    if (s.state.hasSelection || marqueeRef.current || layerBoxRef.current) {
       s.runtime.antsPhase = (s.runtime.antsPhase + 0.25) % 8;
       scheduleDraw();
     }
@@ -499,7 +521,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         st.pending = null;
         if (!p) break;
         await st.ready;
-        const { dx, dy } = moveDelta(p.x - st.startDoc.x, p.y - st.startDoc.y, p.shift);
+        const dirs = st.mode === 'float' ? 8 : 4;
+        const { dx, dy } = constrainMove([p.x - st.startDoc.x, p.y - st.startDoc.y], st.lastConstrain, p.shift ? dirs : 0);
+        st.lastConstrain = [dx, dy];
         if (dx === st.lastDx && dy === st.lastDy) continue;
         const s = getSession(tabId);
         if (!s?.state || s.docId == null) break;
@@ -543,14 +567,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId, applyStrokeFrame]);
 
-  /** 移动工具落笔:有选区且活动层是像素层 → 切割浮动(上游口径:不看按下点是否在选区内);
-   * 引擎拒绝(锁定/非像素层)降级整层;无选区直接整层。 */
-  const beginMoveDrag = useCallback((
-    s: EditorSession, x: number, y: number,
+  /** 建移动拖拽状态(float=选区像素浮动 / layer=整层)。 */
+  const startMoveDrag = useCallback((
+    s: EditorSession, x: number, y: number, opts: { alt: boolean },
   ) => {
     const st0 = s.state!;
     const layer = st0.layers.find((l) => l.id === st0.activeLayer);
-    const floatable = st0.hasSelection && layer?.kind === 'Pixel';
+    const floatable = st0.hasSelection && (st0.selectedLayers.length <= 1) && (layer?.visible ?? false) && layer?.kind === 'Pixel';
     const layerBounds = () => moveBounds(st0.layers, st0.activeLayer, st0.width, st0.height);
     const st = {
       mode: (floatable ? 'float' : 'layer') as 'float' | 'layer',
@@ -558,13 +581,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       bounds: floatable ? st0.selectionBounds : layerBounds(),
       lastDx: 0,
       lastDy: 0,
+      lastConstrain: null as [number, number] | null,
+      alt: opts.alt,
       pending: null as { x: number; y: number; shift: boolean } | null,
       flushing: false,
       ready: Promise.resolve(),
     };
     moveDragRef.current = st;
     if (floatable) {
-      st.ready = runCommand(tabId, 'select.float', { dx: 0, dy: 0 })
+      // ⌥=复制浮动(引擎 select.float copy:留原件浮副本);零位移只切浮动不入史
+      st.ready = runCommand(tabId, 'select.float', { dx: 0, dy: 0, copy: opts.alt })
         .then(() => undefined, () => {
           // 引擎拒绝(层锁定等):降级整层移动
           if (moveDragRef.current === st) {
@@ -574,6 +600,63 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         });
     }
   }, [tabId]);
+
+  /** 层选框(move_box 口径):Auto-Select 命中空白/锁定层的按下改为拖框选层。 */
+  const beginLayerBox = useCallback((s: EditorSession, x: number, y: number, add: boolean) => {
+    layerBoxRef.current = { start: [x, y], end: [x, y], add };
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  /** 移动工具落笔(上游 canvas.rs Move Down 分发):
+   * ① 选区像素可浮动 → 直接切浮动(不做 Auto-Select,选中的像素就是活动层的);
+   * ② Auto-Select(选项开且没按 Ctrl / 选项关且按了 Ctrl)→ 探测光标下图层:
+   *    锁定层/背景命中 = 点击选中 + 拖出层选框(上游 #4058);完全空白 = 层选框;
+   *    命中 = 选中(已选中的多选保持,引擎口径)后照常拖动;
+   * ③ 其余 = 整层拖动(链接层随引擎 with_links 扩散)。
+   * 探测是异步 IPC:seq 防「探测回来前已抬起/再次按下」。 */
+  const beginMoveDrag = useCallback((
+    s: EditorSession, x: number, y: number, mods: { alt: boolean; ctrl: boolean; shift: boolean },
+  ) => {
+    const st0 = s.state!;
+    const layer = st0.layers.find((l) => l.id === st0.activeLayer);
+    const pixelsFloatable = st0.hasSelection && st0.selectedLayers.length <= 1
+      && (layer?.visible ?? false) && layer?.kind === 'Pixel';
+    const seq = moveSeqRef.current;
+    if (pixelsFloatable || s.options.moveAutoSelect === mods.ctrl) {
+      // Ctrl 临时反转 Auto-Select(上游 move_auto_select != mods.command)
+      startMoveDrag(s, x, y, { alt: mods.alt });
+      return;
+    }
+    void (async () => {
+      const pickMode = mods.shift ? 'add' : 'replace';
+      try {
+        const probe = (await runCommand(tabId, 'layer.pickAt', movePickParams(x, y, s.options, false))) as { layer: number | null } | null;
+        if (moveSeqRef.current !== seq || !getSession(tabId)?.state) return;
+        const hit = probe?.layer ?? null;
+        const lock = hit != null ? s.state?.lockInfo?.[String(hit)] : undefined;
+        const lockedHit = !!lock && (lock.position || lock.all || lock.background);
+        const emptyAt = async () => {
+          const list = (await runCommand(tabId, 'layer.pickAt', { x, y, list: true })) as { layers: unknown[] };
+          return (list?.layers?.length ?? 0) === 0;
+        };
+        if (lockedHit || (!hit && (await emptyAt()))) {
+          // 锁定层仍被点击选中(PS 口径);拖拽画层选框,松手替换/添加
+          if (lockedHit) {
+            await runCommand(tabId, 'layer.pickAt', movePickParams(x, y, s.options, true, pickMode)).catch(() => undefined);
+            if (moveSeqRef.current !== seq) return;
+          }
+          beginLayerBox(s, x, y, mods.shift);
+          return;
+        }
+        await runCommand(tabId, 'layer.pickAt', movePickParams(x, y, s.options, true, pickMode));
+        if (moveSeqRef.current !== seq || !getSession(tabId)?.state) return;
+        startMoveDrag(s, x, y, { alt: mods.alt });
+      } catch {
+        // 探测失败(会话已关等):退回整层拖动
+        if (moveSeqRef.current === seq && getSession(tabId)?.state) startMoveDrag(s, x, y, { alt: mods.alt });
+      }
+    })();
+  }, [tabId, startMoveDrag, beginLayerBox]);
 
   /** 裁剪提交(上游 commit_crop 口径;image.crop,历史 "Crop",选区随裁剪清除):
    * 未触碰默认框/整幅框=无操作;框钳进画布(画布外扩展留待办)。 */
@@ -780,34 +863,59 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           return;
         }
       }
-      // 方向键微移(上游 arrow_keys 口径:1px / Shift 10px):
-      // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate
+      // 方向键微移(上游 arrow_keys/move_mods::nudge 口径:1px / Shift 10px):
+      // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate;
+      // Alt = 复制后微移(浮动像素:落定再浮副本移动;整层:桥层原子复制+平移+折叠一步)
       if (s.tool === 'move' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
         e.preventDefault();
         const dist = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -dist : e.key === 'ArrowRight' ? dist : 0;
         const dy = e.key === 'ArrowUp' ? -dist : e.key === 'ArrowDown' ? dist : 0;
-        if (s.state?.hasSelection) {
-          void runCommand(tabId, 'select.float', { dx, dy })
-            .then((r) => {
-              // float 不推进 revision,不触发重渲:按结果 offset 补预览帧
-              const s2 = getSession(tabId);
-              const off = (r as { offset?: [number, number] } | null)?.offset;
-              if (s2?.state && off) applyFloatOffsetFrame(s2, off, dx, dy);
-            })
-            .catch(() => {
-              // 层不可浮(锁定/非像素层):降级整层
-              void runCommand(tabId, 'layer.translate', { dx, dy }).catch((err) => logError('[editor] 移动失败', err));
-            });
+        const s0 = s.state;
+        const applyFloat = (r: unknown) => {
+          const s2 = getSession(tabId);
+          const off = (r as { offset?: [number, number] } | null)?.offset;
+          if (s2?.state && off) applyFloatOffsetFrame(s2, off, dx, dy);
+        };
+        const translate = () => void runCommand(tabId, 'layer.translate', { dx, dy }).catch((err) => logError('[editor] 移动失败', err));
+        if (e.altKey && s0) {
+          if (s0.hasSelection) {
+            const floatCopy = () => runCommand(tabId, 'select.float', { dx, dy, copy: true }).then(applyFloat);
+            // 已有浮动件:先落定(上游 float_selected copy 口径),再浮副本按 (dx,dy) 移动
+            void (s0.floating ? runCommand(tabId, 'select.drop', {}).then(floatCopy) : floatCopy())
+              .catch(() => void duplicateMove(tabId, dx, dy).catch((err) => logError('[editor] Alt 复制微移失败', err)));
+          } else {
+            void duplicateMove(tabId, dx, dy).catch((err) => logError('[editor] Alt 复制微移失败', err));
+          }
+          return;
+        }
+        if (s0?.hasSelection) {
+          void runCommand(tabId, 'select.float', { dx, dy }).then(applyFloat).catch(translate);
         } else {
-          void runCommand(tabId, 'layer.translate', { dx, dy }).catch((err) => logError('[editor] 移动失败', err));
+          translate();
+        }
+        return;
+      }
+      // PS 键位 Delete/Backspace(上游 edit.clear/edit.fill 同键):清除 = 清选区内容
+      // (无选区=整层,引擎口径);Alt+=填充前景色;Ctrl+=填充背景色。preventDefault
+      // 挡住 webview 的后退/删词默认行为
+      if (e.key === 'Backspace' || e.key === 'Delete' || e.code === 'Backspace' || e.code === 'Delete') {
+        e.preventDefault();
+        if (e.altKey) {
+          void runCommand(tabId, 'edit.fill', { contents: 'foreground' }).catch((err) => logError('[editor] 填充前景色失败', err));
+        } else if (e.ctrlKey || e.metaKey) {
+          void runCommand(tabId, 'edit.fill', { contents: 'background' }).catch((err) => logError('[editor] 填充背景色失败', err));
+        } else {
+          void runCommand(tabId, 'edit.clear', {}).catch((err) => logError('[editor] 清除失败', err));
         }
         return;
       }
       if (e.ctrlKey || e.metaKey) {
         const k = e.key.toLowerCase();
-        // 撤销/重做(与工具栏按钮同命令);e.code 兜底防 IME 吃掉字母键
-        const k2 = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y' : k;
+        // 撤销/重做/图层操作(与工具栏按钮同命令);e.code 兜底防 IME 吃掉字母键
+        const k2 = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y'
+          : e.code === 'KeyJ' ? 'j' : e.code === 'KeyG' ? 'g'
+            : e.code === 'KeyE' ? 'e' : e.code === 'KeyN' ? 'n' : k;
         if (k2 === 'z') {
           e.preventDefault();
           const redo = e.shiftKey;
@@ -839,6 +947,36 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           void exportLayerAsPng(tabId).then((r) => {
             if (!r) console.warn('[editor] 快速导出跳过:会话未打开或无活动图层');
           }).catch((err) => logError('[editor] 快速导出失败', err));
+        } else if (k2 === 'e') {
+          // Ctrl+E = 合并图层(单选=向下合并,上游 layer.mergeLayers 口径;
+          // Ctrl+Shift+E 已被快速导出占用,合并可见走图层右键菜单)
+          e.preventDefault();
+          void runCommand(tabId, 'layer.mergeLayers', {}).catch((err) => logError('[editor] 合并图层失败', err));
+        } else if (k2 === 'j') {
+          // Ctrl+J = 通过拷贝的图层(带选区=仅拷选中像素);Ctrl+Shift+J = 通过剪切
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'layer.new.layerViaCut' : 'layer.new.layerViaCopy', {})
+            .catch((err) => logError('[editor] 建图层失败', err));
+        } else if (k2 === 'g') {
+          // Ctrl+G = 编组;Ctrl+Shift+G = 解组(上游 Cmd+G / layer.ungroupLayers)
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'layer.ungroupLayers' : 'layer.groupLayers', {})
+            .catch((err) => logError('[editor] 编组失败', err));
+        } else if (k2 === 'n' && e.shiftKey) {
+          // Ctrl+Shift+N = 新建图层(无对话框直建,上游 ⌥⇧⌘N 口径)
+          e.preventDefault();
+          void runCommand(tabId, 'layer.new.layer', {}).catch((err) => logError('[editor] 新建图层失败', err));
+        } else if (e.code === 'BracketRight' || k === ']') {
+          // Ctrl+] = 上移一层;Ctrl+Shift+] = 移到最前(上游 Cmd+]/Cmd+Shift+];
+          // e.code 兜底 IME 吃掉方括号键)
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'layer.arrange.bringToFront' : 'layer.arrange.bringForward', {})
+            .catch((err) => logError('[editor] 移动层序失败', err));
+        } else if (e.code === 'BracketLeft' || k === '[') {
+          // Ctrl+[ = 下移一层;Ctrl+Shift+[ = 移到最后
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'layer.arrange.sendToBack' : 'layer.arrange.sendBackward', {})
+            .catch((err) => logError('[editor] 移动层序失败', err));
         } else if (k === 'd') {
           e.preventDefault();
           void runCommand(tabId, 'select.deselect', {}).catch(console.error);
@@ -943,7 +1081,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 一笔进行中时忽略再次按下(鼠标不会出现;触屏多指防把进行中描边的 live 顶掉)
       if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
     } else if (s.tool === 'move' && e.button === 0 && s.state) {
-      beginMoveDrag(s, dx, dy);
+      moveSeqRef.current += 1;
+      beginMoveDrag(s, dx, dy, { alt: e.altKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
     } else if (s.tool === 'lasso' && e.button === 0 && s.state) {
       // 套索:按下即起笔(上游绕过拖拽阈值口径),首点入列
       lassoRef.current = { points: [[dx, dy]], mods: initialMods(e.shiftKey, e.altKey) };
@@ -1010,6 +1149,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       void flushMove();
       return;
     }
+    const lb = layerBoxRef.current;
+    if (lb) {
+      lb.end = [dx, dy];
+      scheduleDraw();
+      return;
+    }
     const ls = lassoRef.current;
     if (ls) {
       // 上游口径:每个 PointerMoved 事件都采一个顶点(无距离节流),仅完全重复去重
@@ -1074,11 +1219,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       moveDragRef.current = null;
       const rect = wrapRef.current!.getBoundingClientRect();
       const [ux, uy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
-      const { dx, dy } = moveDelta(ux - md.startDoc.x, uy - md.startDoc.y, e.shiftKey);
+      const dirs = md.mode === 'float' ? 8 : 4;
+      const { dx, dy } = constrainMove([ux - md.startDoc.x, uy - md.startDoc.y], md.lastConstrain, e.shiftKey ? dirs : 0);
       const moved = dx !== 0 || dy !== 0;
       if (md.mode === 'float') {
         if (moved) {
-          // 提交总位移(累加进浮动件并保持浮动;落定=Enter/下一命令,上游口径)
+          // 提交总位移并**立即落定**(PS Move 工具口径,用户已验收"历史即 Move 一步";
+          // 上游 photocraft 保持浮动到 Enter,我们此前因状态拉取掉件恰好是立即落定的
+          // 行为,state() 改直调 inspect 后把它显式化)。drop 把选区随像素一起挪,
+          // 蚂蚁线自动跟上;整幅重渲由 drop 的 revision 驱动
           void runCommand(tabId, 'select.float', { dx, dy })
             .then((r) => {
               const off = (r as { offset?: [number, number] } | null)?.offset;
@@ -1088,27 +1237,53 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
                   x: off[0], y: off[1], rev: s2.revision, sel: s2.state.selectionBounds?.join(',') ?? '',
                 };
               }
-              // 预览未覆盖到的最终位移补一帧(提交后 extra=0 即正式视图)
+              // 落定前补一帧(piece 仍浮动,extra=0 即提交后的正式视图),整幅重渲到达前不闪旧位
               const s3 = getSession(tabId);
               if ((dx !== md.lastDx || dy !== md.lastDy) && s3?.state && s3.docId != null) {
                 const dirty = moveDirtyRect(md.bounds, md.lastDx, md.lastDy, dx, dy, s3.state.width, s3.state.height);
                 if (dirty.w > 0) {
                   void editorMoveFrame(s3.docId, 'float', 0, 0, dirty.x, dirty.y, dirty.w, dirty.h)
-                    .then((f) => applyStrokeFrame(s3, f))
+                    .then((f) => applyStrokeFrame(getSession(tabId), f))
                     .catch(() => undefined);
                 }
               }
+              return runCommand(tabId, 'select.drop', {});
             })
             .catch((err) => logError('[editor] select.float 提交失败', err));
         } else {
           // 原地点击:放回(未动过的 piece 无变化、零历史)
           void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
         }
+      } else if (moved && md.alt) {
+        // Alt 拖动 = 复制选中层并移动(桥层原子三步,历史折叠一步 "Duplicate + Move";
+        // 预览画的是原图层在动,提交后整幅重渲即终态,像素相同无跳变)
+        void duplicateMove(tabId, dx, dy).catch((err) => logError('[editor] Alt 复制移动失败', err));
       } else if (moved) {
-        // 整层:一条 layer.translate 一步 "Move" 历史;revision 变化触发整幅重渲
-        void runCommand(tabId, 'layer.translate', { dx, dy, ...(s.state.hasSelection ? { selection: true } : {}) })
+        // 整层:一条 layer.translate 一步 "Move" 历史;多选层带选区一起走(上游 #7538);
+        // revision 变化触发整幅重渲
+        const carry = s.state.selectedLayers.length > 1 && s.state.hasSelection;
+        void runCommand(tabId, 'layer.translate', { dx, dy, ...(carry ? { selection: true } : {}) })
           .catch((err) => logError('[editor] layer.translate 失败', err));
       }
+    }
+    moveSeqRef.current += 1;
+    const lb = layerBoxRef.current;
+    layerBoxRef.current = null;
+    if (s && lb && s.state) {
+      // 上游 move_box:松手按框选层(selectInRect,负宽高引擎归一);⇧=添加;
+      // 点击(w=h=0)在画板外=取消图层选择,画布内空白点击不动选择(#4923)
+      const w = lb.end[0] - lb.start[0];
+      const h = lb.end[1] - lb.start[1];
+      if (w === 0 && h === 0 && !lb.add) {
+        const b = s.state;
+        const outside = lb.start[0] < 0 || lb.start[1] < 0 || lb.start[0] >= b.width || lb.start[1] >= b.height;
+        if (outside) void runCommand(tabId, 'select.deselectLayers', {}).catch(() => undefined);
+      }
+      if (w !== 0 && h !== 0) {
+        void runCommand(tabId, 'layer.selectInRect', moveSelectRectParams(lb.start, w, h, s.options, lb.add))
+          .catch((err) => logError('[editor] layer.selectInRect 失败', err));
+      }
+      scheduleDraw();
     }
     const m = marqueeRef.current;
     marqueeRef.current = null;
@@ -1184,6 +1359,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
     }
     moveDragRef.current = null;
+    layerBoxRef.current = null;
+    moveSeqRef.current += 1;
     lassoRef.current = null;
     cropDragRef.current = null;
     gradientRef.current = null;
