@@ -100,7 +100,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             </label>
           )}
           <span className="text-neutral-400 dark:text-neutral-500">
-            {s.tool === 'eraser' ? '擦除(锁定透明度的图层上涂背景色)' : '左键绘制;[ / ] 调笔径'}
+            {s.tool === 'eraser' ? '擦除(锁定透明度的图层上涂背景色);按住 Shift 画直线,Shift+点击连接上一笔' : '左键绘制;[ / ] 调笔径;按住 Shift 画直线,Shift+点击连接上一笔'}
           </span>
         </>
       ) : SELECTION_TOOLS.has(s.tool) ? (

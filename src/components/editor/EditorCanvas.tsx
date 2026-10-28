@@ -15,11 +15,11 @@ import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, effectiveMode, gradientParams, initialMods,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainStrokePoint, effectiveMode, gradientParams, initialMods,
   isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
-  type BrushFamilyTool, type DragPoint, type DragMods,
+  type BrushFamilyTool, type DragPoint, type DragMods, type StrokeAxis,
 } from './toolLogic';
 import { error as logError } from '../../utils/logger';
 
@@ -47,6 +47,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [, forceUpdate] = useState(0);
   const spaceRef = useRef(false);
+  /** Shift 按住态(画笔族橡皮筋预览的绘制条件;约束本身用指针事件自带的 shiftKey)。 */
+  const shiftRef = useRef(false);
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const drawPending = useRef(false);
   /** 选框拖拽中(文档坐标 + 修饰键时序跟踪,口径同 photocraft 上游 Drag)。 */
@@ -64,11 +66,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     ended: boolean;
     /** pump 循环运行中(单飞:同一时刻至多一个 push/commit 在途)。 */
     pumping: boolean;
-    /** 待投点 [x,y,pressure,…] 平铺。 */
+    /** 待投点 [x,y,pressure,…] 平铺(已过 ⇧ 约束的落笔点)。 */
     pending: number[];
     beginPromise: Promise<void>;
     /** 灰度查看中画蒙版:begin 起帧就是蒙版灰度(引擎侧记录模式),applyStrokeFrame 不得跳过。 */
     maskFrames: boolean;
+    /** ⇧ 直线约束状态(上游 stroke_constraint Axis;松开 Shift 置 null)。 */
+    axis: StrokeAxis | null;
+    /** 最近一个未约束的原始指针位置(Shift 刚按下时约束起点=它)。 */
+    lastRaw: [number, number] | null;
+    /** 最近一个已投点(提交成功后写入 runtime.lastStrokeEnd)。 */
+    lastPoint: [number, number, number] | null;
   } | null>(null);
   /** 增量帧上屏的中转画布(整幅 putImageData 只支持原点,先入 scratch 再缩放贴图)。 */
   const scratchRef = useRef<HTMLCanvasElement | null>(null);
@@ -384,6 +392,28 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.stroke();
     }
 
+    // overlay:⇧ 橡皮筋(上游 draw_line_preview):画笔族按住 Shift、无进行中描边且
+    // 上一笔终点在本文档——细黑线垫底+细白线从上一笔终点连到指针,预览 Shift+点击将画的直线
+    if (BRUSH_TOOLS.has(s.tool) && shiftRef.current && !strokeRef.current
+      && s.runtime.lastStrokeEnd && s.runtime.lastStrokeEnd.docId === s.docId && s.runtime.pointerDoc) {
+      const end = s.runtime.lastStrokeEnd;
+      const ax = end.x * v.scale + v.ox;
+      const ay = end.y * v.scale + v.oy;
+      const bx = s.runtime.pointerDoc.x * v.scale + v.ox;
+      const by = s.runtime.pointerDoc.y * v.scale + v.oy;
+      octx.save();
+      octx.lineCap = 'round';
+      for (const [w, c] of [[2.5, 'rgba(0,0,0,0.47)'], [1, 'rgba(255,255,255,0.9)']] as const) {
+        octx.beginPath();
+        octx.moveTo(ax, ay);
+        octx.lineTo(bx, by);
+        octx.strokeStyle = c;
+        octx.lineWidth = w;
+        octx.stroke();
+      }
+      octx.restore();
+    }
+
     // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位(≈15px/s,近 photocraft 上游 10);
     // 选区消失后本循环自然停
     if (s.state.hasSelection || marqueeRef.current || layerBoxRef.current) {
@@ -451,6 +481,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           const { outcome, frame } = await editorStrokeCommit(st.docId);
           applyStrokeFrame(getSession(tabId), frame, st.maskFrames);
           strokeRef.current = null;
+          // 记录描边终点(⇧+点击直线连接用;上游 last_stroke_end, undo 不清除它)
+          const s0 = getSession(tabId);
+          if (s0 && st.lastPoint) {
+            s0.runtime.lastStrokeEnd = { docId: st.docId, x: st.lastPoint[0], y: st.lastPoint[1], pressure: st.lastPoint[2] };
+          }
           if ((outcome.result as { fromLive?: boolean } | null)?.fromLive === true) {
             // 增量帧(+补差帧)已把提交后的像素画进离屏位图:抬位 bitmapKey,
             // revision 变化触发的整幅重渲按 key 相同跳过
@@ -479,23 +514,32 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId, applyStrokeFrame, scheduleDraw]);
 
-  /** 落笔:建 live 描边(begin 渲染首点),随后的 move 点全部走 pump 批量投递。 */
+  /** 落笔:建 live 描边(begin 渲染首点),随后的 move 点全部走 pump 批量投递。
+   * Shift 按下且上一笔终点在本文档时,点列前置 [上一笔终点(含笔压)]——直线连接段
+   * 属于同一笔、一步历史(上游 stroke_constraint connects + canvas.rs Down 口径)。 */
   const beginStroke = useCallback((
-    s: EditorSession, tool: BrushFamilyTool, x: number, y: number,
+    s: EditorSession, tool: BrushFamilyTool, x: number, y: number, shift: boolean,
   ) => {
     const docId = s.docId;
     if (docId == null) return;
+    const lastEnd = s.runtime.lastStrokeEnd;
+    const connect = shift && lastEnd != null && lastEnd.docId === docId
+      && Math.hypot(x - lastEnd.x, y - lastEnd.y) >= 0.25;
     const st = {
       tool, docId, started: false, failed: false, ended: false, pumping: false,
       pending: [] as number[],
       beginPromise: Promise.resolve(),
       // 灰度查看中编辑蒙版:begin 起向引擎要蒙版灰度帧(逐笔预览),否则合成帧
       maskFrames: isMaskTarget(s.state) && s.state?.layerMaskView?.mode === 'gray',
+      axis: null as StrokeAxis | null,
+      // 约束起点从落笔点起算(上游 last=描边最后一点含落笔;首个移动采样之前它就是落笔点)
+      lastRaw: [x, y] as [number, number],
+      lastPoint: [x, y, 1] as [number, number, number],
     };
     strokeRef.current = st;
     // 蒙版编辑目标(live 描边走桥层直通,不经引擎 routed 注入,必须显式带 target)
     const params = strokeParams(tool, s.options, rgbToHex(s.state?.foreground), s.runtime.view.scale, isMaskTarget(s.state));
-    params.points = [[x, y, 1]];
+    params.points = connect ? [[lastEnd!.x, lastEnd!.y, lastEnd!.pressure], [x, y, 1]] : [[x, y, 1]];
     st.beginPromise = (async () => {
       try {
         const frame = await editorStrokeBegin(docId, strokeCommand(tool), params, st.maskFrames);
@@ -835,6 +879,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         scheduleDraw();
         return;
       }
+      // Shift 按住态:画笔族的橡皮筋预览(上一笔终点→指针的连线)随键即时显隐
+      if (e.key === 'Shift') {
+        shiftRef.current = true;
+        scheduleDraw();
+        return;
+      }
       if (isTyping(e.target)) return;
       // [ / ] 调笔径:除 e.key 外还匹配物理键码——中文输入法下 e.key 是全角"【】"，
       // e.code(BracketLeft/Right)不受布局/输入法影响(PS 键位按物理键算)
@@ -1042,6 +1092,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         spaceRef.current = false;
         scheduleDraw();
       }
+      if (e.key === 'Shift') {
+        shiftRef.current = false;
+        scheduleDraw();
+      }
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
@@ -1101,7 +1155,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     s.runtime.pointerDoc = { x: dx, y: dy };
     if (BRUSH_TOOLS.has(s.tool) && e.button === 0 && s.state) {
       // 一笔进行中时忽略再次按下(鼠标不会出现;触屏多指防把进行中描边的 live 顶掉)
-      if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy);
+      if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy, e.shiftKey);
     } else if (s.tool === 'move' && e.button === 0 && s.state) {
       moveSeqRef.current += 1;
       beginMoveDrag(s, dx, dy, { alt: e.altKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
@@ -1153,13 +1207,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     s.runtime.pointerDoc = { x: dx, y: dy };
     const st = strokeRef.current;
     if (st) {
-      // 一帧内的合并采样点全部投给引擎(高刷鼠标下更平滑;上游回放所有样本的口径)
+      // 一帧内的合并采样点全部投给引擎(高刷鼠标下更平滑;上游回放所有样本的口径);
+      // ⇧ 按住时每个采样点过直线约束(0°/45°/90° 锁定,上游 stroke_constraint 口径),
+      // 投给引擎的是约束后的点——沿直线插值 dabs 由引擎的笔画机制完成
       const native = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] };
       const samples = native.getCoalescedEvents?.() ?? [];
       const list = samples.length ? samples : [native];
       for (const ev of list) {
         const [x, y] = screenToDoc(s.runtime.view, ev.clientX - rect.left, ev.clientY - rect.top);
-        st.pending.push(x, y, 1);
+        const raw: [number, number] = [x, y];
+        const out = constrainStrokePoint(st.axis, st.lastRaw ?? raw, raw, ev.shiftKey, s.runtime.view.scale);
+        st.axis = out.axis;
+        st.lastRaw = raw;
+        st.lastPoint = [out.p[0], out.p[1], 1];
+        st.pending.push(out.p[0], out.p[1], 1);
       }
       void pumpStroke();
       scheduleDraw();
@@ -1227,11 +1288,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s = getSession(tabId);
     const stroke = strokeRef.current;
     if (s && stroke) {
-      // 上游 commit 前的"补齐剩余点":终点本身也要投给引擎,再标记结束
+      // 上游 commit 前的"补齐剩余点":终点本身也要投给引擎(过 ⇧ 约束),再标记结束
       if (s.state) {
         const rect = wrapRef.current!.getBoundingClientRect();
         const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
-        stroke.pending.push(dx, dy, 1);
+        const out = constrainStrokePoint(stroke.axis, stroke.lastRaw ?? [dx, dy], [dx, dy], e.shiftKey, s.runtime.view.scale);
+        stroke.axis = out.axis;
+        stroke.lastPoint = [out.p[0], out.p[1], 1];
+        stroke.pending.push(out.p[0], out.p[1], 1);
       }
       stroke.ended = true;
       void pumpStroke();

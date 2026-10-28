@@ -306,6 +306,60 @@ export function brushSizeStep(size: number, dir: 1 | -1): number {
   return Math.min(500, Math.max(1, Math.round(size + dir * step)));
 }
 
+// ---- 画笔族 ⇧ 直线约束(上游 stroke_constraint.rs 移植)----
+//
+// - 按住 Shift 拖动画笔类工具:描边锁定在自约束起点(描边起点,或拖动中按下 Shift 的那
+//   一点)出发的 0°/45°/90° 直线上;指针移动 ≥3 屏幕像素后方向锁定并保持(带方向记忆);
+//   未锁定且在锁距内时点吸附回起点;松开 Shift 解除锁定、后续点原样通过。
+// - Shift+点击 = 从上一笔终点直线连到本次落点(同一笔、一步历史,由 begin 的点列承载,
+//   引擎沿段插值 dabs)。该行为在 EditorCanvas 的 beginStroke 里接,这里只提供几何。
+
+/** 画笔描边的 ⇧ 约束状态:origin=约束起点,dir=锁定后的单位方向(未锁定为 null)。 */
+export interface StrokeAxis {
+  origin: [number, number];
+  dir: [number, number] | null;
+}
+
+/** 指针须移动的屏幕像素数,⇧ 约束的方向才锁定(上游 LOCK_DISTANCE)。 */
+const STROKE_LOCK_DISTANCE = 3;
+
+/** origin 指向 p 的单位方向,吸附到最近 45° 倍角;重合/非有限返回 null(上游 snapped_dir)。 */
+export function snappedDir(origin: [number, number], p: [number, number]): [number, number] | null {
+  const dx = p[0] - origin[0];
+  const dy = p[1] - origin[1];
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 1e-9) return null;
+  const a = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+  return [Math.cos(a), Math.sin(a)];
+}
+
+/** p 在过 origin、沿单位方向 dir 的直线上的投影(上游 project)。 */
+export function projectOn(origin: [number, number], dir: [number, number], p: [number, number]): [number, number] {
+  const t = (p[0] - origin[0]) * dir[0] + (p[1] - origin[1]) * dir[1];
+  return [origin[0] + dir[0] * t, origin[1] + dir[1] * t];
+}
+
+/**
+ * 画笔族 ⇧ 约束(上游 constrain):`last` 是上一个未约束的原始指针位置(Shift 刚按下时
+ * 约束起点=它),`axis` 在一笔内携带锁定状态;zoom 把 3 屏幕像素锁距换算成文档像素。
+ * 不按 Shift 时点原样通过并丢弃锁定。只对画笔族调用(上游 applies() 在调用侧判定)。
+ */
+export function constrainStrokePoint(
+  axis: StrokeAxis | null,
+  last: [number, number],
+  p: [number, number],
+  shift: boolean,
+  zoom: number,
+): { p: [number, number]; axis: StrokeAxis | null } {
+  if (!shift) return { p, axis: null };
+  const a = axis ?? { origin: last, dir: null };
+  if (!a.dir) {
+    const reach = STROKE_LOCK_DISTANCE / Math.max(zoom, 1e-3);
+    if (Math.hypot(p[0] - a.origin[0], p[1] - a.origin[1]) < reach) return { p: a.origin, axis: a };
+    a.dir = snappedDir(a.origin, p);
+  }
+  return { p: a.dir ? projectOn(a.origin, a.dir, p) : a.origin, axis: a };
+}
+
 /**
  * 移动拖拽的 ⇧ 约束(上游 move_mods::constrain 原样移植):
  * - `dirs=4`(整层):锁到水平/垂直主轴;`dirs=8`(浮动选区像素):轴 + 45° 斜向;

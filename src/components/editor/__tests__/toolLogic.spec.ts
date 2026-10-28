@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainSquare,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainStrokePoint, constrainSquare,
   docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDirtyRect, nextMarqueeShape, normalizeRect, reflectFromCenter,
-  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
+  moveBounds, moveDirtyRect, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
+  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snappedDir, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
+import type { StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 
 const OPTS: ToolOptions = {
@@ -292,6 +293,34 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     expect(bucketParams(0, 0, OPTS, '#000000', false)).not.toHaveProperty('target');
     expect(gradientParams([0, 0], [5, 5], OPTS, true).target).toBe('mask');
     expect(gradientParams([0, 0], [5, 5], OPTS)).not.toHaveProperty('target');
+  });
+});
+
+describe('画笔 ⇧ 直线约束(上游 stroke_constraint.rs 口径)', () => {
+  const close = (a: [number, number], b: [number, number]) => Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+  it('锁距内吸附回起点;≥3 屏幕像素后锁定 0° 并保持方向;松开 Shift 解除', () => {
+    const o: [number, number] = [10, 10];
+    let axis: StrokeAxis | null = null;
+    const p = (q: [number, number]) => { const r = constrainStrokePoint(axis, o, q, true, 1); axis = r.axis; return r.p; };
+    expect(p([11, 11])).toEqual([10, 10]);  // 锁距(3 屏幕像素)内:回起点
+    expect(p([30, 12])).toEqual([30, 10]);  // 锁定水平
+    expect(p([60, 45])).toEqual([60, 10]);  // 方向记忆:指针偏向 45° 仍留在水平线
+    const freed = constrainStrokePoint(axis, [60, 10], [70, 50], false, 1);
+    expect(freed.p).toEqual([70, 50]);      // 松开 Shift:原样通过
+    expect(freed.axis).toBeNull();          // 且丢弃锁定
+  });
+  it('垂直/45° 锁定与 45° 吸附几何(snappedDir/projectOn)', () => {
+    let axis: StrokeAxis | null = null;
+    const p = (q: [number, number]) => { const r = constrainStrokePoint(axis, [10, 10], q, true, 1); axis = r.axis; return r.p; };
+    expect(close(p([9, 60]), [10, 60])).toBe(true);  // 垂直(cos90 浮点噪声用容差断言)
+    axis = null;
+    const q = p([40, 43]);
+    expect(Math.abs(q[0] - 10 - (q[1] - 10))).toBeLessThan(1e-9); // 45° 线:投影两端等距
+    expect(snappedDir([10, 10], [50, 13])).toEqual([1, 0]);       // 近水平 → 0°
+    const d = snappedDir([10, 10], [40, 37])!;
+    expect(Math.abs(d[0] - d[1])).toBeLessThan(1e-9);             // 近 45°
+    expect(snappedDir([10, 10], [10, 10])).toBeNull();            // 重合:无方向
+    expect(projectOn([0, 0], [1, 0], [30, 12])).toEqual([30, 0]); // 投影
   });
 });
 

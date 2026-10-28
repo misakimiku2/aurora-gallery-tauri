@@ -54,6 +54,8 @@ export interface EditorRuntime {
   /** 裁剪框提交/取消(画布注册,选项条 ✓/⊘ 调用)。 */
   cropCommit: (() => void) | null;
   cropCancel: (() => void) | null;
+  /** 上一笔的终点(⇧+点击直线连接用;上游 last_stroke_end,按文档区分)。 */
+  lastStrokeEnd: { docId: number; x: number; y: number; pressure: number } | null;
 }
 
 export interface EditorSession {
@@ -111,7 +113,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       moveAutoSelect: true,
       moveTarget: 'layer',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null },
   };
   sessions.set(tabId, s);
   return s;
