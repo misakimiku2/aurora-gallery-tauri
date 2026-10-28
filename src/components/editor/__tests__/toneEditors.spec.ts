@@ -5,7 +5,8 @@
  */
 import {
   CURVE_MAX_POINTS, curveCanDelete, curveDelete, curveFromParams, curveHit, curveInsert,
-  curveLut, curveMoveTo,
+  curveLut, curveMoveTo, identityCurveMap, isIdentityMap, mapFromParams, mapToFitPoints,
+  mapToParams, pencilLine, pointsToMap, smoothCurveMap,
 } from '../panels/curvePoints';
 import { autoLevels, gammaFromPos, gammaPos, nearestHandle, readLevels, writeLevels } from '../panels/levelsMath';
 import { moveMapStop, sampleStops, stopsFromParams, stopsToParams, widestGapMid } from '../panels/gradientStops';
@@ -80,6 +81,75 @@ describe('曲线点交互(上游 point_curve.rs 口径)', () => {
     expect(curveFromParams(null)).toEqual(line());
     expect(curveFromParams([[10, 20]])).toEqual(line());
     expect(curveFromParams([[0, 0], [128, 150], [255, 255]])).toHaveLength(3);
+  });
+});
+
+describe('曲线铅笔模式(上游 pencil_line + adjust_params.rs 口径)', () => {
+  it('pencilLine:整段反转铺满每一级,快拖不留缝', () => {
+    const map = identityCurveMap();
+    expect(pencilLine(map, [0, 255], [255, 0])).toBe(true);
+    expect(map[0]).toBe(255);
+    expect(map[255]).toBe(0);
+    for (const k of [1, 64, 128, 200, 254]) expect(map[k]).toBeCloseTo(255 - k, 3);
+  });
+
+  it('pencilLine:单点取该点值、x/y 钳 0..255、非法输入不动', () => {
+    const map = identityCurveMap();
+    // from==to(单点):i0==i1,t=1 → 该电平=to 的 y
+    expect(pencilLine(map, [100, 30], [100, 30])).toBe(true);
+    expect(map[100]).toBe(30);
+    expect(map[99]).toBe(99);
+    // output 钳 0..255
+    expect(pencilLine(map, [50, 999], [60, 999])).toBe(true);
+    expect(map[55]).toBe(255);
+    // input 负值钳 0(改 0..5 段)
+    expect(pencilLine(map, [-5, 200], [5, 200])).toBe(true);
+    expect(map[0]).toBe(200);
+    expect(pencilLine(map, [NaN, 0], [10, 0])).toBe(false);
+    expect(pencilLine([], [0, 0], [1, 1])).toBe(false);
+  });
+
+  it('smooth:台阶两遍后中间过渡、端点不动、直线段不变(上游用例)', () => {
+    const step = Array.from({ length: 256 }, (_, k) => (k < 128 ? 0 : 255));
+    smoothCurveMap(step);
+    smoothCurveMap(step);
+    expect(step[127]).toBeGreaterThan(0.2 * 255);
+    expect(step[128]).toBeLessThan(0.8 * 255);
+    expect(step[0]).toBe(0);
+    expect(step[255]).toBe(255);
+    const flat = Array.from({ length: 256 }, () => 50);
+    smoothCurveMap(flat);
+    expect(flat.every((v) => v === 50)).toBe(true);
+  });
+
+  it('点↔map 往返:map 采样自样条;拟合 ≤16 点且曲线仍反转', () => {
+    const map = pointsToMap([[0, 255], [255, 0]]);
+    expect(map).toHaveLength(256);
+    expect(map[64]).toBeCloseTo(191, 0);
+    const fitted = mapToFitPoints(map);
+    expect(fitted.length).toBeGreaterThanOrEqual(2);
+    expect(fitted.length).toBeLessThanOrEqual(16);
+    expect(fitted[0]).toEqual([0, 255]);
+    expect(fitted[fitted.length - 1]).toEqual([255, 0]);
+    const lut = curveLut(fitted, 256);
+    expect(Math.abs(lut[64] * 255 - 191)).toBeLessThan(2);
+    // 恒等图拟合回恒等两点线(上游:误差 ≤1 电平即止于两端点)
+    expect(mapToFitPoints(identityCurveMap())).toEqual(line());
+  });
+
+  it('map 参数读写:非 256 数组回退恒等、写出 2 位小数、恒等判定半电平阈值', () => {
+    expect(mapFromParams(null)).toHaveLength(256);
+    expect(mapFromParams([1, 2, 3])[10]).toBe(10);
+    // 点对数组不是 map → 恒等回退
+    expect(mapFromParams([[0, 0], [255, 255]])[7]).toBe(7);
+    const m = mapFromParams(Array.from({ length: 256 }, (_, k) => k + 0.25));
+    expect(m[10]).toBeCloseTo(10.25, 5);
+    expect(mapToParams([10.256, 3.14159])).toEqual([10.26, 3.14]);
+    expect(isIdentityMap(identityCurveMap())).toBe(true);
+    expect(isIdentityMap(mapFromParams(Array.from({ length: 256 }, (_, k) => k + 0.4)))).toBe(true);
+    const bump = identityCurveMap();
+    bump[128] = 180;
+    expect(isIdentityMap(bump)).toBe(false);
   });
 });
 

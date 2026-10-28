@@ -142,3 +142,102 @@ export function curveFromParams(v: unknown): CurvePoint[] {
     : [];
   return pts.length < 2 ? [[0, 0], [255, 255]] : pts;
 }
+
+// -------------------------------------------------------------------------------------------
+// 铅笔模式(photocraft point_curve.rs pencil_line + adjust_params.rs map 互转/Smooth 口径)
+
+/** 铅笔模式 map 长度:每个输入电平一个输出值。 */
+export const CURVE_MAP_LEN = 256;
+/** 铅笔图切回点模式时的拟合点上限(Photoshop 同款;上游 MAX_FITTED_POINTS)。 */
+export const CURVE_MAP_MAX_FITTED = 16;
+
+/** 恒等铅笔 map(0..255)。 */
+export function identityCurveMap(): number[] {
+  return Array.from({ length: CURVE_MAP_LEN }, (_, k) => k);
+}
+
+/** 铅笔一笔的直线段:按 x 每 level 填一个输出值(快拖不留缝),返回是否有改动。
+ * from/to 为 0..255 电平对;i1==i0(单点/垂直)取 x 较大一端的 y(上游 pencil_line 逐行移植)。 */
+export function pencilLine(map: number[], from: CurvePoint, to: CurvePoint): boolean {
+  if (![from[0], from[1], to[0], to[1]].every(Number.isFinite) || map.length === 0) return false;
+  const last = map.length - 1;
+  const level = (x: number) => (Math.min(255, Math.max(0, x)) / 255) * last;
+  const [a, b] = from[0] <= to[0] ? [from, to] : [to, from];
+  const i0 = Math.round(level(a[0]));
+  const i1 = Math.round(level(b[0]));
+  let changed = false;
+  for (let i = i0; i <= i1; i++) {
+    const t = i1 > i0 ? (i - i0) / (i1 - i0) : 1.0;
+    const o = Math.min(255, Math.max(0, a[1] + (b[1] - a[1]) * t));
+    if (i >= 0 && i <= last && map[i] !== o) {
+      map[i] = o;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** Smooth 一遍:每值=两侧最多 3 邻居对称窗口的均值,直线段与两端不动(上游 smooth_curve_map)。 */
+export function smoothCurveMap(map: number[]): void {
+  const RADIUS = 3;
+  const src = map.slice();
+  const n = src.length;
+  for (let k = 0; k < n; k++) {
+    const r = Math.min(RADIUS, k, n - 1 - k);
+    if (r === 0) continue;
+    let sum = 0;
+    for (let i = k - r; i <= k + r; i++) sum += src[i];
+    map[k] = sum / (2 * r + 1);
+  }
+}
+
+/** 引擎参数 → 铅笔 map(非 256 数组/含非法值回退恒等;上游 read_map)。 */
+export function mapFromParams(v: unknown): number[] {
+  if (Array.isArray(v) && v.length === CURVE_MAP_LEN && v.every((o) => typeof o === 'number' && Number.isFinite(o))) {
+    return v.map((o) => Math.min(255, Math.max(0, o as number)));
+  }
+  return identityCurveMap();
+}
+
+/** 铅笔 map → 引擎参数(每值 round 2 位小数;上游 write_map / map_arr 精度)。 */
+export function mapToParams(map: number[]): number[] {
+  return map.map((o) => Math.round(o * 100) / 100);
+}
+
+/** 点曲线 → 铅笔 map:自然样条在 256 级上采样(上游 points_to_map)。 */
+export function pointsToMap(pts: CurvePoint[]): number[] {
+  return curveLut(pts, CURVE_MAP_LEN).map((o) => o * 255);
+}
+
+/** 铅笔 map → 点曲线:先放两端点,再反复放当前样条偏差最大的电平,直到误差 ≤1 电平
+ * 或放满 16 点(上游 map_to_points,Photoshop 切回点编辑;并列偏差取后者同 Rust max_by)。 */
+export function mapToFitPoints(map: number[]): CurvePoint[] {
+  const target = (k: number) =>
+    k >= 0 && k < map.length && Number.isFinite(map[k]) ? Math.min(255, Math.max(0, map[k])) : 0;
+  const pts: CurvePoint[] = [
+    [0, target(0)],
+    [CURVE_MAP_LEN - 1, target(CURVE_MAP_LEN - 1)],
+  ];
+  while (pts.length < CURVE_MAP_MAX_FITTED) {
+    const lut = curveLut(pts, CURVE_MAP_LEN);
+    let worst = 0;
+    let worstErr = -1;
+    for (let k = 0; k < CURVE_MAP_LEN; k++) {
+      const err = Math.abs(lut[k] * 255 - target(k));
+      if (err >= worstErr) {
+        worstErr = err;
+        worst = k;
+      }
+    }
+    if (worstErr <= 1.0) break; // 阈值 1 电平(上游 1/255)
+    if (pts.some((q) => Math.abs(q[0] - worst) < 0.5)) break; // 判重半个电平(上游 0.5/255)
+    pts.push([worst, target(worst)]);
+    pts.sort((a, b) => a[0] - b[0]);
+  }
+  return pts;
+}
+
+/** 铅笔 map 是否恒等(每级映射自身,阈值半电平;上游 is_identity_map)——叠加显示跳过恒等通道。 */
+export function isIdentityMap(map: number[]): boolean {
+  return map.every((o, k) => Math.abs(o - k) < 0.5);
+}

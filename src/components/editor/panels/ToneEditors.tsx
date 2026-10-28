@@ -2,16 +2,20 @@
  * 色阶/曲线/渐变映射的完整编辑器(photocraft adjust_editors.rs 移植):
  * - Levels:通道+Auto / 256-bin 直方图 / 输入三手柄(按最近抓取,gamma 手柄=50% 灰映射点)/ 输出双手柄。
  * - Curves:点模式(点空白加点、命中拖动、拖出图外删点拖回恢复、Ctrl+点/右键/Delete 删、
- *   方向键微调)/ 自然三次样条画线(与引擎 curve_lut 同一条)/ 复合通道叠加显示单通道曲线。
+ *   方向键微调)/ 自然三次样条画线(与引擎 curve_lut 同一条)/ 复合通道叠加显示单通道曲线 /
+ *   铅笔模式(256 级 map 逐笔直线段、Shift 从上一笔终点连直线、Smooth 平滑按钮;
+ *   模式切换经 layer.setAdjustment {pencil} 由引擎做 点↔map 转换,本地乐观同步)。
  * - GradientMap:停靠点条(点空白=该处插值色加点、拖动跨位重排且选中跟随)/
  *   选中点的颜色/位置/删除 / 最宽间隙中点加停靠点 / Reverse / Dither(映射无透明度,只有颜色停靠点)。
  * 编辑经 emit(100ms 节流+coalesce 合一步历史),拖动中本地态跟手。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pencil, Spline } from 'lucide-react';
 import { editorHistogram } from '../editorBridge';
 import {
   CURVE_DRAG_OFF, CURVE_HIT_RADIUS, CurvePoint, curveCanDelete, curveDelete, curveFromParams,
-  curveHit, curveInsert, curveLut, curveMoveTo,
+  curveHit, curveInsert, curveLut, curveMoveTo, isIdentityMap, mapToFitPoints, mapFromParams,
+  mapToParams, pencilLine, pointsToMap, smoothCurveMap,
 } from './curvePoints';
 import {
   GradStop, moveMapStop, sampleStops, stopsFromParams, stopsToParams, widestGapMid,
@@ -349,7 +353,7 @@ export const LevelsEditor: React.FC<{
 };
 
 // -------------------------------------------------------------------------------------------
-// Curves(曲线,点模式;铅笔/Smooth 留待办)
+// Curves(曲线:点模式 + 铅笔模式)
 
 const curveHandlePx = 7;
 /** 曲线图左侧留给竖直渐变条的空隙(canvas 内、graph 之外)。 */
@@ -366,17 +370,36 @@ export const CurvesEditor: React.FC<{
   const key = curveKey(LEVEL_CHANS[ch]?.key ?? '');
   const [pts, setPts] = useState<CurvePoint[]>(() => curveFromParams(params[key]));
   const [selected, setSelected] = useState<number | null>(null);
+  // 铅笔模式(上游两个模式按钮):mode 本地乐观切换,引擎回包后对齐;
+  // 切换 emit({pencil}) 由引擎解析器做 点↔map 转换(全部通道)
+  const [mode, setMode] = useState<'points' | 'pencil'>(params.pencil === true ? 'pencil' : 'points');
+  const [map, setMap] = useState<number[]>(() => mapFromParams(params[key]));
   const dark = useDarkTheme();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragging = useRef(false);
   const drag = useRef<{ index: number | null; offset: [number, number]; removed: boolean } | null>(null);
+  // 铅笔手势:active=按住画线中,last=上一采样点(Shift 从上一笔终点连直线;上游 egui temp 口径,
+  // 跨通道/跨提交保留)
+  const stroke = useRef<{ active: boolean; last: CurvePoint | null }>({ active: false, last: null });
+  const keyRef = useRef(key);
+  const pencilMode = mode === 'pencil';
 
   useEffect(() => {
-    // 同色阶:拖动中与自己提交的在途回包(300ms 内)不回吸,防止快速松-按时曲线回跳
-    if (dragging.current || (lastEmitRef && Date.now() - lastEmitRef.current < 300)) return;
-    const next = curveFromParams(params[key]);
-    setPts(next);
-    setSelected((s) => (s != null && s < next.length ? s : null));
+    // 同色阶:拖动中与自己提交的在途回包(300ms 内)不回吸,防止快速松-按时曲线回跳;
+    // 切通道必须重读(节流窗口内旧通道数据无效)
+    const channelSwitched = keyRef.current !== key;
+    keyRef.current = key;
+    if (!channelSwitched && (dragging.current || (lastEmitRef && Date.now() - lastEmitRef.current < 300))) return;
+    const p = params.pencil === true;
+    setMode(p ? 'pencil' : 'points');
+    if (p) {
+      setMap(mapFromParams(params[key]));
+      setSelected(null);
+    } else {
+      const next = curveFromParams(params[key]);
+      setPts(next);
+      setSelected((s) => (s != null && s < next.length ? s : null));
+    }
   }, [params, key, lastEmitRef]);
 
   const push = useCallback(
@@ -386,6 +409,31 @@ export const CurvesEditor: React.FC<{
     },
     [emit, key],
   );
+
+  // 模式切换:本地乐观转换(引擎转换同一条样条),命令只发 pencil 标志
+  const switchMode = useCallback(
+    (toPencil: boolean) => {
+      if (toPencil === (mode === 'pencil')) return;
+      setSelected(null);
+      if (toPencil) {
+        setMode('pencil');
+        setMap(mapToParams(pointsToMap(pts)));
+      } else {
+        setMode('points');
+        setPts(mapToFitPoints(map));
+      }
+      emit({ pencil: toPencil });
+    },
+    [mode, pts, map, emit],
+  );
+
+  // Smooth:当前通道 map 单遍窗口均值(上游 curves_mode_row;仅铅笔模式可用)
+  const onSmooth = useCallback(() => {
+    const next = mapToParams(map);
+    smoothCurveMap(next);
+    setMap(next);
+    emit({ [key]: next });
+  }, [map, key, emit]);
 
   // 图内/屏幕坐标换算(0..255 电平;y 翻转)
   const geom = () => {
@@ -418,9 +466,28 @@ export const CurvesEditor: React.FC<{
     );
   };
 
+  // 铅笔:一次采样=从 from 到 q 的直线段填进 map;按住连续画,Shift(或笔内继续)从上一采样点连
+  const pencilStrokeAt = (e: React.PointerEvent) => {
+    const q = toVal(e.clientX, e.clientY);
+    const st = stroke.current;
+    const from = st.active || e.shiftKey ? st.last ?? q : q;
+    const next = map.slice();
+    if (pencilLine(next, from, q)) {
+      const rounded = mapToParams(next);
+      setMap(rounded);
+      emit({ [key]: rounded });
+    }
+    st.active = true;
+    st.last = q;
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 合成事件或指针已释放:跳过捕获,拖动仍走 pointermove */ }
     dragging.current = true;
+    if (pencilMode) {
+      pencilStrokeAt(e);
+      return;
+    }
     const del = e.ctrlKey || e.metaKey;
     const hit = curveHit(pts, toScrX, toScrY, e.clientX, e.clientY, CURVE_HIT_RADIUS);
     if (hit != null && del) {
@@ -451,6 +518,10 @@ export const CurvesEditor: React.FC<{
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (pencilMode) {
+      if (dragging.current) pencilStrokeAt(e);
+      return;
+    }
     if (!dragging.current || !drag.current) return;
     const outside = outsideWithMargin(e.clientX, e.clientY);
     const d = drag.current;
@@ -482,14 +553,15 @@ export const CurvesEditor: React.FC<{
   };
 
   const onPointerUp = () => {
+    if (pencilMode) stroke.current.active = false; // 一次手势一次提交(经 flushNow 落地)
     dragging.current = false;
     drag.current = null;
     flushNow?.();
   };
 
-  // 键盘:Delete/Backspace 删选中点;方向键微调(Shift ×10)——都立即提交
+  // 键盘:Delete/Backspace 删选中点;方向键微调(Shift ×10)——都立即提交(铅笔模式无点编辑)
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (selected == null || selected >= pts.length) return;
+    if (pencilMode || selected == null || selected >= pts.length) return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       const next = [...pts];
@@ -589,32 +661,84 @@ export const CurvesEditor: React.FC<{
       }
       ctx.stroke();
     };
-    // 复合通道编辑时,暗色叠加各单通道曲线(仅非恒等;PS 行为)
-    if (ch === 0) {
-      for (const c of LEVEL_CHANS.slice(1)) {
-        const cp = curveFromParams(params[c.key]);
-        const isIdentity = cp.length === 2 && cp[0][1] === 0 && cp[1][1] === 255;
-        if (!isIdentity) drawCurve(cp, channelColor(c.key) || '#888', 1);
+    const drawMapLine = (m: number[], color: string, width: number) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let k = 0; k < m.length; k++) {
+        const x = X(k);
+        const y = Y(m[k]);
+        if (k === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    if (pencilMode) {
+      // 铅笔:画 256 级 map 折线(点不可见);叠加通道读各自 map,恒等(阈值半电平)不画
+      if (ch === 0) {
+        for (const c of LEVEL_CHANS.slice(1)) {
+          const cm = mapFromParams(params[c.key]);
+          if (!isIdentityMap(cm)) drawMapLine(cm, channelColor(c.key) || '#888', 1);
+        }
+      }
+      drawMapLine(map, ch === 0 ? (dark ? '#f0f0f0' : '#262626') : chanColor, 1.5);
+    } else {
+      // 复合通道编辑时,暗色叠加各单通道曲线(仅非恒等;PS 行为)
+      if (ch === 0) {
+        for (const c of LEVEL_CHANS.slice(1)) {
+          const cp = curveFromParams(params[c.key]);
+          const isIdentity = cp.length === 2 && cp[0][1] === 0 && cp[1][1] === 255;
+          if (!isIdentity) drawCurve(cp, channelColor(c.key) || '#888', 1);
+        }
+      }
+      drawCurve(pts, ch === 0 ? (dark ? '#f0f0f0' : '#262626') : chanColor, 1.5);
+      // 控制点(7px 方块;选中实心+黑边)
+      for (let i = 0; i < pts.length; i++) {
+        const x = X(pts[i][0]);
+        const y = Y(pts[i][1]);
+        ctx.fillStyle = i === selected ? (dark ? '#f0f0f0' : '#262626') : dark ? '#1f1f1f' : '#fafafa';
+        ctx.fillRect(x - curveHandlePx / 2, y - curveHandlePx / 2, curveHandlePx, curveHandlePx);
+        ctx.strokeStyle = i === selected ? '#000000' : chanColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - curveHandlePx / 2, y - curveHandlePx / 2, curveHandlePx, curveHandlePx);
       }
     }
-    drawCurve(pts, ch === 0 ? (dark ? '#f0f0f0' : '#262626') : chanColor, 1.5);
-    // 控制点(7px 方块;选中实心+黑边)
-    for (let i = 0; i < pts.length; i++) {
-      const x = X(pts[i][0]);
-      const y = Y(pts[i][1]);
-      ctx.fillStyle = i === selected ? (dark ? '#f0f0f0' : '#262626') : dark ? '#1f1f1f' : '#fafafa';
-      ctx.fillRect(x - curveHandlePx / 2, y - curveHandlePx / 2, curveHandlePx, curveHandlePx);
-      ctx.strokeStyle = i === selected ? '#000000' : chanColor;
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x - curveHandlePx / 2, y - curveHandlePx / 2, curveHandlePx, curveHandlePx);
-    }
-  }, [pts, params, ch, selected, hist, dark]);
+  }, [pts, map, mode, params, ch, selected, hist, dark]);
 
   const sel = selected != null && selected < pts.length ? selected : null;
 
   return (
     <EditorFrame>
       <ChanSelect value={ch} onChange={setCh} />
+      {/* 模式行(上游 curves_mode_row):点/铅笔两按钮 + Smooth(仅铅笔可用) */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          title="编辑点以修改曲线"
+          onClick={() => switchMode(false)}
+          className={`p-1 rounded ${!pencilMode ? 'bg-sky-600 text-white' : 'bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15'}`}
+        >
+          <Spline size={12} />
+        </button>
+        <button
+          type="button"
+          title="绘制以修改曲线"
+          onClick={() => switchMode(true)}
+          className={`p-1 rounded ${pencilMode ? 'bg-sky-600 text-white' : 'bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15'}`}
+        >
+          <Pencil size={12} />
+        </button>
+        <div className="flex-1" />
+        <button
+          type="button"
+          title="平滑曲线值"
+          disabled={!pencilMode}
+          onClick={onSmooth}
+          className="px-2 py-0.5 rounded text-[10px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40"
+        >
+          平滑
+        </button>
+      </div>
       <div className="flex gap-2.5 pt-1">
         <canvas
           ref={canvasRef}
@@ -628,6 +752,7 @@ export const CurvesEditor: React.FC<{
           onKeyDown={onKeyDown}
           onContextMenu={(e) => {
             e.preventDefault();
+            if (pencilMode) return;
             const hit = curveHit(pts, toScrX, toScrY, e.clientX, e.clientY, CURVE_HIT_RADIUS);
             if (hit != null) {
               const next = [...pts];
@@ -645,7 +770,7 @@ export const CurvesEditor: React.FC<{
           type="number"
           min={0}
           max={255}
-          disabled={sel == null}
+          disabled={pencilMode || sel == null}
           value={sel != null ? Math.round(pts[sel][0]) : ''}
           onChange={(e) => {
             if (sel == null) return;
@@ -662,7 +787,7 @@ export const CurvesEditor: React.FC<{
           type="number"
           min={0}
           max={255}
-          disabled={sel == null}
+          disabled={pencilMode || sel == null}
           value={sel != null ? Math.round(pts[sel][1]) : ''}
           onChange={(e) => {
             if (sel == null) return;
@@ -676,7 +801,9 @@ export const CurvesEditor: React.FC<{
         />
       </div>
       <div className="text-[10px] text-neutral-500 dark:text-neutral-400">
-        点击添加控制点 · 拖出图外 / Ctrl+点击 / Delete 删除 · 方向键微调(Shift ×10)
+        {pencilMode
+          ? '拖动绘制曲线 · Shift+点击从上一笔终点连直线 · 平滑抹平锯齿'
+          : '点击添加控制点 · 拖出图外 / Ctrl+点击 / Delete 删除 · 方向键微调(Shift ×10)'}
       </div>
     </EditorFrame>
   );
