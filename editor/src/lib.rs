@@ -459,10 +459,32 @@ impl EditorManager {
         Ok(StrokeFrame { x: rect.x0, y: rect.y0, width: img.width, height: img.height, pixels: img.pixels })
     }
 
-    /// Alt 复制移动(上游 move_mods:⌥-drag / ⌥-nudge 的整层路径):in place 复制选中层
+    /// Alt 复制移动的历史折叠(上游 move_mods::fold_history 原样):把 `before` 之后的
+    /// 步骤合并成一步并改名 "Duplicate + Move"。拖拽路径的复制与平移分两次命令落地
+    /// (复制在首个真实移动时发生,平移在抬笔),这里收口;`before` = 拖拽开始前的
+    /// history.past_len。purge_last 只删 undo 栈不动画素。
+    pub fn fold_duplicate_move(&mut self, doc: u64, before: u64) -> Result<Value> {
+        self.activate(doc)?;
+        let before = before as usize;
+        if let Some(st) = self.session.active_mut() {
+            while st.history.past_len() > before + 1 {
+                if !st.history.purge_last() {
+                    break;
+                }
+            }
+            if st.history.past_len() == before + 1 {
+                st.history.set_current_label("Duplicate + Move");
+            }
+            Ok(json!({ "revision": st.revision, "historyCurrent": st.history.past_len() }))
+        } else {
+            Err(EditorError("no active document".into()))
+        }
+    }
+
+    /// Alt 复制移动(上游 move_mods ⌥-nudge 的整层路径,方向键用):in place 复制选中层
     /// (副本成为选中),整体平移 (dx,dy),再把复制与移动折叠成一步 "Duplicate + Move"
     /// 历史(上游 fold_history:purge_last 回到复制前 + set_current_label)。
-    /// 预览期间前端画的是原图层在动;落笔这一步原子落地,像素相同故无视觉跳变。
+    /// 拖拽路径不走这里(复制要在首个真实移动时发生以保预览正确,见 fold_duplicate_move)。
     pub fn duplicate_move(&mut self, doc: u64, dx: i32, dy: i32) -> Result<Value> {
         self.activate(doc)?;
         let before = self

@@ -2141,6 +2141,7 @@ pub fn run() {
         editor_cmds::editor_stroke_cancel,
         editor_cmds::editor_move_frame,
         editor_cmds::editor_duplicate_move,
+        editor_cmds::editor_fold_duplicate_move,
         editor_cmds::editor_save,
         editor_cmds::editor_export_as,
         editor_cmds::editor_export_layer_png,

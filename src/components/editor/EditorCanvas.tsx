@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorMaskSnapshot, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
 import type { EditorSession } from './editorStore';
@@ -81,8 +81,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     lastDy: number;
     /** ⇧ 约束的上一帧锁定偏移(8° 迟滞保持方向稳定,上游 move_mods.last)。 */
     lastConstrain: [number, number] | null;
-    /** Alt 按下(整层路径:抬笔走 duplicate_move 原子复制+移动;浮动态在 begin 已带 copy)。 */
+    /** Alt 按下(浮动态在 begin 已带 copy;整层态在首个 ≥2 屏幕像素的移动时复制)。 */
     alt: boolean;
+    /** Alt 整层复制状态(上游 move_mods:首次真实移动才 duplicate,⌥-click 不复制):
+     * pending=未触发 → dupPromise 建立后每帧等待 → done(副本成为选中,预览即移动副本)/failed(按普通移动继续)。 */
+    altDup: 'pending' | 'done' | 'failed';
+    dupPromise: Promise<void> | null;
+    /** 复制发生前的历史长度(fold_duplicate_move 把复制+平移折叠成一步)。 */
+    histBefore: number | null;
     /** rAF 语义的合帧:待发送的最新指针位置。 */
     pending: { x: number; y: number; shift: boolean } | null;
     flushing: boolean;
@@ -527,6 +533,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (dx === st.lastDx && dy === st.lastDy) continue;
         const s = getSession(tabId);
         if (!s?.state || s.docId == null) break;
+        // Alt 整层复制(上游 move_mods:首个 ≥2 屏幕像素的移动才 duplicate,⌥-click 不复制):
+        // in place 复制后副本成为选中,复制完成前各帧在此等待——之后预览移动的是副本,原件原位不动
+        if (st.altDup === 'pending' && !st.dupPromise && Math.hypot(dx, dy) * s.runtime.view.scale >= 2) {
+          st.dupPromise = runCommand(tabId, 'layer.duplicate', { inPlace: true })
+            .then(() => { if (moveDragRef.current === st) st.altDup = 'done'; })
+            .catch((err) => {
+              logError('[editor] Alt 复制选中层失败,按普通移动继续', err);
+              if (moveDragRef.current === st) st.altDup = 'failed';
+            });
+        }
+        if (st.dupPromise) await st.dupPromise;
         const dirty = moveDirtyRect(st.bounds, st.lastDx, st.lastDy, dx, dy, s.state.width, s.state.height);
         st.lastDx = dx;
         st.lastDy = dy;
@@ -583,6 +600,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       lastDy: 0,
       lastConstrain: null as [number, number] | null,
       alt: opts.alt,
+      // 整层 Alt 复制不在按下时做(⌥-click 不得产生副本,上游 DUPLICATE_THRESHOLD 口径),
+      // 首个 ≥2 屏幕像素的移动时在 flushMove 里触发
+      altDup: (opts.alt && !floatable ? 'pending' : 'done') as 'pending' | 'done' | 'failed',
+      dupPromise: null as Promise<void> | null,
+      histBefore: st0.historyCurrent,
       pending: null as { x: number; y: number; shift: boolean } | null,
       flushing: false,
       ready: Promise.resolve(),
@@ -1222,6 +1244,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const dirs = md.mode === 'float' ? 8 : 4;
       const { dx, dy } = constrainMove([ux - md.startDoc.x, uy - md.startDoc.y], md.lastConstrain, e.shiftKey ? dirs : 0);
       const moved = dx !== 0 || dy !== 0;
+      // 多选层移动带选区一起走(上游 #7538 carries_selection)
+      const carry = s.state.selectedLayers.length > 1 && s.state.hasSelection;
       if (md.mode === 'float') {
         if (moved) {
           // 提交总位移并**立即落定**(PS Move 工具口径,用户已验收"历史即 Move 一步";
@@ -1254,14 +1278,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           // 原地点击:放回(未动过的 piece 无变化、零历史)
           void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
         }
-      } else if (moved && md.alt) {
-        // Alt 拖动 = 复制选中层并移动(桥层原子三步,历史折叠一步 "Duplicate + Move";
-        // 预览画的是原图层在动,提交后整幅重渲即终态,像素相同无跳变)
-        void duplicateMove(tabId, dx, dy).catch((err) => logError('[editor] Alt 复制移动失败', err));
+      } else if (moved && md.alt && md.altDup === 'done') {
+        // Alt 拖动 = 复制选中层并移动:复制已在首个真实移动时发生(副本成为选中),
+        // 这里提交平移,再把复制+平移折叠成一步 "Duplicate + Move"(上游 fold_history)
+        void (async () => {
+          await runCommand(tabId, 'layer.translate', { dx, dy, ...(carry ? { selection: true } : {}) });
+          if (md.histBefore != null && s.docId != null) {
+            const r = await editorFoldDuplicateMove(s.docId, md.histBefore);
+            await applyRunOutcome(tabId, { revision: r.revision, viewRevision: 0, damage: null, result: r }, true);
+          }
+        })().catch((err) => logError('[editor] Alt 复制移动失败', err));
       } else if (moved) {
         // 整层:一条 layer.translate 一步 "Move" 历史;多选层带选区一起走(上游 #7538);
         // revision 变化触发整幅重渲
-        const carry = s.state.selectedLayers.length > 1 && s.state.hasSelection;
         void runCommand(tabId, 'layer.translate', { dx, dy, ...(carry ? { selection: true } : {}) })
           .catch((err) => logError('[editor] layer.translate 失败', err));
       }
@@ -1357,6 +1386,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (md?.mode === 'float') {
       // 浮动件已切割:必须 drop 放回(零历史),否则像素留在浮动态丢失显示
       void runCommand(tabId, 'select.drop', {}).catch(() => undefined);
+    }
+    if (md?.mode === 'layer' && md.alt && md.dupPromise) {
+      // Alt 整层复制已发生但拖拽中断:退掉复制那一步(上游 move_mods::abandon 同款 undo;
+      // 复制在途时等它落地再退,避免 undo 吃到别的步)
+      void md.dupPromise.then(() => {
+        if (md.altDup === 'done') void runCommand(tabId, 'edit.undo', {}).catch(() => undefined);
+      });
     }
     moveDragRef.current = null;
     layerBoxRef.current = null;

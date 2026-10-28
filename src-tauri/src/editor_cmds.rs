@@ -159,6 +159,14 @@ pub fn editor_duplicate_move(s: State<EditorState>, doc: u64, dx: i32, dy: i32) 
     m.duplicate_move(doc, dx, dy).map_err(|e| e.to_string())
 }
 
+/// Alt 拖动的历史折叠:把 before(拖拽开始前的 past_len)之后的复制+平移
+/// 合并成一步 "Duplicate + Move"。返回 {revision, historyCurrent}。
+#[tauri::command]
+pub fn editor_fold_duplicate_move(s: State<EditorState>, doc: u64, before: u64) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.fold_duplicate_move(doc, before).map_err(|e| e.to_string())
+}
+
 
 /// 关闭文档(未保存修改直接丢弃,保存流程由前端先行决定)。
 #[tauri::command]

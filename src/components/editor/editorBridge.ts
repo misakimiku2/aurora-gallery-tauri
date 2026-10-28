@@ -144,6 +144,11 @@ export async function editorDuplicateMove(doc: number, dx: number, dy: number): 
   return invoke<{ revision: number; layers: number[] }>('editor_duplicate_move', { doc, dx, dy });
 }
 
+/** Alt 拖动的历史折叠:把 before(拖拽开始前 past_len)之后的复制+平移合并成一步 "Duplicate + Move"。 */
+export async function editorFoldDuplicateMove(doc: number, before: number): Promise<{ revision: number; historyCurrent: number }> {
+  return invoke<{ revision: number; historyCurrent: number }>('editor_fold_duplicate_move', { doc, before });
+}
+
 /** 选区真实轮廓(边界线段 [x0,y0,x1,y1],文档像素坐标;蚂蚁线数据源)。无选区为 null。 */
 export async function editorSelectionOutline(doc: number, step: number): Promise<{ step: number; segments: number[][] } | null> {
   return invoke<{ step: number; segments: number[][] } | null>('editor_selection_outline', { doc, step });

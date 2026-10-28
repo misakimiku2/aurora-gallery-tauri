@@ -383,3 +383,41 @@ fn state_lock_info_and_floating() {
     m.run(doc, "select.drop", json!({})).unwrap();
     assert_eq!(m.state(doc).unwrap()["floating"], serde_json::Value::Bool(false));
 }
+
+/// Alt 拖动的复制+平移分两步落地、fold_duplicate_move 收口成一步(前端拖拽路径):
+/// duplicate(inPlace) 在首个真实移动时发生 → 抬笔 translate → fold(before) →
+/// 一步 "Duplicate + Move",原件不动、副本成为选中。
+#[test]
+fn alt_drag_duplicate_and_translate_fold_via_fold_duplicate_move() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    m.run(doc, "layer.new.layer", json!({"name": "A"})).unwrap();
+    m.run(doc, "select.rect", json!({"x": 8, "y": 8, "width": 16, "height": 16})).unwrap();
+    m.run(doc, "edit.fill", json!({"color": "#ff0000"})).unwrap();
+    m.run(doc, "select.deselect", json!({})).unwrap();
+    let a = m.state(doc).unwrap()["activeLayer"].as_u64().unwrap();
+    let before = m.state(doc).unwrap()["historyCurrent"].as_u64().unwrap();
+
+    // 拖拽:复制(首个真实移动)→ 抬笔平移 → 折叠
+    m.run(doc, "layer.duplicate", json!({"inPlace": true})).unwrap();
+    m.run(doc, "layer.translate", json!({"dx": 12, "dy": 6})).unwrap();
+    let r = m.fold_duplicate_move(doc, before).unwrap();
+    let st = m.state(doc).unwrap();
+    let hist = st["history"].as_array().unwrap();
+    assert_eq!(hist.last().unwrap(), "Duplicate + Move");
+    assert_eq!(st["historyCurrent"].as_u64().unwrap(), r["historyCurrent"].as_u64().unwrap());
+    // entries = past_len + 1(含当前步):折叠后 past_len = before+1 → 条目 = before+2
+    assert_eq!(hist.len() as u64, before + 2, "copy+move folded into one step");
+
+    // 副本(选中的激活层)落在 +12,+6;原件仍在原位
+    assert_ne!(st["activeLayer"].as_u64().unwrap(), a);
+    let img = m.render_full(doc).unwrap();
+    assert_eq!(px(&img, 12, 12), [255, 0, 0], "original stays at (8..24)");
+    assert_eq!(px(&img, 26, 20), [255, 0, 0], "the copy sits at (20..36)x(14..30)");
+
+    // 一步 Undo 同时退掉复制与平移(折叠的意义)
+    m.run(doc, "edit.undo", json!({})).unwrap();
+    let img = m.render_full(doc).unwrap();
+    assert_eq!(px(&img, 26, 20), [255, 255, 255], "undo takes back copy and move together");
+    assert_eq!(m.state(doc).unwrap()["layers"].as_array().unwrap().len(), 2, "background + A only");
+}

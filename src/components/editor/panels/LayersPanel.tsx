@@ -357,8 +357,10 @@ const LayerContextMenu: React.FC<{
 }> = ({ tabId, layer, hasSelection, docHasMultipleLayers, maskEnabled, pos, onClose, onRename }) => {
   const run = (cmd: string, params: Record<string, unknown> = {}) =>
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
-  // 上游口径:右键非激活层时,每项先 select 该层再发命令(命令作用于激活层)
+  // 上游口径:右键层不在选择里时,先 select 该层再发命令(on_set=false 流程,命令作用于激活层);
+  // **已在多选里则保持整组选择直接发命令**——链接/合并等批量操作依赖多选,先 select 会把它塌成单选
   const act = (cmd: string, params: Record<string, unknown> = {}) => {
+    if (layer.selected) return run(cmd, params);
     void run('layer.select', { layer: layer.id }).then(() => run(cmd, params));
   };
   const [colorOpen, setColorOpen] = useState(false);
@@ -401,7 +403,7 @@ const LayerContextMenu: React.FC<{
     { label: '删除图层', run: () => act('layer.delete'), danger: true },
     { label: '从图层创建组', run: () => act('layer.groupLayers') },
     'sep',
-    { label: '快速导出为 PNG', run: () => { void run('layer.select', { layer: layer.id }).then(() => exportLayerAsPng(tabId)); } },
+    { label: '快速导出为 PNG', run: () => { if (layer.selected) { void exportLayerAsPng(tabId); } else { void run('layer.select', { layer: layer.id }).then(() => exportLayerAsPng(tabId)); } } },
     'sep',
     ...(layer.hasMask
       ? ([
@@ -518,7 +520,12 @@ const Row: React.FC<{
 
   return (
     <div
-      onClick={() => void run('layer.select', { layer: layer.id })}
+      onClick={(e) => {
+        // PS 口径:Ctrl+点选=加入/移出选区(引擎 toggle),Shift+点选=自锚点范围选择
+        // (引擎 range,锚点=上次普通点选层);普通点选=单选。多选供链接图层等批量操作。
+        const mode = e.ctrlKey || e.metaKey ? 'toggle' : e.shiftKey ? 'range' : 'replace';
+        void run('layer.select', mode === 'replace' ? { layer: layer.id } : { layer: layer.id, mode });
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -527,6 +534,7 @@ const Row: React.FC<{
       className={`group flex items-center gap-1 px-1.5 h-7 rounded cursor-default text-xs ${
         layer.selected ? 'bg-sky-600/25 text-neutral-900 dark:text-neutral-100' : 'text-gray-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
       }`}
+      title="点选=单选;Ctrl+点选=加入/移出多选;Shift+点选=范围多选(供链接图层等批量操作)"
       style={{ paddingLeft: 6 + depth * 12 }}
     >
       <button
