@@ -3,11 +3,12 @@
  * 画笔族选项(笔径/硬度/不透明度;blur 族加强度)直接进 live 描边参数;
  * 其余工具占位。
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
-import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler } from 'lucide-react';
+import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
   move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
@@ -46,9 +47,44 @@ const GRADIENT_STYLES: { style: ToolOptions['gradientStyle']; label: string }[] 
   { style: 'diamond', label: '菱形' },
 ];
 
+/** 裁剪比例预设(上游 chrome_ui::CROP_RATIOS 的用户向子集)。 */
+const CROP_RATIOS: { v: string; label: string }[] = [
+  { v: '', label: '自由' },
+  { v: 'original', label: '原始比例' },
+  { v: '1:1', label: '1 : 1' },
+  { v: '4:5', label: '4 : 5' },
+  { v: '5:7', label: '5 : 7' },
+  { v: '2:3', label: '2 : 3' },
+  { v: '16:9', label: '16 : 9' },
+];
+
 export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  // 裁剪比例下拉(右键菜单同款毛玻璃弹层)与角度输入框的本地编辑态
+  const [ratioOpen, setRatioOpen] = useState(false);
+  const [ratioPos, setRatioPos] = useState({ left: 0, top: 0 });
+  const [angleText, setAngleText] = useState<string | null>(null);
+  const ratioBtnRef = useRef<HTMLButtonElement | null>(null);
+  const ratioMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!ratioOpen) return;
+    const close = (e: MouseEvent) => {
+      // 按钮与菜单内部的 mousedown 不关(否则菜单在 click 到达前被卸载,选项点击丢失)
+      if (ratioBtnRef.current?.contains(e.target as Node) || ratioMenuRef.current?.contains(e.target as Node)) return;
+      setRatioOpen(false);
+    };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [ratioOpen]);
+  useLayoutEffect(() => {
+    if (!ratioOpen) return;
+    const el = ratioMenuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${Math.max(4, Math.min(ratioPos.left, window.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(ratioPos.top, window.innerHeight - r.height - 4))}px`;
+  }, [ratioOpen, ratioPos]);
   const s = getSession(tabId);
   if (!s) return null;
 
@@ -152,25 +188,49 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'crop' ? (
         <>
-          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="比例预设:选定后当前框按比例内缩适配;拖画与调把手时保持该比例">
-            比例
-            <select
-              value={s.options.cropRatio}
-              onChange={(e) => {
-                setOptions(tabId, { cropRatio: e.target.value });
-                if (e.target.value) s.runtime.cropFitRatio?.();
+          <button
+            ref={ratioBtnRef}
+            onClick={() => {
+              const r = ratioBtnRef.current!.getBoundingClientRect();
+              setRatioPos({ left: r.left, top: r.bottom + 4 });
+              setRatioOpen((v) => !v);
+            }}
+            className="flex items-center gap-1 px-2 h-6 rounded border border-black/15 dark:border-white/15 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10"
+            title="比例预设:选定后当前框按比例内缩适配;拖画与调把手时保持该比例"
+          >
+            比例:{CROP_RATIOS.find((r) => r.v === s.options.cropRatio)?.label ?? '自由'}
+            <ChevronDown size={11} />
+          </button>
+          <label className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400" title="裁剪框角度(度,顺时针为正);输入后回车应用">
+            角度
+            <input
+              value={angleText ?? String(Math.round(s.cropAngle * 10) / 10)}
+              onChange={(e) => setAngleText(e.target.value)}
+              onBlur={() => {
+                if (angleText != null) {
+                  const v = parseFloat(angleText);
+                  if (Number.isFinite(v)) s.runtime.cropSetAngle?.(v);
+                }
+                setAngleText(null);
               }}
-              className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
-            >
-              <option value="">自由</option>
-              <option value="original">原始比例</option>
-              <option value="1:1">1 : 1</option>
-              <option value="4:5">4 : 5</option>
-              <option value="5:7">5 : 7</option>
-              <option value="2:3">2 : 3</option>
-              <option value="16:9">16 : 9</option>
-            </select>
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                else if (e.key === 'Escape') setAngleText(null);
+              }}
+              className="w-14 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-200"
+            />
           </label>
+          <button
+            title="角度约束:旋转吸附 15° 步进;按住 Shift 临时反转"
+            onClick={() => setOptions(tabId, { cropSnapAngle: !s.options.cropSnapAngle })}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border ${
+              s.options.cropSnapAngle
+                ? 'bg-sky-600/20 text-sky-700 dark:text-sky-300 border-sky-500/50'
+                : 'border-black/15 dark:border-white/15 text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+            }`}
+          >
+            <Magnet size={12} />约束
+          </button>
           <button
             title="拉直:沿图里应水平(或应竖直)的线画一条线,自动转正并取最大内接框;再点一次解除"
             onClick={() => {
@@ -186,7 +246,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           >
             <Ruler size={12} />拉直
           </button>
-          <span className="text-neutral-400 dark:text-neutral-500">拖画/移动/把手调整;框外拖=旋转(⇧ 15° 步进);Enter / 双击提交,Esc 取消</span>
           <button
             title="提交裁剪 (Enter)"
             onClick={() => s.runtime.cropCommit?.()}
@@ -201,6 +260,29 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           >
             <CircleOff size={12} />取消
           </button>
+          {ratioOpen &&
+            createPortal(
+              <div
+                ref={ratioMenuRef}
+                className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max"
+              >
+                {CROP_RATIOS.map((r) => (
+                  <div
+                    key={r.v || 'free'}
+                    className="mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px] flex items-center gap-2"
+                    onClick={() => {
+                      setOptions(tabId, { cropRatio: r.v });
+                      if (r.v) s.runtime.cropFitRatio?.();
+                      setRatioOpen(false);
+                    }}
+                  >
+                    <span>{r.label}</span>
+                    {s.options.cropRatio === r.v && <Check size={12} className="ml-auto opacity-80" />}
+                  </div>
+                ))}
+              </div>,
+              document.body,
+            )}
         </>
       ) : s.tool === 'gradient' ? (
         <>

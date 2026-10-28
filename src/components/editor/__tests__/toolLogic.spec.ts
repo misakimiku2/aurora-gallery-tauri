@@ -13,7 +13,7 @@ import type { ToolOptions } from '../editorStore';
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
-  selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '',
+  selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
 };
 
 describe('constrainSquare / reflectFromCenter', () => {

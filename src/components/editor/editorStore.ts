@@ -30,6 +30,8 @@ export interface ToolOptions {
   moveTarget: 'layer' | 'group';
   /** 裁剪比例预设(上游 crop_ratio key):''=自由/original=原始比例/1:1/4:5/5:7/2:3/16:9。 */
   cropRatio: string;
+  /** 裁剪角度约束(旋转吸附 15° 步进)常开;按住 Shift 临时反转。 */
+  cropSnapAngle: boolean;
 }
 
 export interface EditorRuntime {
@@ -64,6 +66,8 @@ export interface EditorRuntime {
   cropStraightenLine: { x0: number; y0: number; x1: number; y1: number } | null;
   /** 比例预设套用到当前裁剪框(选项条下拉 onChange 调;画布注册)。 */
   cropFitRatio: (() => void) | null;
+  /** 设置裁剪框角度(选项条角度输入框;画布注册,归一 (-180,180],无框先建默认框)。 */
+  cropSetAngle: ((deg: number) => void) | null;
 }
 
 export interface EditorSession {
@@ -78,6 +82,8 @@ export interface EditorSession {
   tool: EditorTool;
   options: ToolOptions;
   runtime: EditorRuntime;
+  /** 当前裁剪框角度(度,屏幕顺时针;选项条角度输入框的显示源)。 */
+  cropAngle: number;
 }
 
 const sessions = new Map<string, EditorSession>();
@@ -121,8 +127,10 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       moveAutoSelect: true,
       moveTarget: 'layer',
       cropRatio: '',
+      cropSnapAngle: false,
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
+    cropAngle: 0,
   };
   sessions.set(tabId, s);
   return s;

@@ -10,13 +10,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession } from './editorStore';
+import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession, updateSession } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainStrokePoint, cropCorners, cropDrawn,
-  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropResizedTurned, cropTurnedAngle, effectiveMode, gradientParams, initialMods,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, effectiveMode, gradientParams, initialMods,
   isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -829,6 +829,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (s) {
       s.runtime.cropStraightenArmed = false;
       s.runtime.cropStraightenLine = null;
+      if (s.cropAngle !== 0) updateSession(tabId, { cropAngle: 0 });
     }
     if (!f || !s?.state) {
       scheduleDraw();
@@ -869,9 +870,28 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (s) {
       s.runtime.cropStraightenArmed = false;
       s.runtime.cropStraightenLine = null;
+      if (s.cropAngle !== 0) updateSession(tabId, { cropAngle: 0 });
     }
     scheduleDraw();
   }, [scheduleDraw]);
+
+  /** 设置裁剪框角度(选项条角度输入框;无框时先建默认框)。归一到 (-180,180]。 */
+  const cropSetAngle = useCallback((deg: number) => {
+    const st = getSession(tabId);
+    if (!st?.state) return;
+    if (!cropRef.current) {
+      const sel = st.state.selectionBounds;
+      let rect: CropRect = sel
+        ? [Math.max(0, sel[0]), Math.max(0, sel[1]), Math.min(st.state.width, sel[0] + sel[2]), Math.min(st.state.height, sel[1] + sel[3])]
+        : [0, 0, st.state.width, st.state.height];
+      if (rect[2] - rect[0] < 1 || rect[3] - rect[1] < 1) rect = [0, 0, st.state.width, st.state.height];
+      cropRef.current = { rect, angle: 0, edited: false };
+    }
+    const a = cropNormalizedAngle(deg);
+    cropRef.current = { ...cropRef.current, angle: a, edited: true };
+    updateSession(tabId, { cropAngle: a });
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
 
   /** 比例预设套用到当前框(选项条下拉 onChange;保中心只减不增,默认框适配不算编辑)。 */
   const cropFitRatio = useCallback(() => {
@@ -901,6 +921,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropCommit !== commitCrop) s.runtime.cropCommit = commitCrop;
       if (s.runtime.cropCancel !== cancelCrop) s.runtime.cropCancel = cancelCrop;
       if (s.runtime.cropFitRatio !== cropFitRatio) s.runtime.cropFitRatio = cropFitRatio;
+      if (s.runtime.cropSetAngle !== cropSetAngle) s.runtime.cropSetAngle = cropSetAngle;
     };
     const s0 = getSession(tabId);
     if (s0) register(s0);
@@ -919,8 +940,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropCommit === commitCrop) s.runtime.cropCommit = null;
       if (s.runtime.cropCancel === cancelCrop) s.runtime.cropCancel = null;
       if (s.runtime.cropFitRatio === cropFitRatio) s.runtime.cropFitRatio = null;
+      if (s.runtime.cropSetAngle === cropSetAngle) s.runtime.cropSetAngle = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle]);
 
   // 注册重绘请求 + 初始适配
   useEffect(() => {
@@ -1450,7 +1472,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           edited: true,
         };
       } else {
-        cropRef.current = { rect: cd.restore.rect, angle: cropTurnedAngle(cd.center, cd.grab, cd.from, [dx, dy], e.shiftKey), edited: true };
+        // 角度约束开关(Shift 临时反转):开=旋转吸附 15° 步进
+        const snap = e.shiftKey !== s.options.cropSnapAngle;
+        cropRef.current = { rect: cd.restore.rect, angle: cropTurnedAngle(cd.center, cd.grab, cd.from, [dx, dy], snap), edited: true };
       }
       scheduleDraw();
       return;
@@ -1615,6 +1639,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (!ok) cropRef.current = { rect: cd.restore.rect, angle: cd.restore.angle, edited: cd.restore.edited };
         else cropRef.current = { ...f, edited: true };
       }
+      // 手势结束同步角度到会话(选项条角度输入框的显示源;拖动中靠指针旁 readout)
+      if (cropRef.current && s.cropAngle !== cropRef.current.angle) updateSession(tabId, { cropAngle: cropRef.current.angle });
       scheduleDraw();
     }
     const sline = s?.runtime.cropStraightenLine;
@@ -1628,7 +1654,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const w = frame ? frame.rect[2] - frame.rect[0] : s.state.width;
         const h = frame ? frame.rect[3] - frame.rect[1] : s.state.height;
         const fitted = cropFitted(w, h, s.state.width, s.state.height, deg);
-        if (fitted) cropRef.current = { rect: fitted, angle: deg, edited: true };
+        if (fitted) {
+          cropRef.current = { rect: fitted, angle: deg, edited: true };
+          updateSession(tabId, { cropAngle: deg });
+        }
       }
       s.runtime.cropStraightenArmed = false; // 一次性:画完一条线自动解除(上游 toggle 口径)
       scheduleDraw();
