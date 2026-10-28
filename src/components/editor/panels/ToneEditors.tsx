@@ -128,7 +128,9 @@ export const HistogramCanvas: React.FC<{
       ctx.fillRect(x0, h - bh, Math.max(1, x1 - x0), bh);
     }
   }, [hist, channel, color, dark]);
-  return <canvas ref={ref} className={className} />;
+  // min-w-0:canvas 的 width 属性(=CSS 宽×dpr)是固有宽度,flex 项默认 min-width:auto
+  // 会被它撑破容器出横向滚动条(dpr>1 必现),须显式允许收缩
+  return <canvas ref={ref} className={`block min-w-0 ${className ?? ''}`} />;
 };
 
 /** 倒三角滑杆手柄(上游 handle:顶点朝上,宽 11px 高 9px,1px 描边)。
@@ -149,8 +151,9 @@ const Handle: React.FC<{ pct: number; fill: string; title?: string }> = ({ pct, 
   );
 };
 
+// 不含宽度:调用方各自行宽语义不同(撑满 / 定宽);都带 w-full 会互相打架出横向滚动
 const fieldCls =
-  'w-full bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200 tabular-nums';
+  'bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200 tabular-nums';
 
 const EditorFrame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="flex flex-col gap-1.5 pt-0.5">{children}</div>
@@ -284,7 +287,7 @@ export const LevelsEditor: React.FC<{
         if (!Number.isFinite(v)) return;
         onChange(v);
       }}
-      className={fieldCls}
+      className={`${fieldCls} w-full min-w-0`}
     />
   );
 
@@ -709,9 +712,10 @@ export const CurvesEditor: React.FC<{
 
   return (
     <EditorFrame>
-      <ChanSelect value={ch} onChange={setCh} />
-      {/* 模式行(上游 curves_mode_row):点/铅笔两按钮 + Smooth(仅铅笔可用) */}
+      {/* 通道 + 模式行(上游 curves_mode_row):点/铅笔两按钮 + Smooth(仅铅笔可用),并排省高度 */}
       <div className="flex items-center gap-1">
+        <ChanSelect value={ch} onChange={setCh} />
+        <div className="flex-1" />
         <button
           type="button"
           title="编辑点以修改曲线"
@@ -728,7 +732,6 @@ export const CurvesEditor: React.FC<{
         >
           <Pencil size={12} />
         </button>
-        <div className="flex-1" />
         <button
           type="button"
           title="平滑曲线值"
@@ -739,11 +742,13 @@ export const CurvesEditor: React.FC<{
           平滑
         </button>
       </div>
-      <div className="flex gap-2.5 pt-1">
+      {/* 宽度驱动正方形(aspect-ratio);包一层 block+min-w-0:canvas 固有宽=CSS宽×dpr,
+          直接做 flex 项会被 min-width:auto 撑破面板(dpr>1 必现,曾致横向滚动+巨图) */}
+      <div className="min-w-0 pl-3 pt-1">
         <canvas
           ref={canvasRef}
           tabIndex={0}
-          className="ml-3 h-auto w-[calc(100%-14px)] cursor-crosshair rounded-sm bg-black/5 outline-none focus-visible:ring-1 focus-visible:ring-sky-500 dark:bg-white/10"
+          className="block h-auto w-full cursor-crosshair rounded-sm bg-black/5 outline-none focus-visible:ring-1 focus-visible:ring-sky-500 dark:bg-white/10"
           style={{ aspectRatio: '1 / 1' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -765,7 +770,7 @@ export const CurvesEditor: React.FC<{
         />
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] text-gray-500 dark:text-neutral-400">输入</span>
+        <span className="flex-none whitespace-nowrap text-[10px] text-gray-500 dark:text-neutral-400">输入</span>
         <input
           type="number"
           min={0}
@@ -782,7 +787,7 @@ export const CurvesEditor: React.FC<{
           }}
           className={`${fieldCls} w-14 flex-none`}
         />
-        <span className="text-[10px] text-gray-500 dark:text-neutral-400">输出</span>
+        <span className="flex-none whitespace-nowrap text-[10px] text-gray-500 dark:text-neutral-400">输出</span>
         <input
           type="number"
           min={0}
@@ -800,10 +805,8 @@ export const CurvesEditor: React.FC<{
           className={`${fieldCls} w-14 flex-none`}
         />
       </div>
-      <div className="text-[10px] text-neutral-500 dark:text-neutral-400">
-        {pencilMode
-          ? '拖动绘制曲线 · Shift+点击从上一笔终点连直线 · 平滑抹平锯齿'
-          : '点击添加控制点 · 拖出图外 / Ctrl+点击 / Delete 删除 · 方向键微调(Shift ×10)'}
+      <div className="truncate text-[10px] text-neutral-500 dark:text-neutral-400">
+        {pencilMode ? '拖动绘制 · Shift+点击连上一笔终点' : '点击加点 · Ctrl+点击/Delete 删 · 方向键微调'}
       </div>
     </EditorFrame>
   );

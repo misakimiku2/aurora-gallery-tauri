@@ -557,7 +557,7 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
     ) : null;
   if (active.kind !== 'Adjustment') {
     return (
-      <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto min-h-0">
+      <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto overflow-x-hidden min-h-0">
         {maskSection}
         <div className="text-neutral-500 dark:text-neutral-400">
           当前层是{active.name}(非调整层)。在「调整」页添加调整图层,或选中一个调整层编辑其参数。
@@ -581,7 +581,7 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
   const ready = EDITOR_READY_KINDS.has(adj.kind);
 
   return (
-    <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto min-h-0">
+    <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto overflow-x-hidden min-h-0">
       <div className="flex items-center gap-2 pb-1">
         <span className="font-medium text-neutral-800 dark:text-neutral-200">{kindLabel}</span>
         <div className="flex-1" />
