@@ -8,6 +8,7 @@
  */
 import type { EditorTool } from './editorTypes';
 import type { ToolOptions } from './editorStore';
+import { DEFAULT_GRADIENT_PRESET, findPreset, presetPaintParams } from './gradientPresets';
 
 export interface DragPoint {
   x0: number;
@@ -152,10 +153,6 @@ export function nextMarqueeShape(shape: ToolOptions['marqueeShape']): ToolOption
   return MARQUEE_CYCLE[(i + 1) % MARQUEE_CYCLE.length];
 }
 
-/**
- * 渐变提交参数(paint.gradient):from/to 文档坐标取整;颜色缺省=前景→背景
- * (引擎口径);Shift 吸附 45° 方向(长度不变);<2px 拖拽由调用方忽略。
- */
 export function constrain45(from: [number, number], to: [number, number]): [number, number] {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
@@ -165,18 +162,29 @@ export function constrain45(from: [number, number], to: [number, number]): [numb
   return [from[0] + Math.cos(angle) * len, from[1] + Math.sin(angle) * len];
 }
 
+/**
+ * 渐变提交参数(paint.gradient):from/to 文档坐标取整;stops 来自所选预设,
+ * "foreground"/"background" 活引用原样下发(引擎提交时按当前前景/背景解析,上游同语义)、
+ * 透明度以 0..100 的 transparency 下发(apply_opacity 合并在引擎内);Shift 吸附 45° 方向
+ * (长度不变);<2px 拖拽由调用方忽略。
+ */
 export function gradientParams(
   from: [number, number],
   to: [number, number],
   opts: ToolOptions,
   targetMask = false,
 ): Record<string, unknown> {
+  const preset = findPreset(opts.gradientPreset) ?? findPreset(DEFAULT_GRADIENT_PRESET)!;
+  const { stops, transparency } = presetPaintParams(preset);
   return {
     from: [Math.round(from[0]), Math.round(from[1])],
     to: [Math.round(to[0]), Math.round(to[1])],
     style: opts.gradientStyle,
-    opacity: Math.max(1, Math.min(100, Math.round(opts.brushOpacity * 100))),
-    dither: true,
+    stops,
+    ...(transparency ? { transparency } : {}),
+    reverse: opts.gradientReverse,
+    dither: opts.gradientDither,
+    opacity: Math.max(1, Math.min(100, Math.round(opts.gradientOpacity * 100))),
     ...(targetMask ? { target: 'mask' } : {}),
   };
 }

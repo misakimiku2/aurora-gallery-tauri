@@ -137,7 +137,8 @@ M0 集成测试 `editor/tests/bridge.rs`:new → setColors → select.rect → p
 - **多边形套索(d465aa1,2026-10-30)**:✅ 复用 select.lasso(顶点列表),纯前端交互:单击加点、点距起点 8 屏幕 px 且 ≥3 点=闭合、双击/三击闭合、Enter 提交、Esc 取消、⌫/右键删顶点、Shift 45° 约束、Alt 拖自由画线;替换模式画新多边形隐藏旧蚂蚁线。工具组=独立工具 polygonLasso,L 键组内循环+工具栏槽位右键/长按弹层。
 - **磁性套索(af6cfbc,2026-10-30)**:✅ **引擎与 live-wire 算法(Intelligent Scissors)vendor 已全,零引擎改动**。桥层 `EdgeSource` 像素快照(doc/revision/活动像素层失效重建)+ `editor_magnetic_trace/snap` 两条 invoke;前端状态机:首击吸附定模式、自动落点(频率默认 57→≈47px)、单击钉锚、⌥ 直线/自由画线、点起点(圆圈提示)/双击/Enter 沿边闭合、⌫ 删锚点重追、[ ] 调宽度;选项条 宽度/对比度/频率;提交 `{trace:false}` 一条 "Magnetic Lasso" 历史。压感宽度(上游有)mouse 场景未接,记待办。
 - **选项条去杂(10ae3f3,2026-10-30,用户拍板)**:✅ 移除工具名标签、全部操作说明文案、选框形态名 pill、版本角标——选项条只放控件(控件标签与 hover title 保留)。
-- 待做:渐变映射预设下拉(依赖渐变预设库,渐变工具同样没有);Select and Mask;渐变 Live 图层;完整"导出为"对话框(缩放/重采样,引擎 layer.exportAs 已就绪);移动工具 Auto-Select 的悬停轮廓高亮;粘贴特殊(Paste Into/Outside 前端入口,引擎已就绪);磁性套索压感宽度;裁剪的 WHR 尺寸预设/框专属 undo 步进/自绘旋转光标。
+- **渐变预设库(2026-10-30)**:✅ engine `builtin()` 56 预设(10 组:Basics 3+8 色系×6+Rainbows 5)前端移植为 `gradientPresets.ts`——stops 支持 foreground/background **活引用**(预设存符号,提交时解析,PS"前景→背景"语义)、`resolve/apply_opacity` 的 TS 移植**仅供色板预览**(加密采样点直接当 CSS gradient 停靠点,分段线性与引擎采样曲线一致)。**提交走活引用交引擎解析**:`paint.gradient` 发 `stops:[[t,"#hex"|"foreground"|"background"]]+transparency:[[t,0..100]]`,合并数学(apply_opacity 区间 4 分加密)留引擎,前端零重复;渐变映射下拉=上游 ComboBox 恒显 Custom 口径(选中回显归零),选定时前端解析活引用为 hex、**alpha 丢弃只写 RGB**(透明度只影响 alpha 不影响 RGB 插值,原始颜色停靠点即完整 RGB 曲线,且避开加密采样超 64 stop 上限的上游坑)。选项条补齐上游控件:色板(96×16 棋盘格垫底显透明,点击弹分组网格弹层,毛玻璃+useLayoutEffect 钳位同款)+不透明度(独立于画笔)+反向+仿色。**真机冒烟**:Blue 01 拖线像素级命中(#0b3d91→#4fa3e0 端点+线性中点)、前景→透明 alpha 合成精确、渐变映射选 Blue 01 引擎 stops 正确;tsc 0/vitest 290/build 绿。
+- 待做:Select and Mask;渐变 Live 图层;完整"导出为"对话框(缩放/重采样,引擎 layer.exportAs 已就绪);移动工具 Auto-Select 的悬停轮廓高亮;粘贴特殊(Paste Into/Outside 前端入口,引擎已就绪);磁性套索压感宽度;裁剪的 WHR 尺寸预设/框专属 undo 步进/自绘旋转光标。
 
 ## 6. 风险与对策
 

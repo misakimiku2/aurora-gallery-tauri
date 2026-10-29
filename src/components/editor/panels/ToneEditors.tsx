@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pencil, Spline } from 'lucide-react';
 import { editorHistogram } from '../editorBridge';
+import { findPreset, GRADIENT_GROUPS, presetMapStops } from '../gradientPresets';
 import {
   CURVE_DRAG_OFF, CURVE_HIT_RADIUS, CurvePoint, curveCanDelete, curveDelete, curveFromParams,
   curveHit, curveInsert, curveLut, curveMoveTo, isIdentityMap, mapToFitPoints, mapFromParams,
@@ -813,14 +814,16 @@ export const CurvesEditor: React.FC<{
 };
 
 // -------------------------------------------------------------------------------------------
-// GradientMap(渐变映射;预设下拉依赖渐变预设库,留待办)
+// GradientMap(渐变映射;预设下拉与渐变工具共用 gradientPresets 库)
 
 export const GradientMapEditor: React.FC<{
   params: Record<string, unknown>;
   emit: (patch: Record<string, unknown>) => void;
   lastEmitRef?: React.MutableRefObject<number>;
   flushNow?: () => void;
-}> = ({ params, emit, lastEmitRef, flushNow }) => {
+  fg?: number[];
+  bg?: number[];
+}> = ({ params, emit, lastEmitRef, flushNow, fg, bg }) => {
   const [stops, setStops] = useState<GradStop[]>(() => stopsFromParams(params.stops));
   const [selected, setSelected] = useState(0);
   const dark = useDarkTheme();
@@ -907,6 +910,27 @@ export const GradientMapEditor: React.FC<{
 
   return (
     <EditorFrame>
+      {/* 预设下拉(上游 ComboBox 恒显 Custom 口径:选中后回显归零;活引用按当前前景/背景解析) */}
+      <select
+        value=""
+        title="从渐变预设载入(前景→背景等活引用按当前前景/背景色解析)"
+        onChange={(e) => {
+          const p = findPreset(e.target.value);
+          if (!p) return;
+          push(presetMapStops(p, fg, bg));
+          setSelected(0);
+        }}
+        className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
+      >
+        <option value="">预设…</option>
+        {GRADIENT_GROUPS.map((g) => (
+          <optgroup key={g.name} label={g.name}>
+            {g.presets.map((p) => (
+              <option key={p.name} value={p.name}>{p.name}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
       {/* 渐变条 + 停靠点标记(标记地址不随 Reverse 变;Reverse 只改图像映射) */}
       <div
         className="relative w-full touch-none pb-11"

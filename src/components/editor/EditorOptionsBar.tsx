@@ -9,6 +9,7 @@ import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
+import { DEFAULT_GRADIENT_PRESET, findPreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
 const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
@@ -55,6 +56,28 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [angleText, setAngleText] = useState<string | null>(null);
   const ratioBtnRef = useRef<HTMLButtonElement | null>(null);
   const ratioMenuRef = useRef<HTMLDivElement | null>(null);
+  // 渐变预设弹层(裁剪比例下拉同款毛玻璃)
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presetPos, setPresetPos] = useState({ left: 0, top: 0 });
+  const presetBtnRef = useRef<HTMLButtonElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!presetOpen) return;
+    const close = (e: MouseEvent) => {
+      if (presetBtnRef.current?.contains(e.target as Node) || presetMenuRef.current?.contains(e.target as Node)) return;
+      setPresetOpen(false);
+    };
+    window.addEventListener('mousedown', close);
+    return () => window.removeEventListener('mousedown', close);
+  }, [presetOpen]);
+  useLayoutEffect(() => {
+    if (!presetOpen) return;
+    const el = presetMenuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${Math.max(4, Math.min(presetPos.left, window.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(presetPos.top, window.innerHeight - r.height - 4))}px`;
+  }, [presetOpen, presetPos]);
   useEffect(() => {
     if (!ratioOpen) return;
     const close = (e: MouseEvent) => {
@@ -75,6 +98,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   }, [ratioOpen, ratioPos]);
   const s = getSession(tabId);
   if (!s) return null;
+  // 渐变工具当前预设的色板(前景/背景活引用按当前颜色解析;棋盘格垫底显透明)
+  const gradCss = s.tool === 'gradient'
+    ? presetCss(findPreset(s.options.gradientPreset) ?? findPreset(DEFAULT_GRADIENT_PRESET)!, s.state?.foreground, s.state?.background)
+    : '';
 
   const isBrush = BRUSH_FAMILY.has(s.tool);
 
@@ -291,6 +318,20 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'gradient' ? (
         <>
+          <button
+            ref={presetBtnRef}
+            title={`渐变预设:${s.options.gradientPreset}(点击选择)`}
+            onClick={() => {
+              const r = presetBtnRef.current?.getBoundingClientRect();
+              if (r) setPresetPos({ left: r.left, top: r.bottom + 4 });
+              setPresetOpen((v) => !v);
+            }}
+            className="h-4 w-24 rounded-sm border border-black/25 dark:border-white/30"
+            style={{
+              backgroundImage: `${gradCss}, repeating-conic-gradient(rgba(128,128,128,0.45) 0% 25%, transparent 0% 50%)`,
+              backgroundSize: '100% 100%, 8px 8px',
+            }}
+          />
           <div className="flex items-center gap-0.5" title="渐变样式">
             {GRADIENT_STYLES.map(({ style, label }) => (
               <button
@@ -307,6 +348,66 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               </button>
             ))}
           </div>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+            不透明度
+            <input
+              type="range" min={1} max={100} value={Math.round(s.options.gradientOpacity * 100)}
+              onChange={(e) => setOptions(tabId, { gradientOpacity: Number(e.target.value) / 100 })}
+              className="w-20 accent-sky-600"
+            />
+            <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{Math.round(s.options.gradientOpacity * 100)}%</span>
+          </label>
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="反向:渐变起止互换">
+            <input
+              type="checkbox" checked={s.options.gradientReverse}
+              onChange={(e) => setOptions(tabId, { gradientReverse: e.target.checked })}
+              className="accent-sky-600"
+            />
+            反向
+          </label>
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="仿色:抖动过渡减少色带">
+            <input
+              type="checkbox" checked={s.options.gradientDither}
+              onChange={(e) => setOptions(tabId, { gradientDither: e.target.checked })}
+              className="accent-sky-600"
+            />
+            仿色
+          </label>
+          {presetOpen &&
+            createPortal(
+              <div
+                ref={presetMenuRef}
+                className="fixed z-[1000] w-72 max-h-[60vh] overflow-y-auto rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5"
+              >
+                {GRADIENT_GROUPS.map((g) => (
+                  <div key={g.name}>
+                    <div className="px-3 pt-1.5 pb-0.5 text-[10px] text-neutral-500 dark:text-neutral-400">{g.name}</div>
+                    <div className="grid grid-cols-2 gap-1 px-2 pb-1">
+                      {g.presets.map((p) => (
+                        <button
+                          key={p.name}
+                          title={p.name}
+                          onClick={() => {
+                            setOptions(tabId, { gradientPreset: p.name });
+                            setPresetOpen(false);
+                          }}
+                          className={`h-5 rounded-sm border ${
+                            s.options.gradientPreset === p.name
+                              ? 'border-sky-500 ring-1 ring-sky-500'
+                              : 'border-black/15 dark:border-white/20 hover:border-sky-400'
+                          }`}
+                          style={{
+                            backgroundImage: `${presetCss(p, s.state?.foreground, s.state?.background)}, repeating-conic-gradient(rgba(128,128,128,0.45) 0% 25%, transparent 0% 50%)`,
+                            backgroundSize: '100% 100%, 8px 8px',
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>,
+              document.body,
+            )}
         </>
       ) : s.tool === 'bucket' ? (
         <>

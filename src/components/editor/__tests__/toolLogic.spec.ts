@@ -13,7 +13,9 @@ import type { ToolOptions } from '../editorStore';
 
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
-  feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
+  feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear',
+  gradientPreset: 'Foreground to Background', gradientReverse: false, gradientDither: true, gradientOpacity: 1,
+  marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57,
 };
@@ -277,12 +279,18 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     expect(h2[0]).toBeCloseTo(-Math.hypot(10, 3));
     expect(constrain45([0, 0], [0, 0])).toEqual([0, 0]);   // 零长度原样
   });
-  it('gradientParams:from/to 取整 + 样式 + 不透明度(1..100)+ dither', () => {
-    expect(gradientParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', brushOpacity: 0.5 })).toEqual({
-      from: [1, 3], to: [10, 8], style: 'radial', opacity: 50, dither: true,
+  it('gradientParams:from/to 取整 + 样式 + 预设 stops(活引用)+ 反向/仿色/不透明度', () => {
+    expect(gradientParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', gradientOpacity: 0.5 })).toEqual({
+      from: [1, 3], to: [10, 8], style: 'radial',
+      stops: [[0, 'foreground'], [1, 'background']],
+      reverse: false, dither: true, opacity: 50,
     });
-    expect(gradientParams([0, 0], [5, 5], { ...OPTS, brushOpacity: 0.005 }).opacity).toBe(1);
-    expect(gradientParams([0, 0], [5, 5], { ...OPTS, brushOpacity: 2 }).opacity).toBe(100);
+    expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 0.005 }).opacity).toBe(1);
+    expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 2 }).opacity).toBe(100);
+    // 透明度预设:transparency 以 0..100 下发
+    const ft = gradientParams([0, 0], [5, 5], { ...OPTS, gradientPreset: 'Foreground to Transparent' });
+    expect(ft.transparency).toEqual([[0, 100], [1, 0]]);
+    expect(ft.stops).toEqual([[0, 'foreground'], [1, 'foreground']]);
   });
   it('bucketParams:坐标取整、容差钳 0..255、前景色、连续开', () => {
     expect(bucketParams(3.7, 8.2, OPTS, '#123456')).toEqual({

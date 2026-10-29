@@ -160,6 +160,9 @@ type EditorProps = {
   lastEmitRef?: React.MutableRefObject<number>;
   /** 抬手立即发送节流中的补丁(手势结束尽快落地,缩小在途回包窗口)。 */
   flushNow?: () => void;
+  /** 当前前景/背景色(0..1 RGB;渐变映射预设下拉解析活引用用)。 */
+  fg?: number[];
+  bg?: number[];
 };
 
 const BrightnessContrastEditor: React.FC<EditorProps> = ({ params, emit }) => {
@@ -596,7 +599,7 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
       </div>
       {maskSection}
       {ready && Editor ? (
-        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} lastEmitRef={lastEmitRef} flushNow={() => flushNowRef.current()} />
+        <Editor params={adj.params} emit={(patch) => emitRef.current(patch)} hist={hist} lastEmitRef={lastEmitRef} flushNow={() => flushNowRef.current()} fg={st.foreground} bg={st.background} />
       ) : (
         <div className="text-neutral-500 dark:text-neutral-400 py-1">
           {kindLabel}暂无专属编辑器;重置与剪贴已可用。

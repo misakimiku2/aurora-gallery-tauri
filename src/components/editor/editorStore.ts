@@ -20,6 +20,14 @@ export interface ToolOptions {
   tolerance: number;
   antiAlias: boolean;
   gradientStyle: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
+  /** 渐变预设名(gradientPresets.GRADIENT_GROUPS;默认前景→背景,stops 以活引用下发)。 */
+  gradientPreset: string;
+  /** 渐变反向(引擎 paint.gradient reverse)。 */
+  gradientReverse: boolean;
+  /** 渐变仿色(引擎 dither,默认开;减少色带)。 */
+  gradientDither: boolean;
+  /** 渐变不透明度 0..1(引擎 opacity 1..100;与画笔不透明度分开)。 */
+  gradientOpacity: number;
   /** 选框工具形状(矩形/椭圆/单行/单列);提交给 select.rect 的 ellipse/line。 */
   marqueeShape: 'rect' | 'ellipse' | 'row' | 'column';
   /** 选区四态(选项条显式模式,上游 selection_mode):无修饰键时用;修饰键优先。 */
@@ -128,6 +136,10 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       tolerance: 32,
       antiAlias: true,
       gradientStyle: 'linear',
+      gradientPreset: 'Foreground to Background',
+      gradientReverse: false,
+      gradientDither: true,
+      gradientOpacity: 1,
       marqueeShape: 'rect',
       selectionMode: 'replace',
       moveAutoSelect: true,
