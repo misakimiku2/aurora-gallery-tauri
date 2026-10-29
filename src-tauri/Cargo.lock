@@ -405,6 +405,7 @@ dependencies = [
 name = "aurora-editor"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "photocraft-color",
  "photocraft-compose",
  "photocraft-engine",
