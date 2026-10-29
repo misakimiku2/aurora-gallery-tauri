@@ -11,7 +11,7 @@ import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
-  move: '移动', marquee: '矩形选框', lasso: '套索', crop: '裁剪工具', eyedropper: '吸管',
+  move: '移动', marquee: '矩形选框', lasso: '套索', polygonLasso: '多边形套索', crop: '裁剪工具', eyedropper: '吸管',
   brush: '画笔', eraser: '橡皮擦', gradient: '渐变', bucket: '油漆桶',
   blur: '模糊', sharpen: '锐化', smudge: '涂抹', hand: '抓手', zoom: '缩放',
 };
@@ -32,7 +32,7 @@ const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 顺序 dab 工具(blur/sharpen/smudge):有 strength(强度),参数单位是百分数。 */
 const RETOUCH_TOOLS = new Set(['blur', 'sharpen', 'smudge']);
 /** 选区类工具:羽化/消锯齿/四态模式提示共用。 */
-const SELECTION_TOOLS = new Set(['marquee', 'lasso']);
+const SELECTION_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso']);
 const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
   eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
   crop: '裁剪框交互(M2 后续切片接入)',

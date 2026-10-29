@@ -229,6 +229,11 @@ export function listDirtySessions(): DirtySessionInfo[] {
   return out;
 }
 
+/** 全部会话概览(冒烟/调试用:listDirtySessions 只报 dirty 会话,新开的文档查不到)。 */
+export function debugSessions(): { tabId: string; tool: string; docId: number | null; path: string | null }[] {
+  return [...sessions.values()].map((s) => ({ tabId: s.tabId, tool: s.tool, docId: s.docId, path: s.path }));
+}
+
 /** 指定 Tab 的编辑器会话是否有未保存修改(无会话=false)。 */
 export function isSessionDirty(tabId: string): boolean {
   const s = sessions.get(tabId);

@@ -6,6 +6,7 @@
  *   直到松开并再次按下为止不做形状约束;
  * - 拖拽中途才新按下的修饰键(fresh)→ 形状约束(Shift 正方形 / Alt 从中心)。
  */
+import type { EditorTool } from './editorTypes';
 import type { ToolOptions } from './editorStore';
 
 export interface DragPoint {
@@ -229,12 +230,32 @@ export function sampleHex(
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M 键不在表内:选框组内循环,由画布层处理。 */
+/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M/L 键不在表内:选框/套索组内循环,由画布层处理。 */
 export const TOOL_KEYS: Record<string, string> = {
-  v: 'move', l: 'lasso', c: 'crop', i: 'eyedropper',
+  v: 'move', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser', g: 'gradient', k: 'bucket',
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };
+
+/** 套索组工具(L 键循环;磁性套索二期加入,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
+export const LASSO_GROUP: ReadonlySet<EditorTool> = new Set(['lasso', 'polygonLasso']);
+
+/** L 键:组内循环到下一套索工具;当前不在组内 → 回自由套索。 */
+export function nextLassoTool(current: EditorTool | undefined): EditorTool {
+  return current === 'lasso' ? 'polygonLasso' : 'lasso';
+}
+
+/** 多边形套索 Shift 45° 约束(上游 constrained_polygon_point 逐行移植:角度取 45° 整数倍,
+ * 长度保持;零长度/非有限值原样返回)。 */
+export function constrainPolygonPoint(from: number[], point: number[]): number[] {
+  const dx = point[0] - from[0];
+  const dy = point[1] - from[1];
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return point;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return point;
+  const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+  return [from[0] + length * Math.cos(angle), from[1] + length * Math.sin(angle)];
+}
 
 /** 画笔族(live 描边工具):brush/eraser 走 LiveStroke,blur/sharpen/smudge 走 LiveDab。 */
 export type BrushFamilyTool = 'brush' | 'eraser' | 'blur' | 'sharpen' | 'smudge';

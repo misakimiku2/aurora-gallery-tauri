@@ -1,17 +1,17 @@
 /**
  * 工具栏(左侧竖排):工具组按钮 + 前/背景色芯片。
  * 工具组子形态(photocraft 上游口径):同组共享一个槽位与快捷键,组内最近使用的
- * 形态显示为图标;**右键工具图标**弹出子形态菜单(选框组=矩形/椭圆)。
- * 长按弹层、更多组(套索族/模糊族)随 M2 后续切片接入。
+ * 形态显示为图标;**右键/长按工具图标**弹出子形态菜单(选框组=矩形/椭圆,
+ * 套索组=自由/多边形),双击=组内循环。
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Move, BoxSelect, CircleDashed, Lasso, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
+  Move, BoxSelect, CircleDashed, Lasso, Pentagon, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
   Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw, MoveHorizontal, MoveVertical,
 } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
 import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
-import { nextMarqueeShape } from './toolLogic';
+import { nextLassoTool, nextMarqueeShape } from './toolLogic';
 
 /** 选框组子形态(M 键组内循环,PS 口径四形态)。 */
 const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: React.ReactNode }[] = [
@@ -21,9 +21,14 @@ const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: str
   { shape: 'column', label: '单列选框 (M)', icon: <MoveVertical size={17} /> },
 ];
 
+/** 套索组子工具(L 键组内循环;磁性套索二期加入)。 */
+const LASSO_TOOLS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
+  { tool: 'lasso', label: '套索 (L)', icon: <Lasso size={17} /> },
+  { tool: 'polygonLasso', label: '多边形套索 (L)', icon: <Pentagon size={17} /> },
+];
+
 const GROUPS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
   { tool: 'move', label: '移动 (V)', icon: <Move size={17} /> },
-  { tool: 'lasso', label: '套索 (L)', icon: <Lasso size={17} /> },
   { tool: 'crop', label: '裁剪 (C)', icon: <Crop size={17} /> },
   { tool: 'eyedropper', label: '吸管 (I)', icon: <Pipette size={17} /> },
   { tool: 'brush', label: '画笔 (B)', icon: <Brush size={17} /> },
@@ -47,8 +52,8 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
-  /** 子形态弹层位置(屏幕坐标;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  /** 子形态弹层(屏幕坐标 + 归属组;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
+  const [menu, setMenu] = useState<{ kind: 'marquee' | 'lasso'; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   /** 长按弹层(上游 0.35s 口径):计时器 + "本次长按已开弹层"标记(抑制定击的选工具)。 */
   const pressTimer = useRef<number | null>(null);
@@ -57,13 +62,13 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   // 点菜单外关闭子形态弹层
   useEffect(() => {
-    if (!menuPos) return undefined;
+    if (!menu) return undefined;
     const close = (e: PointerEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) setMenuPos(null);
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
     };
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
-  }, [menuPos]);
+  }, [menu]);
 
   if (!s) return null;
 
@@ -77,10 +82,15 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const pickMarquee = (shape: 'rect' | 'ellipse' | 'row' | 'column') => {
     setOptions(tabId, { marqueeShape: shape });
     setTool(tabId, 'marquee');
-    setMenuPos(null);
+    setMenu(null);
+  };
+  const lassoActive = LASSO_TOOLS.find((t) => t.tool === s.tool) ?? LASSO_TOOLS[0];
+  const pickLasso = (tool: EditorTool) => {
+    setTool(tabId, tool);
+    setMenu(null);
   };
   /** 长按 0.35s 开弹层(上游 panels.rs 口径);短按仍走 onClick 选工具。 */
-  const startMarqueePress = (e: React.PointerEvent) => {
+  const startPress = (kind: 'marquee' | 'lasso') => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     pressPosRef.current = { x: r.right + 4, y: r.top };
@@ -88,42 +98,47 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     pressTimer.current = window.setTimeout(() => {
       pressTimer.current = null;
       pressOpenedRef.current = true;
-      setMenuPos(pressPosRef.current);
+      setMenu({ kind, ...pressPosRef.current });
     }, 350);
   };
-  const endMarqueePress = () => {
+  const endPress = () => {
     if (pressTimer.current != null) {
       clearTimeout(pressTimer.current);
       pressTimer.current = null;
     }
   };
+  /** 组槽位公共 props:长按/右键弹层 + 双击循环 + 短按选中(长按刚开弹层时抑制)。 */
+  const groupSlot = (kind: 'marquee' | 'lasso', title: string, onDoubleClick: () => void, onShortClick: () => void) => ({
+    title: `${title} — 右键/长按切换形态`,
+    onClick: () => {
+      if (pressOpenedRef.current) {
+        pressOpenedRef.current = false;
+        return;
+      }
+      onShortClick();
+    },
+    onPointerDown: startPress(kind),
+    onPointerUp: endPress,
+    onPointerLeave: endPress,
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      endPress();
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setMenu({ kind, x: r.right + 4, y: r.top });
+    },
+    onDoubleClick,
+  });
 
   return (
     <div className="w-11 shrink-0 flex flex-col items-center gap-0.5 py-1.5 bg-panel border-r border-black/10 dark:border-white/10 select-none overflow-y-auto">
       <button
         key="marquee"
-        title={`${shapeLabel} — 右键/长按切换形状`}
-        onClick={() => {
-          // 长按刚开的弹层,这次释放不重复选工具
-          if (pressOpenedRef.current) {
-            pressOpenedRef.current = false;
-            return;
-          }
-          setTool(tabId, 'marquee');
-        }}
-        onPointerDown={startMarqueePress}
-        onPointerUp={endMarqueePress}
-        onPointerLeave={endMarqueePress}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          endMarqueePress();
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          setMenuPos({ x: r.right + 4, y: r.top });
-        }}
-        onDoubleClick={() => {
-          // 双击=循环到下一形态(长按弹层之外的快速切换)
-          setOptions(tabId, { marqueeShape: nextMarqueeShape(marqueeShape) });
-        }}
+        {...groupSlot(
+          'marquee',
+          shapeLabel,
+          () => setOptions(tabId, { marqueeShape: nextMarqueeShape(marqueeShape) }),
+          () => setTool(tabId, 'marquee'),
+        )}
         className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
           s.tool === 'marquee'
             ? 'bg-sky-600 text-white'
@@ -132,14 +147,48 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
       >
         {marqueeIcon}
       </button>
-      {menuPos && (
-        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menuPos.x, top: menuPos.y }}>
+      {menu?.kind === 'marquee' && (
+        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
           {MARQUEE_SHAPES.map(({ shape, label, icon }) => (
             <button
               key={shape}
               onClick={() => pickMarquee(shape)}
               className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
                 marqueeShape === shape
+                  ? 'text-sky-700 dark:text-sky-300'
+                  : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+              }`}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        key="lasso"
+        {...groupSlot(
+          'lasso',
+          lassoActive.label,
+          () => setTool(tabId, nextLassoTool(s.tool)),
+          () => setTool(tabId, lassoActive.tool),
+        )}
+        className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
+          lassoActive.tool === s.tool
+            ? 'bg-sky-600 text-white'
+            : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
+        }`}
+      >
+        {lassoActive.icon}
+      </button>
+      {menu?.kind === 'lasso' && (
+        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
+          {LASSO_TOOLS.map(({ tool, label, icon }) => (
+            <button
+              key={tool}
+              onClick={() => pickLasso(tool)}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
+                tool === s.tool
                   ? 'text-sky-700 dark:text-sky-300'
                   : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
               }`}

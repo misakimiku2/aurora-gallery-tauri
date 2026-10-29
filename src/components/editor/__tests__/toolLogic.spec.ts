@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainStrokePoint, constrainSquare,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
   cropTurnedAngle, docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDirtyRect, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
+  moveBounds, moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snappedDir, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
@@ -139,10 +139,11 @@ describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)'
 });
 
 describe('TOOL_KEYS', () => {
-  it('覆盖一期全部工具(M 键在画布层做组内循环,不在表内)', () => {
+  it('覆盖一期全部工具(M/L 键在画布层做组内循环,不在表内)', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
-    expect(Object.keys(TOOL_KEYS)).toHaveLength(13);
+    expect(TOOL_KEYS.l).toBeUndefined();
+    expect(Object.keys(TOOL_KEYS)).toHaveLength(12);
   });
 });
 
@@ -458,5 +459,36 @@ describe('移动工具纯函数(photocraft move_ui/move_mods 口径)', () => {
     expect(moveBounds(layers, null, 64, 64)).toEqual([0, 0, 40, 40]);
     // 无链接组:保持原并集行为
     expect(moveBounds([layers[3]], 4, 64, 64)).toEqual([8, 8, 4, 4]);
+  });
+});
+
+describe('多边形套索(上游 constrained_polygon_point + lasso 组循环口径)', () => {
+  it('Shift 45° 约束:八个方向全数吸附、长度保持、零长度原样', () => {
+    const f = [100, 100];
+    // 水平/垂直:已对齐的方向原样通过
+    expect(constrainPolygonPoint(f, [180, 100])).toEqual([180, 100]);
+    expect(constrainPolygonPoint(f, [100, 140])).toEqual([100, 140]);
+    // 20°(dy=29.12,dx=80,长度 85.14)→ 吸附到 0°(水平),长度保持
+    const shallow = constrainPolygonPoint(f, [180, 129.12]);
+    expect(shallow[1]).toBeCloseTo(100, 6);
+    expect(shallow[0]).toBeCloseTo(185.14, 2);
+    // 75°(≥67.5°)→ 吸附到 90°(垂直),长度保持
+    const steep = constrainPolygonPoint(f, [121.43, 180]);
+    expect(steep[0]).toBeCloseTo(100, 2);
+    expect(steep[1]).toBeCloseTo(182.82, 2);
+    // 225° 对角方向(已对齐,原样)
+    const diag = constrainPolygonPoint(f, [40, 40]);
+    expect(diag[0]).toBeCloseTo(40, 6);
+    expect(diag[1]).toBeCloseTo(40, 6);
+    // 零长度与非有限输入原样返回
+    expect(constrainPolygonPoint(f, [100, 100])).toEqual([100, 100]);
+    expect(constrainPolygonPoint(f, [NaN, 50])).toEqual([NaN, 50]);
+  });
+
+  it('L 键套索组循环:组内二态互换,组外回自由套索', () => {
+    expect(nextLassoTool('lasso')).toBe('polygonLasso');
+    expect(nextLassoTool('polygonLasso')).toBe('lasso');
+    expect(nextLassoTool('move')).toBe('lasso');
+    expect(nextLassoTool(undefined)).toBe('lasso');
   });
 });

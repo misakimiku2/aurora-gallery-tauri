@@ -15,9 +15,9 @@ import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
-  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainStrokePoint, cropCorners, cropDrawn,
+  BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, effectiveMode, gradientParams, initialMods,
-  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextMarqueeShape,
+  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextLassoTool, nextMarqueeShape,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
@@ -125,6 +125,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const floatOffsetRef = useRef<{ x: number; y: number; rev: number; sel: string } | null>(null);
   /** 套索拖拽中(上游 lasso_ui 口径:每个 pointer 事件采一点、实线预览、<3 点=取消选择)。 */
   const lassoRef = useRef<{ points: number[][]; mods: DragMods } | null>(null);
+  /** 多边形套索进行中(上游 ui.polygon/polygon_mode:逐点连线,首击定运算模式)。
+   * 提交走与自由套索同一条 select.lasso。 */
+  const polygonRef = useRef<{ points: number[][]; mode: 'replace' | 'add' | 'subtract' | 'intersect' } | null>(null);
+  /** 最近一次多边形闭合时刻:双击/三击的后续 click 不许再起新多边形(上游同口径)。 */
+  const polygonClosedAt = useRef(0);
   /** 裁剪框(上游 crop_ui):未转矩形文档 px [x0,y0,x1,y1] + angle(屏幕顺时针度数)+
    * edited(是否被编辑过;未动默认框=离开丢弃/提交无操作)。null=未建框(draw 懒建)。 */
   const cropRef = useRef<{ rect: [number, number, number, number]; angle: number; edited: boolean } | null>(null);
@@ -246,7 +251,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.restore();
     };
     const sel = s.state.selectionBounds;
-    if (sel) {
+    // 替换模式画新多边形时隐藏旧选区蚂蚁线(上游 a_new_polygon_hides_the_selection;Esc 还原)
+    const hideAnts = s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace';
+    if (sel && !hideAnts) {
       refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
       const polys = s.runtime.selectionOutline;
       if (polys && polys.length) {
@@ -263,6 +270,41 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
       // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
     }
+    // overlay:多边形套索实线预览(上游 solid_path:白晕 3px + 黑线 1px;末段橡皮筋画到
+    // hover 点,Shift 按住时按 45° 约束后的点画)
+    if (s.tool === 'polygonLasso' && polygonRef.current && polygonRef.current.points.length >= 1) {
+      const pts = polygonRef.current.points;
+      const hover = s.runtime.pointerDoc;
+      const last = pts[pts.length - 1];
+      const rubber = hover && last
+        ? (shiftRef.current ? constrainPolygonPoint(last, [hover.x, hover.y]) : [hover.x, hover.y])
+        : null;
+      const polyPath = () => {
+        octx.beginPath();
+        pts.forEach(([x, y], i) => {
+          const sx = Math.round(x * v.scale + v.ox) + 0.5;
+          const sy = Math.round(y * v.scale + v.oy) + 0.5;
+          if (i === 0) octx.moveTo(sx, sy);
+          else octx.lineTo(sx, sy);
+        });
+        if (rubber) {
+          octx.lineTo(Math.round(rubber[0] * v.scale + v.ox) + 0.5, Math.round(rubber[1] * v.scale + v.oy) + 0.5);
+        }
+      };
+      octx.save();
+      octx.lineJoin = 'round';
+      octx.lineCap = 'round';
+      polyPath();
+      octx.strokeStyle = 'rgba(255,255,255,0.55)';
+      octx.lineWidth = 3;
+      octx.stroke();
+      polyPath();
+      octx.strokeStyle = '#000000';
+      octx.lineWidth = 1;
+      octx.stroke();
+      octx.restore();
+    }
+
     // overlay:渐变方向线预览(上游 classic 口径:3px 黑(α140)垫底 + 1px 白,两端白色实心圆)
     if (gradientRef.current) {
       const g = gradientRef.current;
@@ -818,6 +860,30 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     cropRef.current = { rect, angle: 0, edited: false };
   };
 
+  /** 多边形套索提交(上游 commit_polygon):≥3 点走 select.lasso(与自由套索同一命令),
+   * 首击定的运算模式随行;<3 点静默丢弃;闭合后 350ms 内的 click 不再起新多边形。 */
+  const commitPolygon = useCallback(() => {
+    const poly = polygonRef.current;
+    polygonRef.current = null;
+    polygonClosedAt.current = Date.now();
+    scheduleDraw();
+    const st = getSession(tabId);
+    if (poly && poly.points.length >= 3 && st?.state) {
+      void runCommand(tabId, 'select.lasso', lassoParams(poly.points, st.options, poly.mode))
+        .catch((err) => logError('[editor] select.lasso 失败', err));
+    }
+  }, [tabId]);
+
+  /** 删上一个多边形顶点(上游 polygon_retract:⌫/Delete/右键;删空=取消并还原)。 */
+  const retractPolygon = useCallback(() => {
+    const poly = polygonRef.current;
+    if (!poly) return false;
+    poly.points.pop();
+    if (poly.points.length === 0) polygonRef.current = null;
+    scheduleDraw();
+    return true;
+  }, []);
+
   /** 裁剪提交(上游 commit_crop):一条 image.crop——显式矩形允许超出画布(扩展区按背景色
    * 填充),带 angle 时引擎一步完成"转正+裁剪";x/y round,w/h round 后 ≥1。未动默认框
    * (=整画布)无操作;提交成功后适配视图(上游 fit_pending);被拒恢复框。 */
@@ -1062,11 +1128,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         console.log(`[editor] brush size ${next}px`);
         return;
       }
-      // Enter:裁剪=提交(上游双提交键之一);套索进行中=提交轮廓;否则落定浮动选区
+      // Enter:裁剪=提交(上游双提交键之一);多边形/套索进行中=提交轮廓;否则落定浮动选区
       if (e.key === 'Enter') {
         e.preventDefault();
         if (s.tool === 'crop') {
           commitCrop();
+          return;
+        }
+        if (s.tool === 'polygonLasso' && polygonRef.current) {
+          commitPolygon();
           return;
         }
         const ls = lassoRef.current;
@@ -1086,10 +1156,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         return;
       }
-      // Esc:取消进行中的裁剪框/套索轮廓(不提交任何命令,上游口径)
+      // Esc:取消进行中的裁剪框/多边形/套索轮廓(不提交任何命令,上游口径)
       if (e.key === 'Escape') {
         if (s.tool === 'crop' && (cropRef.current || cropDragRef.current)) {
           cancelCrop();
+          return;
+        }
+        if (polygonRef.current) {
+          polygonRef.current = null;
+          scheduleDraw();
           return;
         }
         if (lassoRef.current) {
@@ -1147,6 +1222,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 挡住 webview 的后退/删词默认行为
       if (e.key === 'Backspace' || e.key === 'Delete' || e.code === 'Backspace' || e.code === 'Delete') {
         e.preventDefault();
+        if (s.tool === 'polygonLasso' && polygonRef.current) {
+          // 多边形套索:⌫/Delete 删上一顶点(删空=取消),不清像素(上游 polygon_retract)
+          retractPolygon();
+          return;
+        }
         if (e.altKey) {
           void runCommand(tabId, 'edit.fill', { contents: 'foreground' }).catch((err) => logError('[editor] 填充前景色失败', err));
         } else if (e.ctrlKey || e.metaKey) {
@@ -1275,6 +1355,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         } else {
           setTool(tabId, 'marquee');
         }
+      } else if (k === 'l') {
+        // L 键套索组循环:自由套索 ⇄ 多边形套索(上游 lasso 组 L 循环口径)
+        setTool(tabId, nextLassoTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -1330,6 +1413,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s = getSession(tabId);
     if (!s) return;
     (e.target as Element).setPointerCapture(e.pointerId);
+    // 换到其他工具的第一次按下即丢弃进行中的多边形(上游 every_other_tool_drops_the_polygon)
+    if (s.tool !== 'polygonLasso' && polygonRef.current) {
+      polygonRef.current = null;
+      scheduleDraw();
+    }
     const pan = spaceRef.current || e.button === 1 || s.tool === 'hand';
     if (pan) {
       panRef.current = { sx: e.clientX, sy: e.clientY, ox: s.runtime.view.ox, oy: s.runtime.view.oy };
@@ -1354,6 +1442,33 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     } else if (s.tool === 'lasso' && e.button === 0 && s.state) {
       // 套索:按下即起笔(上游绕过拖拽阈值口径),首点入列
       lassoRef.current = { points: [[dx, dy]], mods: initialMods(e.shiftKey, e.altKey) };
+      scheduleDraw();
+    } else if (s.tool === 'polygonLasso' && e.button === 0 && s.state) {
+      // 多边形套索(上游 polygon_click):单击加点;点距起点 8 屏幕 px 且 ≥3 点=闭合;
+      // 首击定运算模式(修饰键,空选区 Alt 降级 replace);Shift 非 Alt=45° 约束;
+      // 双击/三击闭合(首击已放最后一点,第二击不再起新多边形)。
+      if (Date.now() - polygonClosedAt.current < 350) return;
+      const poly = polygonRef.current;
+      if (poly && poly.points.length >= 3) {
+        const [p0] = poly.points;
+        if (Math.hypot(p0[0] - dx, p0[1] - dy) < 8 / Math.max(0.01, s.runtime.view.scale)) {
+          commitPolygon();
+          return;
+        }
+      }
+      if (!poly) {
+        polygonRef.current = {
+          points: [[dx, dy]],
+          mode: resolveSelectionMode(initialMods(e.shiftKey, e.altKey), s.options.selectionMode, s.state.hasSelection),
+        };
+      } else {
+        const last = poly.points[poly.points.length - 1];
+        poly.points.push(e.shiftKey && !e.altKey && last ? constrainPolygonPoint(last, [dx, dy]) : [dx, dy]);
+      }
+      if (e.detail >= 2) {
+        commitPolygon();
+        return;
+      }
       scheduleDraw();
     } else if (s.tool === 'crop' && e.button === 0 && s.state) {
       // 拉直 armed:按下拖画标尺线(松手按长度生效,一次性)
@@ -1467,6 +1582,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const [x, y] = screenToDoc(s.runtime.view, ev.clientX - rect.left, ev.clientY - rect.top);
         const last = ls.points[ls.points.length - 1];
         if (x !== last[0] || y !== last[1]) ls.points.push([x, y]);
+      }
+      scheduleDraw();
+      return;
+    }
+    const poly = polygonRef.current;
+    if (s.tool === 'polygonLasso' && poly) {
+      // 多边形套索:hover 更新橡皮筋终点;⌥ 按住拖动=自由画线(≥1 文档 px 加点,
+      // 松开 ⌥ 回直线段、多边形保持打开——上游 canvas.rs Move 分支口径)
+      if ((e.buttons & 1) !== 0 && e.altKey) {
+        const last = poly.points[poly.points.length - 1];
+        if (!last || Math.hypot(last[0] - dx, last[1] - dy) >= 1) poly.points.push([dx, dy]);
       }
       scheduleDraw();
       return;
@@ -1765,7 +1891,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   if (!session) return null;
-  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'eyedropper', 'gradient', 'bucket']);
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'eyedropper', 'gradient', 'bucket']);
   const cursor =
     session.tool === 'hand' || spaceRef.current ? 'grab'
       : session.tool === 'zoom' ? 'zoom-in'
@@ -1794,7 +1920,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const hit = cropHitTurned(f.rect, f.angle, [px, py], 0);
         if (hit.kind === 'inside') commitCrop();
       }}
-      onContextMenu={(e) => e.preventDefault()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        // 多边形套索画点中:右键=删上一顶点并吃掉菜单(上游 lasso_retracted 口径)
+        if (getSession(tabId)?.tool === 'polygonLasso' && polygonRef.current) retractPolygon();
+      }}
     >
       <canvas ref={displayRef} className="absolute inset-0" />
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
