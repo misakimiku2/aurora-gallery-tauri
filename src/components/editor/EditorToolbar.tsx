@@ -5,42 +5,40 @@
  * 套索组=自由/多边形),双击=组内循环。
  */
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Move, BoxSelect, CircleDashed, Lasso, Magnet, Pentagon, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
-  Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw, MoveHorizontal, MoveVertical,
-} from 'lucide-react';
+import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
+import { EditorIcon, type EditorIconName } from './editorIcons';
 import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
 import { nextLassoTool, nextMarqueeShape } from './toolLogic';
 
-/** 选框组子形态(M 键组内循环,PS 口径四形态)。 */
-const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: React.ReactNode }[] = [
-  { shape: 'rect', label: '矩形选框 (M)', icon: <BoxSelect size={17} /> },
-  { shape: 'ellipse', label: '椭圆选框 (M)', icon: <CircleDashed size={17} /> },
-  { shape: 'row', label: '单行选框 (M)', icon: <MoveHorizontal size={17} /> },
-  { shape: 'column', label: '单列选框 (M)', icon: <MoveVertical size={17} /> },
+/** 选框组子形态(M 键组内循环,PS 口径四形态;图标=上游 assets/icons 同名)。 */
+const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: EditorIconName }[] = [
+  { shape: 'rect', label: '矩形选框 (M)', icon: 'square-dashed' },
+  { shape: 'ellipse', label: '椭圆选框 (M)', icon: 'ellipse-dashed' },
+  { shape: 'row', label: '单行选框 (M)', icon: 'marquee-row' },
+  { shape: 'column', label: '单列选框 (M)', icon: 'marquee-column' },
 ];
 
 /** 套索组子工具(L 键组内循环)。 */
-const LASSO_TOOLS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
-  { tool: 'lasso', label: '套索 (L)', icon: <Lasso size={17} /> },
-  { tool: 'polygonLasso', label: '多边形套索 (L)', icon: <Pentagon size={17} /> },
-  { tool: 'magneticLasso', label: '磁性套索 (L)', icon: <Magnet size={17} /> },
+const LASSO_TOOLS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
+  { tool: 'lasso', label: '套索 (L)', icon: 'lasso' },
+  { tool: 'polygonLasso', label: '多边形套索 (L)', icon: 'pentagon' },
+  { tool: 'magneticLasso', label: '磁性套索 (L)', icon: 'lasso-magnetic' },
 ];
 
-const GROUPS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
-  { tool: 'move', label: '移动 (V)', icon: <Move size={17} /> },
-  { tool: 'crop', label: '裁剪 (C)', icon: <Crop size={17} /> },
-  { tool: 'eyedropper', label: '吸管 (I)', icon: <Pipette size={17} /> },
-  { tool: 'brush', label: '画笔 (B)', icon: <Brush size={17} /> },
-  { tool: 'eraser', label: '橡皮擦 (E)', icon: <Eraser size={17} /> },
-  { tool: 'gradient', label: '渐变 (G)', icon: <Blend size={17} /> },
-  { tool: 'bucket', label: '油漆桶 (K)', icon: <PaintBucket size={17} /> },
-  { tool: 'blur', label: '模糊 (R)', icon: <Droplet size={17} /> },
-  { tool: 'sharpen', label: '锐化 (U)', icon: <Sparkles size={17} /> },
-  { tool: 'smudge', label: '涂抹 (S)', icon: <Fingerprint size={17} /> },
-  { tool: 'hand', label: '抓手 (H)', icon: <Hand size={17} /> },
-  { tool: 'zoom', label: '缩放 (Z)', icon: <ZoomIn size={17} /> },
+const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
+  { tool: 'move', label: '移动 (V)', icon: 'move' },
+  { tool: 'crop', label: '裁剪 (C)', icon: 'crop' },
+  { tool: 'eyedropper', label: '吸管 (I)', icon: 'pipette' },
+  { tool: 'brush', label: '画笔 (B)', icon: 'brush' },
+  { tool: 'eraser', label: '橡皮擦 (E)', icon: 'eraser' },
+  { tool: 'gradient', label: '渐变 (G)', icon: 'gradient' },
+  { tool: 'bucket', label: '油漆桶 (K)', icon: 'paint-bucket' },
+  { tool: 'blur', label: '模糊 (R)', icon: 'droplet' },
+  { tool: 'sharpen', label: '锐化 (U)', icon: 'triangle' },
+  { tool: 'smudge', label: '涂抹 (S)', icon: 'pointer' },
+  { tool: 'hand', label: '抓手 (H)', icon: 'hand' },
+  { tool: 'zoom', label: '缩放 (Z)', icon: 'zoom-in' },
 ];
 
 const rgbaCss = (c: number[] | undefined): string => {
@@ -78,7 +76,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   };
 
   const marqueeShape = s.options.marqueeShape;
-  const marqueeIcon = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.icon ?? <BoxSelect size={17} />;
+  const marqueeIcon = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.icon ?? 'square-dashed';
   const shapeLabel = MARQUEE_SHAPES.find((m) => m.shape === marqueeShape)?.label ?? '矩形选框 (M)';
   const pickMarquee = (shape: 'rect' | 'ellipse' | 'row' | 'column') => {
     setOptions(tabId, { marqueeShape: shape });
@@ -146,7 +144,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
             : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
         }`}
       >
-        {marqueeIcon}
+        <EditorIcon name={marqueeIcon} />
       </button>
       {menu?.kind === 'marquee' && (
         <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
@@ -160,7 +158,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
                   : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
               }`}
             >
-              {icon}
+              <EditorIcon name={icon} size={15} />
               {label}
             </button>
           ))}
@@ -180,7 +178,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
             : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
         }`}
       >
-        {lassoActive.icon}
+        <EditorIcon name={lassoActive.icon} />
       </button>
       {menu?.kind === 'lasso' && (
         <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
@@ -194,7 +192,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
                   : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
               }`}
             >
-              {icon}
+              <EditorIcon name={icon} size={15} />
               {label}
             </button>
           ))}
@@ -211,7 +209,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
               : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
           }`}
         >
-          {icon}
+          <EditorIcon name={icon} />
         </button>
       ))}
       <div className="mt-2 relative w-10 h-10 shrink-0">

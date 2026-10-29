@@ -10,11 +10,13 @@ import {
 } from '../toolLogic';
 import type { StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
+import { findPreset } from '../gradientPresets';
 
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear',
-  gradientPreset: 'Foreground to Background', gradientReverse: false, gradientDither: true, gradientOpacity: 1,
+  gradientCurrent: findPreset('Foreground to Background')!,
+  gradientReverse: false, gradientDither: true, gradientOpacity: 1,
   marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57,
@@ -288,7 +290,7 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 0.005 }).opacity).toBe(1);
     expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 2 }).opacity).toBe(100);
     // 透明度预设:transparency 以 0..100 下发
-    const ft = gradientParams([0, 0], [5, 5], { ...OPTS, gradientPreset: 'Foreground to Transparent' });
+    const ft = gradientParams([0, 0], [5, 5], { ...OPTS, gradientCurrent: findPreset('Foreground to Transparent')! });
     expect(ft.transparency).toEqual([[0, 100], [1, 0]]);
     expect(ft.stops).toEqual([[0, 'foreground'], [1, 'foreground']]);
   });

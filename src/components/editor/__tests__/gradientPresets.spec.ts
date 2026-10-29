@@ -3,8 +3,8 @@
  * apply_opacity 同款数学)、提交参数形态(from_params 可解析的同构 JSON)、渐变映射取色。
  */
 import {
-  applyOpacityStops, DEFAULT_GRADIENT_PRESET, findPreset, GRADIENT_GROUPS, hex01, hexOf01,
-  presetCss, presetMapStops, presetPaintParams, resolvePreset,
+  applyOpacityStops, clonePreset, DEFAULT_GRADIENT_PRESET, defaultGradient, findPreset, GRADIENT_GROUPS, hex01, hexOf01,
+  moveStopAt, presetCss, presetMapStops, presetPaintParams, resolvePreset, sampleResolved, stopGapMid,
 } from '../gradientPresets';
 
 describe('预设数据(photocraft engine builtin() 同构)', () => {
@@ -109,6 +109,40 @@ describe('presetMapStops(渐变映射:活引用解析为 hex,透明度丢弃)', 
       { at: 1, color: '#0000ff' },
     ]);
     expect(presetMapStops(findPreset('Rainbow Fade')!, [0, 0, 0], [0, 0, 0])).toHaveLength(13);
+  });
+});
+
+describe('编辑面板纯函数(clone/move/gap/sample)', () => {
+  it('defaultGradient/clonePreset:独立副本,改副本不动共享预设表', () => {
+    const d = defaultGradient();
+    expect(d.name).toBe('Foreground to Background');
+    d.stops[0] = [0.5, [1, 1, 1]];
+    expect(findPreset(DEFAULT_GRADIENT_PRESET)!.stops[0][0]).toBe(0);
+    const src = findPreset('Blue 02')!;
+    const c = clonePreset(src);
+    c.stops[1][1] = [0, 0, 0];
+    expect((src.stops[1][1] as [number, number, number])[0]).not.toBe(0);
+  });
+  it('moveStopAt:跨位重排返回新下标,round 0.001、钳 0..1、保序', () => {
+    const stops: Array<[number, string]> = [[0, 'a'], [0.5, 'b'], [1, 'c']];
+    expect(moveStopAt(stops, 1, 0.9)).toBe(1);
+    expect(stops.map(([t]) => t)).toEqual([0, 0.9, 1]);
+    expect(moveStopAt(stops, 0, 2)).toBe(1);
+    expect(stops.map(([t]) => t)).toEqual([0.9, 1, 1]);
+    expect(moveStopAt(stops, 9, 0.5)).toBeNull();
+  });
+  it('stopGapMid:最宽间隙中点;少于两点取 0.5', () => {
+    expect(stopGapMid([[0, 0], [0.4, 0], [0.5, 0]])).toBeCloseTo(0.2);
+    expect(stopGapMid([[0, 0]])).toBe(0.5);
+  });
+  it('sampleResolved:活引用解析 + 透明度乘进 alpha(两端外恒值=端点值)', () => {
+    const fb = findPreset(DEFAULT_GRADIENT_PRESET)!;
+    expect(sampleResolved(fb, [1, 0, 0], [0, 0, 1], 0.25).slice(0, 3)).toEqual([0.75, 0, 0.25]);
+    expect(sampleResolved(fb, [1, 0, 0], [0, 0, 1], 0.25)[3]).toBe(1);
+    const ft = findPreset('Foreground to Transparent')!;
+    expect(sampleResolved(ft, [0, 0, 0], [0, 0, 0], 0.5)[3]).toBeCloseTo(0.5);
+    expect(sampleResolved(ft, [0, 0, 0], [0, 0, 0], -1)[3]).toBeCloseTo(1);
+    expect(sampleResolved(ft, [0, 0, 0], [0, 0, 0], 5)[3]).toBeCloseTo(0);
   });
 });
 

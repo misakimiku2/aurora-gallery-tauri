@@ -6,6 +6,7 @@
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments } from './toolLogic';
+import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
 
@@ -20,8 +21,8 @@ export interface ToolOptions {
   tolerance: number;
   antiAlias: boolean;
   gradientStyle: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
-  /** 渐变预设名(gradientPresets.GRADIENT_GROUPS;默认前景→背景,stops 以活引用下发)。 */
-  gradientPreset: string;
+  /** 渐变工具当前渐变(可编辑副本;预设点击=载入副本,渐变面板 stop 编辑改此副本)。 */
+  gradientCurrent: GradientPreset;
   /** 渐变反向(引擎 paint.gradient reverse)。 */
   gradientReverse: boolean;
   /** 渐变仿色(引擎 dither,默认开;减少色带)。 */
@@ -136,7 +137,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       tolerance: 32,
       antiAlias: true,
       gradientStyle: 'linear',
-      gradientPreset: 'Foreground to Background',
+      gradientCurrent: defaultGradient(),
       gradientReverse: false,
       gradientDither: true,
       gradientOpacity: 1,

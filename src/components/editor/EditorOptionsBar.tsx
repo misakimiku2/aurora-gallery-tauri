@@ -9,7 +9,7 @@ import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
-import { DEFAULT_GRADIENT_PRESET, findPreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
+import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
 const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
@@ -98,9 +98,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   }, [ratioOpen, ratioPos]);
   const s = getSession(tabId);
   if (!s) return null;
-  // 渐变工具当前预设的色板(前景/背景活引用按当前颜色解析;棋盘格垫底显透明)
+  // 渐变工具当前渐变的色板(前景/背景活引用按当前颜色解析;棋盘格垫底显透明)
   const gradCss = s.tool === 'gradient'
-    ? presetCss(findPreset(s.options.gradientPreset) ?? findPreset(DEFAULT_GRADIENT_PRESET)!, s.state?.foreground, s.state?.background)
+    ? presetCss(s.options.gradientCurrent, s.state?.foreground, s.state?.background)
     : '';
 
   const isBrush = BRUSH_FAMILY.has(s.tool);
@@ -320,7 +320,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         <>
           <button
             ref={presetBtnRef}
-            title={`渐变预设:${s.options.gradientPreset}(点击选择)`}
+            title={`渐变预设:${s.options.gradientCurrent.name}(点击选择;渐变工具激活时右侧面板可编辑停靠点)`}
             onClick={() => {
               const r = presetBtnRef.current?.getBoundingClientRect();
               if (r) setPresetPos({ left: r.left, top: r.bottom + 4 });
@@ -388,11 +388,11 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                           key={p.name}
                           title={p.name}
                           onClick={() => {
-                            setOptions(tabId, { gradientPreset: p.name });
+                            setOptions(tabId, { gradientCurrent: clonePreset(p) });
                             setPresetOpen(false);
                           }}
                           className={`h-5 rounded-sm border ${
-                            s.options.gradientPreset === p.name
+                            s.options.gradientCurrent.name === p.name
                               ? 'border-sky-500 ring-1 ring-sky-500'
                               : 'border-black/15 dark:border-white/20 hover:border-sky-400'
                           }`}

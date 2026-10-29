@@ -11,11 +11,13 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ColorPanel } from './panels/ColorPanel';
+import { GradientPanel } from './panels/GradientPanel';
 import { HistoryPanel } from './panels/HistoryPanel';
 import { NavigatorInfoPanel } from './panels/NavigatorInfoPanel';
 import { LayersPanel } from './panels/LayersPanel';
 import { AdjustmentGrid } from './panels/AdjustmentGrid';
 import { AdjustmentProps } from './panels/AdjustmentProps';
+import { getSession, subscribeSession } from './editorStore';
 
 /** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。
  * 双击蒙版缩略图等入口经 `aurora-editor-panel` 窗口事件请求切页(与 aurora-editor-saved 同款跨组件信号)。
@@ -91,6 +93,9 @@ const rescale = (prev: number[], expanded: number[], avail: number): number[] =>
 export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // 工具切换(渐变工具激活时第一组换渐变编辑器)与选项变化都要重渲染
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   /** null=未拖动,按权重分配;拖动后为各组像素高(容器尺寸变化时按比例缩放)。 */
   const [heights, setHeights] = useState<number[] | null>(null);
   const heightsRef = useRef<number[] | null>(null);
@@ -158,8 +163,10 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
     window.addEventListener('pointerup', up);
   };
 
+  // 渐变工具激活:第一组内容由颜色面板换为渐变编辑器(用户口径;"颜色"对活引用仍可达=切回其他工具)
+  const gradientTool = getSession(tabId)?.tool === 'gradient';
   const groups: React.ReactNode[] = [
-    <ColorPanel key="color" tabId={tabId} />,
+    gradientTool ? <GradientPanel key="gradient" tabId={tabId} /> : <ColorPanel key="color" tabId={tabId} />,
     <MidPanel key="mid" tabId={tabId} collapsed={collapsed[1]} onToggle={() => toggleCollapse(1)} />,
     <NavigatorInfoPanel
       key="nav"
@@ -188,7 +195,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
                   ? { height: heights[i], flexShrink: 0, minHeight: MIN_H[i] }
                   : { flexGrow: GROW[i] / growSum, flexBasis: 0, flexShrink: 1, minHeight: MIN_H[i] }
             }
-            title={GROUP_TITLES[i]}
+            title={i === 0 && gradientTool ? '渐变' : GROUP_TITLES[i]}
           >
             <div className="h-full flex flex-col overflow-hidden">{g}</div>
           </div>

@@ -8,7 +8,7 @@
  */
 import type { EditorTool } from './editorTypes';
 import type { ToolOptions } from './editorStore';
-import { DEFAULT_GRADIENT_PRESET, findPreset, presetPaintParams } from './gradientPresets';
+import { presetPaintParams } from './gradientPresets';
 
 export interface DragPoint {
   x0: number;
@@ -163,8 +163,8 @@ export function constrain45(from: [number, number], to: [number, number]): [numb
 }
 
 /**
- * 渐变提交参数(paint.gradient):from/to 文档坐标取整;stops 来自所选预设,
- * "foreground"/"background" 活引用原样下发(引擎提交时按当前前景/背景解析,上游同语义)、
+ * 渐变提交参数(paint.gradient):from/to 文档坐标取整;stops 来自当前渐变
+ * (gradientCurrent,含 "foreground"/"background" 活引用,引擎提交时按当前前景/背景解析)、
  * 透明度以 0..100 的 transparency 下发(apply_opacity 合并在引擎内);Shift 吸附 45° 方向
  * (长度不变);<2px 拖拽由调用方忽略。
  */
@@ -174,8 +174,7 @@ export function gradientParams(
   opts: ToolOptions,
   targetMask = false,
 ): Record<string, unknown> {
-  const preset = findPreset(opts.gradientPreset) ?? findPreset(DEFAULT_GRADIENT_PRESET)!;
-  const { stops, transparency } = presetPaintParams(preset);
+  const { stops, transparency } = presetPaintParams(opts.gradientCurrent);
   return {
     from: [Math.round(from[0]), Math.round(from[1])],
     to: [Math.round(to[0]), Math.round(to[1])],

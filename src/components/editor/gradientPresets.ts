@@ -180,6 +180,53 @@ export function findPreset(name: string): GradientPreset | null {
   return null;
 }
 
+/** 深拷贝(编辑面板改副本,不动共享预设表;rgb 元组拷贝防别名)。 */
+export function clonePreset(p: GradientPreset): GradientPreset {
+  return {
+    name: p.name,
+    stops: p.stops.map(([t, c]) => [t, Array.isArray(c) ? ([...c] as [number, number, number]) : c] as [number, PresetStopColor]),
+    opacity: p.opacity.map(([t, a]) => [t, a] as [number, number]),
+  };
+}
+
+/** 默认当前渐变(前景→背景的独立副本;ToolOptions 初始化用)。 */
+export function defaultGradient(): GradientPreset {
+  return clonePreset(findPreset(DEFAULT_GRADIENT_PRESET)!);
+}
+
+/**
+ * 把 (location,·) 停靠点移到 location(钳 0..1、round 0.001、保持数组按位置有序),
+ * 返回移动后的新下标(跨位重排选中跟随,同 gradientStops.moveMapStop 口径);原地修改。
+ */
+export function moveStopAt<T>(stops: Array<[number, T]>, index: number, location: number): number | null {
+  const s = stops[index];
+  if (!s) return null;
+  stops[index] = [Math.round(Math.min(1, Math.max(0, location)) * 1000) / 1000, s[1]];
+  const at = stops[index][0];
+  let rank = 0;
+  stops.forEach((q, i) => {
+    if (i !== index && (q[0] < at || (q[0] === at && i < index))) rank++;
+  });
+  stops.sort((a, b) => a[0] - b[0]);
+  return rank;
+}
+
+/** 最宽间隙的中点([location,·] 停靠点;少于两点取 0.5)——Add Stop 落位。 */
+export function stopGapMid(stops: Array<[number, unknown]>): number {
+  if (stops.length < 2) return 0.5;
+  const sorted = [...stops].sort((a, b) => a[0] - b[0]);
+  let best = 0.5;
+  let bestW = -1;
+  for (let i = 1; i < sorted.length; i++) {
+    const w = sorted[i][0] - sorted[i - 1][0];
+    if (w > bestW) {
+      bestW = w;
+      best = (sorted[i - 1][0] + sorted[i][0]) / 2;
+    }
+  }
+  return Math.round(best * 1000) / 1000;
+}
+
 // ---------------------------------------------------------------- 预览用解析(引擎同款数学)
 
 type Rgba = [number, number, number, number];
@@ -275,6 +322,16 @@ export function presetMapStops(
   return p.stops
     .map(([t, c]) => ({ at: Math.round(clamp01(t) * 1000) / 1000, color: of(c) }))
     .sort((a, b) => a.at - b.at);
+}
+
+/** 预设解析后在 t 处的 RGBA(活引用已解析、透明度已乘进 alpha)——编辑面板取色/取 alpha 用。 */
+export function sampleResolved(
+  p: GradientPreset,
+  fg: number[] | undefined | null,
+  bg: number[] | undefined | null,
+  t: number,
+): [number, number, number, number] {
+  return sample(resolvePreset(p, fg, bg), clamp01(t), lerp4) ?? [0, 0, 0, 1];
 }
 
 /** 预设 → CSS linear-gradient(加密采样点直接当停靠点,分段线性与引擎采样曲线一致)。 */
