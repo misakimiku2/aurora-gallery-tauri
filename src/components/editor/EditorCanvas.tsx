@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession, updateSession } from './editorStore';
 import type { EditorSession } from './editorStore';
@@ -16,9 +16,9 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
-  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, effectiveMode, gradientParams, initialMods,
-  isMaskTarget, lassoParams, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nextLassoTool, nextMarqueeShape,
-  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientParams, initialMods,
+  isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextLassoTool, nextMarqueeShape,
+  pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
   type BrushFamilyTool, type CropRect, type DragPoint, type DragMods, type StrokeAxis,
@@ -130,6 +130,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const polygonRef = useRef<{ points: number[][]; mode: 'replace' | 'add' | 'subtract' | 'intersect' } | null>(null);
   /** 最近一次多边形闭合时刻:双击/三击的后续 click 不许再起新多边形(上游同口径)。 */
   const polygonClosedAt = useRef(0);
+  /** 磁性套索进行中(上游 MagneticLasso):path=已钉边框、anchors=path 下标、live=末锚点到
+   * 指针的追踪段、trail=自上一锚点起指针走过的路径(边在其附近找)。 */
+  const magneticRef = useRef<{
+    path: number[][]; anchors: number[]; live: number[][]; trail: number[][];
+    mode: 'replace' | 'add' | 'subtract' | 'intersect'; freehand: boolean;
+  } | null>(null);
+  /** 磁性追踪单飞:一次一条 IPC 在途,期间最新指针位置进 queued,回包后重跑。 */
+  const magneticBusy = useRef(false);
+  const magneticQueued = useRef<{ x: number; y: number; fasten: boolean } | null>(null);
   /** 裁剪框(上游 crop_ui):未转矩形文档 px [x0,y0,x1,y1] + angle(屏幕顺时针度数)+
    * edited(是否被编辑过;未动默认框=离开丢弃/提交无操作)。null=未建框(draw 懒建)。 */
   const cropRef = useRef<{ rect: [number, number, number, number]; angle: number; edited: boolean } | null>(null);
@@ -251,8 +260,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.restore();
     };
     const sel = s.state.selectionBounds;
-    // 替换模式画新多边形时隐藏旧选区蚂蚁线(上游 a_new_polygon_hides_the_selection;Esc 还原)
-    const hideAnts = s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace';
+    // 替换模式画新多边形/磁性边框时隐藏旧选区蚂蚁线(上游 a_new_polygon_hides_the_selection;Esc 还原)
+    const hideAnts =
+      (s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace') ||
+      (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace');
     if (sel && !hideAnts) {
       refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
       const polys = s.runtime.selectionOutline;
@@ -303,6 +314,65 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.lineWidth = 1;
       octx.stroke();
       octx.restore();
+    }
+
+    // overlay:磁性套索(实线边框 path+live;锚点 5×5 白方块+黑边;指针在起点上=闭合圆圈提示)
+    if (s.tool === 'magneticLasso' && magneticRef.current && magneticRef.current.path.length >= 1) {
+      const m = magneticRef.current;
+      const pts = [...m.path, ...m.live.slice(1)];
+      const magPath = () => {
+        octx.beginPath();
+        pts.forEach(([x, y], i) => {
+          const sx = Math.round(x * v.scale + v.ox) + 0.5;
+          const sy = Math.round(y * v.scale + v.oy) + 0.5;
+          if (i === 0) octx.moveTo(sx, sy);
+          else octx.lineTo(sx, sy);
+        });
+      };
+      octx.save();
+      octx.lineJoin = 'round';
+      octx.lineCap = 'round';
+      magPath();
+      octx.strokeStyle = 'rgba(255,255,255,0.55)';
+      octx.lineWidth = 3;
+      octx.stroke();
+      magPath();
+      octx.strokeStyle = '#000000';
+      octx.lineWidth = 1;
+      octx.stroke();
+      // 锚点(上游 draw:5×5 白方块 + 1px 黑描边)
+      for (const i of m.anchors) {
+        const p = m.path[i];
+        if (!p) continue;
+        const sx = Math.round(p[0] * v.scale + v.ox);
+        const sy = Math.round(p[1] * v.scale + v.oy);
+        octx.fillStyle = '#ffffff';
+        octx.fillRect(sx - 2.5, sy - 2.5, 5, 5);
+        octx.strokeStyle = '#000000';
+        octx.lineWidth = 1;
+        octx.strokeRect(sx - 2.5, sy - 2.5, 5, 5);
+      }
+      octx.restore();
+      // Photoshop 的闭合光标:指针旁的小圆圈(上游 +12,+12 半径 4)
+      const hover = s.runtime.pointerDoc;
+      const first = m.path[0];
+      if (hover && first) {
+        const r = 8 / Math.max(0.01, v.scale);
+        if (nearMagneticStart(first, [hover.x, hover.y], r, pathLength(m.path) + pathLength(m.live))) {
+          const cx = hover.x * v.scale + v.ox + 12;
+          const cy = hover.y * v.scale + v.oy + 12;
+          octx.beginPath();
+          octx.arc(cx, cy, 4, 0, Math.PI * 2);
+          octx.strokeStyle = 'rgba(0,0,0,0.78)';
+          octx.lineWidth = 3;
+          octx.stroke();
+          octx.beginPath();
+          octx.arc(cx, cy, 4, 0, Math.PI * 2);
+          octx.strokeStyle = '#ffffff';
+          octx.lineWidth = 1.2;
+          octx.stroke();
+        }
+      }
     }
 
     // overlay:渐变方向线预览(上游 classic 口径:3px 黑(α140)垫底 + 1px 白,两端白色实心圆)
@@ -884,6 +954,147 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return true;
   }, []);
 
+  /** 磁性套索选项三元组+提交参数(选项条;宽度/对比度/频率)。 */
+  const magneticOpts = useCallback(() => {
+    const st = getSession(tabId);
+    return {
+      width: st?.options.magneticWidth ?? 10,
+      contrast: st?.options.magneticContrast ?? 10,
+      frequency: st?.options.magneticFrequency ?? 57,
+      antiAlias: st?.options.antiAlias ?? true,
+      feather: Math.min(1000, Math.max(0, st?.options.feather ?? 0)),
+    };
+  }, [tabId]);
+
+  /** trail 增量(上游 extend_trail:点距 gap=(width/4).clamp(1,8),边在指针走过的路径附近找)。 */
+  const extendTrail = (m: NonNullable<typeof magneticRef.current>, x: number, y: number, width: number) => {
+    const gap = Math.min(8, Math.max(1, width / 4));
+    const last = m.trail[m.trail.length - 1];
+    if (!last || Math.hypot(last[0] - x, last[1] - y) >= gap) m.trail.push([x, y]);
+  };
+
+  /** 追踪驱动(上游 follow):trace 末锚点→吸附目标,累计够 spacing 就自动落点(fasten),
+   * 否则整段挂 live。单飞:一条 IPC 在途时最新指针进 queued,回包后重跑。 */
+  const magneticFollow = useCallback((q: { x: number; y: number }, fasten: boolean) => {
+    if (magneticBusy.current) {
+      magneticQueued.current = { ...q, fasten };
+      return;
+    }
+    magneticBusy.current = true;
+    void (async () => {
+      try {
+        const st = getSession(tabId);
+        let m = magneticRef.current;
+        if (!st?.state || !m || st.docId == null || m.freehand) return;
+        const opts = magneticOpts();
+        const every = magneticSpacing(opts.frequency, st.runtime.view.scale);
+        const snapped = await editorMagneticSnap(st.docId, [q.x, q.y] as [number, number], opts.width, opts.contrast).catch(() => null);
+        m = magneticRef.current;
+        if (!m || st.docId == null) return;
+        const target: number[] = snapped?.point ?? [q.x, q.y];
+        for (let guard = 0; guard < 64; guard++) {
+          m = magneticRef.current;
+          if (!m || st.docId == null || m.freehand) return;
+          const from = m.path[m.path.length - 1];
+          if (!from) return;
+          const live = await editorMagneticTrace(st.docId, from as [number, number], target as [number, number], m.trail, opts.width, opts.contrast).catch(() => null);
+          m = magneticRef.current;
+          if (!m || !live) return;
+          const cut = cutPathAtLength(live.points, every);
+          if (cut && fasten) {
+            m.path.push(...cut[0].slice(1));
+            m.anchors.push(m.path.length - 1);
+            // 边沿指针从经过新点之后的路径找(上游 follow 的 trail 截断)
+            let near = 0;
+            let best = Infinity;
+            m.trail.forEach((t, i) => {
+              const d = Math.hypot(t[0] - cut[1][0], t[1] - cut[1][1]);
+              if (d < best) { best = d; near = i; }
+            });
+            m.trail = [cut[1], ...m.trail.slice(near + 1)];
+            continue;
+          }
+          m.live = live.points;
+          return;
+        }
+      } finally {
+        scheduleDraw();
+        magneticBusy.current = false;
+        const q2 = magneticQueued.current;
+        magneticQueued.current = null;
+        if (q2) magneticFollow(q2, q2.fasten);
+      }
+    })();
+  }, [tabId, magneticOpts]);
+
+  /** 磁性单击:live 段并入 path 并设锚点(上游 fasten_live)。 */
+  const magneticFastenLive = useCallback(() => {
+    const m = magneticRef.current;
+    if (!m) return;
+    if (m.live.length > 1) m.path.push(...m.live.slice(1));
+    if (m.path.length > 1) m.anchors.push(m.path.length - 1);
+    m.live = [];
+    scheduleDraw();
+  }, []);
+
+  /** 磁性提交(上游 commit):path 即最终轮廓,select.magneticLasso {trace:false} 一条历史。 */
+  const commitMagnetic = useCallback(() => {
+    const m = magneticRef.current;
+    magneticRef.current = null;
+    magneticBusy.current = false;
+    magneticQueued.current = null;
+    polygonClosedAt.current = Date.now();
+    scheduleDraw();
+    const st = getSession(tabId);
+    if (m && m.path.length >= 3 && st?.state) {
+      const opts = magneticOpts();
+      void runCommand(tabId, 'select.magneticLasso', {
+        points: m.path, trace: false, mode: m.mode, antiAlias: opts.antiAlias, feather: opts.feather,
+      }).catch((err) => logError('[editor] select.magneticLasso 失败', err));
+    }
+  }, [tabId, magneticOpts]);
+
+  /** 磁性闭合(上游 close):Alt=直线连起点;否则沿边描回起点(末点与起点重复,去掉)再提交。 */
+  const closeMagnetic = useCallback((alt: boolean) => {
+    const st = getSession(tabId);
+    const m = magneticRef.current;
+    if (!m || !st?.state || st.docId == null) { magneticRef.current = null; return; }
+    const first = m.path[0];
+    const last = m.path[m.path.length - 1];
+    if (!first || !last) { magneticRef.current = null; return; }
+    if (alt) {
+      m.path.push(first);
+      commitMagnetic();
+      return;
+    }
+    const opts = magneticOpts();
+    void editorMagneticTrace(st.docId, last as [number, number], first as [number, number], m.trail, opts.width, opts.contrast)
+      .then((r) => {
+        const m2 = magneticRef.current;
+        if (m2 && r.points.length > 2) m2.path.push(...r.points.slice(1, -1));
+        commitMagnetic();
+      })
+      .catch(() => commitMagnetic());
+  }, [tabId, magneticOpts, commitMagnetic]);
+
+  /** 磁性删上一锚点(上游 remove_last_point):path 截回锚点、清 live,从指针位置重追
+   * (fasten=false,不动指针可连按连删);只剩第一点再删=整条取消。 */
+  const magneticRemoveLast = useCallback((px: number, py: number) => {
+    const m = magneticRef.current;
+    if (!m) return;
+    if (m.anchors.length <= 1) {
+      magneticRef.current = null;
+      scheduleDraw();
+      return;
+    }
+    m.anchors.pop();
+    const keep = (m.anchors[m.anchors.length - 1] ?? 0) + 1;
+    m.path = m.path.slice(0, Math.max(1, keep));
+    m.live = [];
+    scheduleDraw();
+    magneticFollow({ x: px, y: py }, false);
+  }, [magneticFollow]);
+
   /** 裁剪提交(上游 commit_crop):一条 image.crop——显式矩形允许超出画布(扩展区按背景色
    * 填充),带 angle 时引擎一步完成"转正+裁剪";x/y round,w/h round 后 ≥1。未动默认框
    * (=整画布)无操作;提交成功后适配视图(上游 fit_pending);被拒恢复框。 */
@@ -1120,6 +1331,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const brushKey = e.key === '[' || e.key === ']'
         ? (e.key === ']' ? 1 : -1)
         : e.code === 'BracketRight' ? 1 : e.code === 'BracketLeft' ? -1 : 0;
+      if (brushKey !== 0 && s.tool === 'magneticLasso') {
+        // 磁性套索:[ ] 调检测宽度 ±1(上游 keys 口径),钳 1..256
+        e.preventDefault();
+        const next = Math.min(256, Math.max(1, Math.round(s.options.magneticWidth) + brushKey));
+        setOptions(tabId, { magneticWidth: next });
+        return;
+      }
       if (brushKey !== 0) {
         e.preventDefault();
         // 上游 tools.in/decreaseBrushSize 口径:±25% 且至少 ±1px,钳 1..500
@@ -1139,6 +1357,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           commitPolygon();
           return;
         }
+        if (s.tool === 'magneticLasso' && magneticRef.current) {
+          // 沿边闭合;⌥Enter 直线连起点(上游 close 口径)
+          magneticBusy.current = false;
+          magneticQueued.current = null;
+          closeMagnetic(e.altKey);
+          return;
+        }
         const ls = lassoRef.current;
         const st = getSession(tabId);
         if (ls && st?.state) {
@@ -1156,10 +1381,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         return;
       }
-      // Esc:取消进行中的裁剪框/多边形/套索轮廓(不提交任何命令,上游口径)
+      // Esc:取消进行中的裁剪框/多边形/磁性边框/套索轮廓(不提交任何命令,上游口径)
       if (e.key === 'Escape') {
         if (s.tool === 'crop' && (cropRef.current || cropDragRef.current)) {
           cancelCrop();
+          return;
+        }
+        if (magneticRef.current) {
+          magneticRef.current = null;
+          magneticBusy.current = false;
+          magneticQueued.current = null;
+          scheduleDraw();
           return;
         }
         if (polygonRef.current) {
@@ -1222,6 +1454,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 挡住 webview 的后退/删词默认行为
       if (e.key === 'Backspace' || e.key === 'Delete' || e.code === 'Backspace' || e.code === 'Delete') {
         e.preventDefault();
+        if (s.tool === 'magneticLasso' && magneticRef.current) {
+          // 磁性套索:⌫ 删上一锚点并从指针位置重追(不动指针可连按连删;上游 remove_last_point)
+          magneticBusy.current = false;
+          magneticQueued.current = null;
+          const pd = s.runtime.pointerDoc;
+          magneticRemoveLast(pd?.x ?? magneticRef.current.path[0]?.[0] ?? 0, pd?.y ?? magneticRef.current.path[0]?.[1] ?? 0);
+          return;
+        }
         if (s.tool === 'polygonLasso' && polygonRef.current) {
           // 多边形套索:⌫/Delete 删上一顶点(删空=取消),不清像素(上游 polygon_retract)
           retractPolygon();
@@ -1413,9 +1653,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s = getSession(tabId);
     if (!s) return;
     (e.target as Element).setPointerCapture(e.pointerId);
-    // 换到其他工具的第一次按下即丢弃进行中的多边形(上游 every_other_tool_drops_the_polygon)
+    // 换到其他工具的第一次按下即丢弃进行中的多边形/磁性边框(上游 every_other_tool_drops 口径)
     if (s.tool !== 'polygonLasso' && polygonRef.current) {
       polygonRef.current = null;
+      scheduleDraw();
+    }
+    if (s.tool !== 'magneticLasso' && magneticRef.current) {
+      magneticRef.current = null;
+      magneticBusy.current = false;
+      magneticQueued.current = null;
       scheduleDraw();
     }
     const pan = spaceRef.current || e.button === 1 || s.tool === 'hand';
@@ -1470,6 +1716,45 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         return;
       }
       scheduleDraw();
+    } else if (s.tool === 'magneticLasso' && e.button === 0 && s.state) {
+      // 磁性套索(上游 magnetic_lasso_ui):首击吸附第一点并定模式;点在起点上=沿边闭合;
+      // ⌥ 按下=自由画线段(拖动加点,抬起设锚点);普通单击=live 段钉成锚点。
+      if (Date.now() - polygonClosedAt.current < 350) return;
+      const m = magneticRef.current;
+      if (m && m.path.length >= 1) {
+        const total = pathLength(m.path) + pathLength(m.live);
+        if (nearMagneticStart(m.path[0], [dx, dy], 8 / Math.max(0.01, s.runtime.view.scale), total)) {
+          magneticBusy.current = false;
+          magneticQueued.current = null;
+          closeMagnetic(e.altKey);
+          return;
+        }
+        if (e.altKey) {
+          m.freehand = true;
+          m.path.push([dx, dy]);
+          scheduleDraw();
+          return;
+        }
+      }
+      if (!m) {
+        magneticRef.current = {
+          path: [], anchors: [], live: [], trail: [], freehand: false,
+          mode: resolveSelectionMode(initialMods(e.shiftKey, e.altKey), s.options.selectionMode, s.state.hasSelection),
+        };
+        if (s.docId != null) {
+          void editorMagneticSnap(s.docId, [dx, dy] as [number, number], s.options.magneticWidth, s.options.magneticContrast)
+            .then((r) => {
+              const m2 = magneticRef.current;
+              if (!m2) return;
+              m2.path = [r.point ?? [dx, dy]];
+              m2.anchors = [0];
+              scheduleDraw();
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
+      magneticFastenLive();
     } else if (s.tool === 'crop' && e.button === 0 && s.state) {
       // 拉直 armed:按下拖画标尺线(松手按长度生效,一次性)
       if (s.runtime.cropStraightenArmed) {
@@ -1597,6 +1882,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
       return;
     }
+    const mag = magneticRef.current;
+    if (s.tool === 'magneticLasso' && mag) {
+      // 磁性套索:hover/拖动持续喂点(上游按下抬起都采样);⌥ 拖=自由画线(≥0.5 px)
+      if (mag.freehand) {
+        if ((e.buttons & 1) !== 0) {
+          const last = mag.path[mag.path.length - 1];
+          if (!last || Math.hypot(last[0] - dx, last[1] - dy) >= 0.5) mag.path.push([dx, dy]);
+        }
+        scheduleDraw();
+        return;
+      }
+      extendTrail(mag, dx, dy, s.options.magneticWidth);
+      magneticFollow({ x: dx, y: dy }, true);
+      return;
+    }
     const cd = cropDragRef.current;
     if (cd) {
       const f = cropRef.current!;
@@ -1668,6 +1968,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const onPointerUp = (e: React.PointerEvent) => {
     const s = getSession(tabId);
     const stroke = strokeRef.current;
+    // 磁性自由画线段(⌥ 拖)抬起=段末设锚点(上游 end_freehand)
+    if (s && magneticRef.current?.freehand) {
+      const m = magneticRef.current;
+      if (m.path.length > 1) m.anchors.push(m.path.length - 1);
+      m.freehand = false;
+      scheduleDraw();
+    }
     if (s && stroke) {
       // 上游 commit 前的"补齐剩余点":终点本身也要投给引擎(过 ⇧ 约束),再标记结束
       if (s.state) {
@@ -1891,7 +2198,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   if (!session) return null;
-  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'eyedropper', 'gradient', 'bucket']);
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket']);
   const cursor =
     session.tool === 'hand' || spaceRef.current ? 'grab'
       : session.tool === 'zoom' ? 'zoom-in'

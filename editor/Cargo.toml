@@ -6,6 +6,7 @@ description = "aurora-gallery 图片编辑器 v3:photocraft 引擎桥(无 tauri/
 
 [dependencies]
 photocraft-engine = { path = "../photocraft-vendor/crates/engine" }
+photocraft-algo = { path = "../photocraft-vendor/crates/algo" }
 photocraft-compose = { path = "../photocraft-vendor/crates/compose" }
 photocraft-geom = { path = "../photocraft-vendor/crates/geom" }
 photocraft-color = { path = "../photocraft-vendor/crates/color" }

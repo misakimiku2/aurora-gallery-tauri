@@ -237,12 +237,14 @@ export const TOOL_KEYS: Record<string, string> = {
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };
 
-/** 套索组工具(L 键循环;磁性套索二期加入,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
-export const LASSO_GROUP: ReadonlySet<EditorTool> = new Set(['lasso', 'polygonLasso']);
+/** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
+export const LASSO_GROUP: ReadonlySet<EditorTool> = new Set(['lasso', 'polygonLasso', 'magneticLasso']);
 
-/** L 键:组内循环到下一套索工具;当前不在组内 → 回自由套索。 */
+/** L 键:组内循环到下一套索工具(自由→多边形→磁性→自由);当前不在组内 → 回自由套索。 */
 export function nextLassoTool(current: EditorTool | undefined): EditorTool {
-  return current === 'lasso' ? 'polygonLasso' : 'lasso';
+  if (current === 'lasso') return 'polygonLasso';
+  if (current === 'polygonLasso') return 'magneticLasso';
+  return 'lasso';
 }
 
 /** 多边形套索 Shift 45° 约束(上游 constrained_polygon_point 逐行移植:角度取 45° 整数倍,
@@ -255,6 +257,47 @@ export function constrainPolygonPoint(from: number[], point: number[]): number[]
   if (length === 0) return point;
   const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
   return [from[0] + length * Math.cos(angle), from[1] + length * Math.sin(angle)];
+}
+
+// -------------------------------------------------------------------------------------------
+// 磁性套索(上游 magnetic_lasso_ui.rs 口径的纯函数部分)
+
+/** 折线总长。 */
+export function pathLength(points: number[][]): number {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) len += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+  return len;
+}
+
+/** 自动落点间距(上游 spacing):频率 100→8 屏幕 px、0→98、默认 57→≈47,除以缩放折文档 px。 */
+export function magneticSpacing(frequency: number, zoom: number): number {
+  const f = Number.isFinite(frequency) ? Math.min(100, Math.max(0, frequency)) : 57;
+  return (8.0 + (100.0 - f) * 0.9) / Math.max(0.01, zoom);
+}
+
+/** 沿折线截取 `len` 长度:返回 [截头(含截点), 截点];总长须 ≥ len+1(上游 cut 同口径),否则 null。 */
+export function cutPathAtLength(points: number[][], len: number): [number[][], number[]] | null {
+  if (points.length < 2 || pathLength(points) < len + 1.0) return null;
+  const head: number[][] = [points[0]];
+  let acc = 0;
+  for (let i = 1; i < points.length; i++) {
+    const seg = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    if (acc + seg >= len) {
+      const t = seg === 0 ? 0 : (len - acc) / seg;
+      const at = [points[i - 1][0] + (points[i][0] - points[i - 1][0]) * t, points[i - 1][1] + (points[i][1] - points[i - 1][1]) * t];
+      head.push(at);
+      return [head, at];
+    }
+    acc += seg;
+    head.push(points[i]);
+  }
+  return null;
+}
+
+/** 指针是否在磁性边框起点上(可闭合):距离 ≤ 半径且 path+live 总长 > 2×半径(防短边误闭合)。 */
+export function nearMagneticStart(first: number[] | undefined, p: number[], closeRadius: number, totalLength: number): boolean {
+  if (!first) return false;
+  return Math.hypot(first[0] - p[0], first[1] - p[1]) <= closeRadius && totalLength > 2.0 * closeRadius;
 }
 
 /** 画笔族(live 描边工具):brush/eraser 走 LiveStroke,blur/sharpen/smudge 走 LiveDab。 */

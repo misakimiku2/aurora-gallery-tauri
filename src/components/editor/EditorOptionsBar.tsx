@@ -11,7 +11,7 @@ import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 
 const TOOL_NAMES: Record<EditorTool, string> = {
-  move: '移动', marquee: '矩形选框', lasso: '套索', polygonLasso: '多边形套索', crop: '裁剪工具', eyedropper: '吸管',
+  move: '移动', marquee: '矩形选框', lasso: '套索', polygonLasso: '多边形套索', magneticLasso: '磁性套索', crop: '裁剪工具', eyedropper: '吸管',
   brush: '画笔', eraser: '橡皮擦', gradient: '渐变', bucket: '油漆桶',
   blur: '模糊', sharpen: '锐化', smudge: '涂抹', hand: '抓手', zoom: '缩放',
 };
@@ -32,7 +32,9 @@ const BRUSH_FAMILY = new Set(['brush', 'eraser', 'blur', 'sharpen', 'smudge']);
 /** 顺序 dab 工具(blur/sharpen/smudge):有 strength(强度),参数单位是百分数。 */
 const RETOUCH_TOOLS = new Set(['blur', 'sharpen', 'smudge']);
 /** 选区类工具:羽化/消锯齿/四态模式提示共用。 */
-const SELECTION_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso']);
+const SELECTION_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso']);
+/** 磁性套索专属:宽度/对比度/频率。 */
+const MAGNETIC_TOOL = 'magneticLasso';
 const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
   eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
   crop: '裁剪框交互(M2 后续切片接入)',
@@ -180,10 +182,43 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             消除锯齿
           </label>
+          {s.tool === MAGNETIC_TOOL && (
+            <>
+              <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="跟随边缘的检测宽度(px)">
+                宽度
+                <input
+                  type="range" min={1} max={256} value={s.options.magneticWidth}
+                  onChange={(e) => setOptions(tabId, { magneticWidth: Number(e.target.value) })}
+                  className="w-20 accent-sky-600"
+                />
+                <span className="w-10 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.magneticWidth}px</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="弱于此对比度的边缘被忽略(%)">
+                对比度
+                <input
+                  type="range" min={1} max={100} value={s.options.magneticContrast}
+                  onChange={(e) => setOptions(tabId, { magneticContrast: Number(e.target.value) })}
+                  className="w-20 accent-sky-600"
+                />
+                <span className="w-9 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.magneticContrast}%</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="自动落点的疏密(越高越密)">
+                频率
+                <input
+                  type="range" min={0} max={100} value={s.options.magneticFrequency}
+                  onChange={(e) => setOptions(tabId, { magneticFrequency: Number(e.target.value) })}
+                  className="w-20 accent-sky-600"
+                />
+                <span className="w-9 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.magneticFrequency}</span>
+              </label>
+            </>
+          )}
           <span className="text-neutral-400 dark:text-neutral-500">
             {s.tool === 'marquee'
               ? '按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心'
-              : '拖拽圈选;<3 点提交=取消选择;Esc 取消轮廓;按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交'}
+              : s.tool === 'magneticLasso'
+                ? '沿边框自动落点 · 点起点/双击/Enter 闭合 · ⌥ 直线段与自由画线 · ⌫ 删上一锚点 · [ ] 调宽度'
+                : '拖拽圈选;<3 点提交=取消选择;Esc 取消轮廓;按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交'}
           </span>
         </>
       ) : s.tool === 'crop' ? (

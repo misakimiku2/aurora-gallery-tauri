@@ -2132,6 +2132,8 @@ pub fn run() {
         // 图片编辑器 v3:photocraft 引擎桥(aurora-editor)
         editor_cmds::editor_open,
         editor_cmds::editor_run,
+        editor_cmds::editor_magnetic_trace,
+        editor_cmds::editor_magnetic_snap,
         editor_cmds::editor_render,
         editor_cmds::editor_state,
         editor_cmds::editor_selection_outline,

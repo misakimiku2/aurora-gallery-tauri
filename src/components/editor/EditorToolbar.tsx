@@ -6,7 +6,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Move, BoxSelect, CircleDashed, Lasso, Pentagon, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
+  Move, BoxSelect, CircleDashed, Lasso, Magnet, Pentagon, Crop, Pipette, Brush, Eraser, Blend, PaintBucket,
   Droplet, Sparkles, Fingerprint, Hand, ZoomIn, ArrowLeftRight, RotateCcw, MoveHorizontal, MoveVertical,
 } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
@@ -21,10 +21,11 @@ const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: str
   { shape: 'column', label: '单列选框 (M)', icon: <MoveVertical size={17} /> },
 ];
 
-/** 套索组子工具(L 键组内循环;磁性套索二期加入)。 */
+/** 套索组子工具(L 键组内循环)。 */
 const LASSO_TOOLS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [
   { tool: 'lasso', label: '套索 (L)', icon: <Lasso size={17} /> },
   { tool: 'polygonLasso', label: '多边形套索 (L)', icon: <Pentagon size={17} /> },
+  { tool: 'magneticLasso', label: '磁性套索 (L)', icon: <Magnet size={17} /> },
 ];
 
 const GROUPS: { tool: EditorTool; label: string; icon: React.ReactNode }[] = [

@@ -47,6 +47,24 @@ pub fn editor_run(s: State<EditorState>, doc: u64, cmd: String, params: Value) -
     }))
 }
 
+/// 磁性套索:沿指针路径把 from→to 描在边上(返回 {points:[[x,y],…]})。
+#[tauri::command]
+pub fn editor_magnetic_trace(
+    s: State<EditorState>, doc: u64, from: [f64; 2], to: [f64; 2], guide: Vec<[f64; 2]>, width: f64, contrast: f64,
+) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    let points = m.magnetic_trace(doc, from, to, guide, width, contrast).map_err(|e| e.to_string())?;
+    Ok(json!({ "points": points }))
+}
+
+/// 磁性套索:落点吸附到检测宽度内的显著边(返回 {point:[x,y]|null})。
+#[tauri::command]
+pub fn editor_magnetic_snap(s: State<EditorState>, doc: u64, p: [f64; 2], width: f64, contrast: f64) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    let point = m.magnetic_snap(doc, p, width, contrast).map_err(|e| e.to_string())?;
+    Ok(json!({ "point": point }))
+}
+
 /// 合成画布位图:给 maxW/maxH 时降采样(导航器/大图首屏),否则全分辨率。
 /// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
 #[tauri::command]

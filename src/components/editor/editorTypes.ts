@@ -87,6 +87,7 @@ export type EditorTool =
   | 'marquee'
   | 'lasso'
   | 'polygonLasso'
+  | 'magneticLasso'
   | 'crop'
   | 'eyedropper'
   | 'brush'

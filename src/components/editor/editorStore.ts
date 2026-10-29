@@ -32,6 +32,12 @@ export interface ToolOptions {
   cropRatio: string;
   /** 裁剪角度约束(旋转吸附 15° 步进)常开;按住 Shift 临时反转。 */
   cropSnapAngle: boolean;
+  /** 磁性套索检测宽度(上游 magnetic_width,1..256 px,默认 10):跟随边缘的走廊半径。 */
+  magneticWidth: number;
+  /** 磁性套索对比度(上游 magnetic_contrast,1..100%,默认 10):弱于此值的边缘忽略。 */
+  magneticContrast: number;
+  /** 磁性套索频率(上游 magnetic_frequency,0..100,默认 57):自动落点的疏密。 */
+  magneticFrequency: number;
 }
 
 export interface EditorRuntime {
@@ -128,6 +134,9 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       moveTarget: 'layer',
       cropRatio: '',
       cropSnapAngle: false,
+      magneticWidth: 10,
+      magneticContrast: 10,
+      magneticFrequency: 57,
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,

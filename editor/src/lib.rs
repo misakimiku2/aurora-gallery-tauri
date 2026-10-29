@@ -132,6 +132,8 @@ pub struct EditorManager {
     /// 最近镜像/导入 OS 剪贴板图像的签名:识别"OS 里是我们自己放的图",
     /// 粘贴时跳过导入、保住 session 剪贴板的源位置/整层富信息(上游 os_clip_sig 同款)。
     os_clip_sig: Option<u64>,
+    /// 磁性套索的像素快照(上游 Runtime.source):文档/版本/活动像素层变了即重建。
+    magnetic: Option<photocraft_engine::magnetic_cmds::EdgeSource>,
 }
 
 impl Default for EditorManager {
@@ -142,7 +144,38 @@ impl Default for EditorManager {
 
 impl EditorManager {
     pub fn new() -> Self {
-        Self { session: Session::new(), live: None, os_clip_sig: None }
+        Self { session: Session::new(), live: None, os_clip_sig: None, magnetic: None }
+    }
+
+    /// 磁性套索像素源的当前快照(上游 is_current 口径:活动文档/revision/像素层变了重建)。
+    fn magnetic_source(&mut self) -> Result<&mut photocraft_engine::magnetic_cmds::EdgeSource> {
+        if !self.magnetic.as_ref().is_some_and(|src| src.is_current(&self.session)) {
+            let src = photocraft_engine::magnetic_cmds::EdgeSource::new(&self.session)
+                .ok_or_else(|| EditorError("the document has no pixels".into()))?;
+            self.magnetic = Some(src);
+        }
+        Ok(self.magnetic.as_mut().unwrap())
+    }
+
+    /// 磁性套索:沿 `guide`(指针路径)把 `from`→`to` 描在边上(上游 EdgeSource::trace)。
+    /// width 1..=256 px、contrast 1..=100%(引擎域换算 /100),越界钳制(上游 tool_memory::fit 口径)。
+    pub fn magnetic_trace(&mut self, doc: u64, from: [f64; 2], to: [f64; 2], guide: Vec<[f64; 2]>, width: f64, contrast: f64) -> Result<Vec<[f64; 2]>> {
+        self.activate(doc)?;
+        let s = photocraft_algo::magnetic::Settings::new(
+            width.clamp(1.0, 256.0),
+            (contrast.clamp(1.0, 100.0) / 100.0) as f32,
+        );
+        Ok(self.magnetic_source()?.trace(from, to, &guide, s))
+    }
+
+    /// 磁性套索:把落点吸附到检测宽度内最显著的边(上游 EdgeSource::snap)。
+    pub fn magnetic_snap(&mut self, doc: u64, p: [f64; 2], width: f64, contrast: f64) -> Result<Option<[f64; 2]>> {
+        self.activate(doc)?;
+        let s = photocraft_algo::magnetic::Settings::new(
+            width.clamp(1.0, 256.0),
+            (contrast.clamp(1.0, 100.0) / 100.0) as f32,
+        );
+        Ok(self.magnetic_source()?.snap(p, s))
     }
 
     /// 复制族命令成功后的后置:把 session 剪贴板镜像成 RGBA8 位图进 OS 剪贴板

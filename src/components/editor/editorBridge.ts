@@ -13,6 +13,24 @@ export async function editorRun(doc: number, cmd: string, params: Record<string,
   return invoke<RunOutcome>('editor_run', { doc, cmd, params });
 }
 
+export interface MagneticTraceResult {
+  points: number[][];
+}
+
+/** 磁性套索:沿指针路径把 from→to 描在边上(桥层 EdgeSource 快照)。 */
+export async function editorMagneticTrace(
+  doc: number, from: [number, number], to: [number, number], guide: number[][], width: number, contrast: number,
+): Promise<MagneticTraceResult> {
+  return invoke<MagneticTraceResult>('editor_magnetic_trace', { doc, from, to, guide, width, contrast });
+}
+
+/** 磁性套索:落点吸附到检测宽度内的显著边(无显著边=原点)。 */
+export async function editorMagneticSnap(
+  doc: number, p: [number, number], width: number, contrast: number,
+): Promise<{ point: number[] | null }> {
+  return invoke<{ point: number[] | null }>('editor_magnetic_snap', { doc, p, width, contrast });
+}
+
 export interface RenderedBitmap {
   width: number;
   height: number;

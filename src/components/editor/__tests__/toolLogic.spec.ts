@@ -3,7 +3,8 @@ import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
   cropTurnedAngle, docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
+  moveBounds, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
+  moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snappedDir, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
@@ -14,6 +15,7 @@ const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear', marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
+  magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57,
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -485,10 +487,42 @@ describe('多边形套索(上游 constrained_polygon_point + lasso 组循环口�
     expect(constrainPolygonPoint(f, [NaN, 50])).toEqual([NaN, 50]);
   });
 
-  it('L 键套索组循环:组内二态互换,组外回自由套索', () => {
+  it('L 键套索组循环:组内三态轮转,组外回自由套索', () => {
     expect(nextLassoTool('lasso')).toBe('polygonLasso');
-    expect(nextLassoTool('polygonLasso')).toBe('lasso');
+    expect(nextLassoTool('polygonLasso')).toBe('magneticLasso');
+    expect(nextLassoTool('magneticLasso')).toBe('lasso');
     expect(nextLassoTool('move')).toBe('lasso');
     expect(nextLassoTool(undefined)).toBe('lasso');
+  });
+});
+
+describe('磁性套索纯函数(上游 magnetic_lasso_ui 口径)', () => {
+  it('自动落点间距:频率 100→8 屏幕 px、0→98、默认 57→≈47;除以缩放折文档 px', () => {
+    expect(magneticSpacing(100, 1)).toBeCloseTo(8, 6);
+    expect(magneticSpacing(0, 1)).toBeCloseTo(98, 6);
+    expect(magneticSpacing(57, 1)).toBeCloseTo(46.7, 6);
+    expect(magneticSpacing(57, 0.5)).toBeCloseTo(93.4, 1);
+    expect(magneticSpacing(NaN, 1)).toBeCloseTo(46.7, 6);
+  });
+
+  it('pathLength / cutPathAtLength:截点插值、总长不足拒绝', () => {
+    const l = [[0, 0], [30, 0], [30, 40]];
+    expect(pathLength(l)).toBeCloseTo(70, 6);
+    // 截 50:第二段走 20 → 截点 (30, 20),截头含前两点+截点
+    const [head, at] = cutPathAtLength(l, 50)!;
+    expect(head).toEqual([[0, 0], [30, 0], [30, 20]]);
+    expect(at).toEqual([30, 20]);
+    // 总长 < len+1 → null(上游 cut 生效条件)
+    expect(cutPathAtLength(l, 70)).toBeNull();
+    expect(cutPathAtLength(l, 69.5)).toBeNull();
+    expect(cutPathAtLength([l[0]], 5)).toBeNull();
+  });
+
+  it('nearMagneticStart:半径内且总长 > 2×半径才闭合(防短边误闭合)', () => {
+    const first = [100, 100];
+    expect(nearMagneticStart(first, [104, 103], 8, 100)).toBe(true);
+    expect(nearMagneticStart(first, [104, 103], 8, 15)).toBe(false); // 总长不足
+    expect(nearMagneticStart(first, [120, 100], 8, 100)).toBe(false); // 距离出半径
+    expect(nearMagneticStart(undefined, [104, 103], 8, 100)).toBe(false);
   });
 });
