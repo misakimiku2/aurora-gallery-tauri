@@ -16,6 +16,7 @@ use photocraft_geom::Rect;
 use serde_json::{json, Value};
 
 pub mod histogram;
+pub mod os_clipboard;
 pub mod outline;
 
 #[derive(Debug)]
@@ -128,6 +129,9 @@ struct LiveStrokeState {
 pub struct EditorManager {
     session: Session,
     live: Option<LiveStrokeState>,
+    /// 最近镜像/导入 OS 剪贴板图像的签名:识别"OS 里是我们自己放的图",
+    /// 粘贴时跳过导入、保住 session 剪贴板的源位置/整层富信息(上游 os_clip_sig 同款)。
+    os_clip_sig: Option<u64>,
 }
 
 impl Default for EditorManager {
@@ -138,7 +142,46 @@ impl Default for EditorManager {
 
 impl EditorManager {
     pub fn new() -> Self {
-        Self { session: Session::new(), live: None }
+        Self { session: Session::new(), live: None, os_clip_sig: None }
+    }
+
+    /// 复制族命令成功后的后置:把 session 剪贴板镜像成 RGBA8 位图进 OS 剪贴板
+    /// (上游 export_os_clipboard;外部应用拿到的就是平台标准位图)。
+    fn clipboard_export(&mut self) {
+        let Some(clip) = self.session.clipboard.as_ref() else { return };
+        let b = clip.bounds;
+        if b.is_empty() {
+            return;
+        }
+        let mut px = vec![[0u8; 4]; b.width() as usize * b.height() as usize];
+        clip.surface.read_rgba8_into(b, &mut px);
+        let bytes: Vec<u8> = px.into_iter().flatten().collect();
+        let sig = os_clipboard::signature(b.width(), b.height(), &bytes);
+        if os_clipboard::set_image(b.width(), b.height(), &bytes) {
+            self.os_clip_sig = Some(sig);
+        }
+    }
+
+    /// 粘贴族命令的前置:显式读 OS 剪贴板。是我们自己的镜像(签名同)→ 不动 session 剪贴板;
+    /// 新的外部图 → 变成 session 剪贴板(bounds 置于原点、无源分辨率)并返回 true;
+    /// 没图/读失败 → 不动(内部拷贝保留,上游 busy-clipboard 口径)。
+    fn clipboard_import(&mut self) -> bool {
+        let Some((w, h, bytes)) = os_clipboard::get_image() else { return false };
+        let sig = os_clipboard::signature(w, h, &bytes);
+        if self.os_clip_sig == Some(sig) {
+            return false;
+        }
+        self.os_clip_sig = Some(sig);
+        let r = Rect::from_xywh(0, 0, w, h);
+        let mut surface = photocraft_raster::Surface::from_interleaved(photocraft_color::PixelFormat::RGBA8, r, &bytes);
+        surface.prune();
+        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip {
+            surface,
+            bounds: r,
+            layers: None,
+            resolution: None,
+        });
+        true
     }
 
     fn index_of(&self, doc: u64) -> Result<usize> {
@@ -206,9 +249,24 @@ impl EditorManager {
     /// 通用命令桥。所有编辑行为都从这里过(与 photocraft CLI/MCP 同一入口),
     /// 命令 id 与参数 schema 见 `photocraft_engine::commands::command_specs()`。
     /// 若命令本身关闭了目标文档(file.close 等),返回的增量为空值。
+    ///
+    /// 剪贴板钩子(上游 UI 壳同款,对前端透明):复制族成功后镜像 session 剪贴板
+    /// 到 OS;粘贴族执行前显式读 OS——自家镜像→不动(保住原位/整层信息),
+    /// 外部新图→导入为原点剪贴板并给 `edit.paste` 补画布居中。
     pub fn run(&mut self, doc: u64, cmd: &str, params: Value) -> Result<RunOutcome> {
         self.activate(doc)?;
+        let mut params = params;
+        if matches!(cmd, "edit.paste" | "edit.pasteSpecial.pasteInPlace" | "file.newFromClipboard") {
+            if self.clipboard_import() && cmd == "edit.paste" && params.get("center").is_none() {
+                if let Some(st) = self.session.active() {
+                    params["center"] = json!([f64::from(st.doc.size.width) / 2.0, f64::from(st.doc.size.height) / 2.0]);
+                }
+            }
+        }
         let result = self.session.execute(cmd, params)?;
+        if matches!(cmd, "edit.copy" | "edit.cut" | "edit.copyMerged") {
+            self.clipboard_export();
+        }
         let outcome = match self.session.active() {
             Some(st) if st.doc.id == DocId(doc) => RunOutcome {
                 revision: st.revision,

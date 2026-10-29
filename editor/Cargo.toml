@@ -14,3 +14,5 @@ photocraft-io = { path = "../photocraft-vendor/crates/io" }
 photocraft-format = { path = "../photocraft-vendor/crates/format" }
 serde_json = "1"
 rayon = "1"
+# OS 剪贴板位图桥(上游 app 壳同款;引擎不碰系统剪贴板,镜像/导入在桥层)
+arboard = "3.6"

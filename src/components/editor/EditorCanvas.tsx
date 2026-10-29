@@ -1161,7 +1161,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         // 撤销/重做/图层操作(与工具栏按钮同命令);e.code 兜底防 IME 吃掉字母键
         const k2 = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y'
           : e.code === 'KeyJ' ? 'j' : e.code === 'KeyG' ? 'g'
-            : e.code === 'KeyE' ? 'e' : e.code === 'KeyN' ? 'n' : k;
+            : e.code === 'KeyE' ? 'e' : e.code === 'KeyN' ? 'n'
+              : e.code === 'KeyC' ? 'c' : e.code === 'KeyX' ? 'x' : e.code === 'KeyV' ? 'v' : k;
         if (k2 === 'z') {
           e.preventDefault();
           const redo = e.shiftKey;
@@ -1212,6 +1213,23 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           // Ctrl+Shift+N = 新建图层(无对话框直建,上游 ⌥⇧⌘N 口径)
           e.preventDefault();
           void runCommand(tabId, 'layer.new.layer', {}).catch((err) => logError('[editor] 新建图层失败', err));
+        } else if (k2 === 'c') {
+          // Ctrl+C = 复制(选区软乘进 alpha,无选区=整层内容外接矩形);
+          // Ctrl+Shift+C = 合并拷贝(可见层合成)。copy 不进历史;桥层后置镜像到 OS 剪贴板
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'edit.copyMerged' : 'edit.copy', {})
+            .catch((err) => logError('[editor] 复制失败', err));
+        } else if (k2 === 'x') {
+          // Ctrl+X = 剪切 = 复制+清除(一条 "Cut Pixels" 历史;普通层清成透明、背景层填背景色;
+          // 锁定层在复制前被拒,失败不污染剪贴板)
+          e.preventDefault();
+          void runCommand(tabId, 'edit.cut', {}).catch((err) => logError('[editor] 剪切失败', err));
+        } else if (k2 === 'v') {
+          // Ctrl+V = 粘贴(新栅格层插入活动层上方;桥层前置读 OS 剪贴板:自家镜像→原位,
+          // 外部新图→画布居中);Ctrl+Shift+V = 原位粘贴(上游 pasteInPlace)
+          e.preventDefault();
+          void runCommand(tabId, e.shiftKey ? 'edit.pasteSpecial.pasteInPlace' : 'edit.paste', {})
+            .catch((err) => logError('[editor] 粘贴失败', err));
         } else if (e.code === 'BracketRight' || k === ']') {
           // Ctrl+] = 上移一层;Ctrl+Shift+] = 移到最前(上游 Cmd+]/Cmd+Shift+];
           // e.code 兜底 IME 吃掉方括号键)
