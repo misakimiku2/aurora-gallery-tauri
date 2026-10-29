@@ -10,16 +10,6 @@ import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 
-const TOOL_NAMES: Record<EditorTool, string> = {
-  move: '移动', marquee: '矩形选框', lasso: '套索', polygonLasso: '多边形套索', magneticLasso: '磁性套索', crop: '裁剪工具', eyedropper: '吸管',
-  brush: '画笔', eraser: '橡皮擦', gradient: '渐变', bucket: '油漆桶',
-  blur: '模糊', sharpen: '锐化', smudge: '涂抹', hand: '抓手', zoom: '缩放',
-};
-
-const SHAPE_NAMES: Record<string, string> = {
-  rect: '矩形选框', ellipse: '椭圆选框', row: '单行选框', column: '单列选框',
-};
-
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
 const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
   { mode: 'replace', label: '新选区', icon: <Square size={13} /> },
@@ -35,10 +25,6 @@ const RETOUCH_TOOLS = new Set(['blur', 'sharpen', 'smudge']);
 const SELECTION_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso']);
 /** 磁性套索专属:宽度/对比度/频率。 */
 const MAGNETIC_TOOL = 'magneticLasso';
-const CROSSHAIR_HINT: Partial<Record<EditorTool, string>> = {
-  eyedropper: '点击/拖动取色 → 前景色(按住拖动实时取样)',
-  crop: '裁剪框交互(M2 后续切片接入)',
-};
 
 /** 渐变五样式(引擎 paint.gradient style;PS 选项条同序)。 */
 const GRADIENT_STYLES: { style: ToolOptions['gradientStyle']; label: string }[] = [
@@ -94,7 +80,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   return (
     <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
-      <span className="font-medium text-neutral-700 dark:text-neutral-200">{TOOL_NAMES[s.tool]}</span>
       {isBrush ? (
         <>
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
@@ -137,17 +122,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.retouchStrength}%</span>
             </label>
           )}
-          <span className="text-neutral-400 dark:text-neutral-500">
-            {s.tool === 'eraser' ? '擦除(锁定透明度的图层上涂背景色);按住 Shift 画直线,Shift+点击连接上一笔' : '左键绘制;[ / ] 调笔径;按住 Shift 画直线,Shift+点击连接上一笔'}
-          </span>
         </>
       ) : SELECTION_TOOLS.has(s.tool) ? (
         <>
-          {s.tool === 'marquee' && (
-            <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">
-              {SHAPE_NAMES[s.options.marqueeShape] ?? '矩形选框'}
-            </span>
-          )}
           <div className="flex items-center gap-0.5" title="选区模式(修饰键临时优先:Shift 添加 / Alt 减去 / Shift+Alt 相交)">
             {SEL_MODES.map(({ mode, label, icon }) => (
               <button
@@ -213,13 +190,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               </label>
             </>
           )}
-          <span className="text-neutral-400 dark:text-neutral-500">
-            {s.tool === 'marquee'
-              ? '按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交;拖拽中:Shift 正方形 / Alt 从中心'
-              : s.tool === 'magneticLasso'
-                ? '沿边框自动落点 · 点起点/双击/Enter 闭合 · ⌥ 直线段与自由画线 · ⌫ 删上一锚点 · [ ] 调宽度'
-                : '拖拽圈选;<3 点提交=取消选择;Esc 取消轮廓;按下时:Shift 添加 / Alt 减去 / Shift+Alt 相交'}
-          </span>
         </>
       ) : s.tool === 'crop' ? (
         <>
@@ -337,7 +307,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               </button>
             ))}
           </div>
-          <span className="text-neutral-400 dark:text-neutral-500">拖画方向线(Shift 吸附 45°);前景色 → 背景色;小于 2px 无操作</span>
         </>
       ) : s.tool === 'bucket' ? (
         <>
@@ -359,7 +328,6 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             消除锯齿
           </label>
-          <span className="text-neutral-400 dark:text-neutral-500">点击填充(前景色);Alt+点击=取色</span>
         </>
       ) : s.tool === 'move' ? (
         <>
@@ -381,17 +349,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             <option value="layer">图层</option>
             <option value="group">组</option>
           </select>
-          <span className="text-neutral-400 dark:text-neutral-500">
-            拖动移动图层/选区像素;Alt 拖动=复制移动;Alt+方向键=复制微移;Shift 锁轴;Enter 落定浮动
-          </span>
         </>
-      ) : CROSSHAIR_HINT[s.tool] ? (
-        <span className="text-neutral-400 dark:text-neutral-500">{CROSSHAIR_HINT[s.tool]}</span>
-      ) : (
-        <span className="text-neutral-400 dark:text-neutral-500">该工具的选项在 M2 接入</span>
-      )}
+      ) : null}
       <div className="flex-1" />
-      <span className="text-neutral-400 dark:text-neutral-500">编辑器 v3 · M3</span>
     </div>
   );
 };
