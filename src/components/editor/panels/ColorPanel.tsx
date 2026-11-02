@@ -15,7 +15,7 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
   return (
     <div className="h-full flex flex-col overflow-y-auto">
       <div className="px-2 py-1 shrink-0 text-[11px] text-gray-500 dark:text-neutral-400">颜色</div>
-      <div className="flex gap-2 px-2 pb-2 flex-1 min-h-0">
+      <div className="flex gap-2 px-2 pb-2 flex-1">
         <div className="relative w-11 h-11 shrink-0">
           <button
             title="背景色"
@@ -30,7 +30,7 @@ export const ColorPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
             style={{ background: toHex(...(s.state.foreground.slice(0, 3) as RGB)) }}
           />
         </div>
-        <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col">
           <ColorPicker
             value={color}
             onCommit={(rgb) => {

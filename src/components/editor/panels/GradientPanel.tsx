@@ -216,7 +216,7 @@ export const GradientPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
     <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-2 text-[11px] flex flex-col gap-2">
       {/* 取色窗(与"颜色"面板同款):编辑当前选中的颜色停靠点;改色即固化活引用;高度随面板自适应 */}
       {selColor ? (
-        <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 flex flex-col">
           <ColorPicker
             value={resolvedRgb(selColor[1])}
             onCommit={(rgb) => setColor(sel.index, rgb)}

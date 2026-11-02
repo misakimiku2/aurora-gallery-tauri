@@ -119,7 +119,7 @@ export const ColorPicker: React.FC<{
   const [h, sv, v] = hsv;
 
   return (
-    <div className={`flex flex-col flex-1 min-h-0 ${value ? '' : 'pointer-events-none opacity-40'}`}>
+    <div className={`flex flex-col flex-1 ${value ? '' : 'pointer-events-none opacity-40'}`}>
       <div
         ref={svRef}
         onPointerDown={dragArea(svRef, (fx, fy) => applyHsv([hsvRef.current[0], fx, 1 - fy]))}
