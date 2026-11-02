@@ -77,26 +77,13 @@ const GROUP_TITLES = ['颜色', '属性 · 调整 · 历史记录', '导航器 �
 /** 分隔条高度(px)。 */
 const DIVIDER_H = 10;
 
-/** 把已定格的展开组高度按新可用高缩放:比例保持、钳到各自最小值、误差补进末个展开组;
- * 折叠组不参与(只占页签条高,bar 由调用方实测扣除),总高恒等于 avail。 */
-const rescale = (prev: number[], expanded: number[], avail: number): number[] => {
-  if (!expanded.length || avail <= 0) return prev;
-  const next = [...prev];
-  const total = expanded.reduce((a, i) => a + prev[i], 0);
-  if (total > 0) for (const i of expanded) next[i] = Math.max(MIN_H[i], (prev[i] / total) * avail);
-  else for (const i of expanded) next[i] = Math.max(MIN_H[i], avail / expanded.length);
-  const last = expanded[expanded.length - 1];
-  next[last] = Math.max(MIN_H[last], next[last] + (avail - expanded.reduce((a, i) => a + next[i], 0)));
-  return next;
-};
-
 export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupRefs = useRef<(HTMLDivElement | null)[]>([]);
   // 工具切换(渐变工具激活时第一组换渐变编辑器)与选项变化都要重渲染
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
-  /** null=未拖动,按权重分配;拖动后为各组像素高(容器尺寸变化时按比例缩放)。 */
+  /** 前三组(0 颜色/1 属性/2 导航器)的高度:null=未拖动按 GROW 百分比定宽,拖动后为像素。 */
   const [heights, setHeights] = useState<number[] | null>(null);
   const heightsRef = useRef<number[] | null>(null);
   heightsRef.current = heights;
@@ -105,104 +92,93 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
-  // 收起/展开不重分配(用户口径:收起只腾出底部空隙,其他组保持各自高度);
-  // 首次折叠时把权重模式冻结为像素,否则 grow 归一化会把空隙又摊回去
+  // 收起/展开不重分配前三组(高度原样保留);省出的空间由图层组(flex-grow 恒弹性)吸收——
+  // 图层页脚因此永远钉在面板底部(用户口径),列表区变高变矮。
+  // heights[i] 存的是「组 i 展开时应恢复的高」:收起瞬间记下当前展开高,拖拽冻结不覆盖折叠组
   const toggleCollapse = (i: number) => {
-    if (heightsRef.current == null) {
-      setHeights(groupRefs.current.map((g) => (g ? g.getBoundingClientRect().height : MIN_H[0])));
+    if (i < 3) {
+      setHeights((prev) => {
+        const arr = prev ?? ([0, 1, 2].map((j) => (groupRefs.current[j]?.getBoundingClientRect().height ?? MIN_H[j])) as number[]).concat(0);
+        const out = [...arr];
+        out[i] = collapsedRef.current[i]
+          ? (arr[i] || MIN_H[i]) // 展开:沿用记录的展开高
+          : (groupRefs.current[i] ? Math.round(groupRefs.current[i].getBoundingClientRect().height) : MIN_H[i]); // 收起:记当前展开高
+        return out;
+      });
     }
     setCollapsed((prev) => prev.map((c, j) => (j === i ? !c : c)));
   };
 
-  // 展开组重新填满(折叠组页签条高按当前 DOM 实测扣除):容器尺寸变化(窗口缩放)时调用
-  const rescaleExpanded = useCallback(() => {
+  // 图层组有最小高:前三组之和把它顶穿容器(会裁页脚/出滚动条)时按比例压回前三组
+  const fitOverflow = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
     setHeights((prev) => {
-      if (!prev) return prev;
       const bars = collapsedRef.current.reduce(
-        (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
+        (a, c, i) => a + (c && i < 3 ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
       );
-      const dividerCount = groupRefs.current.length - 1;
-      const avail = el.clientHeight - dividerCount * DIVIDER_H - bars;
-      const expanded = [0, 1, 2, 3].filter((i) => !collapsedRef.current[i]);
-      return rescale(prev, expanded, avail);
+      const budget = el.clientHeight - (groupRefs.current.length - 1) * DIVIDER_H - bars - MIN_H[3];
+      const expanded = [0, 1, 2].filter((i) => !collapsedRef.current[i]);
+      const cur = expanded.map((i) => (prev ? prev[i] : (groupRefs.current[i]?.getBoundingClientRect().height ?? MIN_H[i])));
+      const total = cur.reduce((a, b) => a + b, 0);
+      if (total <= budget || total <= 0) return prev;
+      const next = prev ? [...prev] : [0, 0, 0, 0];
+      expanded.forEach((i, k) => { next[i] = Math.max(MIN_H[i], Math.round(cur[k] * (budget / total))); });
+      return next;
     });
   }, []);
 
-  // 拖动定格后容器高度变化:等比缩放各组,保持恰好填满
+  // 拖动定格后容器高度变化(窗口缩放):前三组超高才压回,否则图层组弹性自然吸收
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(rescaleExpanded);
+    const ro = new ResizeObserver(fitOverflow);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [rescaleExpanded]);
+  }, [fitOverflow]);
 
-  // 折叠切换本身不重分配(底部留空隙);仅当展开导致总高超容器(会裁图层页脚)时按比例重填
+  // 展开/收起后同理兜底(展开把前三组像素高加回来时可能顶穿)
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el || !heightsRef.current) return;
-    const dividerCount = groupRefs.current.length - 1;
-    const bars = collapsedRef.current.reduce(
-      (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
-    );
-    const total = heightsRef.current.reduce((a, h, i) => a + (collapsedRef.current[i] ? 0 : h), 0) + bars + dividerCount * DIVIDER_H;
-    if (total > el.clientHeight) rescaleExpanded();
-  }, [collapsed, rescaleExpanded]);
+    fitOverflow();
+  }, [collapsed, fitOverflow]);
 
-  // 分隔条拖动 = 移动相邻边界:高度在「上方最近的展开组」与「下方最近的展开组」之间转移,
-  // 中间的折叠组页签条只随边界平移不参与(旧实现的幽灵转移根因=把高度转移进折叠组在
-  // heights 里的条目,而折叠组渲染完全忽略它);一侧没有展开组时以底部空隙作虚拟对侧。
-  // 两侧各自钳最小高,总高永不超容器(页脚不被裁)。分隔条只在组间(3 根),末组下方无。
+  // 分隔条拖动 = 调整它上方最近的展开组(前三组)的高度,底边跟随指针;下方各组整体推移,
+  // 高度变化全部由图层组(flex-grow)吸收——页脚恒在底部。前三组全折叠时无可调组(不动作)。
   const onDividerDown = (i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
     const el = containerRef.current;
     if (!el) return;
-    if (!heightsRef.current) {
-      setHeights(groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0])));
-    }
     let a = -1;
-    for (let j = i; j >= 0; j--) {
+    for (let j = Math.min(i, 2); j >= 0; j--) {
       if (!collapsedRef.current[j]) { a = j; break; }
     }
-    let b = -1;
-    for (let j = i + 1; j < groupRefs.current.length; j++) {
-      if (!collapsedRef.current[j]) { b = j; break; }
+    const g = a >= 0 ? groupRefs.current[a] : null;
+    if (!g) return;
+    if (!heightsRef.current) {
+      // 冻结:展开组记当前 DOM 高;折叠组沿用记录的展开高(heights 非空,见 toggleCollapse)
+      setHeights([0, 1, 2]
+        .map((j) => (collapsedRef.current[j] ? (heightsRef.current?.[j] ?? MIN_H[j]) : (groupRefs.current[j]?.getBoundingClientRect().height ?? MIN_H[j])))
+        .concat(0));
     }
-    if (a < 0 && b < 0) return;
-    // b 缺失(其后全折叠)时与底部空隙结算:a 的增长上限=最后一组底边触到容器底
+    const gTop = g.getBoundingClientRect().top;
+    // 抓点通常不在组底边上:记录指针相对底边的偏移,拖动中补偿(否则按下瞬间组高跳变)
+    const grabOffset = e.clientY - (gTop + g.getBoundingClientRect().height);
     let others = 0;
-    groupRefs.current.forEach((gg, j) => {
-      if (j !== a && j !== b && gg) others += gg.getBoundingClientRect().height;
-    });
-    const maxA = b < 0 ? Math.max(MIN_H[0], el.clientHeight - others - (groupRefs.current.length - 1) * DIVIDER_H) : Infinity;
-    let lastY = e.clientY;
+    for (let j = 0; j < 3; j++) {
+      if (j === a) continue;
+      const gg = groupRefs.current[j];
+      if (gg) others += gg.getBoundingClientRect().height;
+    }
+    const maxA = Math.max(MIN_H[a], el.clientHeight - others - (groupRefs.current.length - 1) * DIVIDER_H - MIN_H[3]);
     const move = (ev: PointerEvent) => {
-      const dy = ev.clientY - lastY;
-      lastY = ev.clientY;
+      const next = Math.round(Math.min(maxA, Math.max(MIN_H[a], ev.clientY - gTop - grabOffset)));
       setHeights((prev) => {
-        const arr = prev ?? groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0]));
-        const next = [...arr];
-        if (a >= 0 && b >= 0) {
-          if (dy > 0) {
-            const grow = Math.min(dy, next[b] - MIN_H[b]);
-            next[a] += grow;
-            next[b] -= grow;
-          } else if (dy < 0) {
-            const shrink = Math.min(-dy, next[a] - MIN_H[a]);
-            next[a] -= shrink;
-            next[b] += shrink;
-          }
-        } else if (a >= 0) {
-          next[a] = Math.round(Math.min(maxA, Math.max(MIN_H[a], next[a] + dy)));
-        } else {
-          if (dy <= 0) return prev; // 上方全折叠:边界推不上去,只能向下拖(缩小 b)
-          next[b] = Math.max(MIN_H[b], next[b] - Math.min(dy, next[b] - MIN_H[b]));
-        }
-        if (next[a] === arr[a] && (b < 0 || next[b] === arr[b])) return prev;
-        return next;
+        const arr = prev ?? [MIN_H[0], MIN_H[1], MIN_H[2], 0];
+        if (arr[a] === next) return prev;
+        const out = [...arr];
+        out[a] = next;
+        return out;
       });
     };
     const up = () => {
@@ -227,10 +203,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
     <LayersPanel key="layers" tabId={tabId} />,
   ];
 
-  // 权重模式按展开组归一化:flex 分配是 grow×剩余空间(不除以 Σgrow),GROW 原设计四组之和=1,
-  // 折叠一组后剩余权重不足 1 会底部留空,须把收起组的份额摊给展开组
-  const growSum = GROW.reduce((a, g, i) => a + (collapsed[i] ? 0 : g), 0) || 1;
-
+  // 权重(容器高的百分比)只作为前三组的初始布局;图层组恒 flex-grow 吸满剩余高
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-panel overflow-y-auto overflow-x-hidden">
       {groups.map((g, i) => (
@@ -240,10 +213,12 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
             className="overflow-hidden"
             style={
               collapsed[i]
-                ? { flexShrink: 0 } // 折叠:只占页签条自然高,不参与权重/定格分配
-                : heights
-                  ? { height: heights[i], flexShrink: 0, minHeight: MIN_H[i] }
-                  : { flexGrow: GROW[i] / growSum, flexBasis: 0, flexShrink: 1, minHeight: MIN_H[i] }
+                ? { flexShrink: 0 } // 折叠:只占页签条自然高,不参与高度分配
+                : i === 3
+                  ? { flexGrow: 1, flexBasis: 0, minHeight: MIN_H[3] } // 图层组恒吸满剩余高(页脚恒在底部)
+                  : heights
+                    ? { height: heights[i], flexShrink: 0, minHeight: MIN_H[i] }
+                    : { flexBasis: `${GROW[i] * 100}%`, flexShrink: 0, minHeight: MIN_H[i] }
             }
             title={i === 0 && gradientTool ? '渐变' : GROUP_TITLES[i]}
           >
