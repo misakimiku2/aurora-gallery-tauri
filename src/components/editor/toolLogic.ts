@@ -409,6 +409,57 @@ export function projectOn(origin: [number, number], dir: [number, number], p: [n
   return [origin[0] + dir[0] * t, origin[1] + dir[1] * t];
 }
 
+/** 吸附到过 origin 的最近 45° 射线(8 向;上游 stroke_constraint::snap45)。 */
+export function snap45(origin: [number, number], p: [number, number]): [number, number] {
+  const dir = snappedDir(origin, p);
+  return dir ? projectOn(origin, dir, p) : p;
+}
+
+/**
+ * Live 渐变 widget 命中(上游 gradient_ui Widget::hit 的优先级 End→Start→线;tol 为文档 px,
+ * 调用方传 8 屏幕px/zoom)。色标/中点命中后续切片接入。
+ */
+export function hitLiveGradient(
+  from: [number, number],
+  to: [number, number],
+  p: [number, number],
+  tol: number,
+): 'end' | 'start' | 'line' | null {
+  const d = (q: [number, number]) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+  if (d(to) <= tol) return 'end';
+  if (d(from) <= tol) return 'start';
+  const vx = to[0] - from[0];
+  const vy = to[1] - from[1];
+  const len2 = vx * vx + vy * vy;
+  if (len2 < 1e-9) return null;
+  const t = ((p[0] - from[0]) * vx + (p[1] - from[1]) * vy) / len2;
+  if (t < 0 || t > 1) return null;
+  return Math.hypot(p[0] - (from[0] + vx * t), p[1] - (from[1] + vy * t)) <= tol ? 'line' : null;
+}
+
+/**
+ * Live 渐变图层创建参数(gradient.fill.create):stops/transparency 来自当前渐变
+ * (活引用交引擎解析),几何取整 + 样式/反向/仿色/不透明度(0..100,spec 与
+ * paint.gradient 不同:允许 0)。
+ */
+export function gradientLiveCreateParams(
+  from: [number, number],
+  to: [number, number],
+  opts: ToolOptions,
+): Record<string, unknown> {
+  const { stops, transparency } = presetPaintParams(opts.gradientCurrent);
+  return {
+    from: [Math.round(from[0]), Math.round(from[1])],
+    to: [Math.round(to[0]), Math.round(to[1])],
+    style: opts.gradientStyle,
+    stops,
+    ...(transparency ? { transparency } : {}),
+    reverse: opts.gradientReverse,
+    dither: opts.gradientDither,
+    opacity: Math.max(0, Math.min(100, Math.round(opts.gradientOpacity * 100))),
+  };
+}
+
 /**
  * 画笔族 ⇧ 约束(上游 constrain):`last` 是上一个未约束的原始指针位置(Shift 刚按下时
  * 约束起点=它),`axis` 在一笔内携带锁定状态;zoom 把 3 屏幕像素锁距换算成文档像素。

@@ -10,6 +10,8 @@ import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
+import { peekGradientFill } from './gradientFill';
+import { runCommand } from './editorStore';
 
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
 const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
@@ -61,6 +63,8 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [presetPos, setPresetPos] = useState({ left: 0, top: 0 });
   const presetBtnRef = useRef<HTMLButtonElement | null>(null);
   const presetMenuRef = useRef<HTMLDivElement | null>(null);
+  /** Live 不透明度拖动编号(coalesce 键;一次拖动合并为一个 undo 步)。 */
+  const opacityDragRef = useRef(0);
   useEffect(() => {
     if (!presetOpen) return;
     const close = (e: MouseEvent) => {
@@ -102,6 +106,12 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const gradCss = s.tool === 'gradient'
     ? presetCss(s.options.gradientCurrent, s.state?.foreground, s.state?.background)
     : '';
+
+  // Live 同步(上游 options_changed/opacity_changed):选中渐变填充图层(且非经典模式)时,
+  // 选项条变化直接落到图层;没有选中渐变图层就只改工具选项,影响下一次拖拽
+  const liveFill = s.tool === 'gradient' && !s.options.gradientClassic
+    ? peekGradientFill(s.docId, s.state?.activeLayer ?? null, s.revision)
+    : null;
 
   const isBrush = BRUSH_FAMILY.has(s.tool);
 
@@ -318,6 +328,15 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'gradient' ? (
         <>
+          <select
+            value={s.options.gradientClassic ? 'classic' : 'live'}
+            onChange={(e) => setOptions(tabId, { gradientClassic: e.target.value === 'classic' })}
+            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
+            title="渐变模式:渐变图层=非破坏渐变填充图层(拖线创建/选中即可再编辑);经典渐变=直接涂在像素上"
+          >
+            <option value="live">渐变图层</option>
+            <option value="classic">经典渐变</option>
+          </select>
           <button
             ref={presetBtnRef}
             title={`渐变预设:${s.options.gradientCurrent.name}(点击选择;渐变工具激活时右侧面板可编辑停靠点)`}
@@ -337,7 +356,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               <button
                 key={style}
                 title={label}
-                onClick={() => setOptions(tabId, { gradientStyle: style })}
+                onClick={() => {
+                  setOptions(tabId, { gradientStyle: style });
+                  if (liveFill) void runCommand(tabId, 'gradient.fill.set', { layer: liveFill.layer, style }).catch(() => undefined);
+                }}
                 className={`px-1.5 h-6 rounded text-[11px] ${
                   s.options.gradientStyle === style
                     ? 'bg-sky-600/20 text-sky-700 dark:text-sky-300'
@@ -352,7 +374,15 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             不透明度
             <input
               type="range" min={1} max={100} value={Math.round(s.options.gradientOpacity * 100)}
-              onChange={(e) => setOptions(tabId, { gradientOpacity: Number(e.target.value) / 100 })}
+              onPointerDown={() => { opacityDragRef.current += 1; }}
+              onChange={(e) => {
+                const v = Number(e.target.value) / 100;
+                setOptions(tabId, { gradientOpacity: v });
+                // Live 同步(上游 opacity_changed):拖动 coalesce 成一个 undo 步
+                if (liveFill) {
+                  void runCommand(tabId, 'layer.setProps', { layer: liveFill.layer, opacity: v, coalesce: `gradient-tool-opacity:${opacityDragRef.current}` }).catch(() => undefined);
+                }
+              }}
               className="w-20 accent-sky-600"
             />
             <span className="w-8 tabular-nums text-neutral-700 dark:text-neutral-300">{Math.round(s.options.gradientOpacity * 100)}%</span>
@@ -360,7 +390,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="反向:渐变起止互换">
             <input
               type="checkbox" checked={s.options.gradientReverse}
-              onChange={(e) => setOptions(tabId, { gradientReverse: e.target.checked })}
+              onChange={(e) => {
+                setOptions(tabId, { gradientReverse: e.target.checked });
+                if (liveFill) void runCommand(tabId, 'gradient.fill.set', { layer: liveFill.layer, reverse: e.target.checked }).catch(() => undefined);
+              }}
               className="accent-sky-600"
             />
             反向
@@ -368,7 +401,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="仿色:抖动过渡减少色带">
             <input
               type="checkbox" checked={s.options.gradientDither}
-              onChange={(e) => setOptions(tabId, { gradientDither: e.target.checked })}
+              onChange={(e) => {
+                setOptions(tabId, { gradientDither: e.target.checked });
+                if (liveFill) void runCommand(tabId, 'gradient.fill.set', { layer: liveFill.layer, dither: e.target.checked }).catch(() => undefined);
+              }}
               className="accent-sky-600"
             />
             仿色

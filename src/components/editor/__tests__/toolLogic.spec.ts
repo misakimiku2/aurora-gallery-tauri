@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
-  cropTurnedAngle, docToRaster, effectiveMode, gradientParams, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
+  cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientParams, hitLiveGradient, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
   moveBounds, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
   moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
-  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snappedDir, strokeCommand,
+  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, snappedDir, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { StrokeAxis } from '../toolLogic';
@@ -15,7 +15,7 @@ import { findPreset } from '../gradientPresets';
 const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear',
-  gradientCurrent: findPreset('Foreground to Background')!,
+  gradientCurrent: findPreset('Foreground to Background')!, gradientClassic: false,
   gradientReverse: false, gradientDither: true, gradientOpacity: 1,
   marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
@@ -307,6 +307,42 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     expect(bucketParams(0, 0, OPTS, '#000000', false)).not.toHaveProperty('target');
     expect(gradientParams([0, 0], [5, 5], OPTS, true).target).toBe('mask');
     expect(gradientParams([0, 0], [5, 5], OPTS)).not.toHaveProperty('target');
+  });
+});
+
+describe('Live 渐变图层(上游 gradient_ui 口径)', () => {
+  it('snap45:吸附到过原点的最近 45° 射线(8 向,垂直投影)', () => {
+    expect(snap45([0, 0], [10, 3])[0]).toBeCloseTo(10);
+    expect(snap45([0, 0], [10, 3])[1]).toBeCloseTo(0);
+    expect(snap45([0, 0], [-10, 3])[0]).toBeCloseTo(-10);
+    expect(snap45([0, 0], [-10, 3])[1]).toBeCloseTo(0);
+    const d = snap45([0, 0], [10, 9]);
+    expect(d[0]).toBeCloseTo(d[1]); // 吸到 45° 对角线
+    expect(snap45([5, 5], [5, 5])).toEqual([5, 5]); // 零向量原样
+  });
+  it('hitLiveGradient:优先级 End→Start→线;tol 为文档 px', () => {
+    const from: [number, number] = [0, 0];
+    const to: [number, number] = [100, 0];
+    expect(hitLiveGradient(from, to, [100, 0], 8)).toBe('end');
+    expect(hitLiveGradient(from, to, [0, 0], 8)).toBe('start');
+    expect(hitLiveGradient(from, to, [50, 3], 8)).toBe('line');
+    expect(hitLiveGradient(from, to, [50, 20], 8)).toBeNull();
+    expect(hitLiveGradient(from, to, [-30, 0], 8)).toBeNull(); // 延长线上不算
+    // 两端重叠(零长线)时 End 优先
+    expect(hitLiveGradient([5, 5], [5, 5], [5, 5], 8)).toBe('end');
+  });
+  it('gradientLiveCreateParams:活引用 stops+transparency+样式/反向/仿色/不透明度(0..100)', () => {
+    const p = gradientLiveCreateParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', gradientOpacity: 0.4 });
+    expect(p).toEqual({
+      from: [1, 3], to: [10, 8], style: 'radial',
+      stops: [[0, 'foreground'], [1, 'background']],
+      reverse: false, dither: true, opacity: 40,
+    });
+    // 允许 0%(spec 0..100;与 paint.gradient 的 1..100 不同)
+    expect(gradientLiveCreateParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 0 }).opacity).toBe(0);
+    // 透明度预设带 transparency
+    const ft = gradientLiveCreateParams([0, 0], [5, 5], { ...OPTS, gradientCurrent: findPreset('Foreground to Transparent')! });
+    expect(ft.transparency).toEqual([[0, 100], [1, 0]]);
   });
 });
 

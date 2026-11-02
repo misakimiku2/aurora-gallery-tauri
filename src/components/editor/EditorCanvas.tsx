@@ -16,13 +16,14 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
-  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientParams, initialMods,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientParams, hitLiveGradient, initialMods,
   isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextLassoTool, nextMarqueeShape,
-  pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, strokeCommand,
+  pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
   type BrushFamilyTool, type CropRect, type DragPoint, type DragMods, type StrokeAxis,
 } from './toolLogic';
+import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
@@ -155,6 +156,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const prevToolRef = useRef<string | null>(null);
   /** 渐变拖线中(上游 classic 口径:拖方向线,松手一条命令)。 */
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
+  /** Live 渐变:选中渐变填充图层的信息(gradient.fill.get,revision 过期自动重拉)。 */
+  const liveFillRef = useRef<GradientFillInfo | null>(null);
+  /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线。 */
+  const liveGradRef = useRef<
+    | { kind: 'draw'; from: [number, number]; to: [number, number]; mods: DragMods; redraw: number | null; moved: boolean }
+    | { kind: 'edit'; layer: number; which: 'start' | 'end' | 'line'; orig: { from: [number, number]; to: [number, number] }; grab: [number, number]; from: [number, number]; to: [number, number]; moved: boolean }
+    | null
+  >(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -404,6 +413,60 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.fill();
       }
       octx.restore();
+    }
+
+    // overlay:Live 渐变 widget(上游 gradient_ui::draw_overlay):选中渐变填充图层恒显示
+    // (方向线黑白双描边 + 端点 4px 圆环 + 色标 2.5px 实心点);拖拽中画进行中的线
+    if (s.tool === 'gradient' && !s.options.gradientClassic && !isMaskTarget(s.state)) {
+      const lg = liveGradRef.current;
+      const selFill = liveFillRef.current && liveFillRef.current.layer === s.state?.activeLayer ? liveFillRef.current : null;
+      let line: { from: [number, number]; to: [number, number]; stops: Array<[number, string]> } | null = null;
+      if (lg?.kind === 'draw') {
+        line = { from: lg.from, to: lg.mods.liveShift ? snap45(lg.from, lg.to) : lg.to, stops: [] };
+      } else if (lg?.kind === 'edit') {
+        line = { from: lg.from, to: lg.to, stops: selFill?.stops ?? [] };
+      } else if (selFill) {
+        line = { from: selFill.from, to: selFill.to, stops: selFill.stops };
+      }
+      if (line) {
+        const ax = line.from[0] * v.scale + v.ox;
+        const ay = line.from[1] * v.scale + v.oy;
+        const bx = line.to[0] * v.scale + v.ox;
+        const by = line.to[1] * v.scale + v.oy;
+        octx.save();
+        octx.lineCap = 'round';
+        octx.beginPath();
+        octx.moveTo(ax, ay);
+        octx.lineTo(bx, by);
+        octx.strokeStyle = 'rgba(0,0,0,0.55)';
+        octx.lineWidth = 3;
+        octx.stroke();
+        octx.beginPath();
+        octx.moveTo(ax, ay);
+        octx.lineTo(bx, by);
+        octx.strokeStyle = '#ffffff';
+        octx.lineWidth = 1;
+        octx.stroke();
+        for (const [cx, cy, ring] of [[ax, ay, true], [bx, by, true]] as Array<[number, number, boolean]>) {
+          octx.beginPath();
+          octx.arc(cx, cy, 4, 0, Math.PI * 2);
+          octx.strokeStyle = '#ffffff';
+          octx.lineWidth = 1.2;
+          octx.stroke();
+        }
+        for (const [t, hex] of line.stops) {
+          const sx = ax + (bx - ax) * t;
+          const sy = ay + (by - ay) * t;
+          octx.beginPath();
+          octx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+          octx.fillStyle = hex;
+          octx.fill();
+          octx.strokeStyle = 'rgba(0,0,0,0.6)';
+          octx.lineWidth = 0.8;
+          octx.stroke();
+        }
+        octx.restore();
+      }
     }
 
     // overlay:裁剪框(上游 crop_ui):框外遮罩(even-odd 挖洞,正置/斜置同一实现)+
@@ -1191,6 +1254,25 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   }, [tabId, scheduleDraw]);
 
+  // Live 渐变:选中 kind="Fill" 的图层时读回渐变信息(缓存按 revision 过期),供 widget/命中用
+  const activeLayer = session?.state?.layers.find((l) => l.id === session.state?.activeLayer) ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    const st = getSession(tabId);
+    const layerId = st?.state?.activeLayer ?? null;
+    if (!st?.docId || !layerId || activeLayer?.kind !== 'Fill') {
+      liveFillRef.current = null;
+      scheduleDraw();
+      return;
+    }
+    void fetchGradientFill(tabId, st.docId, layerId, st.revision).then((fill) => {
+      if (cancelled) return;
+      liveFillRef.current = fill && fill.layer === layerId ? fill : null;
+      st.runtime.requestDraw?.();
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [tabId, activeLayer?.kind, session?.docId, session?.revision, session?.state?.activeLayer, scheduleDraw, activeLayer]);
+
   // 注册裁剪回调(选项条 ✓/⊘/比例 用)。会话可能在画布挂载后才创建:除挂载时注册外,
   // 订阅回调里每次通知补注册(requestDraw 同款模式),卸载时清掉。
   useEffect(() => {
@@ -1787,8 +1869,29 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       scheduleDraw();
     } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
-      // 渐变:拖方向线(Shift 吸附 45°;松手 ≥2px 才发命令)
-      gradientRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
+      if (!s.options.gradientClassic && !isMaskTarget(s.state)) {
+        // Live 渐变(上游 gradient_ui::pointer):命中选中渐变图层的手柄/线=编辑它;
+        // 未命中=拖出新线——已有选中渐变图层时重画它的 from/to,否则新建图层
+        const fill = liveFillRef.current;
+        const active = s.state.activeLayer;
+        const sel = fill && fill.layer === active && s.state.layers.find((l) => l.id === active)?.visible !== false ? fill : null;
+        if (sel) {
+          const hit = hitLiveGradient(sel.from, sel.to, [dx, dy], 8 / s.runtime.view.scale);
+          if (hit === 'end') {
+            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'end', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
+          } else if (hit === 'start') {
+            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'start', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
+          } else if (hit === 'line') {
+            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'line', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
+          }
+        }
+        if (!liveGradRef.current) {
+          liveGradRef.current = { kind: 'draw', from: [dx, dy], to: [dx, dy], mods: initialMods(e.shiftKey, e.altKey), redraw: sel ? sel.layer : null, moved: false };
+        }
+      } else {
+        // 经典渐变:拖方向线(Shift 吸附 45°;松手 ≥2px 才发命令)
+        gradientRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
+      }
       scheduleDraw();
     } else if (s.tool === 'bucket' && e.button === 0 && s.state) {
       // 油漆桶:纯点击即填(上游口径,无拖拽);Alt=临时吸管
@@ -1941,6 +2044,28 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         forceUpdate((n) => n + 1);
       }
     }
+    const lg = liveGradRef.current;
+    if (lg) {
+      if (lg.kind === 'draw') {
+        lg.mods = trackMods(lg.mods, e.shiftKey, e.altKey);
+        lg.to = lg.mods.liveShift ? snap45(lg.from, [dx, dy]) : [dx, dy];
+        if (Math.abs(lg.to[0] - lg.from[0]) + Math.abs(lg.to[1] - lg.from[1]) >= 2) lg.moved = true;
+      } else {
+        if (Math.abs(dx - lg.grab[0]) + Math.abs(dy - lg.grab[1]) >= 2) lg.moved = true;
+        if (lg.which === 'line') {
+          // 整线平移:按下的原始起止 + 当前指针相对抓点的总位移
+          lg.from = [lg.orig.from[0] + (dx - lg.grab[0]), lg.orig.from[1] + (dy - lg.grab[1])];
+          lg.to = [lg.orig.to[0] + (dx - lg.grab[0]), lg.orig.to[1] + (dy - lg.grab[1])];
+        } else if (lg.which === 'start') {
+          // 拖起点:提交被拖端,锚是固定的另一端(⇧ 吸附到锚的 45° 射线,上游同款)
+          lg.from = e.shiftKey ? snap45(lg.orig.to, [dx, dy]) : [dx, dy];
+        } else {
+          lg.to = e.shiftKey ? snap45(lg.orig.from, [dx, dy]) : [dx, dy];
+        }
+      }
+      scheduleDraw();
+      return;
+    }
     const gr = gradientRef.current;
     if (gr) {
       gr.x1 = dx;
@@ -2071,6 +2196,25 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     eyedropRef.current = null;
     const cd = cropDragRef.current;
     cropDragRef.current = null;
+    const lg = liveGradRef.current;
+    liveGradRef.current = null;
+    if (s && lg && s.state) {
+      // 上游 gradient_ui::finish:Draw <2px 无操作;重画=SET from/to 一步;新建=create(引擎自动
+      // 插到活动层上方并选中);Edit moved=提交累积的那一条 SET(一步 "Edit Gradient Fill")
+      if (lg.kind === 'draw' && lg.moved) {
+        if (lg.redraw != null) {
+          void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] })
+            .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+        } else {
+          void runCommand(tabId, 'gradient.fill.create', gradientLiveCreateParams(lg.from, lg.to, s.options))
+            .catch((err) => logError('[editor] gradient.fill.create 失败', err));
+        }
+      } else if (lg.kind === 'edit' && lg.moved) {
+        void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] })
+          .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+      }
+      scheduleDraw();
+    }
     const gr = gradientRef.current;
     gradientRef.current = null;
     if (s && gr && s.state) {
@@ -2182,6 +2326,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s0 = getSession(tabId);
     if (s0) s0.runtime.cropStraightenLine = null;
     gradientRef.current = null;
+    liveGradRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;

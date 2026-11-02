@@ -23,6 +23,8 @@ export interface ToolOptions {
   gradientStyle: 'linear' | 'radial' | 'angle' | 'reflected' | 'diamond';
   /** 渐变工具当前渐变(可编辑副本;预设点击=载入副本,渐变面板 stop 编辑改此副本)。 */
   gradientCurrent: GradientPreset;
+  /** 渐变模式(上游 gradient_classic,默认 false=Live 渐变填充图层;true=经典像素渐变)。 */
+  gradientClassic: boolean;
   /** 渐变反向(引擎 paint.gradient reverse)。 */
   gradientReverse: boolean;
   /** 渐变仿色(引擎 dither,默认开;减少色带)。 */
@@ -137,6 +139,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       tolerance: 32,
       antiAlias: true,
       gradientStyle: 'linear',
+      gradientClassic: false,
       gradientCurrent: defaultGradient(),
       gradientReverse: false,
       gradientDither: true,

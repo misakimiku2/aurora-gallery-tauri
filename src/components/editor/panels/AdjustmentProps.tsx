@@ -9,6 +9,8 @@ import { RotateCcw } from 'lucide-react';
 import { getSession, runCommand, subscribeSession } from '../editorStore';
 import type { EditorLayer } from '../editorTypes';
 import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
+import { GradientLayerProps } from './GradientLayerProps';
+import { fetchGradientFill, type GradientFillInfo } from '../gradientFill';
 import {
   ADJUST_LABEL_ZH, COLOR_LOOKUP_BUILTINS, EDITOR_READY_KINDS, HUE_RANGES, PHOTO_FILTERS,
   SELECTIVE_RANGES, bool, num, photoFilterPresetFor, withArrayIndex, withRangeField,
@@ -508,6 +510,22 @@ const MaskPropsSection: React.FC<{
   );
 };
 
+/** 填充图层(kind="Fill")的属性:渐变填充读回参数进 GradientLayerProps;其他填充提示。 */
+const FillProps: React.FC<{ tabId: string; docId: number; layerId: number; revision: number }> = ({ tabId, docId, layerId, revision }) => {
+  const [fill, setFill] = useState<GradientFillInfo | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setFill(undefined);
+    void fetchGradientFill(tabId, docId, layerId, revision).then((f) => {
+      if (!cancelled) setFill(f);
+    });
+    return () => { cancelled = true; };
+  }, [tabId, docId, layerId, revision]);
+  if (fill === undefined) return <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">正在读取填充参数…</div>;
+  if (!fill) return <div className="p-2 text-[11px] text-neutral-500 dark:text-neutral-400">当前层是填充图层(非渐变)。</div>;
+  return <GradientLayerProps tabId={tabId} layerId={layerId} fill={fill} />;
+};
+
 const EDITORS: Record<string, React.FC<EditorProps>> = {  brightnessContrast: BrightnessContrastEditor,
   exposure: ExposureEditor,
   vibrance: VibranceEditor,
@@ -558,6 +576,15 @@ export const AdjustmentProps: React.FC<{ tabId: string }> = ({ tabId }) => {
         feather={st.maskInfo?.[String(active.id)]?.feather ?? 0}
       />
     ) : null;
+  // 填充图层(kind="Fill"):渐变填充进 GradientLayerProps;几何/起止点也可直接在画布拖
+  if (active.kind === 'Fill' && s.docId != null) {
+    return (
+      <div className="p-2 text-[11px] flex flex-col gap-1 overflow-y-auto overflow-x-hidden min-h-0">
+        {maskSection}
+        <FillProps tabId={tabId} docId={s.docId} layerId={active.id} revision={s.revision} />
+      </div>
+    );
+  }
   if (active.kind !== 'Adjustment') {
     return (
       <div className="p-2 text-[11px] flex flex-col gap-0.5 overflow-y-auto overflow-x-hidden min-h-0">
