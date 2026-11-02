@@ -105,9 +105,16 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
-  const toggleCollapse = (i: number) => setCollapsed((prev) => prev.map((c, j) => (j === i ? !c : c)));
+  // 收起/展开不重分配(用户口径:收起只腾出底部空隙,其他组保持各自高度);
+  // 首次折叠时把权重模式冻结为像素,否则 grow 归一化会把空隙又摊回去
+  const toggleCollapse = (i: number) => {
+    if (heightsRef.current == null) {
+      setHeights(groupRefs.current.map((g) => (g ? g.getBoundingClientRect().height : MIN_H[0])));
+    }
+    setCollapsed((prev) => prev.map((c, j) => (j === i ? !c : c)));
+  };
 
-  // 展开组重新填满(折叠组页签条高按当前 DOM 实测扣除):容器尺寸变化与折叠切换时调用
+  // 展开组重新填满(折叠组页签条高按当前 DOM 实测扣除):容器尺寸变化(窗口缩放)时调用
   const rescaleExpanded = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -116,7 +123,8 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
       const bars = collapsedRef.current.reduce(
         (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
       );
-      const avail = el.clientHeight - 3 * DIVIDER_H - bars;
+      const dividerCount = collapsedRef.current.filter((c) => !c).length;
+      const avail = el.clientHeight - dividerCount * DIVIDER_H - bars;
       const expanded = [0, 1, 2, 3].filter((i) => !collapsedRef.current[i]);
       return rescale(prev, expanded, avail);
     });
@@ -131,28 +139,45 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
     return () => ro.disconnect();
   }, [rescaleExpanded]);
 
-  // 折叠/展开切换:展开组立即重填(DOM 已按折叠态布局,页签条高可实测)
+  // 折叠切换本身不重分配(底部留空隙);仅当展开导致总高超容器(会裁图层页脚)时按比例重填
   useEffect(() => {
-    rescaleExpanded();
+    const el = containerRef.current;
+    if (!el || !heightsRef.current) return;
+    const dividerCount = collapsedRef.current.filter((c) => !c).length;
+    const bars = collapsedRef.current.reduce(
+      (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
+    );
+    const total = heightsRef.current.reduce((a, h, i) => a + (collapsedRef.current[i] ? 0 : h), 0) + bars + dividerCount * DIVIDER_H;
+    if (total > el.clientHeight) rescaleExpanded();
   }, [collapsed, rescaleExpanded]);
 
+  // 分隔条拖动 = 直接调整它上方那组的高度(PS 口径:底边跟随指针),其余组保持不动——
+  // 缩小在底部留空隙、增大以最后一组底边触到容器底为上限,总高永不超容器(页脚不被裁)。
+  // 折叠组只剩页签条不可缩放,其下方不渲染分隔条(改用展开组的底边分隔条调整)。
   const onDividerDown = (i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
-    // 首次拖动:把当前布局冻结为像素值,之后只在相邻两组间转移高度
-    setHeights(groupRefs.current.map((g) => (g ? g.getBoundingClientRect().height : MIN_H[0])));
-    let lastY = e.clientY;
+    const g = groupRefs.current[i];
+    const el = containerRef.current;
+    if (!g || !el) return;
+    if (!heightsRef.current) {
+      setHeights(groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0])));
+    }
+    const gTop = g.getBoundingClientRect().top;
+    let others = 0;
+    groupRefs.current.forEach((gg, j) => {
+      if (j !== i && gg) others += gg.getBoundingClientRect().height;
+    });
+    const dividerCount = collapsedRef.current.filter((c) => !c).length;
+    const maxH = Math.max(MIN_H[i], el.clientHeight - others - dividerCount * DIVIDER_H);
     const move = (ev: PointerEvent) => {
-      const dy = ev.clientY - lastY;
-      lastY = ev.clientY;
+      const next = Math.round(Math.min(maxH, Math.max(MIN_H[i], ev.clientY - gTop)));
       setHeights((prev) => {
-        if (!prev) return prev;
-        const next = [...prev];
-        const room = next[i + 1] - MIN_H[i + 1];
-        const grow = Math.min(dy, room);
-        next[i] = Math.max(MIN_H[i], next[i] + grow);
-        next[i + 1] = Math.max(MIN_H[i + 1], next[i + 1] - (next[i] - prev[i]));
-        return next;
+        const arr = prev ?? groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0]));
+        if (arr[i] === next) return prev;
+        const out = [...arr];
+        out[i] = next;
+        return out;
       });
     };
     const up = () => {
@@ -199,7 +224,8 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
           >
             <div className="h-full flex flex-col overflow-hidden">{g}</div>
           </div>
-          {i < groups.length - 1 && (
+          {/* 分隔条挂在每个展开组的底边(拖它=调这组的高度);折叠组不可缩放,其下不渲染 */}
+          {!collapsed[i] && (
             <div
               onPointerDown={onDividerDown(i)}
               className="shrink-0 cursor-row-resize flex items-center px-2 hover:bg-sky-500/20 transition-colors"
