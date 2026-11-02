@@ -119,31 +119,29 @@ export const ColorPicker: React.FC<{
   const [h, sv, v] = hsv;
 
   return (
-    <div className={value ? '' : 'pointer-events-none opacity-40'}>
-      <div className="flex flex-col gap-1.5">
+    <div className={`flex flex-col flex-1 min-h-0 ${value ? '' : 'pointer-events-none opacity-40'}`}>
+      <div
+        ref={svRef}
+        onPointerDown={dragArea(svRef, (fx, fy) => applyHsv([hsvRef.current[0], fx, 1 - fy]))}
+        className="flex-1 min-h-[56px] rounded cursor-crosshair relative"
+        style={{
+          background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${Math.round(h * 360)}, 100%, 50%))`,
+        }}
+      >
         <div
-          ref={svRef}
-          onPointerDown={dragArea(svRef, (fx, fy) => applyHsv([hsvRef.current[0], fx, 1 - fy]))}
-          className="h-20 rounded cursor-crosshair relative"
-          style={{
-            background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${Math.round(h * 360)}, 100%, 50%))`,
-          }}
-        >
-          <div
-            className="absolute w-2.5 h-2.5 rounded-full border-2 border-white shadow pointer-events-none"
-            style={{ left: `calc(${sv * 100}% - 5px)`, top: `calc(${(1 - v) * 100}% - 5px)` }}
-          />
-        </div>
-        <div
-          ref={hueRef}
-          onPointerDown={dragArea(hueRef, (fx) => applyHsv([fx, hsvRef.current[1], hsvRef.current[2]]))}
-          className="h-3 rounded cursor-pointer relative"
-          style={{ background: 'linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red)' }}
-        >
-          <div className="absolute top-0 w-1.5 h-full bg-white border border-black/10 dark:border-white/15 rounded pointer-events-none" style={{ left: `calc(${h * 100}% - 3px)` }} />
-        </div>
+          className="absolute w-2.5 h-2.5 rounded-full border-2 border-white shadow pointer-events-none"
+          style={{ left: `calc(${sv * 100}% - 5px)`, top: `calc(${(1 - v) * 100}% - 5px)` }}
+        />
       </div>
-      <div className="flex items-center gap-2 pt-1.5">
+      <div
+        ref={hueRef}
+        onPointerDown={dragArea(hueRef, (fx) => applyHsv([fx, hsvRef.current[1], hsvRef.current[2]]))}
+        className="h-3 shrink-0 mt-1.5 rounded cursor-pointer relative"
+        style={{ background: 'linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red)' }}
+      >
+        <div className="absolute top-0 w-1.5 h-full bg-white border border-black/10 dark:border-white/15 rounded pointer-events-none" style={{ left: `calc(${h * 100}% - 3px)` }} />
+      </div>
+      <div className="flex items-center gap-2 pt-1.5 shrink-0">
         <span className="w-3 h-3 rounded-sm border border-black/20 dark:border-neutral-600" style={{ background: hex }} />
         <input
           value={hex}

@@ -214,20 +214,22 @@ export const GradientPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   return (
     <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-2 text-[11px] flex flex-col gap-2">
-      {/* 取色窗(与"颜色"面板同款):编辑当前选中的颜色停靠点;改色即固化活引用 */}
+      {/* 取色窗(与"颜色"面板同款):编辑当前选中的颜色停靠点;改色即固化活引用;高度随面板自适应 */}
       {selColor ? (
-        <ColorPicker
-          value={resolvedRgb(selColor[1])}
-          onCommit={(rgb) => setColor(sel.index, rgb)}
-          label={`${nameOf(selColor[1])} @ ${Math.round(selColor[0] * 100)}%`}
-        />
+        <div className="flex-1 min-h-0 flex flex-col">
+          <ColorPicker
+            value={resolvedRgb(selColor[1])}
+            onCommit={(rgb) => setColor(sel.index, rgb)}
+            label={`${nameOf(selColor[1])} @ ${Math.round(selColor[0] * 100)}%`}
+          />
+        </div>
       ) : (
-        <div className="pointer-events-none opacity-40 text-neutral-500 dark:text-neutral-400">
+        <div className="shrink-0 pointer-events-none opacity-40 text-neutral-500 dark:text-neutral-400">
           {selOpacity ? '已选中透明度停靠点(用下方"不透明"字段编辑)' : ''}
         </div>
       )}
       {/* 停靠点编辑条(上行透明度+▼标记 / 下行颜色+▲标记) */}
-      <div className="w-full select-none touch-none">
+      <div className="w-full select-none touch-none shrink-0">
         <div className="relative h-[13px]">
           {cur.opacity.map(([t, a], i) => {
             const on = sel.row === 'opacity' && sel.index === i;
@@ -279,7 +281,7 @@ export const GradientPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
       </div>
       {/* 选中停靠点字段(颜色经上方取色窗;此处保留位置与删除) */}
       {selColor ? (
-        <label className="flex items-center gap-1.5">
+        <label className="flex items-center gap-1.5 shrink-0">
           <span className="w-3 h-3 shrink-0 rounded-sm border border-black/20 dark:border-neutral-600" style={{ background: resolvedHex(selColor[1]) }} />
           <span className="text-[10px] text-neutral-500 dark:text-neutral-400 tabular-nums">{resolvedHex(selColor[1])}</span>
           <div className="flex-1" />
@@ -300,7 +302,7 @@ export const GradientPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           </button>
         </label>
       ) : selOpacity ? (
-        <label className="flex items-center gap-1.5">
+        <label className="flex items-center gap-1.5 shrink-0">
           <span className="w-10 shrink-0 text-[10px] text-gray-500 dark:text-neutral-400">不透明</span>
           <input
             type="number" min={0} max={100} step={1} title="不透明度 %"
@@ -326,7 +328,7 @@ export const GradientPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           </button>
         </label>
       ) : null}
-      <div>
+      <div className="shrink-0">
         <button
           disabled={cur.stops.length >= 64}
           onClick={() => addStop('color', stopGapMid(cur.stops))}
