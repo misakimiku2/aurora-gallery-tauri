@@ -123,7 +123,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
       const bars = collapsedRef.current.reduce(
         (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
       );
-      const dividerCount = collapsedRef.current.filter((c) => !c).length;
+      const dividerCount = groupRefs.current.length - 1;
       const avail = el.clientHeight - dividerCount * DIVIDER_H - bars;
       const expanded = [0, 1, 2, 3].filter((i) => !collapsedRef.current[i]);
       return rescale(prev, expanded, avail);
@@ -143,7 +143,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !heightsRef.current) return;
-    const dividerCount = collapsedRef.current.filter((c) => !c).length;
+    const dividerCount = groupRefs.current.length - 1;
     const bars = collapsedRef.current.reduce(
       (a, c, i) => a + (c ? (groupRefs.current[i]?.getBoundingClientRect().height ?? 0) : 0), 0,
     );
@@ -151,33 +151,58 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
     if (total > el.clientHeight) rescaleExpanded();
   }, [collapsed, rescaleExpanded]);
 
-  // 分隔条拖动 = 直接调整它上方那组的高度(PS 口径:底边跟随指针),其余组保持不动——
-  // 缩小在底部留空隙、增大以最后一组底边触到容器底为上限,总高永不超容器(页脚不被裁)。
-  // 折叠组只剩页签条不可缩放,其下方不渲染分隔条(改用展开组的底边分隔条调整)。
+  // 分隔条拖动 = 移动相邻边界:高度在「上方最近的展开组」与「下方最近的展开组」之间转移,
+  // 中间的折叠组页签条只随边界平移不参与(旧实现的幽灵转移根因=把高度转移进折叠组在
+  // heights 里的条目,而折叠组渲染完全忽略它);一侧没有展开组时以底部空隙作虚拟对侧。
+  // 两侧各自钳最小高,总高永不超容器(页脚不被裁)。分隔条只在组间(3 根),末组下方无。
   const onDividerDown = (i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
     (e.target as Element).setPointerCapture(e.pointerId);
-    const g = groupRefs.current[i];
     const el = containerRef.current;
-    if (!g || !el) return;
+    if (!el) return;
     if (!heightsRef.current) {
       setHeights(groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0])));
     }
-    const gTop = g.getBoundingClientRect().top;
+    let a = -1;
+    for (let j = i; j >= 0; j--) {
+      if (!collapsedRef.current[j]) { a = j; break; }
+    }
+    let b = -1;
+    for (let j = i + 1; j < groupRefs.current.length; j++) {
+      if (!collapsedRef.current[j]) { b = j; break; }
+    }
+    if (a < 0 && b < 0) return;
+    // b 缺失(其后全折叠)时与底部空隙结算:a 的增长上限=最后一组底边触到容器底
     let others = 0;
     groupRefs.current.forEach((gg, j) => {
-      if (j !== i && gg) others += gg.getBoundingClientRect().height;
+      if (j !== a && j !== b && gg) others += gg.getBoundingClientRect().height;
     });
-    const dividerCount = collapsedRef.current.filter((c) => !c).length;
-    const maxH = Math.max(MIN_H[i], el.clientHeight - others - dividerCount * DIVIDER_H);
+    const maxA = b < 0 ? Math.max(MIN_H[0], el.clientHeight - others - (groupRefs.current.length - 1) * DIVIDER_H) : Infinity;
+    let lastY = e.clientY;
     const move = (ev: PointerEvent) => {
-      const next = Math.round(Math.min(maxH, Math.max(MIN_H[i], ev.clientY - gTop)));
+      const dy = ev.clientY - lastY;
+      lastY = ev.clientY;
       setHeights((prev) => {
         const arr = prev ?? groupRefs.current.map((gg) => (gg ? gg.getBoundingClientRect().height : MIN_H[0]));
-        if (arr[i] === next) return prev;
-        const out = [...arr];
-        out[i] = next;
-        return out;
+        const next = [...arr];
+        if (a >= 0 && b >= 0) {
+          if (dy > 0) {
+            const grow = Math.min(dy, next[b] - MIN_H[b]);
+            next[a] += grow;
+            next[b] -= grow;
+          } else if (dy < 0) {
+            const shrink = Math.min(-dy, next[a] - MIN_H[a]);
+            next[a] -= shrink;
+            next[b] += shrink;
+          }
+        } else if (a >= 0) {
+          next[a] = Math.round(Math.min(maxA, Math.max(MIN_H[a], next[a] + dy)));
+        } else {
+          if (dy <= 0) return prev; // 上方全折叠:边界推不上去,只能向下拖(缩小 b)
+          next[b] = Math.max(MIN_H[b], next[b] - Math.min(dy, next[b] - MIN_H[b]));
+        }
+        if (next[a] === arr[a] && (b < 0 || next[b] === arr[b])) return prev;
+        return next;
       });
     };
     const up = () => {
@@ -224,8 +249,8 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
           >
             <div className="h-full flex flex-col overflow-hidden">{g}</div>
           </div>
-          {/* 分隔条挂在每个展开组的底边(拖它=调这组的高度);折叠组不可缩放,其下不渲染 */}
-          {!collapsed[i] && (
+          {/* 分隔条只在组间(末组下方无);拖它=移动边界,跨折叠组在最近展开组间转移高度 */}
+          {i < groups.length - 1 && (
             <div
               onPointerDown={onDividerDown(i)}
               className="shrink-0 cursor-row-resize flex items-center px-2 hover:bg-sky-500/20 transition-colors"
