@@ -76,3 +76,4 @@ aurora_diag_tmp/
 
 # vitest 模块交换目录（vitest.config.ts 把 TEMP 重定向到这里——沙箱适配，2026-10-16）
 .vitest-tmp/
+test/smoke*.png
