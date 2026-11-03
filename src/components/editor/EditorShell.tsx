@@ -10,6 +10,7 @@ import { editorOpen, editorState } from './editorBridge';
 import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeSession, updateSession } from './editorStore';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
+import { SelectMaskDialog } from './panels/SelectMaskDialog';
 import { EditorCanvas } from './EditorCanvas';
 import { actualPixelsSession, fitSession, zoomSession } from './editorViewActions';
 import { ZOOM_STEP } from './viewMath';
@@ -143,6 +144,7 @@ export const EditorShell: React.FC<{
         <EditorToolbar tabId={tabId} />
         <EditorCanvas tabId={tabId} isActive={isActive} />
       </div>
+      <SelectMaskDialog tabId={tabId} />
     </div>
   );
 };

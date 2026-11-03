@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 pub mod histogram;
 pub mod os_clipboard;
 pub mod outline;
+pub mod select_mask_view;
 
 #[derive(Debug)]
 pub struct EditorError(pub String);
@@ -176,6 +177,21 @@ impl EditorManager {
             (contrast.clamp(1.0, 100.0) / 100.0) as f32,
         );
         Ok(self.magnetic_source()?.snap(p, s))
+    }
+
+    /// Select and Mask 预览(对话框打开期间,位图泵按参数键拉取;**零文档改动**,OK 走
+    /// select.refineEdge 正式提交)。起点=选区否则活动层蒙版(引擎命令同口径)。
+    pub fn select_mask_view(
+        &mut self,
+        doc: u64,
+        view: select_mask_view::View,
+        params: Value,
+    ) -> Result<select_mask_view::ViewResult> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let active = st.active_layer;
+        select_mask_view::preview_view(&st.doc, active, &params, &view)
+            .map_err(|e| EditorError(format!("select mask preview: {e}")))
     }
 
     /// 复制族命令成功后的后置:把 session 剪贴板镜像成 RGBA8 位图进 OS 剪贴板

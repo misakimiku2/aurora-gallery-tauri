@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { getSession, runCommand, subscribeSession } from '../editorStore';
+import { getSession, openSelectMask, runCommand, subscribeSession } from '../editorStore';
 import type { EditorLayer } from '../editorTypes';
 import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
 import { GradientLayerProps } from './GradientLayerProps';
@@ -497,6 +497,13 @@ const MaskPropsSection: React.FC<{
         <span className="font-medium text-neutral-800 dark:text-neutral-200">图层蒙版</span>
         {!enabled && <span className="text-[10px] text-amber-600 dark:text-amber-400">已停用</span>}
         <div className="flex-1" />
+        <button
+          onClick={() => openSelectMask(tabId)}
+          className="px-1.5 py-0.5 rounded text-[10px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15"
+          title="选择并遮住(Ctrl+Alt+R):精修蒙版边缘"
+        >
+          选择并遮住…
+        </button>
         <button
           title="反相蒙版(黑白互换;作用于蒙版通道)"
           onClick={() => void runCommand(tabId, 'image.adjustments.invert', { target: 'mask' }).catch((e) => console.error('[editor] invert mask', e))}

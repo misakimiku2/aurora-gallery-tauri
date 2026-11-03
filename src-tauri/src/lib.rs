@@ -2135,6 +2135,7 @@ pub fn run() {
         editor_cmds::editor_magnetic_trace,
         editor_cmds::editor_magnetic_snap,
         editor_cmds::editor_render,
+        editor_cmds::editor_select_mask_view,
         editor_cmds::editor_state,
         editor_cmds::editor_selection_outline,
         editor_cmds::editor_stroke_begin,

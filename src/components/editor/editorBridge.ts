@@ -199,3 +199,43 @@ export async function editorHistogram(doc: number, layer: number, below: boolean
 export async function editorClose(doc: number): Promise<void> {
   return invoke<void>('editor_close', { doc });
 }
+
+/** Select and Mask 预览(对话框打开期间,零文档改动;OK 走 select.refineEdge 提交):
+ * 代理(1/k)精修 + 七视图合成。二进制:[w:u32][h:u32][outlineN:u32][outline i32×4×N][RGBA…],
+ * 位图为文档 1/k(调用方按 width/docW 折算 rasterScale)。 */
+export interface SelectMaskViewResult {
+  width: number;
+  height: number;
+  /** 精修选区轮廓段(文档坐标,[x0,y0,x1,y1] 平铺),MarchingAnts 视图蚂蚁线用。 */
+  outline: number[][];
+  rgba: Uint8ClampedArray<ArrayBuffer>;
+}
+
+export async function editorSelectMaskView(
+  doc: number,
+  view: { mode: string; opacity: number; showEdge: boolean; showOriginal: boolean },
+  params: Record<string, unknown>,
+): Promise<SelectMaskViewResult> {
+  const buf = await invoke<ArrayBuffer>('editor_select_mask_view', {
+    doc,
+    mode: view.mode,
+    opacity: view.opacity,
+    showEdge: view.showEdge,
+    showOriginal: view.showOriginal,
+    params,
+  });
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(u8.buffer as ArrayBuffer, u8.byteOffset);
+  const w = dv.getUint32(0, true);
+  const h = dv.getUint32(4, true);
+  const n = dv.getUint32(8, true);
+  const outline: number[][] = [];
+  let off = 12;
+  for (let i = 0; i < n; i++) {
+    outline.push([
+      dv.getInt32(off, true), dv.getInt32(off + 4, true), dv.getInt32(off + 8, true), dv.getInt32(off + 12, true),
+    ]);
+    off += 16;
+  }
+  return { width: w, height: h, outline, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + off) };
+}

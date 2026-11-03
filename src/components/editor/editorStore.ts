@@ -104,6 +104,8 @@ export interface EditorSession {
   runtime: EditorRuntime;
   /** 当前裁剪框角度(度,屏幕顺时针;选项条角度输入框的显示源)。 */
   cropAngle: number;
+  /** Select and Mask 对话框状态(会话级;null=未打开)。预览零文档改动,OK 一步 select.refineEdge。 */
+  selectMask: SelectMaskState | null;
 }
 
 const sessions = new Map<string, EditorSession>();
@@ -160,6 +162,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
+    selectMask: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -170,6 +173,172 @@ export function updateSession(tabId: string, patch: Partial<EditorSession>): voi
   if (!s) return;
   Object.assign(s, patch);
   notify(tabId);
+}
+
+// ---------------------------------------------------------------- Select and Mask
+
+/** Select and Mask 七视图(上游 Mode;F 按 ALL 顺序循环)。 */
+export const SELECT_MASK_MODES = ['onionSkin', 'marchingAnts', 'overlay', 'onBlack', 'onWhite', 'blackWhite', 'onLayers'] as const;
+export type SelectMaskMode = (typeof SELECT_MASK_MODES)[number];
+export const SELECT_MASK_MODE_ZH: Record<SelectMaskMode, string> = {
+  onionSkin: '洋葱皮', marchingAnts: '蚂蚁线', overlay: '叠加', onBlack: '黑底', onWhite: '白底', blackWhite: '黑白', onLayers: '在图层上',
+};
+/** 每视图默认不透明度(%;无=0,上游 default_opacity)。 */
+export function selectMaskDefaultOpacity(mode: SelectMaskMode): number {
+  if (mode === 'onionSkin' || mode === 'overlay') return 50;
+  if (mode === 'onBlack' || mode === 'onWhite') return 100;
+  return 100;
+}
+export const SELECT_MASK_OUTPUTS = ['selection', 'layerMask', 'newLayer', 'newLayerWithMask', 'newDocument', 'newDocumentWithMask'] as const;
+export const SELECT_MASK_OUTPUT_ZH: Record<string, string> = {
+  selection: '选区', layerMask: '图层蒙版', newLayer: '新建图层', newLayerWithMask: '新建带蒙版的图层', newDocument: '新建文档', newDocumentWithMask: '新建带蒙版的文档',
+};
+
+/** Select and Mask 对话框状态(会话级;null=未打开;预览零文档改动)。 */
+export interface SelectMaskState {
+  open: boolean;
+  /** 打开时锁定的活动层(预览与提交的目标层)。 */
+  layerId: number | null;
+  /** 以蒙版为起点(蒙版目标下打开;提交时带 target:"mask")。 */
+  targetMask: boolean;
+  // 全局精修(上游 spec 顺序与默认值)
+  radius: number;
+  smartRadius: boolean;
+  smooth: number;
+  feather: number;
+  contrast: number;
+  shiftEdge: number;
+  decontaminate: boolean;
+  amount: number;
+  output: string;
+  sampleAllLayers: boolean;
+  // 视图
+  viewMode: SelectMaskMode;
+  /** 每视图独立不透明度(%;上游同款)。 */
+  viewOpacity: Record<string, number>;
+  showEdge: boolean;
+  showOriginal: boolean;
+  /** X 按住:临时显示原图。 */
+  hideView: boolean;
+  /** 预览产物:精修选区轮廓(文档坐标段;泵写,MarchingAnts 视图蚂蚁线用)。 */
+  outline: number[][] | null;
+}
+
+const SELECT_MASK_PREFS_KEY = 'aurora-editor:select-mask-fields';
+/** 记住的上次标量值(localStorage;上游 prefs.dialogs 同款,Json 类参数不记)。 */
+interface SelectMaskPrefs {
+  radius: number;
+  smartRadius: boolean;
+  smooth: number;
+  feather: number;
+  contrast: number;
+  shiftEdge: number;
+  decontaminate: boolean;
+  amount: number;
+  output: string;
+  sampleAllLayers: boolean;
+}
+
+function loadSelectMaskPrefs(): Partial<SelectMaskPrefs> {
+  try {
+    const raw = localStorage.getItem(SELECT_MASK_PREFS_KEY);
+    return raw ? (JSON.parse(raw) as Partial<SelectMaskPrefs>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSelectMaskPrefs(sm: SelectMaskState): void {
+  try {
+    const prefs: SelectMaskPrefs = {
+      radius: sm.radius, smartRadius: sm.smartRadius, smooth: sm.smooth, feather: sm.feather,
+      contrast: sm.contrast, shiftEdge: sm.shiftEdge, decontaminate: sm.decontaminate,
+      amount: sm.amount, output: sm.output, sampleAllLayers: sm.sampleAllLayers,
+    };
+    localStorage.setItem(SELECT_MASK_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* 存储不可用忽略 */
+  }
+}
+
+/** 打开 Select and Mask(上游 select.selectAndMask:有选区或活动层有蒙版才可用;
+ * 无选区有蒙版时 output 默认 layerMask;蒙版目标下以蒙版为起点)。 */
+export function openSelectMask(tabId: string): boolean {
+  const s = sessions.get(tabId);
+  if (!s || !s.state || s.docId == null) return false;
+  const active = s.state.layers.find((l) => l.id === s.state?.activeLayer) ?? null;
+  const hasMask = active?.hasMask === true;
+  if (!s.state.hasSelection && !hasMask) return false;
+  const prefs = loadSelectMaskPrefs();
+  const targetMask = isMaskTargetState(s) && hasMask;
+  s.selectMask = {
+    open: true,
+    layerId: s.state.activeLayer,
+    targetMask,
+    radius: prefs.radius ?? 0,
+    smartRadius: prefs.smartRadius ?? false,
+    smooth: prefs.smooth ?? 0,
+    feather: prefs.feather ?? 0,
+    contrast: prefs.contrast ?? 0,
+    shiftEdge: prefs.shiftEdge ?? 0,
+    decontaminate: prefs.decontaminate ?? false,
+    amount: prefs.amount ?? 100,
+    output: s.state.hasSelection ? (prefs.output ?? 'selection') : 'layerMask',
+    sampleAllLayers: prefs.sampleAllLayers ?? false,
+    viewMode: 'onionSkin',
+    viewOpacity: {},
+    showEdge: false,
+    showOriginal: false,
+    hideView: false,
+    outline: null,
+  };
+  notify(tabId);
+  return true;
+}
+
+function isMaskTargetState(s: EditorSession): boolean {
+  return s.state?.channels?.target?.kind === 'layerMask';
+}
+
+/** 更新对话框字段(字段变化=预览键变化,位图泵自动重算)。 */
+export function updateSelectMask(tabId: string, patch: Partial<SelectMaskState>): void {
+  const s = sessions.get(tabId);
+  if (!s?.selectMask?.open) return;
+  s.selectMask = { ...s.selectMask, ...patch };
+  notify(tabId);
+}
+
+/** 关闭对话框(commit=确定:记上次标量值;取消:丢弃一切)。 */
+export function closeSelectMask(tabId: string, commit: boolean): void {
+  const s = sessions.get(tabId);
+  if (!s?.selectMask) return;
+  if (commit) saveSelectMaskPrefs(s.selectMask);
+  s.selectMask = null;
+  notify(tabId);
+}
+
+/** 确定:一条 select.refineEdge(**一步 "Select and Mask"** 历史;预览期间文档零改动,
+ * 一切参数在该条提交)。成功记上次标量值并关闭;失败保持打开(引擎报错见日志)。 */
+export function confirmSelectMask(tabId: string): void {
+  const s = sessions.get(tabId);
+  const sm = s?.selectMask;
+  if (!s || !sm?.open || s.docId == null) return;
+  const params: Record<string, unknown> = {
+    radius: sm.radius,
+    smartRadius: sm.smartRadius,
+    smooth: sm.smooth,
+    feather: sm.feather,
+    contrast: sm.contrast,
+    shiftEdge: sm.shiftEdge,
+    decontaminate: sm.decontaminate,
+    amount: sm.amount,
+    output: sm.output,
+    sampleAllLayers: sm.sampleAllLayers,
+    ...(sm.targetMask ? { target: 'mask' } : {}),
+  };
+  void runCommand(tabId, 'select.refineEdge', params)
+    .then(() => closeSelectMask(tabId, true))
+    .catch((err) => console.error('[editor] select.refineEdge 失败', err));
 }
 
 export function setTool(tabId: string, tool: EditorTool): void {

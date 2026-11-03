@@ -9,9 +9,9 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession, updateSession } from './editorStore';
+import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -301,12 +301,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     };
     const sel = s.state.selectionBounds;
     // 替换模式画新多边形/磁性边框时隐藏旧选区蚂蚁线(上游 a_new_polygon_hides_the_selection;Esc 还原)
+    // Select and Mask 对话框:非蚂蚁线视图隐藏蚂蚁线;蚂蚁线视图描预览的精修选区轮廓
+    const smOpen = s.selectMask?.open === true && !s.selectMask.hideView;
+    const smAnts = smOpen && s.selectMask?.viewMode === 'marchingAnts';
     const hideAnts =
       (s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace') ||
-      (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace');
+      (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace') ||
+      (smOpen && !smAnts);
     if (sel && !hideAnts) {
-      refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
-      const polys = s.runtime.selectionOutline;
+      if (!smAnts) refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
+      const polys = smAnts ? s.selectMask?.outline ?? null : s.runtime.selectionOutline;
       if (polys && polys.length) {
         drawAnts((c) => {
           c.beginPath();
@@ -1480,6 +1484,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const docH = session?.state?.height ?? 0;
   // 蒙版灰度查看(view.layerMask,视图态不推 revision):key 带上它,视图开合/换层都会重拉
   const maskViewKey = session?.state?.layerMaskView ? `${session.state.layerMaskView.layer}:${session.state.layerMaskView.mode}` : '';
+  // Select and Mask 对话框字段的值级键:字段变化(开/关/视图/参数)都要重新触发泵
+  // (泵内部按完整键决定是否重算;outline 不入键防 notify 循环)
+  const selectMaskKey = session?.selectMask?.open
+    ? JSON.stringify([
+        session.selectMask.viewMode, session.selectMask.viewOpacity, session.selectMask.showEdge,
+        session.selectMask.showOriginal, session.selectMask.hideView, session.selectMask.radius,
+        session.selectMask.smartRadius, session.selectMask.smooth, session.selectMask.feather,
+        session.selectMask.contrast, session.selectMask.shiftEdge, session.selectMask.sampleAllLayers,
+        session.selectMask.targetMask,
+      ])
+    : '';
   const bitmapPump = useCallback(async () => {
     if (bitmapBusyRef.current) return;
     bitmapBusyRef.current = true;
@@ -1487,6 +1502,42 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       for (;;) {
         const s = getSession(tabId);
         if (!s || s.docId == null || !s.state) return;
+        // Select and Mask 对话框预览:精修选区 + 视图合成(零文档改动;参数键变化=重算,
+        // 循环重读最新字段天然合并在途变化;X 按住=走下方正常渲染分支)
+        const sm = s.selectMask;
+        if (sm?.open && !sm.hideView) {
+          const params: Record<string, unknown> = {
+            radius: sm.radius, smartRadius: sm.smartRadius, smooth: sm.smooth, feather: sm.feather,
+            contrast: sm.contrast, shiftEdge: sm.shiftEdge, sampleAllLayers: sm.sampleAllLayers,
+            ...(sm.targetMask ? { target: 'mask' } : {}),
+          };
+          const op = sm.viewOpacity[sm.viewMode] ?? selectMaskDefaultOpacity(sm.viewMode);
+          const key = `sm:${s.docId}:${s.revision}:${sm.viewMode}:${op}:${sm.showEdge}:${sm.showOriginal}:${JSON.stringify(params)}`;
+          if (bitmapKeyRef.current === key) return;
+          bitmapKeyRef.current = key;
+          const bmp = await editorSelectMaskView(
+            s.docId,
+            { mode: sm.viewMode, opacity: op / 100, showEdge: sm.showEdge, showOriginal: sm.showOriginal },
+            params,
+          );
+          let canvas = s.runtime.offscreen;
+          if (!canvas || canvas.width !== bmp.width || canvas.height !== bmp.height) {
+            canvas = document.createElement('canvas');
+            canvas.width = bmp.width;
+            canvas.height = bmp.height;
+            s.runtime.offscreen = canvas;
+          }
+          const ctx = canvas.getContext('2d');
+          if (ctx) ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
+          s.runtime.rasterScale = s.state.width > 0 ? bmp.width / s.state.width : 1;
+          // 精修选区轮廓 → 会话(MarchingAnts 视图蚂蚁线画它;值同则不写防 notify 循环)
+          const cur = getSession(tabId)?.selectMask;
+          if (cur && JSON.stringify(cur.outline) !== JSON.stringify(bmp.outline)) {
+            updateSession(tabId, { selectMask: { ...cur, outline: bmp.outline } });
+          }
+          scheduleDraw();
+          continue;
+        }
         const gray = s.state.layerMaskView?.mode === 'gray' ? s.state.layerMaskView.layer : null;
         const key = `${s.docId}:${s.revision}:${gray != null ? `${gray}:${s.state.layerMaskView?.mode ?? ''}` : ''}`;
         if (bitmapKeyRef.current === key) return;
@@ -1525,7 +1576,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [tabId, scheduleDraw]);
   useEffect(() => {
     void bitmapPump();
-  }, [bitmapPump, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey]);
+  }, [bitmapPump, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey, selectMaskKey]);
 
   // 容器尺寸观察
   useEffect(() => {
@@ -1563,6 +1614,55 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         return;
       }
       if (isTyping(e.target)) return;
+      // Select and Mask 入口(Ctrl+Alt+R,上游 Cmd+Alt+R):有选区或活动层有蒙版才可用
+      if (e.code === 'KeyR' && e.ctrlKey && e.altKey) {
+        e.preventDefault();
+        openSelectMask(tabId);
+        return;
+      }
+      // 对话框打开期间接管视图键(输入框聚焦让位):F 循环/O M V A T K Y 直选/J P 切换/
+      // X 按住看原图/Enter=确定/Esc=取消(上游 select_mask_view::keys + dialogs)
+      if (s.selectMask?.open) {
+        const sm = s.selectMask;
+        const key = e.key.toLowerCase();
+        if (e.code === 'KeyX') {
+          updateSelectMask(tabId, { hideView: true });
+          return;
+        }
+        if (key === 'enter') {
+          e.preventDefault();
+          confirmSelectMask(tabId);
+          return;
+        }
+        if (key === 'escape') {
+          e.preventDefault();
+          closeSelectMask(tabId, false);
+          return;
+        }
+        if (key === 'f') {
+          e.preventDefault();
+          const i = SELECT_MASK_MODES.indexOf(sm.viewMode);
+          updateSelectMask(tabId, { viewMode: SELECT_MASK_MODES[(i + 1) % SELECT_MASK_MODES.length] as SelectMaskMode });
+          return;
+        }
+        const modeKey: Record<string, SelectMaskMode> = { o: 'onionSkin', m: 'marchingAnts', v: 'overlay', a: 'onBlack', t: 'onWhite', k: 'blackWhite', y: 'onLayers' };
+        if (modeKey[key]) {
+          e.preventDefault();
+          updateSelectMask(tabId, { viewMode: modeKey[key] });
+          return;
+        }
+        if (key === 'j') {
+          e.preventDefault();
+          updateSelectMask(tabId, { showEdge: !sm.showEdge });
+          return;
+        }
+        if (key === 'p') {
+          e.preventDefault();
+          updateSelectMask(tabId, { showOriginal: !sm.showOriginal });
+          return;
+        }
+        return; // 其余键不进工具(对话框模态)
+      }
       // [ / ] 调笔径:除 e.key 外还匹配物理键码——中文输入法下 e.key 是全角"【】"，
       // e.code(BracketLeft/Right)不受布局/输入法影响(PS 键位按物理键算)
       const brushKey = e.key === '[' || e.key === ']'
@@ -1848,6 +1948,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         shiftRef.current = false;
         scheduleDraw();
       }
+      // X 松开:Select and Mask 视图恢复(按住=临时看原图)
+      if (e.code === 'KeyX') {
+        const s = getSession(tabId);
+        if (s?.selectMask?.open && s.selectMask.hideView) updateSelectMask(tabId, { hideView: false });
+      }
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
@@ -1953,6 +2058,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       panRef.current = { sx: e.clientX, sy: e.clientY, ox: s.runtime.view.ox, oy: s.runtime.view.oy };
       return;
     }
+    // Select and Mask 对话框模态:工具交互全部让位(缩放/平移仍可用)
+    if (s.selectMask?.open) return;
     if (s.tool === 'zoom' && s.state) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const factor = e.altKey ? 1 / ZOOM_STEP : ZOOM_STEP;

@@ -89,6 +89,42 @@ pub fn editor_state(s: State<EditorState>, doc: u64) -> Result<Value, String> {
     m.state(doc).map_err(|e| e.to_string())
 }
 
+/// Select and Mask 预览:代理(1/k)精修 + 七视图合成,**零文档改动**(OK 走
+/// select.refineEdge 正式提交一步)。k 由文档尺寸自动定。
+/// 返回 [w:u32 LE][h:u32 LE][outlineN:u32 LE][outline i32×4×N(文档坐标)][RGBA…],
+/// 位图为文档 1/k(前端按 w/docW 折算 rasterScale)。
+#[tauri::command]
+pub fn editor_select_mask_view(
+    s: State<EditorState>,
+    doc: u64,
+    mode: String,
+    opacity: f64,
+    showEdge: bool,
+    showOriginal: bool,
+    params: Value,
+) -> Result<Response, String> {
+    let mode = aurora_editor::select_mask_view::Mode::from_id(&mode).ok_or_else(|| format!("unknown view mode `{mode}`"))?;
+    let view = aurora_editor::select_mask_view::View {
+        mode,
+        opacity: (opacity as f32).clamp(0.0, 1.0),
+        show_edge: showEdge,
+        show_original: showOriginal,
+    };
+    let mut m = lock(&s)?;
+    let r = m.select_mask_view(doc, view, params).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(12 + r.outline.len() * 16 + r.rgba.len());
+    bytes.extend_from_slice(&(r.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.outline.len() as u32).to_le_bytes());
+    for seg in &r.outline {
+        for v in seg {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    bytes.extend_from_slice(&r.rgba);
+    Ok(Response::new(bytes))
+}
+
 /// 选区真实轮廓(边界线段,文档坐标;蚂蚁线数据源)。无选区返回 null。
 #[tauri::command]
 pub fn editor_selection_outline(s: State<EditorState>, doc: u64, step: Option<u32>) -> Result<Option<Value>, String> {
