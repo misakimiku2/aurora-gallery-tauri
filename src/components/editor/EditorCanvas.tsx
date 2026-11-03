@@ -162,16 +162,24 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const liveFillRef = useRef<GradientFillInfo | null>(null);
   /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线,
    * Stop/Mid=拖色标/中点菱形(节流提交 gradient.fill.stop + coalesce 合一步历史=实时预览;
-   * stops/mids 是按下时的快照,其余色标/段在拖动中不动,overlay 直接用它画)。 */
+   * stops/mids 是按下时的快照,其余色标/段在拖动中不动,overlay 直接用它画)。
+   * Hold=抬笔后的保持态:overlay 继续画本地终态几何,直到 refetch 落地(修订版防"松手闪回
+   * 旧位"——直接清空手势会回退到过期的 liveFillRef),1s 兜底/再次按下时清除。 */
   const liveGradRef = useRef<
     | { kind: 'draw'; from: [number, number]; to: [number, number]; mods: DragMods; redraw: number | null; moved: boolean }
     | { kind: 'edit'; layer: number; which: 'start' | 'end' | 'line'; orig: { from: [number, number]; to: [number, number] }; grab: [number, number]; grabT: number; from: [number, number]; to: [number, number]; moved: boolean }
     | { kind: 'stop'; layer: number; from: [number, number]; to: [number, number]; reverse: boolean; stops: Array<[number, string]>; mids: number[]; origIndex: number; curIdx: number; t: number; tornOff: boolean; moved: boolean; down: [number, number] }
     | { kind: 'mid'; layer: number; from: [number, number]; to: [number, number]; reverse: boolean; stops: Array<[number, string]>; mids: number[]; seg: number; a: number; b: number; value: number; moved: boolean; down: [number, number] }
+    | { kind: 'hold'; fill: GradientFillInfo; rev0: number; token: object }
     | null
   >(null);
   /** Live 渐变手势序号(coalesce 键一次手势一个,期间其他命令不得插入)+ 节流时间戳。 */
   const gradGestureRef = useRef({ seq: 0, lastSent: 0 });
+  /** 预览提交的背压:一次只放一条在途,期间最新指针状态合并到尾沿、回包后补发
+   * (防命令/渲染队列积压失控——积压时像素滞后滚雪球到秒级,用户报障根因)。 */
+  const gradInflightRef = useRef<{ busy: boolean; pending: null | (() => void) }>({ busy: false, pending: null });
+  /** hold 兜底计时器句柄(新手势/卸载时清)。 */
+  const gradHoldTimerRef = useRef<number | null>(null);
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   /** 双击色标/端点的取色卡(上游 Color Picker (Stop Color) 对话框:确定一条命令,取消不动)。 */
@@ -180,6 +188,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
+  /** 位图泵互斥(跨 effect 实例/StrictMode 双挂载):同一时刻只有一个渲染循环在跑。 */
+  const bitmapBusyRef = useRef(false);
   /** 首幅位图落地后做一次 fit(viewW 在 draw 里就会被写非零,不能靠 ResizeObserver 判首次)。 */
   const fittedRef = useRef(false);
 
@@ -435,7 +445,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // live_mode:mask 目标 + active_gradient = Live)。
     if (s.tool === 'gradient' && !s.options.gradientClassic) {
       const lg = liveGradRef.current;
-      const selFill = liveFillRef.current && liveFillRef.current.layer === s.state?.activeLayer ? liveFillRef.current : null;
+      const selFill0 = liveFillRef.current && liveFillRef.current.layer === s.state?.activeLayer ? liveFillRef.current : null;
+      // hold(抬笔后的保持态)优先于过期的 liveFillRef:refetch 落地前 overlay 画本地终态
+      const selFill = lg?.kind === 'hold' ? lg.fill : selFill0;
       if (!isMaskTarget(s.state) || selFill) {
         // 几何:静止=选中图层;拖拽=手势本地态。stops/mids 用快照 + 被拖件本地值覆盖,
         // 跨位重排只影响排序下标、不影响各点在画布上的位置
@@ -1383,7 +1395,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   }, [tabId, scheduleDraw]);
 
-  // Live 渐变:选中 kind="Fill" 的图层时读回渐变信息(缓存按 revision 过期),供 widget/命中用
+  // Live 渐变:选中 kind="Fill" 的图层时读回渐变信息(缓存按 revision 过期),供 widget/命中用。
+  // 拖动中跳过(overlay 画手势本地态,读回纯属浪费一条 IPC);hold 态读回落地后清 hold
+  // (revision 已前进=引擎终态已取回,overlay 交还给真实数据,无可见跳变)
   const activeLayer = session?.state?.layers.find((l) => l.id === session.state?.activeLayer) ?? null;
   useEffect(() => {
     let cancelled = false;
@@ -1394,9 +1408,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
       return;
     }
+    if (liveGradRef.current && liveGradRef.current.kind !== 'hold') return;
     void fetchGradientFill(tabId, st.docId, layerId, st.revision).then((fill) => {
       if (cancelled) return;
       liveFillRef.current = fill && fill.layer === layerId ? fill : null;
+      const lg = liveGradRef.current;
+      if (lg?.kind === 'hold' && st.revision > lg.rev0) liveGradRef.current = null;
       st.runtime.requestDraw?.();
     }).catch(() => undefined);
     return () => { cancelled = true; };
@@ -1442,11 +1459,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     };
   }, [tabId, scheduleDraw]);
 
-  // 位图刷新:docId/revision 变化 → 重渲染整幅(描边提交 fromLive 已局部贴图,bitmapKey 相同跳过)。
-  // deps 只含值级触发器——runCommand 先落 revision 再落 state 两次 notify,若 effect 每次渲染都重跑,
-  // 第二次会 cancel 掉第一次的异步渲染(cancelled 标记)而 bitmapKey 已前移 → 跳过,整帧永久丢失
-  // (撤销/重做后画布不刷新的根因;选区类命令不改像素所以从未暴露)。只有同一依赖再次变化
-  // (revision 又动了)才应取消上一次渲染。docW/docH 覆盖裁剪等改尺寸的命令。
+  // 位图刷新泵:revision/docId/maskView 变化 → 渲染整幅上屏。**完成序、不取消**:循环每轮
+  // 重读会话最新 revision,渲染上屏后若 key 又变了就继续下一轮——快速连发命令时渲染永远追
+  // 最新、且每个在途渲染都活到上屏。旧实现按 effect 实例取消:提交间隔短于渲染耗时时,每个
+  // 在途渲染都在上屏前被下一个 revision 的 cleanup 取消 → 像素全程冻结到指针停住才跳最新
+  // (Live 渐变拖动预览"过好一会才变"的根因)。描边提交 fromLive 已局部贴图,key 相同即退出。
+  // bitmapBusyRef 跨 effect 实例互斥(StrictMode 双挂载/重订阅也只有一个循环在跑)。
   const docIdForBitmap = session?.docId ?? null;
   const revisionForBitmap = session?.revision ?? -1;
   const stateReady = session?.state != null;
@@ -1454,27 +1472,25 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const docH = session?.state?.height ?? 0;
   // 蒙版灰度查看(view.layerMask,视图态不推 revision):key 带上它,视图开合/换层都会重拉
   const maskViewKey = session?.state?.layerMaskView ? `${session.state.layerMaskView.layer}:${session.state.layerMaskView.mode}` : '';
-  useEffect(() => {
-    const s = getSession(tabId);
-    if (!s || s.docId == null || !s.state) return;
-    const key = `${s.docId}:${s.revision}:${maskViewKey}`;
-    if (bitmapKeyRef.current === key) return;
-    bitmapKeyRef.current = key;
-    let cancelled = false;
-    (async () => {
-      try {
-        const docPx = s.state!.width * s.state!.height;
+  const bitmapPump = useCallback(async () => {
+    if (bitmapBusyRef.current) return;
+    bitmapBusyRef.current = true;
+    try {
+      for (;;) {
+        const s = getSession(tabId);
+        if (!s || s.docId == null || !s.state) return;
+        const gray = s.state.layerMaskView?.mode === 'gray' ? s.state.layerMaskView.layer : null;
+        const key = `${s.docId}:${s.revision}:${gray != null ? `${gray}:${s.state.layerMaskView?.mode ?? ''}` : ''}`;
+        if (bitmapKeyRef.current === key) return;
+        bitmapKeyRef.current = key;
+        const docPx = s.state.width * s.state.height;
         const rs = docPx > RASTER_PIXEL_BUDGET ? Math.sqrt(RASTER_PIXEL_BUDGET / docPx) : 1;
-        const maxW = rs < 1 ? Math.round(s.state!.width * rs) : undefined;
-        const maxH = rs < 1 ? Math.round(s.state!.height * rs) : undefined;
+        const maxW = rs < 1 ? Math.round(s.state.width * rs) : undefined;
+        const maxH = rs < 1 ? Math.round(s.state.height * rs) : undefined;
         // 灰度查看:位图换蒙版快照(灰度 RGBA,同一 rasterScale 管线);正常:合成渲染
-        const gray = s.state!.layerMaskView?.mode === 'gray'
-          ? s.state!.layerMaskView.layer
-          : null;
         const bmp = gray != null
-          ? await editorMaskSnapshot(s.docId!, gray, maxW ?? s.state!.width, maxH ?? s.state!.height)
-          : await editorRender(s.docId!, maxW, maxH);
-        if (cancelled) return;
+          ? await editorMaskSnapshot(s.docId, gray, maxW ?? s.state.width, maxH ?? s.state.height)
+          : await editorRender(s.docId, maxW, maxH);
         let canvas = s.runtime.offscreen;
         if (!canvas || canvas.width !== bmp.width || canvas.height !== bmp.height) {
           canvas = document.createElement('canvas');
@@ -1485,21 +1501,23 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.putImageData(new ImageData(bmp.rgba, bmp.width, bmp.height), 0, 0);
         // 从实际位图宽反推(蒙版快照按 k 步长取整,与请求的 maxW 有 ±1 差)
-        s.runtime.rasterScale = bmp.width / s.state!.width;
+        s.runtime.rasterScale = bmp.width / s.state.width;
         if (!fittedRef.current && wrapRef.current && wrapRef.current.clientWidth > 0) {
-          s.runtime.view = fitToView(s.state!.width, s.state!.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
+          s.runtime.view = fitToView(s.state.width, s.state.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
           fittedRef.current = true;
         }
         scheduleDraw();
-      } catch (e) {
-        if (!cancelled) console.error('[editor] render failed', e);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch (e) {
+      console.error('[editor] render failed', e);
+    } finally {
+      bitmapBusyRef.current = false;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabId, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey]);
+  }, [tabId, scheduleDraw]);
+  useEffect(() => {
+    void bitmapPump();
+  }, [bitmapPump, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey]);
 
   // 容器尺寸观察
   useEffect(() => {
@@ -1860,6 +1878,30 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     void runCommand(tabId, 'tools.setColors', { foreground: hex }).catch(console.error);
   };
 
+  /**
+   * Live 渐变预览提交(80ms 节流 + 在途背压 + noPull):一次只放一条命令在途,期间调用
+   * 只记录尾沿回调,回包后补发最新状态——管线自 pace,命令/渲染队列不积压(积压时
+   * 像素滞后滚雪球到秒级)。noPull 跳过状态快照(面板不需要逐帧跟,释放的最终提交
+   * 不带 noPull 补拉一次)。onSent 在命令真正发出时执行(节流时间戳/curIdx 推进)。
+   */
+  const gradPreviewSend = (cmd: string, params: Record<string, unknown>, onSent?: () => void) => {
+    const fire = () => {
+      gradGestureRef.current.lastSent = performance.now();
+      gradInflightRef.current.busy = true;
+      onSent?.();
+      void runCommand(tabId, cmd, { ...params, coalesce: `gradient-live-drag:${gradGestureRef.current.seq}` }, { noPull: true })
+        .catch((err) => logError(`[editor] ${cmd} 失败`, err))
+        .finally(() => {
+          gradInflightRef.current.busy = false;
+          const p = gradInflightRef.current.pending;
+          gradInflightRef.current.pending = null;
+          p?.();
+        });
+    };
+    if (gradInflightRef.current.busy) gradInflightRef.current.pending = fire;
+    else fire();
+  };
+
   /** 双击色标/端点开取色卡(上游 edit_stop_color:端点=该端的那颗色标,反向折算)。 */
   const openStopColorPicker = (layer: number, at: number | 'start' | 'end', cx: number, cy: number) => {
     const fill = liveFillRef.current;
@@ -2021,6 +2063,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       scheduleDraw();
     } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
+      // hold(上一次抬笔的保持态)在此清除:命中测试与「未命中=拖新线」都以它为起点
+      if (liveGradRef.current?.kind === 'hold') liveGradRef.current = null;
       const fill = liveFillRef.current;
       const active = s.state.activeLayer;
       const sel = fill && fill.layer === active && s.state.layers.find((l) => l.id === active)?.visible !== false ? fill : null;
@@ -2219,13 +2263,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         lg.to = lg.mods.liveShift ? snap45(lg.from, [dx, dy]) : [dx, dy];
         if (Math.abs(lg.to[0] - lg.from[0]) + Math.abs(lg.to[1] - lg.from[1]) >= 2) lg.moved = true;
         // 重画选中图层:节流 SET(coalesce)=实时预览;新图层还没有实体,无法命令预览
-        if (lg.moved && lg.redraw != null) {
-          const g = gradGestureRef.current;
-          if (performance.now() - g.lastSent >= 80) {
-            g.lastSent = performance.now();
-            void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: `gradient-live-drag:${g.seq}` })
-              .catch((err) => logError('[editor] gradient.fill.set 失败', err));
-          }
+        if (lg.moved && lg.redraw != null && performance.now() - gradGestureRef.current.lastSent >= 80) {
+          gradPreviewSend('gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] });
         }
       } else if (lg.kind === 'stop') {
         if (Math.abs(dx - lg.down[0]) + Math.abs(dy - lg.down[1]) >= 2) lg.moved = true;
@@ -2238,13 +2277,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           } else {
             lg.tornOff = false;
             lg.t = c.location ?? lg.t;
-            const g = gradGestureRef.current;
-            if (performance.now() - g.lastSent >= 80) {
-              g.lastSent = performance.now();
-              void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'move', index: lg.curIdx, location: lg.t, coalesce: `gradient-live-drag:${g.seq}` })
-                .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
-              // 被拖色标会跨位重排:引擎按当前排序下标寻址,发送后按新位置重算
-              lg.curIdx = gradientStopIndexAfter(lg.stops.map((q) => q[0]), lg.origIndex, lg.t);
+            if (performance.now() - gradGestureRef.current.lastSent >= 80) {
+              // 被拖色标会跨位重排:引擎按当前排序下标寻址,发出后按新位置重算(onSent 时机=真正发出)
+              const locs = lg.stops.map((q) => q[0]);
+              const t = lg.t;
+              gradPreviewSend('gradient.fill.stop', { layer: lg.layer, action: 'move', index: lg.curIdx, location: t }, () => {
+                lg.curIdx = gradientStopIndexAfter(locs, lg.origIndex, t);
+              });
             }
           }
         }
@@ -2253,14 +2292,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const c = gradientMidDragParams(lg.from, lg.to, lg.reverse, [dx, dy], lg.seg, lg.a, lg.b);
         if (lg.moved && c) {
           lg.value = c.location;
-          const g = gradGestureRef.current;
-          if (performance.now() - g.lastSent >= 80) {
-            g.lastSent = performance.now();
-            void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'midpoint', index: lg.seg, location: lg.value, coalesce: `gradient-live-drag:${g.seq}` })
-              .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+          if (performance.now() - gradGestureRef.current.lastSent >= 80) {
+            gradPreviewSend('gradient.fill.stop', { layer: lg.layer, action: 'midpoint', index: lg.seg, location: lg.value });
           }
         }
-      } else {
+      } else if (lg.kind === 'edit') {
         if (Math.abs(dx - lg.grab[0]) + Math.abs(dy - lg.grab[1]) >= 2) lg.moved = true;
         if (lg.which === 'line') {
           // 整线平移:按下的原始起止 + 当前指针相对抓点的总位移
@@ -2273,13 +2309,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           lg.to = e.shiftKey ? snap45(lg.orig.from, [dx, dy]) : [dx, dy];
         }
         // 手柄/整线拖动:节流 SET(coalesce)=实时预览(引擎每帧从 from/to 重推角度/缩放)
-        if (lg.moved) {
-          const g = gradGestureRef.current;
-          if (performance.now() - g.lastSent >= 80) {
-            g.lastSent = performance.now();
-            void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: `gradient-live-drag:${g.seq}` })
-              .catch((err) => logError('[editor] gradient.fill.set 失败', err));
-          }
+        if (lg.moved && performance.now() - gradGestureRef.current.lastSent >= 80) {
+          gradPreviewSend('gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] });
         }
       }
       scheduleDraw();
@@ -2416,9 +2447,27 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const cd = cropDragRef.current;
     cropDragRef.current = null;
     const lg = liveGradRef.current;
-    liveGradRef.current = null;
-    if (s && lg && s.state) {
+    if (s && lg && s.state && lg.kind !== 'hold') {
       const gradKey = `gradient-live-drag:${gradGestureRef.current.seq}`;
+      // 终提交:清掉尾沿挂起(否则它会晚于终提交落地,把旧状态写回去);在途预览的发送序
+      // 在终提交之前,引擎按到达序执行=终态正确。终提交不带 noPull(补拉一次状态给面板)。
+      gradInflightRef.current.pending = null;
+      const rev0 = s.revision;
+      // hold:overlay 继续画本地终态,直到 refetch(revision 前进后触发)落地才交还,
+      // 防"松手闪回旧位再跳回来"(直接清手势会回退到过期的 liveFillRef)
+      const base = liveFillRef.current;
+      const holdToken = {};
+      const setHold = (fill: GradientFillInfo) => {
+        liveGradRef.current = { kind: 'hold', fill, rev0, token: holdToken };
+        if (gradHoldTimerRef.current != null) window.clearTimeout(gradHoldTimerRef.current);
+        gradHoldTimerRef.current = window.setTimeout(() => {
+          gradHoldTimerRef.current = null;
+          if (liveGradRef.current && 'token' in liveGradRef.current && liveGradRef.current.token === holdToken) {
+            liveGradRef.current = null;
+            scheduleDraw();
+          }
+        }, 1000);
+      };
       // 上游 gradient_ui::finish/click:Draw <2px 无操作;重画=SET from/to 一步;新建=create
       // (引擎自动插到活动层上方并选中);Edit moved=SET 一步;无拖动点击=线上加色标/
       // 双击色标或端点开取色;Stop/Mid moved=最终 stop 命令(节流发的已 coalesce 成同一步)
@@ -2427,6 +2476,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           // 重画:节流 SET 已 coalesce 到本手势,最终一条同键合并成一步
           void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: gradKey })
             .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+          if (base && base.layer === lg.redraw) setHold({ ...base, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] });
         } else {
           void runCommand(tabId, 'gradient.fill.create', gradientLiveCreateParams(lg.from, lg.to, s.options))
             .catch((err) => logError('[editor] gradient.fill.create 失败', err));
@@ -2434,6 +2484,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (lg.kind === 'edit' && lg.moved) {
         void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: gradKey })
           .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+        if (base && base.layer === lg.layer) setHold({ ...base, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] });
       } else if (lg.kind === 'edit' && !lg.moved) {
         // 无拖动点击:线上加色标(位置=按下时折算的渐变位置);双击色标/端点=取色
         if (lg.which === 'line') {
@@ -2454,10 +2505,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           // 撕离删除释放才提交(拖动中只藏标记;与节流的 move 同 coalesce 键=同一历史步)
           void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'delete', index: lg.curIdx, coalesce: gradKey })
             .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+          if (base && base.layer === lg.layer) {
+            // 剩余色标按原序保留;每个色标拥有其后段的 mid 值,末位的丢弃(引擎 unpair 口径)
+            const rest = lg.stops.filter((_, i) => i !== lg.origIndex);
+            const owned = lg.stops.map((_, i) => lg.mids[i] ?? 0.5).filter((_, i) => i !== lg.origIndex).slice(0, -1);
+            setHold({ ...base, stops: rest, midpoints: owned });
+          }
         } else if (lg.moved) {
           // 最终移动:节流发的最后一发可能已过期,补一条确定值(同键合并)
           void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'move', index: lg.curIdx, location: lg.t, coalesce: gradKey })
             .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+          if (base && base.layer === lg.layer) setHold({ ...base, stops: lg.stops.map((q, i) => (i === lg.origIndex ? [lg.t, q[1]] : q)), midpoints: lg.mids });
         } else {
           // 单击色标:仅记录双击判定(上游 click 只处理 Line 与双击取色)
           const key = `stop:${lg.origIndex}`;
@@ -2469,8 +2527,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (lg.kind === 'mid' && lg.moved) {
         void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'midpoint', index: lg.seg, location: lg.value, coalesce: gradKey })
           .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+        if (base && base.layer === lg.layer) setHold({ ...base, stops: lg.stops, midpoints: lg.mids.map((m, i) => (i === lg.seg ? lg.value : m)) });
       }
+      if (liveGradRef.current?.kind !== 'hold') liveGradRef.current = null;
       scheduleDraw();
+    } else {
+      liveGradRef.current = null;
     }
     const gr = gradientRef.current;
     gradientRef.current = null;
@@ -2583,7 +2645,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s0 = getSession(tabId);
     if (s0) s0.runtime.cropStraightenLine = null;
     gradientRef.current = null;
-    liveGradRef.current = null;
+    // hold 不是进行中的手势,中断不清(它由 refetch/1s 兜底/再次按下回收)
+    if (liveGradRef.current?.kind !== 'hold') liveGradRef.current = null;
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;

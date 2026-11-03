@@ -196,13 +196,17 @@ export function subscribeSession(tabId: string, fn: () => void): () => void {
   return () => set.delete(fn);
 }
 
-/** 跑引擎命令:推进 revision,并总是拉一份状态快照(工具态命令不推进 revision)。 */
-export async function runCommand(tabId: string, cmd: string, params: Record<string, unknown> = {}): Promise<unknown> {
+/**
+ * 跑引擎命令:推进 revision,并总是拉一份状态快照(工具态命令不推进 revision)。
+ * opts.noPull:跳过状态快照(实时预览的节流提交用——拖动中面板不需要每帧跟,
+ * 省一条 IPC;revision 照常推进,位图管线照常重渲,释放的最终提交不带 noPull 补拉一次)。
+ */
+export async function runCommand(tabId: string, cmd: string, params: Record<string, unknown> = {}, opts: { noPull?: boolean } = {}): Promise<unknown> {
   const s = sessions.get(tabId);
   if (!s || s.docId == null) throw new Error('editor session not open');
   const out = await editorRun(s.docId, cmd, params);
   // layer.pickAt/selectInRect 只改图层选择(不入史不推进 revision),选择一变面板就要跟上
-  const pull = out.revision > 0 || /^(tools|view|channel)\./.test(cmd) || /^layer\.(pickAt|selectInRect)$/.test(cmd);
+  const pull = !opts.noPull && (out.revision > 0 || /^(tools|view|channel)\./.test(cmd) || /^layer\.(pickAt|selectInRect)$/.test(cmd));
   await applyRunOutcome(tabId, out, pull);
   return out.result;
 }
