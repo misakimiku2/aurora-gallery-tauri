@@ -464,6 +464,114 @@ export function gradientLiveHit(
   return Math.hypot(p[0] - (from[0] + vx * u), p[1] - (from[1] + vy * u)) <= tol ? { kind: 'line', t: reverse ? 1 - u : u } : null;
 }
 
+/**
+ * 中点重映射(上游 compose midpoint_remap 逐行移植:分段线性——色在 m 处恰为一半,
+ * 两侧各自由线性;0.5=不变)。属性页停靠点条与画布渲染共用同一公式,条带显示与引擎一致。
+ */
+export function midpointRemap(u: number, m: number): number {
+  const mm = Math.min(0.95, Math.max(0.05, m));
+  if (Math.abs(mm - 0.5) < 1e-6) return u;
+  if (u <= mm) return (0.5 * u) / mm;
+  return 0.5 + (0.5 * (u - mm)) / (1 - mm);
+}
+
+export type LayerRampFill = {
+  stops: Array<[number, string]>;
+  midpoints: number[];
+  transparency: Array<[number, number]>;
+};
+
+/** "#rrggbb"/"#rrggbbaa" → 0..1 RGBA(非法输入回黑)。 */
+export function hexToRgba01(hex: string): [number, number, number, number] {
+  const h = hex.replace('#', '');
+  const b = (i: number) => Number.parseInt(h.slice(i * 2, i * 2 + 2) || '00', 16) / 255;
+  return [b(0), b(1), b(2), h.length >= 8 ? b(3) : 1];
+}
+
+/**
+ * 渐变填充图层在渐变空间 t 处的 RGBA(引擎 Ramp::sample 移植:颜色停靠点带各自 alpha、
+ * 按中点分段线性插值 × 透明度停靠点线性插值(空=全不透明))。属性页条带渲染用。
+ */
+export function sampleLayerRamp(fill: LayerRampFill, t: number): [number, number, number, number] {
+  const stops = fill.stops.map(([p, hex]) => [p, hexToRgba01(hex)] as [number, [number, number, number, number]]).sort((x, y) => x[0] - y[0]);
+  if (!stops.length) return [0, 0, 0, 0];
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  let color: [number, number, number, number];
+  if (t <= first[0]) {
+    color = first[1];
+  } else if (t >= last[0]) {
+    color = last[1];
+  } else {
+    color = first[1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i];
+      const b = stops[i + 1];
+      if (t <= b[0]) {
+        const u = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
+        const k = midpointRemap(u, fill.midpoints[i] ?? 0.5);
+        color = [0, 1, 2, 3].map((c) => a[1][c] + (b[1][c] - a[1][c]) * k) as [number, number, number, number];
+        break;
+      }
+    }
+  }
+  // 透明度停靠点(空=全不透明;线性、无中点)
+  const os = fill.transparency.map(([p, a]) => [p, Math.min(1, Math.max(0, a / 100))] as [number, number]).sort((x, y) => x[0] - y[0]);
+  let alpha = 1;
+  if (os.length) {
+    if (t <= os[0][0]) alpha = os[0][1];
+    else if (t >= os[os.length - 1][0]) alpha = os[os.length - 1][1];
+    else {
+      for (let i = 0; i < os.length - 1; i++) {
+        const a = os[i];
+        const b = os[i + 1];
+        if (t <= b[0]) {
+          const u = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
+          alpha = a[1] + (b[1] - a[1]) * u;
+          break;
+        }
+      }
+    }
+  }
+  return [color[0], color[1], color[2], color[3] * alpha];
+}
+
+/**
+ * 层渐变条带的 CSS 渐变串(64 均匀采样,上游 stop_strip 的 paint_ramp n=64 同口径;
+ * 中点分段线性在该密度下与逐像素渲染无可见差)。棋盘格垫底显透明由调用方叠加。
+ */
+export function layerRampCss(fill: LayerRampFill): string {
+  const parts: string[] = [];
+  for (let i = 0; i <= 64; i++) {
+    const u = i / 64;
+    const [r, g, b, a] = sampleLayerRamp(fill, u);
+    parts.push(`rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a.toFixed(4)}) ${(u * 100).toFixed(2)}%`);
+  }
+  return `linear-gradient(to right, ${parts.join(', ')})`;
+}
+
+/**
+ * 停靠点编辑后的排序下标(上游 selection_after_edit:move/add 后被编辑的停靠点会重排,
+ * 选中跟随它的新位置;delete/其他 → null=清选中)。move 的并列位置只在原序在前时计入
+ * (引擎稳定排序保持原相对序);add 的并列位置全计入(新标排在同位者之后)。
+ */
+export function stopIndexAfterEdit(
+  locations: number[],
+  params: { action: string; index?: number; location?: number },
+): number | null {
+  const sorted = [...locations].sort((a, b) => a - b);
+  if (params.action === 'move' && params.index != null && params.location != null) {
+    const loc = params.location;
+    const old = params.index;
+    return sorted.filter((l, i) => i !== old && (l < loc || (l === loc && i < old))).length;
+  }
+  if (params.action === 'add' && params.location != null) {
+    const loc = params.location;
+    return sorted.filter((l) => l <= loc).length;
+  }
+  return null;
+}
+
 /** 撕离删除阈值:被拖色标离线超过此屏幕距离且色标 >2 个即删除(上游 TEAR_OFF)。 */
 export const GRADIENT_TEAR_OFF = 36;
 

@@ -3,10 +3,10 @@ import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
   cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
-  gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
-  moveBounds, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
-  moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
-  resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, snappedDir, strokeCommand,
+  gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, layerRampCss, marqueeParams, marqueeRect,
+  midpointRemap, moveBounds, moveDirtyRect, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
+  nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
+  resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
 import type { StrokeAxis } from '../toolLogic';
@@ -401,6 +401,50 @@ describe('Live 渐变图层(上游 gradient_ui 口径)', () => {
     // 透明度预设带 transparency
     const ft = gradientLiveCreateParams([0, 0], [5, 5], { ...OPTS, gradientCurrent: findPreset('Foreground to Transparent')! });
     expect(ft.transparency).toEqual([[0, 100], [1, 0]]);
+  });
+  it('midpointRemap:分段线性,m 处恰为一半(引擎 midpoint_remap 断言同款)', () => {
+    expect(midpointRemap(0.3, 0.5)).toBeCloseTo(0.3);
+    expect(midpointRemap(0.25, 0.5)).toBeCloseTo(0.25);
+    // m=0.25:u=0.125 → 0.5*0.125/0.25=0.25;u=0.4 → 0.5+0.5*0.15/0.75=0.6
+    expect(midpointRemap(0.125, 0.25)).toBeCloseTo(0.25);
+    expect(midpointRemap(0.4, 0.25)).toBeCloseTo(0.6);
+    expect(midpointRemap(0.25, 0.25)).toBeCloseTo(0.5);
+    expect(midpointRemap(0.9, 0.25)).toBeCloseTo(0.5 + 0.5 * 0.65 / 0.75);
+  });
+  it('sampleLayerRamp:中点分段线性 × 透明度停靠点线性(空=全不透明)', () => {
+    const f = { stops: [[0, '#000000'], [1, '#ffffff']] as Array<[number, string]>, midpoints: [], transparency: [] as Array<[number, number]> };
+    expect(sampleLayerRamp(f, 0)).toEqual([0, 0, 0, 1]);
+    expect(sampleLayerRamp(f, 0.5)[0]).toBeCloseTo(0.5);
+    expect(sampleLayerRamp(f, 1)).toEqual([1, 1, 1, 1]);
+    // 中点 m=0.25:u=0.125 处色为一半黑(remap→0.25)
+    const fm = { ...f, midpoints: [0.25] };
+    expect(sampleLayerRamp(fm, 0.125)[0]).toBeCloseTo(0.25);
+    // 透明度 0..100 → 0..1 相乘;透明度停靠点 [0→20%,1→100%]:t=0.5 → alpha=0.6
+    const fa = { ...f, transparency: [[0, 20], [1, 100]] as Array<[number, number]> };
+    expect(sampleLayerRamp(fa, 0)[3]).toBeCloseTo(0.2);
+    expect(sampleLayerRamp(fa, 0.5)[3]).toBeCloseTo(0.6);
+    // 透明度空数组=全不透明;alpha 带在 hex 里也相乘
+    const fh = { ...f, stops: [[0, '#ff000080'], [1, '#ff0000']] as Array<[number, string]> };
+    expect(sampleLayerRamp(fh, 0)[3]).toBeCloseTo(128 / 255, 2);
+  });
+  it('layerRampCss:64 采样 rgba 渐变串,两端色正确', () => {
+    const f = { stops: [[0, '#ff0000'], [1, '#0000ff']] as Array<[number, string]>, midpoints: [], transparency: [] as Array<[number, number]> };
+    const css = layerRampCss(f);
+    expect(css.startsWith('linear-gradient(to right, rgba(255,0,0,1.0000) 0.00%')).toBe(true);
+    expect(css.endsWith('rgba(0,0,255,1.0000) 100.00%)')).toBe(true);
+  });
+  it('stopIndexAfterEdit:move/add 后选中跟随重排(上游 selection_after_edit 断言同款)', () => {
+    const locs = [0, 0.5, 1];
+    // move 0 → 0.5:并列位且原序在前 → 仍 0
+    expect(stopIndexAfterEdit(locs, { action: 'move', index: 0, location: 0.5 })).toBe(0);
+    // move 0 → 0.75:越过 0.5 → 1
+    expect(stopIndexAfterEdit(locs, { action: 'move', index: 0, location: 0.75 })).toBe(1);
+    // add 0.5:并列位全计入 → 2
+    expect(stopIndexAfterEdit(locs, { action: 'add', location: 0.5 })).toBe(2);
+    // opacity move 0 → 1:并列于末端、原序在前 → 0(上游同款)
+    expect(stopIndexAfterEdit([0, 1], { action: 'move', index: 0, location: 1 })).toBe(0);
+    // delete → null(清选中)
+    expect(stopIndexAfterEdit(locs, { action: 'delete', index: 1 })).toBeNull();
   });
 });
 

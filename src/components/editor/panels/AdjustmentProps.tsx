@@ -10,6 +10,7 @@ import { getSession, runCommand, subscribeSession } from '../editorStore';
 import type { EditorLayer } from '../editorTypes';
 import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
 import { GradientLayerProps } from './GradientLayerProps';
+import { isGradientLayerStripDragging } from './GradientLayerStops';
 import { fetchGradientFill, type GradientFillInfo } from '../gradientFill';
 import {
   ADJUST_LABEL_ZH, COLOR_LOOKUP_BUILTINS, EDITOR_READY_KINDS, HUE_RANGES, PHOTO_FILTERS,
@@ -514,6 +515,8 @@ const MaskPropsSection: React.FC<{
 const FillProps: React.FC<{ tabId: string; docId: number; layerId: number; revision: number }> = ({ tabId, docId, layerId, revision }) => {
   const [fill, setFill] = useState<GradientFillInfo | null | undefined>(undefined);
   useEffect(() => {
+    // 停靠点条拖动中跳过读回:标记渲染走组件本地快照,每 tick 读回既费 IPC 又让引擎回包顶手指
+    if (isGradientLayerStripDragging()) return;
     let cancelled = false;
     setFill(undefined);
     void fetchGradientFill(tabId, docId, layerId, revision).then((f) => {

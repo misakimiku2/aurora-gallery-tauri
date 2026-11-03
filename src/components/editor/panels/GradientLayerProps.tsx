@@ -1,13 +1,14 @@
 /**
- * 渐变填充图层的属性页(上游 gradient_ui/properties_panel.rs 的 Options 段):
- * Style 五样式 / Angle / Scale(1..1000%) / Reverse / Dither / Align / Reset Alignment,
- * 每个控件一条 gradient.fill.set(上游同款,一次手势一步历史)。
+ * 渐变填充图层的属性页(上游 gradient_ui/properties_panel.rs 口径):
+ * Gradient 段=停靠点条(GradientLayerStops:透明度/颜色/中点编辑+字段行);
+ * Gradient Options 段=Style 五样式 / Angle / Scale(1..1000%) / Reverse / Dither / Align /
+ * Reset Alignment,每个控件一条 gradient.fill.set(一次手势一步历史)。
  * 数值输入本地草稿跟手,失焦/回车提交(上游 numeric_row drag_stopped/lost_focus 口径)。
- * 停靠点条编辑后续切片接入(画布与属性页共用条组件)。
  */
 import React, { useEffect, useState } from 'react';
 import { runCommand } from '../editorStore';
 import type { GradientFillInfo } from '../gradientFill';
+import { GradientLayerStops } from './GradientLayerStops';
 
 const STYLES: { v: string; label: string }[] = [
   { v: 'linear', label: '线性' },
@@ -45,7 +46,8 @@ export const GradientLayerProps: React.FC<{ tabId: string; layerId: number; fill
 
   return (
     <div className="flex flex-col gap-1 text-[11px] text-neutral-700 dark:text-neutral-300">
-      <div className="flex items-center gap-0.5" title="渐变样式">
+      <GradientLayerStops tabId={tabId} layerId={layerId} fill={fill} />
+      <div className="flex items-center gap-0.5 pt-1" title="渐变样式">
         {STYLES.map(({ v, label }) => (
           <button
             key={v}
@@ -106,7 +108,6 @@ export const GradientLayerProps: React.FC<{ tabId: string; layerId: number; fill
           重置对齐
         </button>
       </div>
-      <div className="text-[10px] text-neutral-500 dark:text-neutral-400">几何与起止点可直接在画布上拖动;停靠点面板编辑即将支持</div>
     </div>
   );
 };
