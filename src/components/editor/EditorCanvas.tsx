@@ -32,6 +32,14 @@ const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
 
+/**
+ * 精确十字光标(PS Precise Cursor 口径):黑影垫底 + 白芯的双色自绘光标。原生 crosshair
+ * 跟随 Windows 系统主题(深色系统=纯白),在浅色画面上完全看不见(用户报障);双色版
+ * 任何底色都可见。选框/套索族/吸管/渐变/油漆桶共用。
+ */
+const CROSSHAIR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="21" height="21"><g fill="none" stroke-linecap="round"><path d="M10.5 1.5V19.5M1.5 10.5H19.5" stroke="rgba(0,0,0,0.8)" stroke-width="3"/><path d="M10.5 1.5V19.5M1.5 10.5H19.5" stroke="#ffffff" stroke-width="1.3"/></g></svg>`;
+const CROSSHAIR_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(CROSSHAIR_SVG)}") 10 10, crosshair`;
+
 /** 裁剪手势的回退快照(press 时的框;尺寸不满足/取消时恢复)。 */
 type CropRestore = { rect: CropRect; angle: number; edited: boolean };
 
@@ -2695,7 +2703,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       : session.tool === 'zoom' ? 'zoom-in'
         : BRUSH_TOOLS.has(session.tool) ? 'none'
           : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')
-            : CROSSHAIR_TOOLS.has(session.tool) ? 'crosshair'
+            : CROSSHAIR_TOOLS.has(session.tool) ? CROSSHAIR_CURSOR
               : 'default';
 
   return (
