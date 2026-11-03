@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
-  cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientParams, hitLiveGradient, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
+  cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
+  gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, marqueeParams, marqueeRect,
   moveBounds, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
   moveDirtyRect, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, snappedDir, strokeCommand,
@@ -16,7 +17,7 @@ const OPTS: ToolOptions = {
   brushSize: 24, brushHardness: 0.8, brushOpacity: 1, brushFlow: 1, retouchStrength: 50,
   feather: 0, tolerance: 32, antiAlias: true, gradientStyle: 'linear',
   gradientCurrent: findPreset('Foreground to Background')!, gradientClassic: false,
-  gradientReverse: false, gradientDither: true, gradientOpacity: 1,
+  gradientReverse: false, gradientDither: true, gradientOpacity: 1, gradientBlend: 'Normal',
   marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57,
@@ -281,12 +282,13 @@ describe('渐变/油漆桶参数(photocraft paint.gradient / paint.bucket 口径
     expect(h2[0]).toBeCloseTo(-Math.hypot(10, 3));
     expect(constrain45([0, 0], [0, 0])).toEqual([0, 0]);   // 零长度原样
   });
-  it('gradientParams:from/to 取整 + 样式 + 预设 stops(活引用)+ 反向/仿色/不透明度', () => {
+  it('gradientParams:from/to 取整 + 样式 + 预设 stops(活引用)+ 反向/仿色/不透明度/混合模式', () => {
     expect(gradientParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', gradientOpacity: 0.5 })).toEqual({
       from: [1, 3], to: [10, 8], style: 'radial',
       stops: [[0, 'foreground'], [1, 'background']],
-      reverse: false, dither: true, opacity: 50,
+      reverse: false, dither: true, opacity: 50, mode: 'Normal',
     });
+    expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientBlend: 'Multiply' }).mode).toBe('Multiply');
     expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 0.005 }).opacity).toBe(1);
     expect(gradientParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 2 }).opacity).toBe(100);
     // 透明度预设:transparency 以 0..100 下发
@@ -320,23 +322,79 @@ describe('Live 渐变图层(上游 gradient_ui 口径)', () => {
     expect(d[0]).toBeCloseTo(d[1]); // 吸到 45° 对角线
     expect(snap45([5, 5], [5, 5])).toEqual([5, 5]); // 零向量原样
   });
-  it('hitLiveGradient:优先级 End→Start→线;tol 为文档 px', () => {
+  it('gradientLiveHit:优先级 End→Start→色标→中点→线;tol 为文档 px', () => {
     const from: [number, number] = [0, 0];
     const to: [number, number] = [100, 0];
-    expect(hitLiveGradient(from, to, [100, 0], 8)).toBe('end');
-    expect(hitLiveGradient(from, to, [0, 0], 8)).toBe('start');
-    expect(hitLiveGradient(from, to, [50, 3], 8)).toBe('line');
-    expect(hitLiveGradient(from, to, [50, 20], 8)).toBeNull();
-    expect(hitLiveGradient(from, to, [-30, 0], 8)).toBeNull(); // 延长线上不算
+    const stops: Array<[number, string]> = [[0.25, '#ff0000'], [0.75, '#00ff00']];
+    const mids = [0.5];
+    expect(gradientLiveHit(from, to, stops, mids, false, [100, 0], 8)).toEqual({ kind: 'end' });
+    expect(gradientLiveHit(from, to, stops, mids, false, [0, 0], 8)).toEqual({ kind: 'start' });
+    expect(gradientLiveHit(from, to, stops, mids, false, [25, 2], 8)).toEqual({ kind: 'stop', index: 0 });
+    expect(gradientLiveHit(from, to, stops, mids, false, [75, -2], 8)).toEqual({ kind: 'stop', index: 1 });
+    // 中点菱形在段中央(0.25/0.75 的中点=0.5 处);命中优先于线
+    expect(gradientLiveHit(from, to, stops, mids, false, [50, 2], 8)).toEqual({ kind: 'mid', index: 0 });
+    expect(gradientLiveHit(from, to, stops, mids, false, [40, 3], 8)).toEqual({ kind: 'line', t: 0.4 });
+    expect(gradientLiveHit(from, to, stops, mids, false, [50, 20], 8)).toBeNull();
+    expect(gradientLiveHit(from, to, stops, mids, false, [-30, 0], 8)).toBeNull(); // 延长线上不算
     // 两端重叠(零长线)时 End 优先
-    expect(hitLiveGradient([5, 5], [5, 5], [5, 5], 8)).toBe('end');
+    expect(gradientLiveHit([5, 5], [5, 5], [], [], false, [5, 5], 8)).toEqual({ kind: 'end' });
+    // reverse:色标 t=0.25 画在线的 75% 处;线命中 t 折算回渐变空间
+    expect(gradientLiveHit(from, to, stops, mids, true, [75, 2], 8)).toEqual({ kind: 'stop', index: 0 });
+    expect(gradientLiveHit(from, to, stops, mids, true, [60, 3], 8)).toEqual({ kind: 'line', t: 0.4 });
+    // 重合色标(t 相同)仍按色标命中(第一个)
+    const twin: Array<[number, string]> = [[0.5, '#ffffff'], [0.5, '#000000']];
+    expect(gradientLiveHit(from, to, twin, [0.5], false, [50, 2], 8)).toEqual({ kind: 'stop', index: 0 });
   });
-  it('gradientLiveCreateParams:活引用 stops+transparency+样式/反向/仿色/不透明度(0..100)', () => {
+  it('gradientLiveAt:反向把 t 映射成 1-t 再沿线插值', () => {
+    expect(gradientLiveAt([0, 0], [100, 0], 0.3, false)[0]).toBeCloseTo(30);
+    expect(gradientLiveAt([0, 0], [100, 0], 0.3, true)[0]).toBeCloseTo(70);
+  });
+  it('gradientStopDragParams:沿线移动/撕离删除/双标不删;reverse 折算', () => {
+    const from: [number, number] = [0, 0];
+    const to: [number, number] = [100, 0];
+    const locs = [0.25, 0.75];
+    // 沿线拖动:投影位置=渐变位置
+    expect(gradientStopDragParams(from, to, false, [50, 1], 1, locs, 0, 0)).toEqual({ action: 'move', index: 0, location: 0.5 });
+    // 撕离:离线 >36 屏幕 px 且色标 >2 个 → delete(下标=引擎当前持有下标)
+    const three = [0, 0.5, 1];
+    expect(gradientStopDragParams(from, to, false, [50, 40], 1, three, 1, 1)).toEqual({ action: 'delete', index: 1 });
+    expect(gradientStopDragParams(from, to, false, [50, GRADIENT_TEAR_OFF + 1], 1, three, 1, 1)).toEqual({ action: 'delete', index: 1 });
+    // 阈值内仍在移动
+    expect(gradientStopDragParams(from, to, false, [50, GRADIENT_TEAR_OFF], 1, three, 1, 1)).toEqual({ action: 'move', index: 1, location: 0.5 });
+    // 只有两个色标:撕离也只移动(引擎保底 2 个)
+    expect(gradientStopDragParams(from, to, false, [50, 60], 1, locs, 0, 0)).toEqual({ action: 'move', index: 0, location: 0.5 });
+    // reverse:指针在 30% 处 → 渐变位置 0.7
+    expect(gradientStopDragParams(from, to, true, [30, 1], 1, locs, 1, 1)).toEqual({ action: 'move', index: 1, location: 0.7 });
+    // 零长线退化
+    expect(gradientStopDragParams([5, 5], [5, 5], false, [5, 6], 1, locs, 0, 0)).toBeNull();
+  });
+  it('gradientStopIndexAfter:移动提交后的排序下标=其余色标中位置更小的个数', () => {
+    const locs = [0, 0.5, 1];
+    expect(gradientStopIndexAfter(locs, 0, 0.6)).toBe(1);  // 越过 0.5
+    expect(gradientStopIndexAfter(locs, 0, 0.4)).toBe(0);
+    expect(gradientStopIndexAfter(locs, 2, 0.3)).toBe(1); // 从右往左落到 0 与 0.5 之间
+    expect(gradientStopIndexAfter(locs, 2, 0.8)).toBe(2); // 落在 0.5 右侧:两个都在下方
+    expect(gradientStopIndexAfter(locs, 1, 0.5)).toBe(1);  // 自身位置不算
+  });
+  it('gradientMidDragParams:段内比值钳 0.05..0.95;reverse 折算;段退化 null', () => {
+    const from: [number, number] = [0, 0];
+    const to: [number, number] = [100, 0];
+    // 段 [0.25, 0.75],指针在 0.5 → 段内 0.5
+    expect(gradientMidDragParams(from, to, false, [50, 1], 0, 0.25, 0.75)).toEqual({ action: 'midpoint', index: 0, location: 0.5 });
+    // 指针拖出段外:钳 0.05/0.95
+    expect(gradientMidDragParams(from, to, false, [5, 1], 0, 0.25, 0.75)).toEqual({ action: 'midpoint', index: 0, location: 0.05 });
+    expect(gradientMidDragParams(from, to, false, [95, 1], 0, 0.25, 0.75)).toEqual({ action: 'midpoint', index: 0, location: 0.95 });
+    // reverse:指针 0.4 → 渐变 0.6 → 段内 (0.6-0.25)/0.5=0.7
+    expect(gradientMidDragParams(from, to, true, [40, 1], 0, 0.25, 0.75)?.location).toBeCloseTo(0.7);
+    // 段退化(两色标重合)
+    expect(gradientMidDragParams(from, to, false, [50, 1], 0, 0.5, 0.5)).toBeNull();
+  });
+  it('gradientLiveCreateParams:活引用 stops+transparency+样式/反向/仿色/不透明度(0..100)/混合模式', () => {
     const p = gradientLiveCreateParams([1.4, 2.6], [10, 8], { ...OPTS, gradientStyle: 'radial', gradientOpacity: 0.4 });
     expect(p).toEqual({
       from: [1, 3], to: [10, 8], style: 'radial',
       stops: [[0, 'foreground'], [1, 'background']],
-      reverse: false, dither: true, opacity: 40,
+      reverse: false, dither: true, opacity: 40, mode: 'Normal',
     });
     // 允许 0%(spec 0..100;与 paint.gradient 的 1..100 不同)
     expect(gradientLiveCreateParams([0, 0], [5, 5], { ...OPTS, gradientOpacity: 0 }).opacity).toBe(0);

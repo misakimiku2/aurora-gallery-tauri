@@ -184,6 +184,7 @@ export function gradientParams(
     reverse: opts.gradientReverse,
     dither: opts.gradientDither,
     opacity: Math.max(1, Math.min(100, Math.round(opts.gradientOpacity * 100))),
+    mode: opts.gradientBlend,
     ...(targetMask ? { target: 'mask' } : {}),
   };
 }
@@ -415,26 +416,116 @@ export function snap45(origin: [number, number], p: [number, number]): [number, 
   return dir ? projectOn(origin, dir, p) : p;
 }
 
+/** Live 渐变 widget 命中的抓取物(上游 Grab):stop/mid 的 index 是排序下标/段号,
+ * line 的 t 是渐变空间位置(反向已折算)。 */
+export type GradientLiveGrab =
+  | { kind: 'end' }
+  | { kind: 'start' }
+  | { kind: 'stop'; index: number }
+  | { kind: 'mid'; index: number }
+  | { kind: 'line'; t: number };
+
+/** 渐变空间位置 t 在方向线上的点(上游 Widget::at:reverse 把 t 映射成 1-t 再插值)。 */
+export function gradientLiveAt(from: [number, number], to: [number, number], t: number, reverse: boolean): [number, number] {
+  const u = reverse ? 1 - t : t;
+  return [from[0] + (to[0] - from[0]) * u, from[1] + (to[1] - from[1]) * u];
+}
+
 /**
- * Live 渐变 widget 命中(上游 gradient_ui Widget::hit 的优先级 End→Start→线;tol 为文档 px,
- * 调用方传 8 屏幕px/zoom)。色标/中点命中后续切片接入。
+ * Live 渐变 widget 命中(上游 gradient_ui Widget::hit 完整版;tol 为文档 px,调用方传
+ * 8 屏幕px/zoom)。优先级 End→Start→色标→中点→线;stops 升序、渐变空间位置;mids 为
+ * 每段中点 0..1(缺省 0.5,段宽 ≤1e-4 无中点);线命中=投影钳 0..1 后距离 ≤tol。
  */
-export function hitLiveGradient(
+export function gradientLiveHit(
   from: [number, number],
   to: [number, number],
+  stops: Array<[number, string]>,
+  mids: number[],
+  reverse: boolean,
   p: [number, number],
   tol: number,
-): 'end' | 'start' | 'line' | null {
+): GradientLiveGrab | null {
   const d = (q: [number, number]) => Math.hypot(p[0] - q[0], p[1] - q[1]);
-  if (d(to) <= tol) return 'end';
-  if (d(from) <= tol) return 'start';
+  if (d(to) <= tol) return { kind: 'end' };
+  if (d(from) <= tol) return { kind: 'start' };
+  const si = stops.findIndex((s) => d(gradientLiveAt(from, to, s[0], reverse)) <= tol);
+  if (si >= 0) return { kind: 'stop', index: si };
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i][0];
+    const b = stops[i + 1][0];
+    if (b - a <= 1e-4) continue;
+    if (d(gradientLiveAt(from, to, a + (b - a) * (mids[i] ?? 0.5), reverse)) <= tol) return { kind: 'mid', index: i };
+  }
   const vx = to[0] - from[0];
   const vy = to[1] - from[1];
   const len2 = vx * vx + vy * vy;
   if (len2 < 1e-9) return null;
-  const t = ((p[0] - from[0]) * vx + (p[1] - from[1]) * vy) / len2;
-  if (t < 0 || t > 1) return null;
-  return Math.hypot(p[0] - (from[0] + vx * t), p[1] - (from[1] + vy * t)) <= tol ? 'line' : null;
+  const u = Math.min(1, Math.max(0, ((p[0] - from[0]) * vx + (p[1] - from[1]) * vy) / len2));
+  return Math.hypot(p[0] - (from[0] + vx * u), p[1] - (from[1] + vy * u)) <= tol ? { kind: 'line', t: reverse ? 1 - u : u } : null;
+}
+
+/** 撕离删除阈值:被拖色标离线超过此屏幕距离且色标 >2 个即删除(上游 TEAR_OFF)。 */
+export const GRADIENT_TEAR_OFF = 36;
+
+/**
+ * 被拖色标的排序下标(引擎 move/delete 按「当前排序下标」寻址;move 提交会重排,
+ * 所以下标按引擎当前持有的位置=上一次发送的位置计算;其余色标在快照里不动)。
+ * lastSent=null 时引擎还是原样,用 origIndex。
+ */
+export function gradientStopIndexAfter(stopLocations: number[], origIndex: number, t: number): number {
+  return stopLocations.filter((l, i) => i !== origIndex && l < t).length;
+}
+
+/**
+ * 色标拖拽提交参数(上游 drag_to Grab::Stop):沿线投影得渐变位置;离线 >36 屏幕 px 且
+ * 色标 >2 个=撕离删除,否则移动(位置钳 0..1 由引擎做)。返回 null=退化(零长线)。
+ * curIdx 是被拖色标当前在引擎里的排序下标;新下标由调用方在提交成功后用
+ * gradientStopIndexAfter 重算。
+ */
+export function gradientStopDragParams(
+  from: [number, number],
+  to: [number, number],
+  reverse: boolean,
+  p: [number, number],
+  zoom: number,
+  stopLocations: number[],
+  origIndex: number,
+  curIdx: number,
+): { action: 'move' | 'delete'; index: number; location?: number } | null {
+  const vx = to[0] - from[0];
+  const vy = to[1] - from[1];
+  const len2 = vx * vx + vy * vy;
+  if (len2 <= 1e-9) return null;
+  const u = Math.min(1, Math.max(0, ((p[0] - from[0]) * vx + (p[1] - from[1]) * vy) / len2));
+  const d = Math.hypot(p[0] - (from[0] + vx * u), p[1] - (from[1] + vy * u));
+  const t = reverse ? 1 - u : u;
+  if (d * zoom > GRADIENT_TEAR_OFF && stopLocations.length > 2) {
+    // 撕离删除:下标=被拖色标当前位置(引擎里的最新位置)在其余色标中的排序位
+    return { action: 'delete', index: curIdx };
+  }
+  return { action: 'move', index: curIdx, location: t };
+}
+
+/**
+ * 中点菱形拖拽提交参数(上游 drag_to Grab::Mid):指针沿线投影的位置 t 折算到
+ * 段内比值,钳 0.05..0.95。返回 null=段退化(两色标重合)或零长线。
+ */
+export function gradientMidDragParams(
+  from: [number, number],
+  to: [number, number],
+  reverse: boolean,
+  p: [number, number],
+  seg: number,
+  a: number,
+  b: number,
+): { action: 'midpoint'; index: number; location: number } | null {
+  const vx = to[0] - from[0];
+  const vy = to[1] - from[1];
+  const len2 = vx * vx + vy * vy;
+  if (len2 <= 1e-9 || b - a <= 1e-4) return null;
+  const u = Math.min(1, Math.max(0, ((p[0] - from[0]) * vx + (p[1] - from[1]) * vy) / len2));
+  const t = reverse ? 1 - u : u;
+  return { action: 'midpoint', index: seg, location: Math.min(0.95, Math.max(0.05, (t - a) / (b - a))) };
 }
 
 /**
@@ -457,6 +548,7 @@ export function gradientLiveCreateParams(
     reverse: opts.gradientReverse,
     dither: opts.gradientDither,
     opacity: Math.max(0, Math.min(100, Math.round(opts.gradientOpacity * 100))),
+    mode: opts.gradientBlend,
   };
 }
 

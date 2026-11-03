@@ -31,6 +31,9 @@ export interface ToolOptions {
   gradientDither: boolean;
   /** 渐变不透明度 0..1(引擎 opacity 1..100;与画笔不透明度分开)。 */
   gradientOpacity: number;
+  /** 渐变混合模式(上游 gradient_blend_mode):经典=paint.gradient mode;Live=建层带 mode、
+   * 选中渐变图层时同步 layer.setProps blend。 */
+  gradientBlend: string;
   /** 选框工具形状(矩形/椭圆/单行/单列);提交给 select.rect 的 ellipse/line。 */
   marqueeShape: 'rect' | 'ellipse' | 'row' | 'column';
   /** 选区四态(选项条显式模式,上游 selection_mode):无修饰键时用;修饰键优先。 */
@@ -144,6 +147,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       gradientReverse: false,
       gradientDither: true,
       gradientOpacity: 1,
+      gradientBlend: 'Normal',
       marqueeShape: 'rect',
       selectionMode: 'replace',
       moveAutoSelect: true,

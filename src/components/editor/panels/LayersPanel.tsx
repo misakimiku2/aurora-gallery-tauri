@@ -5,17 +5,8 @@ import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, ChevronRight, 
 import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
+import { BLEND_ZH } from '../editorTypes';
 
-/** 引擎英文标签 → 中文(混合模式,PS 中文版口径)。 */
-const BLEND_ZH: Record<string, string> = {
-  'Pass Through': '穿透', 'Normal': '正常', 'Dissolve': '溶解', 'Darken': '变暗', 'Multiply': '正片叠底',
-  'Color Burn': '颜色加深', 'Linear Burn': '线性加深', 'Darker Color': '深色', 'Lighten': '变亮', 'Screen': '滤色',
-  'Color Dodge': '颜色减淡', 'Linear Dodge': '线性减淡', 'Lighter Color': '浅色', 'Overlay': '叠加', 'Soft Light': '柔光',
-  'Hard Light': '强光', 'Vivid Light': '亮光', 'Linear Light': '线性光', 'Pin Light': '点光', 'Hard Mix': '实色混合',
-  'Difference': '差值', 'Exclusion': '排除', 'Subtract': '减去', 'Divide': '划分', 'Hue': '色相',
-  'Saturation': '饱和度', 'Color': '颜色', 'Luminosity': '明度', 'Reflect': '反射', 'Glow': '发光',
-  'Negation': '否定', 'Xor': '异或',
-};
 /** 图层类型 kind_name → 中文。 */
 const KIND_ZH: Record<string, string> = {
   Pixel: '像素', Group: '编组', Adjustment: '调整', Fill: '填充', Type: '文字', Shape: '形状', 'Smart Object': '智能对象',

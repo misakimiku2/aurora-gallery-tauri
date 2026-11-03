@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { getSession, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
+import { BLEND_ZH } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
@@ -337,9 +338,23 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             <option value="live">渐变图层</option>
             <option value="classic">经典渐变</option>
           </select>
+          <select
+            value={s.options.gradientBlend}
+            onChange={(e) => {
+              setOptions(tabId, { gradientBlend: e.target.value });
+              // Live 同步(上游 options_changed 的 blend 分支):选中渐变图层直接改它
+              if (liveFill) void runCommand(tabId, 'layer.setProps', { layer: liveFill.layer, blend: e.target.value }).catch(() => undefined);
+            }}
+            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
+            title="混合模式:经典渐变=涂像素时的混合;渐变图层=改选中图层"
+          >
+            {(s.state?.blendModes ?? ['Normal']).map((b) => (
+              <option key={b} value={b}>{BLEND_ZH[b] ?? b}</option>
+            ))}
+          </select>
           <button
             ref={presetBtnRef}
-            title={`渐变预设:${s.options.gradientCurrent.name}(点击选择;渐变工具激活时右侧面板可编辑停靠点)`}
+            title={`渐变预设:${s.options.gradientCurrent.name}(单击选择,双击建渐变填充图层;渐变工具激活时右侧面板可编辑停靠点)`}
             onClick={() => {
               const r = presetBtnRef.current?.getBoundingClientRect();
               if (r) setPresetPos({ left: r.left, top: r.bottom + 4 });
@@ -424,8 +439,14 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                           key={p.name}
                           title={p.name}
                           onClick={() => {
+                            // 单击=选为当前渐变(弹层保持开,上游预设面板同款;外点关闭)
                             setOptions(tabId, { gradientCurrent: clonePreset(p) });
+                          }}
+                          onDoubleClick={() => {
+                            // 双击=建层(上游 Ev::Activate → gradient.presets.apply,PS 口径)
                             setPresetOpen(false);
+                            void runCommand(tabId, 'gradient.presets.apply', { preset: p.name })
+                              .catch((err) => console.error('[editor] gradient.presets.apply 失败', err));
                           }}
                           className={`h-5 rounded-sm border ${
                             s.options.gradientCurrent.name === p.name

@@ -7,7 +7,8 @@
  * 画笔族(brush/eraser/blur/sharpen/smudge):落笔 begin → 每帧批量 push(引擎在文档克隆上
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, duplicateMove, exportLayerAsPng, getSession, refreshSelectionOutline, runCommand, saveAsSession, saveSession, setOptions, setTool, subscribeSession, updateSession } from './editorStore';
@@ -16,7 +17,7 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
-  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientParams, hitLiveGradient, initialMods,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
   isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextLassoTool, nextMarqueeShape,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -24,6 +25,7 @@ import {
   type BrushFamilyTool, type CropRect, type DragPoint, type DragMods, type StrokeAxis,
 } from './toolLogic';
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
+import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
@@ -158,12 +160,23 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   /** Live 渐变:选中渐变填充图层的信息(gradient.fill.get,revision 过期自动重拉)。 */
   const liveFillRef = useRef<GradientFillInfo | null>(null);
-  /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线。 */
+  /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线,
+   * Stop/Mid=拖色标/中点菱形(节流提交 gradient.fill.stop + coalesce 合一步历史=实时预览;
+   * stops/mids 是按下时的快照,其余色标/段在拖动中不动,overlay 直接用它画)。 */
   const liveGradRef = useRef<
     | { kind: 'draw'; from: [number, number]; to: [number, number]; mods: DragMods; redraw: number | null; moved: boolean }
-    | { kind: 'edit'; layer: number; which: 'start' | 'end' | 'line'; orig: { from: [number, number]; to: [number, number] }; grab: [number, number]; from: [number, number]; to: [number, number]; moved: boolean }
+    | { kind: 'edit'; layer: number; which: 'start' | 'end' | 'line'; orig: { from: [number, number]; to: [number, number] }; grab: [number, number]; grabT: number; from: [number, number]; to: [number, number]; moved: boolean }
+    | { kind: 'stop'; layer: number; from: [number, number]; to: [number, number]; reverse: boolean; stops: Array<[number, string]>; mids: number[]; origIndex: number; curIdx: number; t: number; tornOff: boolean; moved: boolean; down: [number, number] }
+    | { kind: 'mid'; layer: number; from: [number, number]; to: [number, number]; reverse: boolean; stops: Array<[number, string]>; mids: number[]; seg: number; a: number; b: number; value: number; moved: boolean; down: [number, number] }
     | null
   >(null);
+  /** Live 渐变手势序号(coalesce 键一次手势一个,期间其他命令不得插入)+ 节流时间戳。 */
+  const gradGestureRef = useRef({ seq: 0, lastSent: 0 });
+  /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
+  const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
+  /** 双击色标/端点的取色卡(上游 Color Picker (Stop Color) 对话框:确定一条命令,取消不动)。 */
+  const [stopPicker, setStopPicker] = useState<{ layer: number; index: number; rgb: RGB; x: number; y: number } | null>(null);
+  const stopPickerRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -415,57 +428,173 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.restore();
     }
 
-    // overlay:Live 渐变 widget(上游 gradient_ui::draw_overlay):选中渐变填充图层恒显示
-    // (方向线黑白双描边 + 端点 4px 圆环 + 色标 2.5px 实心点);拖拽中画进行中的线
-    if (s.tool === 'gradient' && !s.options.gradientClassic && !isMaskTarget(s.state)) {
+    // overlay:Live 渐变 widget(上游 gradient_ui::draw_overlay):非经典模式下恒显示——
+    // 方向线 3px 黑(α90)+1.5px 白;径向/角度=圆、菱形=转置方、反射=虚线镜像;端点 8px
+    // 圆环、色标 5px 实心点(反向折算位置)、中点 4.5px 菱形;被拖件 accent 高亮。
+    // 拖拽中画手势本地态(指针跟手,不等引擎回包);蒙版目标下选中渐变图层仍显示(上游
+    // live_mode:mask 目标 + active_gradient = Live)。
+    if (s.tool === 'gradient' && !s.options.gradientClassic) {
       const lg = liveGradRef.current;
       const selFill = liveFillRef.current && liveFillRef.current.layer === s.state?.activeLayer ? liveFillRef.current : null;
-      let line: { from: [number, number]; to: [number, number]; stops: Array<[number, string]> } | null = null;
-      if (lg?.kind === 'draw') {
-        line = { from: lg.from, to: lg.mods.liveShift ? snap45(lg.from, lg.to) : lg.to, stops: [] };
-      } else if (lg?.kind === 'edit') {
-        line = { from: lg.from, to: lg.to, stops: selFill?.stops ?? [] };
-      } else if (selFill) {
-        line = { from: selFill.from, to: selFill.to, stops: selFill.stops };
-      }
-      if (line) {
-        const ax = line.from[0] * v.scale + v.ox;
-        const ay = line.from[1] * v.scale + v.oy;
-        const bx = line.to[0] * v.scale + v.ox;
-        const by = line.to[1] * v.scale + v.oy;
-        octx.save();
-        octx.lineCap = 'round';
-        octx.beginPath();
-        octx.moveTo(ax, ay);
-        octx.lineTo(bx, by);
-        octx.strokeStyle = 'rgba(0,0,0,0.55)';
-        octx.lineWidth = 3;
-        octx.stroke();
-        octx.beginPath();
-        octx.moveTo(ax, ay);
-        octx.lineTo(bx, by);
-        octx.strokeStyle = '#ffffff';
-        octx.lineWidth = 1;
-        octx.stroke();
-        for (const [cx, cy, ring] of [[ax, ay, true], [bx, by, true]] as Array<[number, number, boolean]>) {
-          octx.beginPath();
-          octx.arc(cx, cy, 4, 0, Math.PI * 2);
-          octx.strokeStyle = '#ffffff';
-          octx.lineWidth = 1.2;
-          octx.stroke();
+      if (!isMaskTarget(s.state) || selFill) {
+        // 几何:静止=选中图层;拖拽=手势本地态。stops/mids 用快照 + 被拖件本地值覆盖,
+        // 跨位重排只影响排序下标、不影响各点在画布上的位置
+        let from: [number, number] | null = null;
+        let to: [number, number] = [0, 0];
+        let reverse = false;
+        let stops: Array<[number, string]> = [];
+        let ownedMids: number[] = [];
+        let style: string = selFill?.style ?? s.options.gradientStyle;
+        let grabbed: string | null = null;
+        let skipStop = -1;
+        if (lg?.kind === 'draw') {
+          from = lg.from;
+          to = lg.mods.liveShift ? snap45(lg.from, lg.to) : lg.to;
+          // 重画=沿用图层自身反向;新线=选项条反向(将随 create 一起提交)
+          reverse = lg.redraw != null ? selFill?.reverse ?? false : s.options.gradientReverse;
+          stops = lg.redraw != null ? selFill?.stops ?? [] : [];
+          ownedMids = lg.redraw != null ? selFill?.midpoints ?? [] : [];
+          grabbed = 'end';
+        } else if (lg?.kind === 'edit') {
+          from = lg.from;
+          to = lg.to;
+          reverse = selFill?.reverse ?? false;
+          stops = selFill?.stops ?? [];
+          ownedMids = selFill?.midpoints ?? [];
+          grabbed = lg.which;
+        } else if (lg?.kind === 'stop') {
+          from = lg.from;
+          to = lg.to;
+          reverse = lg.reverse;
+          stops = lg.stops.map((q, i) => (i === lg.origIndex ? [lg.t, q[1]] : q));
+          ownedMids = lg.mids;
+          if (!lg.tornOff) grabbed = `stop:${lg.origIndex}`;
+          skipStop = lg.origIndex;
+        } else if (lg?.kind === 'mid') {
+          from = lg.from;
+          to = lg.to;
+          reverse = lg.reverse;
+          stops = lg.stops;
+          ownedMids = lg.mids.map((m, i) => (i === lg.seg ? lg.value : m));
+          grabbed = `mid:${lg.seg}`;
+        } else if (selFill) {
+          from = selFill.from;
+          to = selFill.to;
+          reverse = selFill.reverse;
+          stops = selFill.stops;
+          ownedMids = selFill.midpoints;
         }
-        for (const [t, hex] of line.stops) {
-          const sx = ax + (bx - ax) * t;
-          const sy = ay + (by - ay) * t;
-          octx.beginPath();
-          octx.arc(sx, sy, 2.5, 0, Math.PI * 2);
-          octx.fillStyle = hex;
-          octx.fill();
-          octx.strokeStyle = 'rgba(0,0,0,0.6)';
-          octx.lineWidth = 0.8;
-          octx.stroke();
+        if (from) {
+          // 每个色标拥有其后段的中点值(引擎 unpair 口径);按位置排序输出各段中点渐变位置
+          const entries = stops.map((q, i) => ({ loc: q[0], owned: ownedMids[i] ?? 0.5 }));
+          entries.sort((x, y) => x.loc - y.loc);
+          const midPos: Array<[number, number, number]> = []; // [渐变位置 t, 段号, 值]
+          for (let j = 0; j + 1 < entries.length; j++) {
+            const a = entries[j].loc;
+            const b = entries[j + 1].loc;
+            if (b - a > 1e-4) midPos.push([a + (b - a) * entries[j].owned, j, entries[j].owned]);
+          }
+          const ax = from[0] * v.scale + v.ox;
+          const ay = from[1] * v.scale + v.oy;
+          const bx = to[0] * v.scale + v.ox;
+          const by = to[1] * v.scale + v.oy;
+          const at = (t: number): [number, number] => {
+            const q = gradientLiveAt(from!, to, t, reverse);
+            return [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy];
+          };
+          const diamond = (x: number, y: number, r: number, fill: string, stroke: string) => {
+            octx.beginPath();
+            octx.moveTo(x, y - r);
+            octx.lineTo(x + r, y);
+            octx.lineTo(x, y + r);
+            octx.lineTo(x - r, y);
+            octx.closePath();
+            octx.fillStyle = fill;
+            octx.fill();
+            octx.strokeStyle = stroke;
+            octx.lineWidth = 1;
+            octx.stroke();
+          };
+          const dual = (path: () => void) => {
+            octx.beginPath();
+            path();
+            octx.strokeStyle = 'rgba(0,0,0,0.35)';
+            octx.lineWidth = 3;
+            octx.stroke();
+            octx.beginPath();
+            path();
+            octx.strokeStyle = '#ffffff';
+            octx.lineWidth = 1.5;
+            octx.stroke();
+          };
+          octx.save();
+          octx.lineCap = 'round';
+          // 样式几何(上游 draw_overlay):径向/角度=圆,菱形=转置方,反射=虚线镜像
+          const r = Math.hypot(bx - ax, by - ay);
+          if (style === 'radial' || style === 'angle') {
+            dual(() => { octx.arc(ax, ay, r, 0, Math.PI * 2); });
+          } else if (style === 'diamond') {
+            const dx = bx - ax;
+            const dy = by - ay;
+            dual(() => {
+              octx.moveTo(ax + dx, ay + dy);
+              octx.lineTo(ax - dy, ay + dx);
+              octx.lineTo(ax - dx, ay - dy);
+              octx.lineTo(ax + dy, ay - dx);
+              octx.closePath();
+            });
+          } else if (style === 'reflected') {
+            const mx = 2 * ax - bx;
+            const my = 2 * ay - by;
+            octx.setLineDash([5, 4]);
+            octx.beginPath();
+            octx.moveTo(ax, ay);
+            octx.lineTo(mx, my);
+            octx.strokeStyle = '#ffffff';
+            octx.lineWidth = 1.5;
+            octx.stroke();
+            octx.setLineDash([]);
+          }
+          dual(() => { octx.moveTo(ax, ay); octx.lineTo(bx, by); });
+          // 中点菱形(线上的段中点;被拖的 accent 填充)
+          for (const [t, seg] of midPos) {
+            const [sx, sy] = at(t);
+            diamond(sx, sy, 4.5, grabbed === `mid:${seg}` ? '#0284c7' : '#ffffff', 'rgba(0,0,0,0.63)');
+          }
+          // 端点圆环(上游 8px:3.5px 黑 α90 垫底 + 2px 白/accent)
+          for (const [cx, cy, kind] of [[ax, ay, 'start'], [bx, by, 'end']] as Array<[number, number, string]>) {
+            octx.beginPath();
+            octx.arc(cx, cy, 8, 0, Math.PI * 2);
+            octx.strokeStyle = 'rgba(0,0,0,0.35)';
+            octx.lineWidth = 3.5;
+            octx.stroke();
+            octx.beginPath();
+            octx.arc(cx, cy, 8, 0, Math.PI * 2);
+            octx.strokeStyle = grabbed === kind ? '#0284c7' : '#ffffff';
+            octx.lineWidth = 2;
+            octx.stroke();
+          }
+          // 色标点(5px 实心 stop 色 + 1.5px 白/accent 环 + 1px 黑 α110 外环);撕离中隐藏
+          stops.forEach(([t, hex], i) => {
+            if (i === skipStop && grabbed === null) return;
+            const [sx, sy] = at(t);
+            octx.beginPath();
+            octx.arc(sx, sy, 5, 0, Math.PI * 2);
+            octx.fillStyle = hex;
+            octx.fill();
+            octx.beginPath();
+            octx.arc(sx, sy, 5.5, 0, Math.PI * 2);
+            octx.strokeStyle = grabbed === `stop:${i}` ? '#0284c7' : '#ffffff';
+            octx.lineWidth = 1.5;
+            octx.stroke();
+            octx.beginPath();
+            octx.arc(sx, sy, 6.8, 0, Math.PI * 2);
+            octx.strokeStyle = 'rgba(0,0,0,0.43)';
+            octx.lineWidth = 1;
+            octx.stroke();
+          });
+          octx.restore();
         }
-        octx.restore();
       }
     }
 
@@ -1731,6 +1860,29 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     void runCommand(tabId, 'tools.setColors', { foreground: hex }).catch(console.error);
   };
 
+  /** 双击色标/端点开取色卡(上游 edit_stop_color:端点=该端的那颗色标,反向折算)。 */
+  const openStopColorPicker = (layer: number, at: number | 'start' | 'end', cx: number, cy: number) => {
+    const fill = liveFillRef.current;
+    if (!fill || fill.layer !== layer || !fill.stops.length) return;
+    let index: number;
+    if (at === 'start') index = fill.reverse ? fill.stops.length - 1 : 0;
+    else if (at === 'end') index = fill.reverse ? 0 : fill.stops.length - 1;
+    else index = Math.min(at, fill.stops.length - 1);
+    const hex = fill.stops[index][1];
+    const q = (i: number) => Number.parseInt(hex.replace('#', '').slice(i * 2, i * 2 + 2) || '00', 16) / 255;
+    setStopPicker({ layer, index, rgb: [q(0), q(1), q(2)], x: cx, y: cy });
+  };
+
+  /** 取色卡确定:一条 gradient.fill.stop color 命令(6 位 hex,上游同款=该标 alpha 归 1)。 */
+  const commitStopColor = () => {
+    const sp = stopPicker;
+    if (!sp) return;
+    const hex = `#${sp.rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+    void runCommand(tabId, 'gradient.fill.stop', { layer: sp.layer, action: 'color', index: sp.index, color: hex })
+      .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+    setStopPicker(null);
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     const s = getSession(tabId);
     if (!s) return;
@@ -1869,20 +2021,36 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       scheduleDraw();
     } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
-      if (!s.options.gradientClassic && !isMaskTarget(s.state)) {
-        // Live 渐变(上游 gradient_ui::pointer):命中选中渐变图层的手柄/线=编辑它;
+      const fill = liveFillRef.current;
+      const active = s.state.activeLayer;
+      const sel = fill && fill.layer === active && s.state.layers.find((l) => l.id === active)?.visible !== false ? fill : null;
+      // Live 渐变(上游 live_mode):非经典模式即 Live;蒙版目标例外——选中渐变填充图层
+      // 仍 Live(编辑它的填充,上游同款),否则经典涂蒙版
+      if (!s.options.gradientClassic && (!isMaskTarget(s.state) || sel)) {
+        // Live 渐变(上游 gradient_ui::pointer):命中选中渐变图层的手柄/色标/中点/线=编辑它;
         // 未命中=拖出新线——已有选中渐变图层时重画它的 from/to,否则新建图层
-        const fill = liveFillRef.current;
-        const active = s.state.activeLayer;
-        const sel = fill && fill.layer === active && s.state.layers.find((l) => l.id === active)?.visible !== false ? fill : null;
+        // 手势序号每次按下都递增:coalesce 键一次手势一个,连续手势不得并入上一步
+        gradGestureRef.current.seq += 1;
+        gradGestureRef.current.lastSent = 0;
         if (sel) {
-          const hit = hitLiveGradient(sel.from, sel.to, [dx, dy], 8 / s.runtime.view.scale);
-          if (hit === 'end') {
-            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'end', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
-          } else if (hit === 'start') {
-            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'start', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
-          } else if (hit === 'line') {
-            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'line', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], from: sel.from, to: sel.to, moved: false };
+          const hit = gradientLiveHit(sel.from, sel.to, sel.stops, sel.midpoints, sel.reverse, [dx, dy], 8 / Math.max(s.runtime.view.scale, 1e-3));
+          if (hit?.kind === 'end' || hit?.kind === 'start') {
+            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: hit.kind, orig: { from: sel.from, to: sel.to }, grab: [dx, dy], grabT: 0, from: sel.from, to: sel.to, moved: false };
+          } else if (hit?.kind === 'line') {
+            liveGradRef.current = { kind: 'edit', layer: sel.layer, which: 'line', orig: { from: sel.from, to: sel.to }, grab: [dx, dy], grabT: hit.t, from: sel.from, to: sel.to, moved: false };
+          } else if (hit?.kind === 'stop') {
+            liveGradRef.current = {
+              kind: 'stop', layer: sel.layer, from: sel.from, to: sel.to, reverse: sel.reverse,
+              stops: sel.stops.map((q) => [...q] as [number, string]), mids: [...sel.midpoints],
+              origIndex: hit.index, curIdx: hit.index, t: sel.stops[hit.index][0], tornOff: false, moved: false, down: [dx, dy],
+            };
+          } else if (hit?.kind === 'mid') {
+            liveGradRef.current = {
+              kind: 'mid', layer: sel.layer, from: sel.from, to: sel.to, reverse: sel.reverse,
+              stops: sel.stops.map((q) => [...q] as [number, string]), mids: [...sel.midpoints],
+              seg: hit.index, a: sel.stops[hit.index][0], b: sel.stops[hit.index + 1]?.[0] ?? 1,
+              value: sel.midpoints[hit.index] ?? 0.5, moved: false, down: [dx, dy],
+            };
           }
         }
         if (!liveGradRef.current) {
@@ -2050,6 +2218,48 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         lg.mods = trackMods(lg.mods, e.shiftKey, e.altKey);
         lg.to = lg.mods.liveShift ? snap45(lg.from, [dx, dy]) : [dx, dy];
         if (Math.abs(lg.to[0] - lg.from[0]) + Math.abs(lg.to[1] - lg.from[1]) >= 2) lg.moved = true;
+        // 重画选中图层:节流 SET(coalesce)=实时预览;新图层还没有实体,无法命令预览
+        if (lg.moved && lg.redraw != null) {
+          const g = gradGestureRef.current;
+          if (performance.now() - g.lastSent >= 80) {
+            g.lastSent = performance.now();
+            void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: `gradient-live-drag:${g.seq}` })
+              .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+          }
+        }
+      } else if (lg.kind === 'stop') {
+        if (Math.abs(dx - lg.down[0]) + Math.abs(dy - lg.down[1]) >= 2) lg.moved = true;
+        // 上游 drag_to Grab::Stop:沿线投影得渐变位置;离线 >36 屏幕 px 且 >2 个色标=撕离
+        // (释放才提交删除,拖回线内自动恢复移动);移动节流提交(coalesce 合一步历史)=实时预览
+        const c = gradientStopDragParams(lg.from, lg.to, lg.reverse, [dx, dy], Math.max(s.runtime.view.scale, 1e-3), lg.stops.map((q) => q[0]), lg.origIndex, lg.curIdx);
+        if (lg.moved && c) {
+          if (c.action === 'delete') {
+            lg.tornOff = true;
+          } else {
+            lg.tornOff = false;
+            lg.t = c.location ?? lg.t;
+            const g = gradGestureRef.current;
+            if (performance.now() - g.lastSent >= 80) {
+              g.lastSent = performance.now();
+              void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'move', index: lg.curIdx, location: lg.t, coalesce: `gradient-live-drag:${g.seq}` })
+                .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+              // 被拖色标会跨位重排:引擎按当前排序下标寻址,发送后按新位置重算
+              lg.curIdx = gradientStopIndexAfter(lg.stops.map((q) => q[0]), lg.origIndex, lg.t);
+            }
+          }
+        }
+      } else if (lg.kind === 'mid') {
+        if (Math.abs(dx - lg.down[0]) + Math.abs(dy - lg.down[1]) >= 2) lg.moved = true;
+        const c = gradientMidDragParams(lg.from, lg.to, lg.reverse, [dx, dy], lg.seg, lg.a, lg.b);
+        if (lg.moved && c) {
+          lg.value = c.location;
+          const g = gradGestureRef.current;
+          if (performance.now() - g.lastSent >= 80) {
+            g.lastSent = performance.now();
+            void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'midpoint', index: lg.seg, location: lg.value, coalesce: `gradient-live-drag:${g.seq}` })
+              .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+          }
+        }
       } else {
         if (Math.abs(dx - lg.grab[0]) + Math.abs(dy - lg.grab[1]) >= 2) lg.moved = true;
         if (lg.which === 'line') {
@@ -2061,6 +2271,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           lg.from = e.shiftKey ? snap45(lg.orig.to, [dx, dy]) : [dx, dy];
         } else {
           lg.to = e.shiftKey ? snap45(lg.orig.from, [dx, dy]) : [dx, dy];
+        }
+        // 手柄/整线拖动:节流 SET(coalesce)=实时预览(引擎每帧从 from/to 重推角度/缩放)
+        if (lg.moved) {
+          const g = gradGestureRef.current;
+          if (performance.now() - g.lastSent >= 80) {
+            g.lastSent = performance.now();
+            void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: `gradient-live-drag:${g.seq}` })
+              .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+          }
         }
       }
       scheduleDraw();
@@ -2199,19 +2418,57 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const lg = liveGradRef.current;
     liveGradRef.current = null;
     if (s && lg && s.state) {
-      // 上游 gradient_ui::finish:Draw <2px 无操作;重画=SET from/to 一步;新建=create(引擎自动
-      // 插到活动层上方并选中);Edit moved=提交累积的那一条 SET(一步 "Edit Gradient Fill")
+      const gradKey = `gradient-live-drag:${gradGestureRef.current.seq}`;
+      // 上游 gradient_ui::finish/click:Draw <2px 无操作;重画=SET from/to 一步;新建=create
+      // (引擎自动插到活动层上方并选中);Edit moved=SET 一步;无拖动点击=线上加色标/
+      // 双击色标或端点开取色;Stop/Mid moved=最终 stop 命令(节流发的已 coalesce 成同一步)
       if (lg.kind === 'draw' && lg.moved) {
         if (lg.redraw != null) {
-          void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] })
+          // 重画:节流 SET 已 coalesce 到本手势,最终一条同键合并成一步
+          void runCommand(tabId, 'gradient.fill.set', { layer: lg.redraw, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: gradKey })
             .catch((err) => logError('[editor] gradient.fill.set 失败', err));
         } else {
           void runCommand(tabId, 'gradient.fill.create', gradientLiveCreateParams(lg.from, lg.to, s.options))
             .catch((err) => logError('[editor] gradient.fill.create 失败', err));
         }
       } else if (lg.kind === 'edit' && lg.moved) {
-        void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])] })
+        void runCommand(tabId, 'gradient.fill.set', { layer: lg.layer, from: [Math.round(lg.from[0]), Math.round(lg.from[1])], to: [Math.round(lg.to[0]), Math.round(lg.to[1])], coalesce: gradKey })
           .catch((err) => logError('[editor] gradient.fill.set 失败', err));
+      } else if (lg.kind === 'edit' && !lg.moved) {
+        // 无拖动点击:线上加色标(位置=按下时折算的渐变位置);双击色标/端点=取色
+        if (lg.which === 'line') {
+          void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'add', location: lg.grabT })
+            .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+        } else {
+          const key = lg.which;
+          const now = performance.now();
+          const dbl = gradLastClickRef.current?.key === key && now - gradLastClickRef.current.time <= 450;
+          gradLastClickRef.current = { key, time: now };
+          if (dbl) {
+            gradLastClickRef.current = null;
+            openStopColorPicker(lg.layer, lg.which, e.clientX, e.clientY);
+          }
+        }
+      } else if (lg.kind === 'stop') {
+        if (lg.moved && lg.tornOff) {
+          // 撕离删除释放才提交(拖动中只藏标记;与节流的 move 同 coalesce 键=同一历史步)
+          void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'delete', index: lg.curIdx, coalesce: gradKey })
+            .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+        } else if (lg.moved) {
+          // 最终移动:节流发的最后一发可能已过期,补一条确定值(同键合并)
+          void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'move', index: lg.curIdx, location: lg.t, coalesce: gradKey })
+            .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
+        } else {
+          // 单击色标:仅记录双击判定(上游 click 只处理 Line 与双击取色)
+          const key = `stop:${lg.origIndex}`;
+          const now = performance.now();
+          const dbl = gradLastClickRef.current?.key === key && now - gradLastClickRef.current.time <= 450;
+          gradLastClickRef.current = dbl ? null : { key, time: now };
+          if (dbl) openStopColorPicker(lg.layer, lg.origIndex, e.clientX, e.clientY);
+        }
+      } else if (lg.kind === 'mid' && lg.moved) {
+        void runCommand(tabId, 'gradient.fill.stop', { layer: lg.layer, action: 'midpoint', index: lg.seg, location: lg.value, coalesce: gradKey })
+          .catch((err) => logError('[editor] gradient.fill.stop 失败', err));
       }
       scheduleDraw();
     }
@@ -2342,6 +2599,32 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   };
 
+  // 取色卡:外点/Esc=取消(确定才发命令);位置钳进视口(useLayoutEffect 按实际尺寸,弹层统一口径)
+  useEffect(() => {
+    if (!stopPicker) return;
+    const close = (ev: MouseEvent) => {
+      if (stopPickerRef.current?.contains(ev.target as Node)) return;
+      setStopPicker(null);
+    };
+    const esc = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setStopPicker(null);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', esc);
+    };
+  }, [stopPicker]);
+  useLayoutEffect(() => {
+    if (!stopPicker) return;
+    const el = stopPickerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    el.style.left = `${Math.max(4, Math.min(stopPicker.x, window.innerWidth - r.width - 4))}px`;
+    el.style.top = `${Math.max(4, Math.min(stopPicker.y, window.innerHeight - r.height - 4))}px`;
+  }, [stopPicker]);
+
   if (!session) return null;
   const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket']);
   const cursor =
@@ -2382,6 +2665,35 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
       {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">正在打开…</div>}
       {session.error && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-400 p-8 text-center">{session.error}</div>}
+      {stopPicker &&
+        createPortal(
+          <div
+            ref={stopPickerRef}
+            className="fixed z-[1000] w-56 rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-2"
+            style={{ left: stopPicker.x, top: stopPicker.y }}
+          >
+            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mb-1">拾色器(色标颜色)</div>
+            <div className="h-44 flex flex-col">
+              <ColorPicker
+                value={stopPicker.rgb}
+                onCommit={(rgb) => setStopPicker((sp) => (sp ? { ...sp, rgb } : sp))}
+                label={`色标 #${stopPicker.index + 1}`}
+              />
+            </div>
+            <div className="flex justify-end gap-1.5 mt-2">
+              <button
+                onClick={() => setStopPicker(null)}
+                className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300"
+              >
+                取消
+              </button>
+              <button onClick={commitStopColor} className="px-2 py-0.5 rounded text-[11px] bg-sky-600 text-white hover:bg-sky-500">
+                确定
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };
