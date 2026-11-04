@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getSession, setOptions, subscribeSession } from './editorStore';
+import { getSession, openSelectMask, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { BLEND_ZH } from './editorTypes';
@@ -215,7 +215,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                   onChange={(e) => setOptions(tabId, { magneticContrast: Number(e.target.value) })}
                   className="w-20 accent-sky-600"
                 />
-                <span className="w-9 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.magneticContrast}%</span>
+                <span className="w-10 tabular-nums text-neutral-700 dark:text-neutral-300">{s.options.magneticContrast}%</span>
               </label>
               <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="自动落点的疏密(越高越密)">
                 频率
@@ -228,6 +228,16 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
               </label>
             </>
           )}
+          {/* 选择并遮住…(PS 选框/套索选项条同款按钮;无选区且活动层无蒙版时禁用;
+              Ctrl+Alt+R 可能被系统热键抢占,按钮入口不依赖快捷键) */}
+          <button
+            onClick={() => openSelectMask(tabId)}
+            disabled={!s.state?.hasSelection && !s.state?.layers.find((l) => l.id === s.state?.activeLayer)?.hasMask}
+            title="选择并遮住…(Ctrl+Alt+R)"
+            className="px-2 py-0.5 rounded text-[11px] shrink-0 bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            选择并遮住…
+          </button>
         </>
       ) : s.tool === 'crop' ? (
         <>
