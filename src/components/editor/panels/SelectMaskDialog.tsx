@@ -47,19 +47,52 @@ const Slider: React.FC<{
   </label>
 );
 
+// 对话框位置持久化(localStorage;跨编辑器会话/软件重启保留,用户拍板)
+const SM_POS_KEY = 'aurora-editor:select-mask-pos';
+function loadSelectMaskPos(): { x: number; y: number } | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(SM_POS_KEY) ?? 'null') as { x: number; y: number } | null;
+    return p && typeof p.x === 'number' && typeof p.y === 'number' ? p : null;
+  } catch {
+    return null;
+  }
+}
+function saveSelectMaskPos(p: { x: number; y: number }): void {
+  try {
+    localStorage.setItem(SM_POS_KEY, JSON.stringify(p));
+  } catch {
+    /* 存储不可用忽略 */
+  }
+}
+const clampPos = (p: { x: number; y: number }): { x: number; y: number } => ({
+  x: Math.min(Math.max(p.x, 4), window.innerWidth - 384),
+  y: Math.min(Math.max(p.y, 4), window.innerHeight - 120),
+});
+
 export const SelectMaskDialog: React.FC<{ tabId: string; active: boolean }> = ({ tabId, active }) => {
   const [, forceUpdate] = useState(0);
   React.useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
-  // 标题栏拖拽(null=默认顶部居中;拖过后记 fixed 位置,跨开合保留)
+  // 标题栏拖拽(null=未定位;位置持久化到 localStorage,首次打开居中于编辑器画布)
   const cardRef = React.useRef<HTMLDivElement>(null);
   const dragRef = React.useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(loadSelectMaskPos);
   const s = getSession(tabId);
   const sm = s?.selectMask;
-  // 每次打开钳进视口(窗口缩放后旧位置可能出屏)
+  // 每次打开:已有位置钳进视口(窗口缩放后可能出屏);没有则居中于编辑器画布(data-editor-canvas)
   React.useLayoutEffect(() => {
     if (!sm?.open) return;
-    setPos((p) => (p ? { x: Math.min(Math.max(p.x, 4), window.innerWidth - 384), y: Math.min(Math.max(p.y, 4), window.innerHeight - 120) } : null));
+    setPos((p) => {
+      if (p) return clampPos(p);
+      const cv = document.querySelector('[data-editor-canvas]');
+      const card = cardRef.current;
+      if (!cv || !card) return null;
+      const cr = cv.getBoundingClientRect();
+      const kr = card.getBoundingClientRect();
+      return clampPos({
+        x: Math.round(cr.left + cr.width / 2 - kr.width / 2),
+        y: Math.round(cr.top + cr.height / 2 - kr.height / 2),
+      });
+    });
   }, [sm?.open]);
   const onTitlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -73,14 +106,16 @@ export const SelectMaskDialog: React.FC<{ tabId: string; active: boolean }> = ({
   const onTitlePointerMove = (e: React.PointerEvent) => {
     const d = dragRef.current;
     if (!d) return;
-    setPos({
-      x: Math.min(Math.max(d.ox + e.clientX - d.sx, 4), window.innerWidth - 384),
-      y: Math.min(Math.max(d.oy + e.clientY - d.sy, 4), window.innerHeight - 120),
-    });
+    setPos(clampPos({ x: d.ox + e.clientX - d.sx, y: d.oy + e.clientY - d.sy }));
   };
   const onTitlePointerUp = (e: React.PointerEvent) => {
     dragRef.current = null;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
+    // 拖动结束持久化(钳位后的位置即用户放置的位置)
+    setPos((p) => {
+      if (p) saveSelectMaskPos(p);
+      return p;
+    });
   };
   if (!active || !s || !sm?.open) return null;
 
@@ -91,7 +126,7 @@ export const SelectMaskDialog: React.FC<{ tabId: string; active: boolean }> = ({
   const patch = (p: Parameters<typeof updateSelectMask>[1]) => updateSelectMask(tabId, p);
 
   return createPortal(
-    <div className="fixed inset-0 z-[900] flex items-start justify-center pt-14 pointer-events-none">
+    <div className="fixed inset-0 z-[900] flex items-center justify-center pointer-events-none">
       <div
         ref={cardRef}
         className="pointer-events-auto w-[380px] max-h-[80vh] overflow-y-auto rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-3 text-[11px] flex flex-col gap-1.5"

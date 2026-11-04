@@ -2912,6 +2912,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   return (
     <div
       ref={wrapRef}
+      data-editor-canvas=""
       className="relative flex-1 min-h-0 overflow-hidden bg-subtle"
       style={{ cursor, touchAction: 'none' }}
       onPointerDown={onPointerDown}
