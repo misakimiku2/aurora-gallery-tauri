@@ -2828,6 +2828,7 @@ export const App: React.FC = () => {
             activeTab={activeTab}
             state={state}
             displayFileIds={displayFileIds}
+            overlayOpen={isModalOpen}
             t={t}
             onLayoutToggle={onLayoutToggle}
             closeViewer={closeViewer}

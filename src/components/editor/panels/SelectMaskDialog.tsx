@@ -15,6 +15,7 @@ import {
   SELECT_MASK_OUTPUTS, SELECT_MASK_OUTPUT_ZH, selectMaskDefaultOpacity, showEditorNotice, subscribeSession, updateSelectMask,
   type SelectMaskMode,
 } from '../editorStore';
+import { EditorSelect } from '../editorSelect';
 
 const numCls = 'w-14 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] tabular-nums text-neutral-700 dark:text-neutral-300';
 const labelCls = 'text-neutral-500 dark:text-neutral-400 shrink-0';
@@ -46,7 +47,7 @@ const Slider: React.FC<{
   </label>
 );
 
-export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
+export const SelectMaskDialog: React.FC<{ tabId: string; active: boolean }> = ({ tabId, active }) => {
   const [, forceUpdate] = useState(0);
   React.useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   // 标题栏拖拽(null=默认顶部居中;拖过后记 fixed 位置,跨开合保留)
@@ -81,7 +82,7 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
     dragRef.current = null;
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
-  if (!s || !sm?.open) return null;
+  if (!active || !s || !sm?.open) return null;
 
   const op = sm.viewOpacity[sm.viewMode] ?? selectMaskDefaultOpacity(sm.viewMode);
   const hasOpacity = sm.viewMode === 'onionSkin' || sm.viewMode === 'overlay' || sm.viewMode === 'onBlack' || sm.viewMode === 'onWhite';
@@ -112,15 +113,12 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
         {/* 视图(上游 select_mask_view::controls) */}
         <label className="flex items-center gap-1.5">
           <span className={`${labelCls} w-14`}>视图</span>
-          <select
+          <EditorSelect
             value={sm.viewMode}
-            onChange={(e) => patch({ viewMode: e.target.value as SelectMaskMode })}
-            className="flex-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-300"
-          >
-            {SELECT_MASK_MODES.map((m) => (
-              <option key={m} value={m}>{SELECT_MASK_MODE_ZH[m]}</option>
-            ))}
-          </select>
+            onChange={(v) => patch({ viewMode: v as SelectMaskMode })}
+            className="flex-1"
+            options={SELECT_MASK_MODES.map((m) => ({ value: m, label: SELECT_MASK_MODE_ZH[m] }))}
+          />
         </label>
         {hasOpacity ? (
           <Slider label="不透明度" value={op} min={0} max={100} suffix="%" onChange={(v) => patch({ viewOpacity: { ...sm.viewOpacity, [sm.viewMode]: v } })} />
@@ -158,14 +156,15 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
           <>
             <label className="flex items-center gap-1.5">
               <span className={`${labelCls} w-14`}>模式</span>
-              <select
+              <EditorSelect
                 value={sm.brushMode}
-                onChange={(e) => patch({ brushMode: e.target.value as 'add' | 'subtract' })}
-                className="flex-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-300"
-              >
-                <option value="add">扩展检测区域</option>
-                <option value="subtract">恢复原始边缘</option>
-              </select>
+                onChange={(v) => patch({ brushMode: v as 'add' | 'subtract' })}
+                className="flex-1"
+                options={[
+                  { value: 'add', label: '扩展检测区域' },
+                  { value: 'subtract', label: '恢复原始边缘' },
+                ]}
+              />
             </label>
             <Slider label="大小" value={sm.brushSize} min={1} max={1000} suffix="px" onChange={(v) => patch({ brushSize: Math.round(v) })} />
             <div className="text-[10px] text-neutral-500 dark:text-neutral-400">在图像上涂抹头发或毛发等细节;Alt 涂出另一模式</div>
@@ -203,15 +202,12 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
         {sm.decontaminate ? <Slider label="数量" value={sm.amount} min={0} max={100} suffix="%" onChange={(v) => patch({ amount: v })} /> : null}
         <div className={sectionCls}>输出到</div>
         <label className="flex items-center gap-1.5">
-          <select
+          <EditorSelect
             value={sm.output}
-            onChange={(e) => patch({ output: e.target.value })}
-            className="flex-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-300"
-          >
-            {SELECT_MASK_OUTPUTS.filter((o) => o !== 'newDocument' && o !== 'newDocumentWithMask').map((o) => (
-              <option key={o} value={o}>{SELECT_MASK_OUTPUT_ZH[o]}</option>
-            ))}
-          </select>
+            onChange={(v) => patch({ output: v })}
+            className="flex-1"
+            options={SELECT_MASK_OUTPUTS.filter((o) => o !== 'newDocument' && o !== 'newDocumentWithMask').map((o) => ({ value: o, label: SELECT_MASK_OUTPUT_ZH[o] }))}
+          />
         </label>
         <label className="flex items-center gap-1.5" title="精修采样全部图层的合成(关=仅当前层)">
           <input type="checkbox" checked={sm.sampleAllLayers} onChange={(e) => patch({ sampleAllLayers: e.target.checked })} className="accent-sky-600" />

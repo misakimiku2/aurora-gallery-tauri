@@ -7,6 +7,8 @@ import { AppState, FileNode, FileType, TabState } from '../../types';
 
 interface ViewerPaneProps {
   activeTab: TabState;
+  /** App 级覆盖层(设置页/模态)开着:编辑器内的浮层对话框让位不显示。 */
+  overlayOpen: boolean;
   state: AppState;
   displayFileIds: string[];
   t: (key: string) => string;
@@ -40,6 +42,7 @@ interface ViewerPaneProps {
 // 查看器区域：大图预览（ImageViewer）+ 图片对比画布（ImageComparer）
 export const ViewerPane = ({
   activeTab,
+  overlayOpen,
   state,
   displayFileIds,
   t,
@@ -160,6 +163,7 @@ export const ViewerPane = ({
               fileId={file.id}
               filePath={file.path}
               isActive={tab.id === state.activeTabId}
+              overlayOpen={overlayOpen}
               sidebarVisible={state.layout.isSidebarVisible}
               metadataVisible={state.layout.isMetadataVisible}
               onToggleSidebar={onToggleSidebar}

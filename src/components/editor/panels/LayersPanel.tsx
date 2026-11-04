@@ -6,6 +6,7 @@ import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../e
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 import { BLEND_ZH } from '../editorTypes';
+import { EditorSelect } from '../editorSelect';
 
 /** 图层类型 kind_name → 中文。 */
 const KIND_ZH: Record<string, string> = {
@@ -709,16 +710,13 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
       <div className="px-2 py-1 text-[11px] text-gray-500 dark:text-neutral-400 shrink-0">图层</div>
       {/* 混合模式(当前层) */}
       <div className="px-2 pb-1 shrink-0">
-        <select
+        <EditorSelect
           value={active?.blend ?? 'Normal'}
           disabled={!active}
-          onChange={(e) => active && void run('layer.setProps', { layer: active.id, blend: e.target.value })}
-          className="w-full bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200"
-        >
-          {(st.blendModes ?? ['Normal']).map((b) => (
-            <option key={b} value={b}>{BLEND_ZH[b] ?? b}</option>
-          ))}
-        </select>
+          onChange={(v) => active && void run('layer.setProps', { layer: active.id, blend: v })}
+          className="w-full"
+          options={(st.blendModes ?? ['Normal']).map((b) => ({ value: b, label: BLEND_ZH[b] ?? b }))}
+        />
       </div>
       {/* 不透明度(当前层) */}
       <div className="flex items-center gap-1.5 px-2 pb-1.5 shrink-0">

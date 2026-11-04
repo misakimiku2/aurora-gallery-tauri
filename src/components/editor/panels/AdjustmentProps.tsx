@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { getSession, openSelectMask, runCommand, subscribeSession } from '../editorStore';
+import { EditorSelect } from '../editorSelect';
 import type { EditorLayer } from '../editorTypes';
 import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
 import { GradientLayerProps } from './GradientLayerProps';
@@ -75,16 +76,7 @@ const SelectRow: React.FC<{
 }> = ({ label, value, disabled, options, onChange }) => (
   <label className="flex items-center gap-1.5 py-0.5">
     <span className="w-16 shrink-0 text-[10px] text-gray-500 dark:text-neutral-400 truncate">{label}</span>
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      className="flex-1 min-w-0 bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200"
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>{o.label}</option>
-      ))}
-    </select>
+    <EditorSelect value={value} disabled={disabled} onChange={onChange} className="flex-1 min-w-0" options={options} />
   </label>
 );
 

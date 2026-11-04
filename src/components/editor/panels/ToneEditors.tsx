@@ -10,6 +10,7 @@
  * 编辑经 emit(100ms 节流+coalesce 合一步历史),拖动中本地态跟手。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { EditorSelect } from '../editorSelect';
 import { Pencil, Spline } from 'lucide-react';
 import { editorHistogram } from '../editorBridge';
 import { findPreset, GRADIENT_GROUPS, presetMapStops } from '../gradientPresets';
@@ -163,15 +164,12 @@ const EditorFrame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 const ChanSelect: React.FC<{ value: number; onChange: (i: number) => void }> = ({ value, onChange }) => (
   <label className="flex items-center gap-1.5">
     <span className="text-[10px] text-gray-500 dark:text-neutral-400">通道</span>
-    <select
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="bg-surface border border-black/10 dark:border-white/15 rounded px-1 py-0.5 text-[11px] text-gray-800 dark:text-neutral-200"
-    >
-      {LEVEL_CHANS.map((c, i) => (
-        <option key={c.key} value={i}>{c.label}</option>
-      ))}
-    </select>
+    <EditorSelect
+      value={String(value)}
+      onChange={(v) => onChange(Number(v))}
+      className="w-20"
+      options={LEVEL_CHANS.map((c, i) => ({ value: String(i), label: c.label }))}
+    />
   </label>
 );
 
@@ -911,26 +909,20 @@ export const GradientMapEditor: React.FC<{
   return (
     <EditorFrame>
       {/* 预设下拉(上游 ComboBox 恒显 Custom 口径:选中后回显归零;活引用按当前前景/背景解析) */}
-      <select
+      <EditorSelect
         value=""
+        alwaysBlank
+        blankLabel="预设…"
         title="从渐变预设载入(前景→背景等活引用按当前前景/背景色解析)"
-        onChange={(e) => {
-          const p = findPreset(e.target.value);
+        onChange={(v) => {
+          const p = findPreset(v);
           if (!p) return;
           push(presetMapStops(p, fg, bg));
           setSelected(0);
         }}
-        className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
-      >
-        <option value="">预设…</option>
-        {GRADIENT_GROUPS.map((g) => (
-          <optgroup key={g.name} label={g.name}>
-            {g.presets.map((p) => (
-              <option key={p.name} value={p.name}>{p.name}</option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+        className="w-28"
+        options={GRADIENT_GROUPS.flatMap((g) => g.presets.map((p) => ({ value: p.name, label: p.name, group: g.name })))}
+      />
       {/* 渐变条 + 停靠点标记(标记地址不随 Reverse 变;Reverse 只改图像映射) */}
       <div
         className="relative w-full touch-none pb-11"

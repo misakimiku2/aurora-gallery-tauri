@@ -12,6 +12,7 @@ import { BLEND_ZH } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
+import { EditorSelect } from './editorSelect';
 import { runCommand } from './editorStore';
 
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
@@ -339,29 +340,25 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'gradient' ? (
         <>
-          <select
+          <EditorSelect
             value={s.options.gradientClassic ? 'classic' : 'live'}
-            onChange={(e) => setOptions(tabId, { gradientClassic: e.target.value === 'classic' })}
-            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
+            onChange={(v) => setOptions(tabId, { gradientClassic: v === 'classic' })}
             title="渐变模式:渐变图层=非破坏渐变填充图层(拖线创建/选中即可再编辑);经典渐变=直接涂在像素上"
-          >
-            <option value="live">渐变图层</option>
-            <option value="classic">经典渐变</option>
-          </select>
-          <select
+            options={[
+              { value: 'live', label: '渐变图层' },
+              { value: 'classic', label: '经典渐变' },
+            ]}
+          />
+          <EditorSelect
             value={s.options.gradientBlend}
-            onChange={(e) => {
-              setOptions(tabId, { gradientBlend: e.target.value });
+            onChange={(v) => {
+              setOptions(tabId, { gradientBlend: v });
               // Live 同步(上游 options_changed 的 blend 分支):选中渐变图层直接改它
-              if (liveFill) void runCommand(tabId, 'layer.setProps', { layer: liveFill.layer, blend: e.target.value }).catch(() => undefined);
+              if (liveFill) void runCommand(tabId, 'layer.setProps', { layer: liveFill.layer, blend: v }).catch(() => undefined);
             }}
-            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300"
             title="混合模式:经典渐变=涂像素时的混合;渐变图层=改选中图层"
-          >
-            {(s.state?.blendModes ?? ['Normal']).map((b) => (
-              <option key={b} value={b}>{BLEND_ZH[b] ?? b}</option>
-            ))}
-          </select>
+            options={(s.state?.blendModes ?? ['Normal']).map((b) => ({ value: b, label: BLEND_ZH[b] ?? b }))}
+          />
           <button
             ref={presetBtnRef}
             title={`渐变预设:${s.options.gradientCurrent.name}(单击选择,双击建渐变填充图层;渐变工具激活时右侧面板可编辑停靠点)`}
@@ -507,16 +504,16 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             自动选择
           </label>
-          <select
+          <EditorSelect
             value={s.options.moveTarget}
             disabled={!s.options.moveAutoSelect}
-            onChange={(e) => setOptions(tabId, { moveTarget: e.target.value as ToolOptions['moveTarget'] })}
-            className="h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-600 dark:text-neutral-300 disabled:opacity-40"
+            onChange={(v) => setOptions(tabId, { moveTarget: v as ToolOptions['moveTarget'] })}
             title="Auto-Select 的拾取目标:图层 / 最外层编组"
-          >
-            <option value="layer">图层</option>
-            <option value="group">组</option>
-          </select>
+            options={[
+              { value: 'layer', label: '图层' },
+              { value: 'group', label: '组' },
+            ]}
+          />
         </>
       ) : null}
       <div className="flex-1" />

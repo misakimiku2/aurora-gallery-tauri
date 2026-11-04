@@ -35,12 +35,14 @@ export const EditorShell: React.FC<{
   fileId: string;
   filePath: string;
   isActive: boolean;
+  /** App 级覆盖层(设置页/模态)开着:编辑器内浮层对话框让位不显示。 */
+  overlayOpen: boolean;
   /** 左侧文件夹栏/右侧面板可见性(应用全局布局态,与主界面同源)。 */
   sidebarVisible: boolean;
   metadataVisible: boolean;
   onToggleSidebar: () => void;
   onToggleMetadata: () => void;
-}> = ({ tabId, fileId, filePath, isActive, sidebarVisible, metadataVisible, onToggleSidebar, onToggleMetadata }) => {
+}> = ({ tabId, fileId, filePath, isActive, overlayOpen, sidebarVisible, metadataVisible, onToggleSidebar, onToggleMetadata }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
 
@@ -144,7 +146,7 @@ export const EditorShell: React.FC<{
         <EditorToolbar tabId={tabId} />
         <EditorCanvas tabId={tabId} isActive={isActive} />
       </div>
-      <SelectMaskDialog tabId={tabId} />
+      <SelectMaskDialog tabId={tabId} active={isActive && !overlayOpen} />
       <EditorNoticeToast />
     </div>
   );
