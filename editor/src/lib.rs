@@ -145,7 +145,16 @@ impl Default for EditorManager {
 
 impl EditorManager {
     pub fn new() -> Self {
-        Self { session: Session::new(), live: None, os_clip_sig: None, magnetic: None }
+        let mut session = Session::new();
+        // 内存治理:引擎默认 8GB 历史字节预算对 24MP 大图形同虚设(整幅调整每步独占
+        // ~96MB,几十步即 GB 级常驻原生进程)。压到 2GB:超预算按引擎口径丢弃最旧历史
+        // (historyStates 步数上限保持 50 不变)。prefs.set 无文档依赖,进程级一次即可;
+        // add_document 与 apply_prefs 会把预算挂到每个文档上。失败忽略(极端回落引擎默认)。
+        let _ = session.execute(
+            "prefs.set",
+            json!({ "values": { "performance.memoryUsageMb": 2048 } }),
+        );
+        Self { session, live: None, os_clip_sig: None, magnetic: None }
     }
 
     /// 磁性套索像素源的当前快照(上游 is_current 口径:活动文档/revision/像素层变了重建)。
@@ -290,8 +299,12 @@ impl EditorManager {
 
     /// 关闭文档(丢弃未保存修改,与 PS 一致;保存由调用方先行决定)。
     /// 进行中的 live 描边一并丢弃(其文档克隆随会话释放)。
+    /// 内存治理:磁性套索像素快照持整份文档的 `Arc<Document>`、剪贴板持像素/整层快照,
+    /// 都跨文档存活——不清则最后编辑的文档(24MP≈96MB+)在所有文档关闭后仍常驻原生进程。
     pub fn close(&mut self, doc: u64) -> Result<()> {
         self.live = None;
+        self.magnetic = None;
+        self.session.clipboard = None;
         self.run(doc, "file.close", json!({})).map(|_| ())
     }
 

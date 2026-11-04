@@ -24,6 +24,15 @@ function cachePut(key: string, bmp: RenderedBitmap): void {
   }
 }
 
+/** 关闭文档时清掉该 doc 的全部缩略图条目(L/M 键以 docId 开头):模块级缓存跨文档
+ * 永存,不失效则已关闭文档的位图(≤400×16KB)被一直攥着。 */
+export function clearEditorThumbCaches(docId: number): void {
+  const prefix = `${docId}:`;
+  for (const key of [...thumbCache.keys()]) {
+    if (key.startsWith(prefix)) thumbCache.delete(key);
+  }
+}
+
 /** 把快照画进缩略图画布(等比缩到 box 内);禁用蒙版的红叉由调用方接着画。 */
 function drawThumb(cv: HTMLCanvasElement, bmp: RenderedBitmap): void {
   cv.width = bmp.width;

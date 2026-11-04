@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { Undo2, Redo2, Save, SaveAll, FileOutput, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
 import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeEditorNotice, subscribeSession, updateSession, type EditorNotice } from './editorStore';
+import { clearEditorThumbCaches } from './panels/LayersPanel';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { SelectMaskDialog } from './panels/SelectMaskDialog';
@@ -64,6 +65,9 @@ export const EditorShell: React.FC<{
     })();
     return () => {
       cancelled = true;
+      // 先按 docId 清图层缩略图缓存再 dispose(会话删除后取不到 docId)
+      const docId = getSession(tabId)?.docId;
+      if (docId != null) clearEditorThumbCaches(docId);
       disposeSession(tabId);
     };
   }, [tabId, fileId, filePath]);

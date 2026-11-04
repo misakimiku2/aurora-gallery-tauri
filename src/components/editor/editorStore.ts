@@ -63,6 +63,12 @@ export interface EditorRuntime {
   offscreen: HTMLCanvasElement | null;
   /** 离屏位图相对文档的缩放(大图降采样保护时 <1)。 */
   rasterScale: number;
+  /** 交互期降载渲染的截止时刻(Date.now() ms;0=非交互):拖动调整滑杆/渐变等高频交互
+   * 进行中,位图泵按视口预算出图(每帧从 96MB 级降到 ~10MB 级,GPU 纹理池不再被撑大),
+   * 结束/过期回全分辨率——PS「低分辨率预览」同款。 */
+  interactiveRenderUntil: number;
+  /** 交互标记的过期唤醒定时器:到期清零并 notify,让泵以全分辨率补渲当前 revision。 */
+  interactiveRenderTimer: number | null;
   viewW: number;
   viewH: number;
   /** 画布注册的重绘请求(视图动作/工具预览用)。 */
@@ -160,7 +166,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       magneticContrast: 10,
       magneticFrequency: 57,
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
     selectMask: null,
   };
@@ -173,6 +179,35 @@ export function updateSession(tabId: string, patch: Partial<EditorSession>): voi
   if (!s) return;
   Object.assign(s, patch);
   notify(tabId);
+}
+
+/**
+ * 交互期降载渲染标记(PS「低分辨率预览」同款):ms>0 把泵的降载截止时刻续期到 now+ms
+ * (拖动中每次 emit 都调,不通知——revision 推进自会唤醒泵);ms=0 立即结束(抬手/最终
+ * 提交前调,随后的 revision 推进即以全分辨率出图)。续期同时重排过期唤醒定时器:到期
+ * 清零并 notify,让泵对同一 revision 按全分辨率预算补渲(键含 rasterScale,两档必不同)——
+ * 打字输入等没有"抬手"事件的提交路径靠它自愈,不存在标记泄漏。
+ */
+export function markInteractiveRender(tabId: string, ms: number): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  const until = ms > 0 ? Date.now() + ms : 0;
+  const was = s.runtime.interactiveRenderUntil > 0;
+  s.runtime.interactiveRenderUntil = until;
+  if (s.runtime.interactiveRenderTimer != null) {
+    window.clearTimeout(s.runtime.interactiveRenderTimer);
+    s.runtime.interactiveRenderTimer = null;
+  }
+  if (until > 0) {
+    s.runtime.interactiveRenderTimer = window.setTimeout(() => {
+      s.runtime.interactiveRenderTimer = null;
+      if (s.runtime.interactiveRenderUntil > 0 && Date.now() >= s.runtime.interactiveRenderUntil) {
+        s.runtime.interactiveRenderUntil = 0;
+        notify(tabId);
+      }
+    }, ms + 50);
+  }
+  if (was !== until > 0) notify(tabId);
 }
 
 // ---------------------------------------------------------------- Select and Mask
@@ -496,6 +531,16 @@ export function disposeSession(tabId: string): void {
   if (!s) return;
   sessions.delete(tabId);
   listeners.delete(tabId);
+  if (s.runtime.interactiveRenderTimer != null) {
+    window.clearTimeout(s.runtime.interactiveRenderTimer);
+    s.runtime.interactiveRenderTimer = null;
+  }
+  // 位图归零释放 backing(置宽高 0 立刻丢 96MB 级画布内存,仅靠断引用 GC 慢且 WebView2 不放账)
+  if (s.runtime.offscreen) {
+    s.runtime.offscreen.width = 0;
+    s.runtime.offscreen.height = 0;
+    s.runtime.offscreen = null;
+  }
   if (s.docId != null) {
     void editorClose(s.docId).catch(() => undefined);
   }

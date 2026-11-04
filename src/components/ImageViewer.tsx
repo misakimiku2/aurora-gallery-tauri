@@ -50,6 +50,23 @@ const evictBlobCache = (): void => {
   }
 };
 
+// data URL(裸 base64 也兜底)→ Blob object URL。base64 data URL 是 ×1.37 体积的 JS
+// 字符串常驻堆上(JXL/AVIF 条目;8MB AVIF ≈ 10.7MB 字符串,50 条最坏 ~500MB);blob 的
+// 载荷交给浏览器底层存储,evictBlobCache revoke 时即释放。转换失败回落原 data URL。
+const dataUrlToObjectUrl = (dataUrl: string): { url: string; bytes: number } => {
+  try {
+    const comma = dataUrl.indexOf(',');
+    const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    const mime = comma >= 0 ? (/^data:([^;]+)/.exec(dataUrl.slice(0, comma))?.[1] ?? 'application/octet-stream') : 'application/octet-stream';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { url: URL.createObjectURL(new Blob([bytes], { type: mime })), bytes: bytes.byteLength };
+  } catch {
+    return { url: dataUrl, bytes: dataUrl.length };
+  }
+};
+
 // 同步获取缓存（如果存在）- 用于无闪烁切换
 export const getBlobCacheSync = (path: string): string | null => {
   if (blobCache.has(path)) {
@@ -156,18 +173,24 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
     try {
       if (path.toLowerCase().endsWith('.jxl')) {
         const previewUrl = await invoke<string>('get_jxl_preview', { path });
-        blobCache.set(path, previewUrl);
-        blobCacheSizes.set(path, 0);
+        // base64 data URL → blob object URL:base64 字符串(×1.37)不常驻 JS 堆
+        const { url, bytes } = dataUrlToObjectUrl(previewUrl);
+        blobCache.set(path, url);
+        blobCacheSizes.set(path, bytes);
+        totalBlobBytes += bytes;
         evictBlobCache();
-        return previewUrl;
+        return url;
       }
 
       if (path.toLowerCase().endsWith('.avif')) {
         const previewUrl = await invoke<string>('get_avif_preview', { path });
-        blobCache.set(path, previewUrl);
-        blobCacheSizes.set(path, 0);
+        // 同上;AVIF 回落是整个原文件的 base64,收益最大
+        const { url, bytes } = dataUrlToObjectUrl(previewUrl);
+        blobCache.set(path, url);
+        blobCacheSizes.set(path, bytes);
+        totalBlobBytes += bytes;
         evictBlobCache();
-        return previewUrl;
+        return url;
       }
 
       const url = convertFileSrc(path);

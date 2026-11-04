@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -31,6 +31,11 @@ import { error as logError } from '../../utils/logger';
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
+/** 交互期降载(PS「低分辨率预览」同款)的视口像素上限(约 4MP):拖动滑杆/渐变时泵按
+ * 视口 dpr² 出图,把高频交互的每帧上传从 96MB 级压到 ~10MB 级;下限 1MP 兜底极小窗口。 */
+const RASTER_VIEWPORT_BUDGET = 4_000_000;
+/** 交互期但拿不到视口尺寸(挂起/隐藏)时的降载预算(约 2MP)。 */
+const RASTER_INTERACTIVE_FALLBACK = 2_000_000;
 
 /**
  * 精确十字光标(PS Precise Cursor 口径):黑影垫底 + 白芯的双色自绘光标。原生 crosshair
@@ -1536,6 +1541,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         session.selectMask.refineStrokes,
       ])
     : '';
+  // 交互期降载标记(渲染时刻求值):翻转靠 markInteractiveRender 的 notify 唤醒本 effect,
+  // 泵内部每轮再读实时截止时刻(mark 的续期不通知,靠 revision 推进唤醒)
+  const interactiveRenderForBitmap = (session?.runtime.interactiveRenderUntil ?? 0) > Date.now();
   const bitmapPump = useCallback(async () => {
     if (bitmapBusyRef.current) return;
     bitmapBusyRef.current = true;
@@ -1581,11 +1589,18 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           continue;
         }
         const gray = s.state.layerMaskView?.mode === 'gray' ? s.state.layerMaskView.layer : null;
-        const key = `${s.docId}:${s.revision}:${gray != null ? `${gray}:${s.state.layerMaskView?.mode ?? ''}` : ''}`;
+        // 交互期降载:标记未过期时按视口 dpr² 预算出图;过期/结束回全分辨率。
+        // rs 入键——同一 revision 在两档预算间切换(过期唤醒/抬手终渲)也要重渲。
+        const interactive = s.runtime.interactiveRenderUntil > 0 && Date.now() < s.runtime.interactiveRenderUntil;
+        const wrap = wrapRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        const vpPx = interactive && wrap ? wrap.clientWidth * wrap.clientHeight * dpr * dpr : 0;
+        const budget = interactive ? (vpPx > 0 ? Math.min(RASTER_VIEWPORT_BUDGET, Math.max(1_000_000, vpPx)) : RASTER_INTERACTIVE_FALLBACK) : RASTER_PIXEL_BUDGET;
+        const docPx = s.state.width * s.state.height;
+        const rs = docPx > budget ? Math.sqrt(budget / docPx) : 1;
+        const key = `${s.docId}:${s.revision}:${gray != null ? `${gray}:${s.state.layerMaskView?.mode ?? ''}` : ''}:${rs < 1 ? rs.toFixed(4) : '1'}`;
         if (bitmapKeyRef.current === key) return;
         bitmapKeyRef.current = key;
-        const docPx = s.state.width * s.state.height;
-        const rs = docPx > RASTER_PIXEL_BUDGET ? Math.sqrt(RASTER_PIXEL_BUDGET / docPx) : 1;
         const maxW = rs < 1 ? Math.round(s.state.width * rs) : undefined;
         const maxH = rs < 1 ? Math.round(s.state.height * rs) : undefined;
         // 灰度查看:位图换蒙版快照(灰度 RGBA,同一 rasterScale 管线);正常:合成渲染
@@ -1618,7 +1633,28 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [tabId, scheduleDraw]);
   useEffect(() => {
     void bitmapPump();
-  }, [bitmapPump, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey, selectMaskKey]);
+  }, [bitmapPump, docIdForBitmap, revisionForBitmap, stateReady, docW, docH, maskViewKey, selectMaskKey, interactiveRenderForBitmap]);
+
+  // 隐藏编辑 tab 释放位图(多开 N 个编辑 tab = N×96MB 级离屏):切走即归零 backing,
+  // 切回重置 key 强制泵重渲(会话状态/历史不动,只重拉一次位图)
+  useEffect(() => {
+    if (isActive) return;
+    const s = getSession(tabId);
+    if (!s) return;
+    if (s.runtime.offscreen) {
+      s.runtime.offscreen.width = 0;
+      s.runtime.offscreen.height = 0;
+      s.runtime.offscreen = null;
+    }
+    bitmapKeyRef.current = '';
+  }, [isActive, tabId]);
+  useEffect(() => {
+    if (!isActive) return;
+    bitmapKeyRef.current = '';
+    void bitmapPump();
+    // 仅在激活沿触发;bitmapPump 引用变化时泵 effect 自己会跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
 
   // 容器尺寸观察
   useEffect(() => {
@@ -2070,6 +2106,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
    */
   const gradPreviewSend = (cmd: string, params: Record<string, unknown>, onSent?: () => void) => {
     const fire = () => {
+      // 长拖续期:预览每发都把降载截止时刻往后推(拖动超过首按的 1200ms 仍是视口预算)
+      markInteractiveRender(tabId, 1200);
       gradGestureRef.current.lastSent = performance.now();
       gradInflightRef.current.busy = true;
       onSent?.();
@@ -2273,6 +2311,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         // 手势序号每次按下都递增:coalesce 键一次手势一个,连续手势不得并入上一步
         gradGestureRef.current.seq += 1;
         gradGestureRef.current.lastSent = 0;
+        // Live 渐变拖动进交互期降载(预览 ~80ms/发,视口预算出图);抬手 mark(0) 回全分辨率
+        markInteractiveRender(tabId, 1200);
         if (sel) {
           const hit = gradientLiveHit(sel.from, sel.to, sel.stops, sel.midpoints, sel.reverse, [dx, dy], 8 / Math.max(s.runtime.view.scale, 1e-3));
           if (hit?.kind === 'end' || hit?.kind === 'start') {
@@ -2550,6 +2590,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const s = getSession(tabId);
     const stroke = strokeRef.current;
     smStrokeRef.current = false;
+    // 交互期降载在此收口(渐变拖动等画布交互;滑杆类在各自 flushNow):mark(0) 的
+    // notify 唤醒泵,随后的终提交 revision 推进即以全分辨率出图
+    markInteractiveRender(tabId, 0);
     // 磁性自由画线段(⌥ 拖)抬起=段末设锚点(上游 end_freehand)
     if (s && magneticRef.current?.freehand) {
       const m = magneticRef.current;

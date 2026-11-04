@@ -233,3 +233,44 @@ pub async fn capture_window_snapshot(app_handle: tauri::AppHandle) -> Result<Str
 pub fn capture_window_snapshot(_app_handle: tauri::AppHandle) -> Result<String, String> {
     Err("capture_window_snapshot is only supported on Windows".into())
 }
+
+/// 内存治理:WebView2 低内存目标(官方 MemoryUsageTargetLevel,Runtime 1.0.2903+)。
+/// 关闭最后一个编辑标签时设 LOW,让 GPU/管理器进程把可重建资源(纹理池/解码缓存)
+/// 归还 OS;打开编辑器时设回 NORMAL。旧 Runtime 无该接口——cast 失败静默跳过。
+#[cfg(windows)]
+#[tauri::command]
+pub fn set_webview_memory_target(app_handle: tauri::AppHandle, low: bool) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        ICoreWebView2_19,
+    };
+    use windows::core::Interface as _;
+
+    let window = app_handle
+        .get_webview_window("main")
+        .ok_or("main window not found")?;
+    window
+        .with_webview(move |webview| {
+            let controller = webview.controller();
+            let Ok(core_webview) = (unsafe { controller.CoreWebView2() }) else {
+                return;
+            };
+            if let Ok(wv19) = core_webview.cast::<ICoreWebView2_19>() {
+                let level = if low {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+                } else {
+                    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+                };
+                unsafe {
+                    let _ = wv19.SetMemoryUsageTargetLevel(level);
+                }
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn set_webview_memory_target(_app_handle: tauri::AppHandle, _low: bool) -> Result<(), String> {
+    Ok(()) // 非 Windows 无 WebView2,静默跳过
+}

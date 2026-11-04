@@ -25,6 +25,14 @@ export function useImageLoader(imageFiles: FileNode[], isAndroid: boolean) {
 
   // Load images & create mipmap levels (batch loading on Android)
   useEffect(() => {
+    // 内存治理:按当前选区淘汰缓存。imagesCache 无淘汰,对比选区缩小时旧图
+    // (original + 7 级 mipmap,24MP 每张 ≈ 200MB)常驻到组件卸载。
+    if (imagesCache.current.size > 0) {
+      const ids = new Set(imageFiles.map(f => f.id));
+      for (const key of [...imagesCache.current.keys()]) {
+        if (!ids.has(key)) imagesCache.current.delete(key);
+      }
+    }
     const filesToLoad = imageFiles.filter(
       file => !imagesCache.current.has(file.id) && !loadingIdsRef.current.has(file.id)
     );

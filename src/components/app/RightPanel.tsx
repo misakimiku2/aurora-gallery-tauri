@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { MetadataPanel } from '../MetadataPanel';
 import { MobileColorPickerSheet } from '../MobileColorPickerSheet';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
-import { EditorRightPanels } from '../editor/EditorRightPanels';
+
+// 编辑器非常驻:右侧编辑器四组面板(图层/调整/导航/属性)与 EditorShell 同属编辑器
+// chunk,激活编辑 tab 才加载;chunk 在途时槽位短暂空白(仅首次)。
+const EditorRightPanels = React.lazy(() => import('../editor/EditorRightPanels').then(m => ({ default: m.EditorRightPanels })));
 
 interface RightPanelProps {
   state: AppState;
@@ -53,7 +56,9 @@ export const RightPanel = ({
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
           {/* 编辑器 v3:编辑 Tab 激活时,右侧槽位换成编辑器四组面板(可拖调高度);退出即还原详情面板 */}
           {activeTab.isEditorMode && !isAndroidPlatformCached() ? (
-            <EditorRightPanels tabId={activeTab.id} />
+            <Suspense fallback={null}>
+              <EditorRightPanels tabId={activeTab.id} />
+            </Suspense>
           ) : (
           <MetadataPanel
             files={state.files}

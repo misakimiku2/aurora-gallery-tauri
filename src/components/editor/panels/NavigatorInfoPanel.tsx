@@ -108,6 +108,10 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
   useEffect(() => {
     let raf = 0;
     let last = 0;
+    // 取色键门控:指针像素/revision/位图尺寸都没变就不重取——getImageData(1,1) 虽只读
+    // 一像素,却强制 GPU 把整幅画布纹理回读到 CPU(96MB 级),66ms 空转轮询曾是编辑时
+    // GPU 压力的次要来源。键含位图尺寸:交互期降载换档(宽高变)也会重取。
+    let lastKey = '';
     const loop = (t: number) => {
       if (t - last > 66) {
         last = t;
@@ -118,6 +122,12 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
           const cv = s.runtime.offscreen;
           const px = Math.floor(p.x * rs);
           const py = Math.floor(p.y * rs);
+          const key = `${px},${py},${s.revision},${cv ? cv.width : 0}x${cv ? cv.height : 0}`;
+          if (key === lastKey) {
+            raf = requestAnimationFrame(loop);
+            return;
+          }
+          lastKey = key;
           let rgb: [number, number, number] | null = null;
           if (cv && px >= 0 && py >= 0 && px < cv.width && py < cv.height) {
             const ctx = cv.getContext('2d');
@@ -131,6 +141,7 @@ const InfoTab: React.FC<{ tabId: string }> = ({ tabId }) => {
             setInfo(next);
           }
         } else if (infoRef.current) {
+          lastKey = '';
           infoRef.current = null;
           setInfo(null);
         }

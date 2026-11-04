@@ -189,6 +189,15 @@ export const App: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 内存治理:WebView2 低内存目标。没有任何编辑 tab 时设 LOW,让 GPU/管理器进程把
+  // 可重建资源(纹理池/解码缓存)归还 OS(任务管理器里"关掉编辑后不回落"的主要手段);
+  // 开编辑器即回 NORMAL。Rust 侧旧 Runtime 静默跳过。
+  const editorTabCount = state.tabs.filter(t => t.isEditorMode).length;
+  useEffect(() => {
+    if (!isTauriEnvironment()) return;
+    void invoke('set_webview_memory_target', { low: editorTabCount === 0 }).catch(() => undefined);
+  }, [editorTabCount]);
+
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);

@@ -6,7 +6,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
-import { getSession, openSelectMask, runCommand, subscribeSession } from '../editorStore';
+import { getSession, markInteractiveRender, openSelectMask, runCommand, subscribeSession } from '../editorStore';
 import { EditorSelect } from '../editorSelect';
 import type { EditorLayer } from '../editorTypes';
 import { GradientMapEditor, CurvesEditor, LevelsEditor, useHistogram, type RgbHistograms } from './ToneEditors';
@@ -122,10 +122,14 @@ function useAdjustEmitter(
   flushRef.current = flush;
   useEffect(() => () => {
     if (timer.current != null) window.clearTimeout(timer.current);
+    markInteractiveRender(tabId, 0);
     flushRef.current();
-  }, []);
+  }, [tabId]);
   const emit = useCallback((patch: Record<string, unknown>) => {
     lastEmitRef.current = Date.now();
+    // 交互期降载(PS「低分辨率预览」):拖动中泵按视口预算出图;抬手/卸载 mark(0) 后
+    // 最终提交即以全分辨率出图。过期定时器兜底打字输入等无"抬手"路径。
+    markInteractiveRender(tabId, 1200);
     pending.current = { ...(pending.current ?? {}), ...patch };
     const gap = performance.now() - lastSent.current;
     if (gap >= 100) {
@@ -142,8 +146,9 @@ function useAdjustEmitter(
       window.clearTimeout(timer.current);
       timer.current = null;
     }
+    markInteractiveRender(tabId, 0);
     flushRef.current();
-  }, []);
+  }, [tabId]);
   return { emit, flushNow, lastEmitRef };
 }
 
@@ -451,6 +456,7 @@ const MaskPropsSection: React.FC<{
   }, []);
   const emitField = (field: 'density' | 'feather', value: number) => {
     lastEmit.current = Date.now();
+    markInteractiveRender(tabId, 1200);
     pending.current = { ...(pending.current ?? {}), [field]: value };
     setLocal((prev) => ({ ...prev, [field]: value }));
     if (timer.current == null) {
@@ -472,8 +478,8 @@ const MaskPropsSection: React.FC<{
           max={1000}
           value={Math.round(toPos(local[field]))}
           onPointerDown={() => { dragging.current = true; }}
-          onPointerUp={() => { dragging.current = false; flushRef.current(); }}
-          onPointerCancel={() => { dragging.current = false; flushRef.current(); }}
+          onPointerUp={() => { dragging.current = false; markInteractiveRender(tabId, 0); flushRef.current(); }}
+          onPointerCancel={() => { dragging.current = false; markInteractiveRender(tabId, 0); flushRef.current(); }}
           onChange={(e) => emitField(field, toVal(Number(e.target.value)))}
           className="flex-1 min-w-0 accent-sky-600"
         />

@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { ImageViewer } from '../ImageViewer';
 import { ImageComparer } from '../ImageComparer';
-import { EditorShell } from '../editor/EditorShell';
 import { isAndroidSync } from '../../utils/androidPlatform';
 import { AppState, FileNode, FileType, TabState } from '../../types';
+
+// 编辑器非常驻:EditorShell(含画布/面板/工具条全部子树)按需加载——浏览图库不下载、
+// 不解析编辑器代码,首次点开编辑图片(或已有编辑 tab)才拉取该 chunk。
+const EditorShell = React.lazy(() => import('../editor/EditorShell').then(m => ({ default: m.EditorShell })));
 
 interface ViewerPaneProps {
   activeTab: TabState;
@@ -152,26 +155,31 @@ export const ViewerPane = ({
         </div>
       ))}
       {/* 编辑器 v3:编辑 Tab(桌面端;引擎文档随 Tab 生命周期开合)。
-          右侧四组面板走应用 RightPanel 槽位;左栏/右栏可见性切换沿用全局布局态。 */}
-      {!isAndroidSync() && state.tabs.map(tab => tab.isEditorMode && (() => {
-        const file = tab.editorFileId ? state.files[tab.editorFileId] : undefined;
-        if (!file?.path) return null;
-        return (
-          <div key={tab.id} className={`w-full h-full flex-1 flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
-            <EditorShell
-              tabId={tab.id}
-              fileId={file.id}
-              filePath={file.path}
-              isActive={tab.id === state.activeTabId}
-              overlayOpen={overlayOpen}
-              sidebarVisible={state.layout.isSidebarVisible}
-              metadataVisible={state.layout.isMetadataVisible}
-              onToggleSidebar={onToggleSidebar}
-              onToggleMetadata={onToggleMetadata}
-            />
-          </div>
-        );
-      })())}
+          右侧四组面板走应用 RightPanel 槽位;左栏/右栏可见性切换沿用全局布局态。
+          Suspense:首开编辑 tab 时 chunk 在途,编辑器区域短暂空白(仅首次)。 */}
+      {!isAndroidSync() && (
+        <Suspense fallback={null}>
+          {state.tabs.map(tab => tab.isEditorMode && (() => {
+            const file = tab.editorFileId ? state.files[tab.editorFileId] : undefined;
+            if (!file?.path) return null;
+            return (
+              <div key={tab.id} className={`w-full h-full flex-1 flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
+                <EditorShell
+                  tabId={tab.id}
+                  fileId={file.id}
+                  filePath={file.path}
+                  isActive={tab.id === state.activeTabId}
+                  overlayOpen={overlayOpen}
+                  sidebarVisible={state.layout.isSidebarVisible}
+                  metadataVisible={state.layout.isMetadataVisible}
+                  onToggleSidebar={onToggleSidebar}
+                  onToggleMetadata={onToggleMetadata}
+                />
+              </div>
+            );
+          })())}
+        </Suspense>
+      )}
     </>
   );
 };

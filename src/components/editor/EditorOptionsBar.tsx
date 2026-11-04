@@ -5,7 +5,7 @@
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { getSession, openSelectMask, setOptions, subscribeSession } from './editorStore';
+import { getSession, markInteractiveRender, openSelectMask, setOptions, subscribeSession } from './editorStore';
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { BLEND_ZH } from './editorTypes';
@@ -396,12 +396,15 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             不透明度
             <input
               type="range" min={1} max={100} value={Math.round(s.options.gradientOpacity * 100)}
-              onPointerDown={() => { opacityDragRef.current += 1; }}
+              onPointerDown={() => { opacityDragRef.current += 1; markInteractiveRender(tabId, 1200); }}
+              onPointerUp={() => { markInteractiveRender(tabId, 0); }}
+              onPointerCancel={() => { markInteractiveRender(tabId, 0); }}
               onChange={(e) => {
                 const v = Number(e.target.value) / 100;
                 setOptions(tabId, { gradientOpacity: v });
                 // Live 同步(上游 opacity_changed):拖动 coalesce 成一个 undo 步
                 if (liveFill) {
+                  markInteractiveRender(tabId, 1200);
                   void runCommand(tabId, 'layer.setProps', { layer: liveFill.layer, opacity: v, coalesce: `gradient-tool-opacity:${opacityDragRef.current}` }).catch(() => undefined);
                 }
               }}

@@ -10,7 +10,7 @@
  */
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { runCommand } from '../editorStore';
+import { markInteractiveRender, runCommand } from '../editorStore';
 import { error as logError } from '../../../utils/logger';
 import { ColorPicker, type RGB } from './ColorPicker';
 import { gradientStopIndexAfter, layerRampCss, stopIndexAfterEdit } from '../toolLogic';
@@ -73,6 +73,7 @@ export const GradientLayerStops: React.FC<{ tabId: string; layerId: number; fill
   // 预览提交(80ms 节流 + 一次一条在途,尾沿合并)
   const previewSend = (cmd: string, params: Record<string, unknown>) => {
     const fire = () => {
+      markInteractiveRender(tabId, 1200);
       gestureRef.current.lastSent = performance.now();
       inflightRef.current.busy = true;
       void runCommand(tabId, cmd, { layer: layerId, ...params, coalesce: `gradient-props-drag:${gestureRef.current.seq}` }, { noPull: true })
@@ -98,6 +99,8 @@ export const GradientLayerStops: React.FC<{ tabId: string; layerId: number; fill
     stripDragDepth += 1;
     gestureRef.current.seq += 1;
     gestureRef.current.lastSent = 0;
+    // 交互期降载:条带拖动的预览与画布 Live 渐变同口径(视口预算出图,up 时回全分辨率)
+    markInteractiveRender(tabId, 1200);
   };
   const endDrag = () => {
     stripDragDepth = Math.max(0, stripDragDepth - 1);
@@ -152,6 +155,7 @@ export const GradientLayerStops: React.FC<{ tabId: string; layerId: number; fill
       forceUpdate((n) => n + 1);
     };
     const up = () => {
+      markInteractiveRender(tabId, 0);
       const bc = barClickRef.current;
       barClickRef.current = null;
       if (bc && !bc.moved) {
@@ -191,6 +195,7 @@ export const GradientLayerStops: React.FC<{ tabId: string; layerId: number; fill
       }
     };
     const cancel = () => {
+      markInteractiveRender(tabId, 0);
       barClickRef.current = null;
       if (dragRef.current) {
         dragRef.current = null;
