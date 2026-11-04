@@ -1045,3 +1045,45 @@ export function chainSegments(segs: number[][]): number[][] {
   }
   return polys;
 };
+
+// ===== Select and Mask 边刷(上游 select_mask_view::paint 移植)=====
+
+/** 边刷笔划(引擎 select.refineEdge 的 refineStrokes 形态;点=文档 px)。 */
+export interface SelectMaskStroke {
+  points: number[][];
+  size: number;
+  mode: 'add' | 'subtract';
+}
+
+/** vendor smartselect_cmds 上限(超出即拒收,前端同口径停笔)。 */
+export const SELECT_MASK_MAX_STROKES = 4096;
+export const SELECT_MASK_MAX_STROKE_POINTS = 100_000;
+
+/** 边刷直径范围(上游 BRUSH_SIZES;滑杆与 [ ] 键共用)。 */
+export const SELECT_MASK_BRUSH_SIZES: [number, number] = [1, 1000];
+
+/** 在 `at` 画边刷:start=新开一笔,否则延最后一笔;距上点 < max(size/8,1) 的点跳过;
+ * 总点数到上限停笔(上游 paint 逐行移植;返回新数组,不可变)。 */
+export function selectMaskPaintStroke(
+  strokes: SelectMaskStroke[],
+  at: [number, number],
+  start: boolean,
+  subtract: boolean,
+  size: number,
+): SelectMaskStroke[] {
+  if (!Number.isFinite(at[0]) || !Number.isFinite(at[1])) return strokes;
+  if (strokes.reduce((n, s) => n + s.points.length, 0) >= SELECT_MASK_MAX_STROKE_POINTS) return strokes;
+  const round = (v: number) => Math.round(v * 10) / 10;
+  const pt = [round(at[0]), round(at[1])];
+  const room = strokes.length < SELECT_MASK_MAX_STROKES;
+  const last = strokes.length > 0 ? strokes[strokes.length - 1] : null;
+  if (last && !start) {
+    const prev = last.points[last.points.length - 1];
+    if (!prev || Math.hypot(prev[0] - at[0], prev[1] - at[1]) >= Math.max(size / 8, 1)) {
+      return [...strokes.slice(0, -1), { ...last, points: [...last.points, pt] }];
+    }
+    return strokes;
+  }
+  if (!room) return strokes;
+  return [...strokes, { points: [pt], size, mode: subtract ? 'subtract' : 'add' }];
+}

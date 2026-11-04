@@ -6,10 +6,10 @@ import {
   gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, layerRampCss, marqueeParams, marqueeRect,
   midpointRemap, moveBounds, moveDirtyRect, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
   nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
-  resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
+  resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMaskPaintStroke, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
   strokeParams, TOOL_KEYS, trackMods,
 } from '../toolLogic';
-import type { StrokeAxis } from '../toolLogic';
+import type { SelectMaskStroke, StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
 import { findPreset } from '../gradientPresets';
 
@@ -672,5 +672,34 @@ describe('磁性套索纯函数(上游 magnetic_lasso_ui 口径)', () => {
     expect(nearMagneticStart(first, [104, 103], 8, 15)).toBe(false); // 总长不足
     expect(nearMagneticStart(first, [120, 100], 8, 100)).toBe(false); // 距离出半径
     expect(nearMagneticStart(undefined, [104, 103], 8, 100)).toBe(false);
+  });
+});
+
+describe('selectMaskPaintStroke(上游 select_mask_view::paint 口径)', () => {
+  it('start 新开一笔并带模式与非零点', () => {
+    let strokes = selectMaskPaintStroke([], [10.46, 20.53], true, false, 30);
+    expect(strokes).toEqual([{ points: [[10.5, 20.5]], size: 30, mode: 'add' }]);
+    strokes = selectMaskPaintStroke(strokes, [30, 20], true, true, 30);
+    expect(strokes).toHaveLength(2);
+    expect(strokes[1]).toEqual({ points: [[30, 20]], size: 30, mode: 'subtract' });
+  });
+
+  it('非 start 延最后一笔:近点跳过、远点追加、坐标 0.1 取整', () => {
+    let strokes = selectMaskPaintStroke([], [0, 0], true, false, 32);
+    // 点距 max(size/8,1)=4:3px 内跳过
+    strokes = selectMaskPaintStroke(strokes, [3, 0], false, false, 32);
+    expect(strokes[0].points).toHaveLength(1);
+    strokes = selectMaskPaintStroke(strokes, [4.24, 0], false, false, 32);
+    expect(strokes[0].points).toEqual([[0, 0], [4.2, 0]]);
+    // Alt 反向不改变已有笔,只影响新开的
+    strokes = selectMaskPaintStroke(strokes, [100, 0], true, true, 32);
+    expect(strokes[1].mode).toBe('subtract');
+  });
+
+  it('点数/笔数上限停笔;非有限坐标忽略', () => {
+    const full: SelectMaskStroke[] = [{ points: Array.from({ length: 100_000 }, (_, i) => [i, 0]), size: 30, mode: 'add' }];
+    expect(selectMaskPaintStroke(full, [1, 1], true, false, 30)).toBe(full);
+    const strokes = selectMaskPaintStroke([], [NaN, 5], true, false, 30);
+    expect(strokes).toHaveLength(0);
   });
 });

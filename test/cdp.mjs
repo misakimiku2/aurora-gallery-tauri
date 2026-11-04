@@ -25,7 +25,7 @@ ws.onmessage = (ev) => {
   }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const VK = { Backspace: 8, Delete: 46, Enter: 13, Escape: 27 };
+const VK = { Backspace: 8, Delete: 46, Enter: 13, Escape: 27, '[': 219, ']': 221 };
 const keyChar = (c) => c.toUpperCase().charCodeAt(0);
 
 await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });

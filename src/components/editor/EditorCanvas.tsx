@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -74,6 +74,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const spaceRef = useRef(false);
   /** Shift 按住态(画笔族橡皮筋预览的绘制条件;约束本身用指针事件自带的 shiftKey)。 */
   const shiftRef = useRef(false);
+  /** Alt 按住态(Select and Mask 边刷光标形态刷新;笔划方向用指针事件自带的 altKey)。 */
+  const altRef = useRef(false);
+  /** Select and Mask 边刷涂抹中(左键按住期间,move 连续 paint)。 */
+  const smStrokeRef = useRef(false);
   const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const drawPending = useRef(false);
   /** 选框拖拽中(文档坐标 + 修饰键时序跟踪,口径同 photocraft 上游 Drag)。 */
@@ -803,6 +807,42 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.stroke();
     }
 
+    // overlay:Select and Mask 边刷光标(上游 canvas_brush):圆环=直径/2×zoom(min 1.5 屏幕 px),
+    // 黑影垫底+白芯双描;十字臂恒有横臂(add=+),竖臂仅在正向模式(subtract=−,Alt 即时切换)
+    if (s.selectMask?.open && s.selectMask.brush && s.runtime.pointerDoc && !s.selectMask.hideView) {
+      const subtract = (s.selectMask.brushMode === 'subtract') !== altRef.current;
+      const r = Math.max(1.5, (s.selectMask.brushSize / 2) * v.scale);
+      const cx = s.runtime.pointerDoc.x * v.scale + v.ox;
+      const cy = s.runtime.pointerDoc.y * v.scale + v.oy;
+      octx.beginPath();
+      octx.arc(cx, cy, r + 0.5, 0, Math.PI * 2);
+      octx.strokeStyle = 'rgba(0,0,0,0.55)';
+      octx.lineWidth = 1;
+      octx.stroke();
+      octx.beginPath();
+      octx.arc(cx, cy, r, 0, Math.PI * 2);
+      octx.strokeStyle = 'rgba(255,255,255,0.86)';
+      octx.stroke();
+      const arm = 3;
+      octx.lineCap = 'butt';
+      for (const [w, c] of [[2.5, 'rgba(0,0,0,0.55)'], [1, 'rgba(255,255,255,0.86)']] as const) {
+        octx.beginPath();
+        octx.moveTo(cx - arm, cy);
+        octx.lineTo(cx + arm, cy);
+        octx.strokeStyle = c;
+        octx.lineWidth = w;
+        octx.stroke();
+        if (!subtract) {
+          octx.beginPath();
+          octx.moveTo(cx, cy - arm);
+          octx.lineTo(cx, cy + arm);
+          octx.strokeStyle = c;
+          octx.lineWidth = w;
+          octx.stroke();
+        }
+      }
+    }
+
     // overlay:⇧ 橡皮筋(上游 draw_line_preview):画笔族按住 Shift、无进行中描边且
     // 上一笔终点在本文档——细黑线垫底+细白线从上一笔终点连到指针,预览 Shift+点击将画的直线
     if (BRUSH_TOOLS.has(s.tool) && shiftRef.current && !strokeRef.current
@@ -1493,6 +1533,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         session.selectMask.smartRadius, session.selectMask.smooth, session.selectMask.feather,
         session.selectMask.contrast, session.selectMask.shiftEdge, session.selectMask.sampleAllLayers,
         session.selectMask.targetMask,
+        session.selectMask.refineStrokes,
       ])
     : '';
   const bitmapPump = useCallback(async () => {
@@ -1509,6 +1550,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           const params: Record<string, unknown> = {
             radius: sm.radius, smartRadius: sm.smartRadius, smooth: sm.smooth, feather: sm.feather,
             contrast: sm.contrast, shiftEdge: sm.shiftEdge, sampleAllLayers: sm.sampleAllLayers,
+            ...(sm.refineStrokes.length > 0 ? { refineStrokes: sm.refineStrokes } : {}),
             ...(sm.targetMask ? { target: 'mask' } : {}),
           };
           const op = sm.viewOpacity[sm.viewMode] ?? selectMaskDefaultOpacity(sm.viewMode);
@@ -1613,6 +1655,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         scheduleDraw();
         return;
       }
+      // Alt 按住态:Select and Mask 边刷光标的 +/- 形态随键即时切换
+      if (e.key === 'Alt') {
+        altRef.current = true;
+        scheduleDraw();
+        return;
+      }
       if (isTyping(e.target)) return;
       // Select and Mask 入口(Ctrl+Alt+R,上游 Cmd+Alt+R):有选区或活动层有蒙版才可用
       if (e.code === 'KeyR' && e.ctrlKey && e.altKey) {
@@ -1659,6 +1707,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (key === 'p') {
           e.preventDefault();
           updateSelectMask(tabId, { showOriginal: !sm.showOriginal });
+          return;
+        }
+        // R:边刷开关;[ ] 调边刷直径(上游 apply_key:×0.9/×1.1 且至少 ±1,钳 1..1000;
+        // 中文 IME 下 e.key 是全角【】,按 e.code 兜底——与画笔笔径键同款口径)
+        if (key === 'r') {
+          e.preventDefault();
+          updateSelectMask(tabId, { brush: !sm.brush });
+          return;
+        }
+        if (e.key === '[' || e.key === ']' || e.code === 'BracketLeft' || e.code === 'BracketRight') {
+          e.preventDefault();
+          const dir = e.key === ']' || e.code === 'BracketRight' ? 1 : -1;
+          const size = sm.brushSize;
+          const next = dir > 0 ? Math.max(size * 1.1, size + 1) : Math.min(size * 0.9, size - 1);
+          updateSelectMask(tabId, { brushSize: Math.round(Math.min(1000, Math.max(1, next))) });
           return;
         }
         return; // 其余键不进工具(对话框模态)
@@ -1948,6 +2011,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         shiftRef.current = false;
         scheduleDraw();
       }
+      if (e.key === 'Alt') {
+        altRef.current = false;
+        scheduleDraw();
+      }
       // X 松开:Select and Mask 视图恢复(按住=临时看原图)
       if (e.code === 'KeyX') {
         const s = getSession(tabId);
@@ -2058,8 +2125,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       panRef.current = { sx: e.clientX, sy: e.clientY, ox: s.runtime.view.ox, oy: s.runtime.view.oy };
       return;
     }
-    // Select and Mask 对话框模态:工具交互全部让位(缩放/平移仍可用)
-    if (s.selectMask?.open) return;
+    // Select and Mask 对话框模态:工具交互全部让位(缩放/平移仍可用);
+    // 边刷开时左键=涂抹笔划起点(Alt 涂另一模式,上游 canvas_brush)
+    if (s.selectMask?.open) {
+      if (s.selectMask.brush && e.button === 0 && s.state) {
+        smStrokeRef.current = true;
+        const rect = wrapRef.current!.getBoundingClientRect();
+        const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+        s.runtime.pointerDoc = { x: dx, y: dy };
+        paintSelectMaskStroke(tabId, [dx, dy], true, e.altKey);
+        scheduleDraw();
+      }
+      return;
+    }
     if (s.tool === 'zoom' && s.state) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const factor = e.altKey ? 1 / ZOOM_STEP : ZOOM_STEP;
@@ -2254,6 +2332,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    // Select and Mask 边刷:按住拖动连续涂抹(Alt 即时反向;近点由纯函数按 max(size/8,1)
+    // 点距过滤=零通知,跨过阈值才 updateSelectMask→泵重算预览)
+    if (s.selectMask?.open) {
+      if (smStrokeRef.current && (e.buttons & 1) !== 0) {
+        paintSelectMaskStroke(tabId, [dx, dy], false, e.altKey);
+      }
+      scheduleDraw();
+      return;
+    }
     const st = strokeRef.current;
     if (st) {
       // 一帧内的合并采样点全部投给引擎(高刷鼠标下更平滑;上游回放所有样本的口径);
@@ -2458,6 +2545,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const onPointerUp = (e: React.PointerEvent) => {
     const s = getSession(tabId);
     const stroke = strokeRef.current;
+    smStrokeRef.current = false;
     // 磁性自由画线段(⌥ 拖)抬起=段末设锚点(上游 end_freehand)
     if (s && magneticRef.current?.freehand) {
       const m = magneticRef.current;
@@ -2732,6 +2820,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   const onPointerCancel = (e: React.PointerEvent) => {
+    smStrokeRef.current = false;
     const stroke = strokeRef.current;
     if (stroke) {
       strokeRef.current = null;
@@ -2806,7 +2895,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   if (!session) return null;
   const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket']);
   const cursor =
-    session.tool === 'hand' || spaceRef.current ? 'grab'
+    session.selectMask?.open
+      ? // 对话框模态:边刷开=自绘圆环(原生光标隐藏),关=普通箭头(上游模态画布口径)
+        session.selectMask.brush ? 'none' : 'default'
+        : session.tool === 'hand' || spaceRef.current ? 'grab'
       : session.tool === 'zoom' ? 'zoom-in'
         : BRUSH_TOOLS.has(session.tool) ? 'none'
           : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')

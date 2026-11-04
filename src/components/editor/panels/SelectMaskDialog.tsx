@@ -2,8 +2,9 @@
  * Select and Mask(选择并遮住)对话框(上游 filter_dialog + select_mask_view::controls 口径):
  * 视图区(七视图 select + 每视图不透明度 + Show Edge/Show Original)= 对话框打开期间画布的
  * 显示方式(位图泵按参数键拉 editorSelectMaskView);全局精修参数(半径/智能半径/平滑/羽化/
- * 对比度/移置边缘);去污色 + 数量;输出目标;采样所有图层。确定=一条 select.refineEdge
- * (一步 "Select and Mask");取消=丢弃(预览零改动)。键盘(F/O/M/V/A/T/K/Y/J/P/X/Enter/Esc)
+ * 对比度/移置边缘);边刷(R 切换,画布涂抹处=精修发生处,Alt 反向,[ ] 调径,可清除);
+ * 去污色 + 数量;输出目标;采样所有图层。确定=一条 select.refineEdge
+ * (一步 "Select and Mask");取消=丢弃(预览零改动)。键盘(F/O/M/V/A/T/K/Y/J/P/X/R/[ ]/Enter/Esc)
  * 由画布全局键处理;对话框不做首字段聚焦(上游同款,键盘留给视图)。
  * 输出暂缺「新建文档」两项目标(我们的多标签文档模型未接会话内新文档,待办)。
  */
@@ -101,6 +102,38 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
             显示原始选区
           </button>
         </div>
+        {/* 边刷(上游 brush_controls;画布涂抹处=精修发生处,R 切换,[ ] 调径) */}
+        <div className={sectionCls}>边刷</div>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={sm.brush} onChange={(e) => patch({ brush: e.target.checked })} className="accent-sky-600" />
+          边缘笔刷 (R)
+        </label>
+        {sm.brush ? (
+          <>
+            <label className="flex items-center gap-1.5">
+              <span className={`${labelCls} w-14`}>模式</span>
+              <select
+                value={sm.brushMode}
+                onChange={(e) => patch({ brushMode: e.target.value as 'add' | 'subtract' })}
+                className="flex-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-300"
+              >
+                <option value="add">扩展检测区域</option>
+                <option value="subtract">恢复原始边缘</option>
+              </select>
+            </label>
+            <Slider label="大小" value={sm.brushSize} min={1} max={1000} suffix="px" onChange={(v) => patch({ brushSize: Math.round(v) })} />
+            <div className="text-[10px] text-neutral-500 dark:text-neutral-400">在图像上涂抹头发或毛发等细节;Alt 涂出另一模式</div>
+          </>
+        ) : null}
+        {sm.refineStrokes.length > 0 ? (
+          <button
+            onClick={() => patch({ refineStrokes: [] })}
+            title="清除已画的边刷笔划"
+            className="px-2 py-0.5 rounded text-[10px] self-start bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300"
+          >
+            清除笔刷笔划
+          </button>
+        ) : null}
         {/* 全局精修(上游 spec 顺序) */}
         <div className={sectionCls}>全局精修</div>
         <Slider label="半径" value={sm.radius} min={0} max={250} suffix="px" onChange={(v) => patch({ radius: v })} />
@@ -142,6 +175,7 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
               radius: 0, smartRadius: false, smooth: 0, feather: 0, contrast: 0, shiftEdge: 0,
               decontaminate: false, amount: 100, sampleAllLayers: false,
               showEdge: false, showOriginal: false,
+              brush: false, brushMode: 'add', brushSize: 30, refineStrokes: [],
             })}
             className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300"
           >

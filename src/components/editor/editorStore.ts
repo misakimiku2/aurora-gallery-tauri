@@ -5,7 +5,7 @@
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
-import { chainSegments } from './toolLogic';
+import { chainSegments, selectMaskPaintStroke, type SelectMaskStroke } from './toolLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
@@ -220,8 +220,13 @@ export interface SelectMaskState {
   showOriginal: boolean;
   /** X 按住:临时显示原图。 */
   hideView: boolean;
-  /** 预览产物:精修选区轮廓(文档坐标段;泵写,MarchingAnts 视图蚂蚁线用)。 */
+  /** 精修选区轮廓(文档坐标段;泵写,MarchingAnts 视图蚂蚁线用)。 */
   outline: number[][] | null;
+  // 边刷(上游 __brush/__brushMode/__brushSize + refineStrokes;UI 态,不进 prefs)
+  brush: boolean;
+  brushMode: 'add' | 'subtract';
+  brushSize: number;
+  refineStrokes: SelectMaskStroke[];
 }
 
 const SELECT_MASK_PREFS_KEY = 'aurora-editor:select-mask-fields';
@@ -291,6 +296,10 @@ export function openSelectMask(tabId: string): boolean {
     showOriginal: false,
     hideView: false,
     outline: null,
+    brush: false,
+    brushMode: 'add',
+    brushSize: 30,
+    refineStrokes: [],
   };
   notify(tabId);
   return true;
@@ -306,6 +315,18 @@ export function updateSelectMask(tabId: string, patch: Partial<SelectMaskState>)
   if (!s?.selectMask?.open) return;
   s.selectMask = { ...s.selectMask, ...patch };
   notify(tabId);
+}
+
+/** 边刷在文档点 `at` 涂抹(start=新开一笔;subtract=Alt 反向;上游 canvas_brush→paint)。
+ * 关闭时忽略;近点被点距过滤=同一引用直接返回(零通知),否则经 updateSelectMask
+ * 通知→selectMaskKey 触发泵重算预览。 */
+export function paintSelectMaskStroke(tabId: string, at: [number, number], start: boolean, subtract: boolean): void {
+  const s = sessions.get(tabId);
+  const sm = s?.selectMask;
+  if (!sm?.open || !sm.brush) return;
+  const next = selectMaskPaintStroke(sm.refineStrokes, at, start, subtract, sm.brushSize);
+  if (next === sm.refineStrokes) return;
+  updateSelectMask(tabId, { refineStrokes: next });
 }
 
 /** 关闭对话框(commit=确定:记上次标量值;取消:丢弃一切)。 */
@@ -334,6 +355,7 @@ export function confirmSelectMask(tabId: string): void {
     amount: sm.amount,
     output: sm.output,
     sampleAllLayers: sm.sampleAllLayers,
+    ...(sm.refineStrokes.length > 0 ? { refineStrokes: sm.refineStrokes } : {}),
     ...(sm.targetMask ? { target: 'mask' } : {}),
   };
   void runCommand(tabId, 'select.refineEdge', params)

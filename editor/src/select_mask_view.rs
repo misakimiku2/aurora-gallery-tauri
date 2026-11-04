@@ -103,6 +103,7 @@ fn length(params: &Value, key: &str, k: u32) -> f64 {
 }
 
 /// 单通道覆盖度:area 内为 values,其余为 outside(上游 Coverage)。
+#[derive(Clone)]
 struct Coverage {
     area: Rect,
     values: Vec<f32>,
@@ -144,6 +145,20 @@ impl Coverage {
         }
         let i = (y - self.area.y0) as usize * self.area.width() as usize + (x - self.area.x0) as usize;
         self.values.get(i).copied().unwrap_or(self.outside)
+    }
+
+    /// 边缘带随边刷变化:涂抹区加入、恢复区退出(上游 with_brush)。
+    fn with_brush(self, brush: Option<&matting::EdgeBrush>, canvas: Rect) -> Coverage {
+        let Some(brush) = brush else { return self };
+        let area = self.area.union(&brush.bounds()).intersect(&canvas);
+        let values = (area.y0..area.y1)
+            .flat_map(|y| (area.x0..area.x1).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let (v, b) = (self.at(x, y), brush.at(x, y));
+                if b >= 0.0 { v.max(b) } else { v * (1.0 + b) }
+            })
+            .collect();
+        Coverage { area, values, outside: self.outside }
     }
 
     /// GRAY8 蒙版面,f(coverage)(上游 surface)。
@@ -249,6 +264,26 @@ fn show(doc: &mut Document, active: Option<LayerId>, view: &View, coverage: &Cov
     }
 }
 
+/// `refineStrokes` JSON → 缩放后的笔划(上游 scaled_strokes:点/径 ÷k,mode 折 add)。
+fn scaled_strokes(params: &Value, k: u32) -> Option<Vec<matting::EdgeStroke>> {
+    let k = k.max(1) as f32;
+    params
+        .get("refineStrokes")?
+        .as_array()?
+        .iter()
+        .map(|s| {
+            let points = s
+                .get("points")?
+                .as_array()?
+                .iter()
+                .map(|p| Some((p.get(0)?.as_f64()? as f32 / k, p.get(1)?.as_f64()? as f32 / k)))
+                .collect::<Option<Vec<_>>>()?;
+            let size = (s.get("size").and_then(Value::as_f64).unwrap_or(30.0) as f32 / k).max(1.0);
+            Some(matting::EdgeStroke { points, size, add: s.get("mode").and_then(Value::as_str) != Some("subtract") })
+        })
+        .collect()
+}
+
 /// Select and Mask 预览:代理文档按 `view` 展示精修后的选区(上游 preview_document)。
 /// 返回合成 RGBA(代理分辨率)+ 精修选区轮廓(×k 回文档空间)。
 pub fn preview_view(doc: &Document, active: Option<LayerId>, params: &Value, view: &View) -> Result<ViewResult, String> {
@@ -262,7 +297,8 @@ pub fn preview_view(doc: &Document, active: Option<LayerId>, params: &Value, vie
         .or_else(|| active.and_then(|id| proxy.layer(id)).and_then(|l| l.mask.as_ref()).map(|m| m.surface.clone()));
     let canvas = Rect::new(0, 0, proxy.size.width as i32, proxy.size.height as i32);
     let coverage = if view.show_edge {
-        Coverage::edge_band(original.as_ref(), canvas, length(params, "radius", k).round().clamp(1.0, 250.0) as usize)
+        let band = Coverage::edge_band(original.as_ref(), canvas, length(params, "radius", k).round().clamp(1.0, 250.0) as usize);
+        band.with_brush(scaled_strokes(params, k).as_deref().and_then(|s| matting::EdgeBrush::new(s, canvas)).as_ref(), canvas)
     } else if view.show_original {
         Coverage::read(original.as_ref(), canvas)
     } else {
@@ -287,4 +323,52 @@ pub fn preview_view(doc: &Document, active: Option<LayerId>, params: &Value, vie
         })
         .unwrap_or_default();
     Ok(ViewResult { width: img.width, height: img.height, rgba: img.pixels, outline, k })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use photocraft_color::PixelFormat;
+
+    use matting::EdgeStroke;
+
+    #[test]
+    fn scaled_strokes_divide_by_k_and_fold_mode() {
+        let params = json!({"refineStrokes": [
+            {"points": [[100.0, 200.0], [300.0, 400.0]], "size": 50.0, "mode": "subtract"},
+            {"points": [[8.0, 8.0]], "size": 20.0, "mode": "add"},
+        ]});
+        let strokes = scaled_strokes(&params, 2).expect("strokes");
+        assert_eq!(strokes.len(), 2);
+        assert_eq!(strokes[0].points, vec![(50.0, 100.0), (150.0, 200.0)]);
+        assert_eq!(strokes[0].size, 25.0);
+        assert!(!strokes[0].add);
+        assert_eq!(strokes[1].points, vec![(4.0, 4.0)]);
+        assert!(strokes[1].add);
+        assert!(scaled_strokes(&json!({}), 1).is_none());
+    }
+
+    #[test]
+    fn brush_joins_the_band_and_restored_leaves_it() {
+        let canvas = Rect::new(0, 0, 64, 64);
+        let mut sel = Surface::new(PixelFormat::GRAY8);
+        sel.fill_rect(Rect::new(0, 0, 32, 64), &[1.0]);
+        let band = Coverage::edge_band(Some(&sel), canvas, 2);
+        // 边缘带外(x=60)原本覆盖 0:一笔 add 涂抹后加入(b>=0 → max),一笔 subtract 衰减原值。
+        let strokes = [EdgeStroke { points: vec![(60.0, 10.0)], size: 8.0, add: true }];
+        let brushed = band.clone().with_brush(matting::EdgeBrush::new(&strokes, canvas).as_ref(), canvas);
+        assert!(brushed.at(60, 10) > 0.9, "painted area joins the band: {}", brushed.at(60, 10));
+        // x=10 在选区内部深处(band 外?edge_band 是 grown−shrunk 带内>0;深处 = 0)
+        // 用带内点(x=32 附近)验 subtract:v*(1+b) 低于原 v。
+        let inner = band.at(31, 32);
+        if inner > 0.0 {
+            let strokes = [EdgeStroke { points: vec![(31.0, 32.0)], size: 10.0, add: false }];
+            let brushed = band.clone().with_brush(matting::EdgeBrush::new(&strokes, canvas).as_ref(), canvas);
+            let after = brushed.at(31, 32);
+            assert!(after < inner, "restored point leaves the band: {inner} → {after}");
+        }
+        // 无笔刷时原样返回。
+        let plain = band.clone().with_brush(None, canvas);
+        assert_eq!(plain.at(31, 32), inner);
+    }
 }
