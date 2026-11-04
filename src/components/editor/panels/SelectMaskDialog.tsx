@@ -49,8 +49,38 @@ const Slider: React.FC<{
 export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   React.useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  // 标题栏拖拽(null=默认顶部居中;拖过后记 fixed 位置,跨开合保留)
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  const dragRef = React.useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const s = getSession(tabId);
   const sm = s?.selectMask;
+  // 每次打开钳进视口(窗口缩放后旧位置可能出屏)
+  React.useLayoutEffect(() => {
+    if (!sm?.open) return;
+    setPos((p) => (p ? { x: Math.min(Math.max(p.x, 4), window.innerWidth - 384), y: Math.min(Math.max(p.y, 4), window.innerHeight - 120) } : null));
+  }, [sm?.open]);
+  const onTitlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const r = cardRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const base = pos ?? { x: r.left, y: r.top };
+    setPos(base);
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: base.x, oy: base.y };
+    (e.target as Element).setPointerCapture(e.pointerId);
+  };
+  const onTitlePointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setPos({
+      x: Math.min(Math.max(d.ox + e.clientX - d.sx, 4), window.innerWidth - 384),
+      y: Math.min(Math.max(d.oy + e.clientY - d.sy, 4), window.innerHeight - 120),
+    });
+  };
+  const onTitlePointerUp = (e: React.PointerEvent) => {
+    dragRef.current = null;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+  };
   if (!s || !sm?.open) return null;
 
   const op = sm.viewOpacity[sm.viewMode] ?? selectMaskDefaultOpacity(sm.viewMode);
@@ -62,10 +92,19 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
   return createPortal(
     <div className="fixed inset-0 z-[900] flex items-start justify-center pt-14 pointer-events-none">
       <div
+        ref={cardRef}
         className="pointer-events-auto w-[380px] max-h-[80vh] overflow-y-auto rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-3 text-[11px] flex flex-col gap-1.5"
+        style={pos ? { position: 'fixed', left: pos.x, top: pos.y } : undefined}
         onKeyDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center">
+        <div
+          className="flex items-center cursor-grab active:cursor-grabbing select-none touch-none shrink-0"
+          title="按住拖动窗口"
+          onPointerDown={onTitlePointerDown}
+          onPointerMove={onTitlePointerMove}
+          onPointerUp={onTitlePointerUp}
+          onPointerCancel={onTitlePointerUp}
+        >
           <span className="text-[12px] font-medium">选择并遮住</span>
           <div className="flex-1" />
           <span className="text-[10px] text-neutral-500 dark:text-neutral-400">F 循环视图 · X 按住看原图 · Enter 确定 Esc 取消</span>
