@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -1665,7 +1665,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // Select and Mask 入口(Ctrl+Alt+R,上游 Cmd+Alt+R):有选区或活动层有蒙版才可用
       if (e.code === 'KeyR' && e.ctrlKey && e.altKey) {
         e.preventDefault();
-        openSelectMask(tabId);
+        // 打不开(无选区无蒙版)给提示;成功=对话框弹出已是显眼反馈。
+        // 注意:键被系统热键抢占时这里根本收不到,选项条按钮是无快捷键依赖的入口
+        if (!openSelectMask(tabId)) showEditorNotice('选择并遮住:需要先有选区,或活动层带蒙版');
         return;
       }
       // 对话框打开期间接管视图键(输入框聚焦让位):F 循环/O M V A T K Y 直选/J P 切换/
@@ -1709,11 +1711,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           updateSelectMask(tabId, { showOriginal: !sm.showOriginal });
           return;
         }
-        // R:边刷开关;[ ] 调边刷直径(上游 apply_key:×0.9/×1.1 且至少 ±1,钳 1..1000;
+        // R:边刷开关(提示条反馈生效态——唯一可见变化是小复选框+光标,不加提示难感知);
+        // [ ] 调边刷直径(上游 apply_key:×0.9/×1.1 且至少 ±1,钳 1..1000;
         // 中文 IME 下 e.key 是全角【】,按 e.code 兜底——与画笔笔径键同款口径)
         if (key === 'r') {
           e.preventDefault();
           updateSelectMask(tabId, { brush: !sm.brush });
+          showEditorNotice(sm.brush ? '边刷已关闭' : '边刷已开启:在画布上涂抹 · Alt 反向 · [ ] 调直径');
           return;
         }
         if (e.key === '[' || e.key === ']' || e.code === 'BracketLeft' || e.code === 'BracketRight') {

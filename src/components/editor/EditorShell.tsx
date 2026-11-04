@@ -7,7 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { Undo2, Redo2, Save, SaveAll, FileOutput, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
-import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeSession, updateSession } from './editorStore';
+import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeEditorNotice, subscribeSession, updateSession, type EditorNotice } from './editorStore';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { SelectMaskDialog } from './panels/SelectMaskDialog';
@@ -145,6 +145,26 @@ export const EditorShell: React.FC<{
         <EditorCanvas tabId={tabId} isActive={isActive} />
       </div>
       <SelectMaskDialog tabId={tabId} />
+      <EditorNoticeToast />
+    </div>
+  );
+};
+
+/** 编辑器内状态提示条(底部居中毛玻璃,2.6s 自动消失;showEditorNotice 触发)。 */
+const NOTICE_MS = 2600;
+const EditorNoticeToast: React.FC = () => {
+  const [n, setN] = useState<EditorNotice | null>(null);
+  useEffect(() => subscribeEditorNotice(setN), []);
+  useEffect(() => {
+    if (!n) return undefined;
+    const t = setTimeout(() => setN(null), NOTICE_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [n?.seq]);
+  if (!n) return null;
+  return (
+    <div className="fixed bottom-7 left-1/2 -translate-x-1/2 z-[950] px-3 py-1.5 rounded-md bg-black/70 dark:bg-black/60 backdrop-blur-md text-white/90 text-[11px] shadow-[0_4px_18px_rgba(0,0,0,0.3)] pointer-events-none whitespace-nowrap">
+      {n.text}
     </div>
   );
 };

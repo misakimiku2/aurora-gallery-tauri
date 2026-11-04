@@ -233,7 +233,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           <button
             onClick={() => openSelectMask(tabId)}
             disabled={!s.state?.hasSelection && !s.state?.layers.find((l) => l.id === s.state?.activeLayer)?.hasMask}
-            title="选择并遮住…(Ctrl+Alt+R)"
+            title="选择并遮住…(Ctrl+Alt+R;快捷键被系统热键占用时用此按钮)"
             className="px-2 py-0.5 rounded text-[11px] shrink-0 bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             选择并遮住…

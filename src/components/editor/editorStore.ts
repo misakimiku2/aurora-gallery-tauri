@@ -377,6 +377,32 @@ export function setOptions(tabId: string, patch: Partial<ToolOptions>): void {
   notify(tabId);
 }
 
+// ===== 编辑器内状态提示(轻量 toast;与画布订阅解耦,跨组件直达)=====
+
+/** 编辑器状态提示(text 展示于底部居中,seq 区分同文本连发以重置计时)。 */
+export interface EditorNotice {
+  text: string;
+  seq: number;
+}
+
+let editorNotice: EditorNotice | null = null;
+let editorNoticeSeq = 0;
+const noticeListeners = new Set<(n: EditorNotice | null) => void>();
+
+/** 弹一条编辑器内提示(2.6s 自动消失;纯状态反馈,不阻断交互)。 */
+export function showEditorNotice(text: string): void {
+  editorNotice = { text, seq: ++editorNoticeSeq };
+  noticeListeners.forEach((fn) => fn(editorNotice));
+}
+
+export function subscribeEditorNotice(fn: (n: EditorNotice | null) => void): () => void {
+  noticeListeners.add(fn);
+  fn(editorNotice);
+  return () => {
+    noticeListeners.delete(fn);
+  };
+}
+
 export function subscribeSession(tabId: string, fn: () => void): () => void {
   let set = listeners.get(tabId);
   if (!set) {

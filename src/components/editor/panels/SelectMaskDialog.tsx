@@ -12,7 +12,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   closeSelectMask, confirmSelectMask, getSession, SELECT_MASK_MODES, SELECT_MASK_MODE_ZH,
-  SELECT_MASK_OUTPUTS, SELECT_MASK_OUTPUT_ZH, selectMaskDefaultOpacity, subscribeSession, updateSelectMask,
+  SELECT_MASK_OUTPUTS, SELECT_MASK_OUTPUT_ZH, selectMaskDefaultOpacity, showEditorNotice, subscribeSession, updateSelectMask,
   type SelectMaskMode,
 } from '../editorStore';
 
@@ -105,7 +105,14 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
         {/* 边刷(上游 brush_controls;画布涂抹处=精修发生处,R 切换,[ ] 调径) */}
         <div className={sectionCls}>边刷</div>
         <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={sm.brush} onChange={(e) => patch({ brush: e.target.checked })} className="accent-sky-600" />
+          <input
+            type="checkbox" checked={sm.brush}
+            onChange={(e) => {
+              patch({ brush: e.target.checked });
+              showEditorNotice(e.target.checked ? '边刷已开启:在画布上涂抹 · Alt 反向 · [ ] 调直径' : '边刷已关闭');
+            }}
+            className="accent-sky-600"
+          />
           边缘笔刷 (R)
         </label>
         {sm.brush ? (
@@ -127,7 +134,10 @@ export const SelectMaskDialog: React.FC<{ tabId: string }> = ({ tabId }) => {
         ) : null}
         {sm.refineStrokes.length > 0 ? (
           <button
-            onClick={() => patch({ refineStrokes: [] })}
+            onClick={() => {
+              patch({ refineStrokes: [] });
+              showEditorNotice('已清除边刷笔划');
+            }}
             title="清除已画的边刷笔划"
             className="px-2 py-0.5 rounded text-[10px] self-start bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300"
           >
