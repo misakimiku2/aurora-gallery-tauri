@@ -43,8 +43,15 @@ export interface ToolOptions {
   moveAutoSelect: boolean;
   /** Auto-Select 的拾取目标(PS 选项条 图层/组 下拉;组=最外层编组)。 */
   moveTarget: 'layer' | 'group';
-  /** 裁剪比例预设(上游 crop_ratio key):''=自由/original=原始比例/1:1/4:5/5:7/2:3/16:9。 */
+  /** 裁剪比例预设(上游 crop_ratio key):''=自由/whr=W×H×分辨率/original=原始比例/
+   * 1:1/4:5/5:7/2:3/16:9/preset:*=尺寸预设/front=前景图像(即用即弃)。 */
   cropRatio: string;
+  /** W×H×分辨率模式的长度字段(带单位,"4 in"/"1024 px";空=自由该侧)。 */
+  cropWidth: string;
+  cropHeight: string;
+  /** 分辨率字段(数字)与单位。 */
+  cropResolution: string;
+  cropResolutionUnit: 'px/in' | 'px/cm';
   /** 裁剪角度约束(旋转吸附 15° 步进)常开;按住 Shift 临时反转。 */
   cropSnapAngle: boolean;
   /** 磁性套索检测宽度(上游 magnetic_width,1..256 px,默认 10):跟随边缘的走廊半径。 */
@@ -175,6 +182,10 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       moveTarget: 'layer',
       cropRatio: '',
       cropSnapAngle: false,
+      cropWidth: '',
+      cropHeight: '',
+      cropResolution: '',
+      cropResolutionUnit: 'px/in',
       magneticWidth: 10,
       magneticContrast: 10,
       magneticFrequency: 57,

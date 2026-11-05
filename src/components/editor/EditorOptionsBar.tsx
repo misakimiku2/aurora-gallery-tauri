@@ -12,6 +12,7 @@ import { BLEND_ZH } from './editorTypes';
 import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
+import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetFields } from './cropSize';
 import { EditorSelect } from './editorSelect';
 import { runCommand } from './editorStore';
 
@@ -49,6 +50,16 @@ const CROP_RATIOS: { v: string; label: string }[] = [
   { v: '5:7', label: '5 : 7' },
   { v: '2:3', label: '2 : 3' },
   { v: '16:9', label: '16 : 9' },
+];
+
+/** 裁剪比例下拉全量(上游 crop_size::dropdown_options:自由 → W×H×分辨率 → 比例预设 →
+ * 尺寸预设 → 前景图像)。 */
+const CROP_MENU: { v: string; label: string }[] = [
+  CROP_RATIOS[0],
+  { v: 'whr', label: 'W × H × 分辨率' },
+  ...CROP_RATIOS.slice(1),
+  ...WHR_PRESETS.map((p) => ({ v: p.key, label: p.label })),
+  { v: 'front', label: '前景图像' },
 ];
 
 export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
@@ -260,9 +271,66 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             className="flex items-center gap-1 px-2 h-6 rounded border border-black/15 dark:border-white/15 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10"
             title="比例预设:选定后当前框按比例内缩适配;拖画与调把手时保持该比例"
           >
-            比例:{CROP_RATIOS.find((r) => r.v === s.options.cropRatio)?.label ?? '自由'}
+            比例:{CROP_MENU.find((r) => r.v === s.options.cropRatio)?.label ?? '自由'}
             <ChevronDown size={11} />
           </button>
+          {isWhrKey(s.options.cropRatio) ? (
+            <>
+              <label className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400" title="输出宽度(可带单位:px/in/cm/mm;裸数字沿用上次单位)">
+                W
+                <input
+                  value={s.options.cropWidth}
+                  onChange={(e) => {
+                    setOptions(tabId, { cropWidth: normalizeLength(e.target.value, s.options.cropWidth) });
+                    s.runtime.cropFitRatio?.();
+                  }}
+                  placeholder="1024 px"
+                  className="w-20 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-200"
+                />
+              </label>
+              <label className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400" title="输出高度(可带单位)">
+                H
+                <input
+                  value={s.options.cropHeight}
+                  onChange={(e) => {
+                    setOptions(tabId, { cropHeight: normalizeLength(e.target.value, s.options.cropHeight) });
+                    s.runtime.cropFitRatio?.();
+                  }}
+                  placeholder="768 px"
+                  className="w-20 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-200"
+                />
+              </label>
+              <label className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400" title="输出分辨率:物理单位按它换算;提交时写入文档(空=沿用文档 ppi;仅填分辨率=只改 ppi 不重采样)">
+                分辨率
+                <input
+                  value={s.options.cropResolution}
+                  onChange={(e) => setOptions(tabId, { cropResolution: normalizeResolution(e.target.value, s.options.cropResolution) })}
+                  placeholder="300"
+                  className="w-14 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-200"
+                />
+              </label>
+              <EditorSelect
+                value={s.options.cropResolutionUnit}
+                onChange={(v) => setOptions(tabId, { cropResolutionUnit: v as 'px/in' | 'px/cm' })}
+                title="分辨率单位"
+                className="w-20"
+                options={[
+                  { value: 'px/in', label: 'px/in' },
+                  { value: 'px/cm', label: 'px/cm' },
+                ]}
+              />
+              <button
+                title="交换 W 与 H (X)"
+                onClick={() => {
+                  setOptions(tabId, { cropWidth: s.options.cropHeight, cropHeight: s.options.cropWidth });
+                  s.runtime.cropFitRatio?.();
+                }}
+                className="px-2 py-0.5 rounded border border-black/15 dark:border-white/15 text-[11px] text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10"
+              >
+                ⇄
+              </button>
+            </>
+          ) : null}
           <label className="flex items-center gap-1 text-[11px] text-neutral-500 dark:text-neutral-400" title="裁剪框角度(度,顺时针为正);输入后回车应用">
             角度
             <input
@@ -328,20 +396,44 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                 ref={ratioMenuRef}
                 className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max"
               >
-                {CROP_RATIOS.map((r) => (
-                  <div
-                    key={r.v || 'free'}
-                    className="mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px] flex items-center gap-2"
-                    onClick={() => {
-                      setOptions(tabId, { cropRatio: r.v });
-                      if (r.v) s.runtime.cropFitRatio?.();
-                      setRatioOpen(false);
-                    }}
-                  >
-                    <span>{r.label}</span>
-                    {s.options.cropRatio === r.v && <Check size={12} className="ml-auto opacity-80" />}
-                  </div>
-                ))}
+                {CROP_MENU.map((r) => {
+                  const preset = whrPresetFields(r.v);
+                  return (
+                    <div
+                      key={r.v || 'free'}
+                      className="mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px] flex items-center gap-2"
+                      onClick={() => {
+                        if (r.v === 'front') {
+                          // 前景图像:按文档尺寸(px)+文档分辨率回填字段并立即应用
+                          // (上游 Front Image 即用即弃,裁剪工具内 I 键同款)
+                          const doc = s.state;
+                          if (doc) {
+                            setOptions(tabId, {
+                              cropRatio: 'whr',
+                              cropWidth: `${doc.width} px`,
+                              cropHeight: `${doc.height} px`,
+                              cropResolution: doc.resolution ? String(Math.round(doc.resolution)) : '',
+                            });
+                            s.runtime.cropFitRatio?.();
+                          }
+                          setRatioOpen(false);
+                          return;
+                        }
+                        // 尺寸预设:字段一并回填并切到 W×H×分辨率模式(preset key 不保留,
+                        // 上游 crop_size::chosen 口径);比例预设只换 key
+                        setOptions(tabId, {
+                          cropRatio: preset ? 'whr' : r.v,
+                          ...(preset ? { cropWidth: preset.w, cropHeight: preset.h, cropResolution: preset.res, cropResolutionUnit: 'px/in' as const } : {}),
+                        });
+                        if (r.v) s.runtime.cropFitRatio?.();
+                        setRatioOpen(false);
+                      }}
+                    >
+                      <span>{r.label}</span>
+                      {s.options.cropRatio === r.v && <Check size={12} className="ml-auto opacity-80" />}
+                    </div>
+                  );
+                })}
               </div>,
               document.body,
             )}

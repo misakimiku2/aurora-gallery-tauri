@@ -12,7 +12,8 @@ import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, closeExportDialog, closeSelectMask, confirmExportDialog, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
-import type { EditorSession } from './editorStore';
+import type { EditorSession, ToolOptions } from './editorStore';
+import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
@@ -48,8 +49,10 @@ const CROSSHAIR_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(CROSSHAIR
 /** 裁剪手势的回退快照(press 时的框;尺寸不满足/取消时恢复)。 */
 type CropRestore = { rect: CropRect; angle: number; edited: boolean };
 
-/** 裁剪比例预设 key → width/height(上游 chrome_ui::crop_ratio;'original'=文档尺寸)。 */
-function cropPresetRatioOf(key: string, docW: number, docH: number): number | null {
+/** 裁剪比例预设 key → width/height(上游 chrome_ui::crop_ratio;'original'=文档尺寸;
+ * whr/preset:*=W×H×分辨率模式,按字段换算,上游 crop_size::ratio)。 */
+function cropPresetRatioOf(key: string, o: ToolOptions, docW: number, docH: number, docDpi: number): number | null {
+  if (isWhrKey(key)) return whrRatio(o, docDpi);
   if (!key) return null;
   const [w, h] = key === 'original' ? [docW, docH] : key.split(':').map(Number);
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
@@ -1451,6 +1454,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       height: Math.max(1, Math.round(f.rect[3] - f.rect[1])),
     };
     if (Math.abs(f.angle) > 1e-9) params.angle = f.angle;
+    // W×H×分辨率模式:裁剪区重采样到精确 W×H + 写文档分辨率(引擎 image.crop target,
+    // 一步完成;W/H 未填=不重采样,仅分辨率=只改 ppi;上游 crop_size::commit_params)
+    if (isWhrKey(s.options.cropRatio)) Object.assign(params, whrCommitParams(s.options, s.state.resolution || 72));
     void runCommand(tabId, 'image.crop', params)
       .then(() => {
         // 裁剪后适配视图(上游 fit_pending)
@@ -1511,10 +1517,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       cropRef.current = { rect, angle: 0, edited: false };
     }
     const f = cropRef.current;
-    const preset = cropPresetRatioOf(st.options.cropRatio, st.state.width, st.state.height);
+    const preset = cropPresetRatioOf(st.options.cropRatio, st.options, st.state.width, st.state.height, st.state.resolution || 72);
     if (f && preset != null) {
       const fitted = cropFittedRatio(f.rect, preset);
-      if (fitted) cropRef.current = { ...f, rect: fitted };
+      if (fitted) {
+        // W×H×分辨率:输出尺寸=显式指令,适配后的框=待提交裁剪(上游 #6750 sized→keyed);
+        // 普通比例预设适配默认框不算编辑(#6750)
+        cropRef.current = { ...f, rect: fitted, edited: isWhrKey(st.options.cropRatio) ? true : f.edited };
+      }
     }
     scheduleDraw();
   }, [tabId, scheduleDraw]);
@@ -2135,6 +2145,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (e.altKey) return;
       const k = e.key.toLowerCase();
       if (k === 'x') {
+        // W×H×分辨率模式:X=交换 W 与 H(上游 swap 口径);其余工具=交换前/背景色
+        if (s.tool === 'crop' && isWhrKey(s.options.cropRatio)) {
+          setOptions(tabId, { cropWidth: s.options.cropHeight, cropHeight: s.options.cropWidth });
+          s.runtime.cropFitRatio?.();
+          return;
+        }
         void runCommand(tabId, 'tools.swapColors', {}).catch(console.error);
       } else if (k === 'd') {
         void runCommand(tabId, 'tools.defaultColors', {}).catch(console.error);
@@ -2585,7 +2601,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const cd = cropDragRef.current;
     if (cd) {
       const f = cropRef.current!;
-      const preset = cropPresetRatioOf(s.options.cropRatio, s.state.width, s.state.height);
+      const preset = cropPresetRatioOf(s.options.cropRatio, s.options, s.state.width, s.state.height, s.state.resolution || 72);
       if (cd.kind === 'draw') {
         cropRef.current = { rect: cropDrawn(cd.anchor, [dx, dy], preset, e.shiftKey, e.altKey), angle: 0, edited: true };
       } else if (cd.kind === 'move') {
