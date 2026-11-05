@@ -18,7 +18,7 @@ import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMa
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextLassoTool, nextMarqueeShape,
+  isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
@@ -2065,6 +2065,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'l') {
         // L 键套索组循环:自由套索 ⇄ 多边形套索(上游 lasso 组 L 循环口径)
         setTool(tabId, nextLassoTool(getSession(tabId)?.tool));
+      } else if (k === 'g') {
+        // G 键渐变组循环:渐变 ⇄ 油漆桶(上游 Tool::Gradient|PaintBucket 同键 'G' 口径)
+        setTool(tabId, nextGradientTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }

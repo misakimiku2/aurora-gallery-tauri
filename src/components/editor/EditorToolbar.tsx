@@ -33,7 +33,7 @@ const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'brush', label: '画笔 (B)', icon: 'brush' },
   { tool: 'eraser', label: '橡皮擦 (E)', icon: 'eraser' },
   { tool: 'gradient', label: '渐变 (G)', icon: 'gradient' },
-  { tool: 'bucket', label: '油漆桶 (K)', icon: 'paint-bucket' },
+  { tool: 'bucket', label: '油漆桶 (G 循环)', icon: 'paint-bucket' },
   { tool: 'blur', label: '模糊 (R)', icon: 'droplet' },
   { tool: 'sharpen', label: '锐化 (U)', icon: 'triangle' },
   { tool: 'smudge', label: '涂抹 (S)', icon: 'pointer' },

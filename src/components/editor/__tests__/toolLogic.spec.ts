@@ -5,9 +5,9 @@ import {
   cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
   gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, layerRampCss, marqueeParams, marqueeRect,
   midpointRemap, moveBounds, moveDirtyRect, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
-  nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
+  nextGradientTool, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMaskPaintStroke, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
-  strokeParams, TOOL_KEYS, trackMods,
+  strokeParams, TOOL_KEYS, trackMods, GRADIENT_GROUP,
 } from '../toolLogic';
 import type { SelectMaskStroke, StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -146,11 +146,22 @@ describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)'
 });
 
 describe('TOOL_KEYS', () => {
-  it('覆盖一期全部工具(M/L 键在画布层做组内循环,不在表内)', () => {
+  it('覆盖一期全部工具(M/L/G 键在画布层做组内循环,不在表内)', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
     expect(TOOL_KEYS.l).toBeUndefined();
-    expect(Object.keys(TOOL_KEYS)).toHaveLength(12);
+    expect(TOOL_KEYS.g).toBeUndefined();
+    expect(Object.keys(TOOL_KEYS)).toHaveLength(10);
+  });
+});
+
+describe('G 键渐变组循环(上游 Tool::Gradient|PaintBucket 同键)', () => {
+  it('渐变→油漆桶→渐变;不在组内回渐变;旧 K 键别名已废(PS 口径油漆桶无独立键)', () => {
+    expect(nextGradientTool('gradient')).toBe('bucket');
+    expect(nextGradientTool('bucket')).toBe('gradient');
+    expect(nextGradientTool('move')).toBe('gradient');
+    expect(nextGradientTool(undefined)).toBe('gradient');
+    expect(GRADIENT_GROUP.has('gradient') && GRADIENT_GROUP.has('bucket')).toBe(true);
   });
 });
 

@@ -238,10 +238,10 @@ export function sampleHex(
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M/L 键不在表内:选框/套索组内循环,由画布层处理。 */
+/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M/L/G 键不在表内:选框/套索/渐变组内循环,由画布层处理。 */
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', c: 'crop', i: 'eyedropper',
-  b: 'brush', e: 'eraser', g: 'gradient', k: 'bucket',
+  b: 'brush', e: 'eraser',
   r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
 };
 
@@ -253,6 +253,15 @@ export function nextLassoTool(current: EditorTool | undefined): EditorTool {
   if (current === 'lasso') return 'polygonLasso';
   if (current === 'polygonLasso') return 'magneticLasso';
   return 'lasso';
+}
+
+/** 渐变组工具(G 键循环,上游 Tool::Gradient|Tool::PaintBucket 同键 'G';我们旧版把油漆桶
+ * 挂在 K 上是自造偏离,统一回 PS 口径)。 */
+export const GRADIENT_GROUP: ReadonlySet<EditorTool> = new Set(['gradient', 'bucket']);
+
+/** G 键:组内循环 渐变→油漆桶→渐变;当前不在组内 → 回渐变。 */
+export function nextGradientTool(current: EditorTool | undefined): EditorTool {
+  return current === 'gradient' ? 'bucket' : 'gradient';
 }
 
 /** 多边形套索 Shift 45° 约束(上游 constrained_polygon_point 逐行移植:角度取 45° 整数倍,
