@@ -65,6 +65,12 @@ try {
     const [xe, ye] = pts[pts.length - 1];
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: xe, y: ye, button: btn, buttons: 0, clickCount: 1, modifiers: flags });
     console.log(cmd, 'done', mods.join('+'));
+  } else if (cmd === 'move') {
+    // move x y [mods]:纯指针移动无按键(悬停高亮等 hover 态测试)
+    const mods = (args[2] ?? '').split(',').filter(Boolean);
+    const flags = (mods.includes('ctrl') ? 2 : 0) | (mods.includes('shift') ? 8 : 0) | (mods.includes('alt') ? 1 : 0);
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: +args[0], y: +args[1], modifiers: flags });
+    console.log('move done');
   } else if (cmd === 'dblclick') {
     // dblclick x y [mods]:两轮 press/release,第二击 clickCount:2 才合成原生 dblclick
     // (React onDoubleClick 依赖原生事件;见 2026-11-04 冒烟坑)

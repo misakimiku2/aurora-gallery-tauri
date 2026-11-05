@@ -65,6 +65,14 @@ pub fn editor_magnetic_snap(s: State<EditorState>, doc: u64, p: [f64; 2], width:
     Ok(json!({ "point": point }))
 }
 
+/// 移动工具悬停高亮(上游 move_hover):点击会拾取的图层/组+可见内容边界
+/// (Background 除外)。文档零改动;前端按 revision+指针像素缓存。
+#[tauri::command]
+pub fn editor_move_hover(s: State<EditorState>, doc: u64, x: i32, y: i32, group: bool) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.move_hover(doc, x, y, group).map_err(|e| e.to_string())
+}
+
 /// 合成画布位图:给 maxW/maxH 时降采样(导航器/大图首屏),否则全分辨率。
 /// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
 #[tauri::command]

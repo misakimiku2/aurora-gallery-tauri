@@ -9,7 +9,7 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, closeExportDialog, closeSelectMask, confirmExportDialog, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
@@ -142,6 +142,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   } | null>(null);
   /** 按下代次:pointerdown/up 各自递增;Auto-Select 的异步 pick 链靠它核对按下是否已被抬起/替换。 */
   const moveSeqRef = useRef(0);
+  /** 移动工具悬停高亮(上游 move_hover):缓存键=doc:rev:像素:组,resting 指针零每帧开销。 */
+  const moveHoverRef = useRef<{ key: string; bounds: [number, number, number, number] | null } | null>(null);
+  const moveHoverBusy = useRef(false);
+  const moveHoverQueued = useRef<{ x: number; y: number; group: boolean } | null>(null);
   /** 层选框(move_box 口径:Auto-Select 命中空白/锁定层,拖框选层,松手 selectInRect)。 */
   const layerBoxRef = useRef<{ start: [number, number]; end: [number, number]; add: boolean } | null>(null);
   /** 浮动件已提交偏移(select.float 结果回读;脏矩形计算用,选区/revision 变了作废)。 */
@@ -303,6 +307,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     octx.strokeStyle = isDark ? '#ffffff66' : '#00000055';
     octx.lineWidth = 1;
     octx.strokeRect(v.ox - 0.5, v.oy - 0.5, dw + 1, dh + 1);
+
+    // overlay:移动工具悬停高亮(上游 move_hover::draw):点击会拾取的层/组可见内容边界,
+    // accent 色 1.5px 外描;无边界=无(Background/空白)。
+    if (s.tool === 'move' && moveHoverRef.current?.bounds && !moveDragRef.current) {
+      const [bx0, by0, bx1, by1] = moveHoverRef.current.bounds;
+      octx.strokeStyle = isDark ? '#38bdf8' : '#0284c7';
+      octx.lineWidth = 1.5;
+      octx.strokeRect(v.ox + bx0 * v.scale - 0.75, v.oy + by0 * v.scale - 0.75, (bx1 - bx0) * v.scale + 1.5, (by1 - by0) * v.scale + 1.5);
+    }
 
     // overlay:选区蚂蚁线——真实 mask 轮廓(editor_selection_outline,引擎侧 outline.rs
     // 按 0.5 阈值提边界段),加减/羽化/反选后的形状都正确;轮廓到达前的过渡帧画 bounds 框。
@@ -1192,6 +1205,31 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     layerBoxRef.current = { start: [x, y], end: [x, y], add };
     scheduleDraw();
   }, [scheduleDraw]);
+
+  /** 悬停高亮拾取(上游 move_hover::target 的取数侧):单飞+尾沿排队;缓存键命中直接跳过。 */
+  const fetchMoveHover = useCallback((x: number, y: number, group: boolean) => {
+    const s = getSession(tabId);
+    if (!s?.state || s.docId == null) return;
+    const key = `${s.docId}:${s.revision}:${Math.floor(x)}:${Math.floor(y)}:${group}`;
+    if (moveHoverRef.current?.key === key) return;
+    if (moveHoverBusy.current) {
+      moveHoverQueued.current = { x, y, group };
+      return;
+    }
+    moveHoverBusy.current = true;
+    void editorMoveHover(s.docId, Math.floor(x), Math.floor(y), group)
+      .then((r) => {
+        moveHoverRef.current = { key, bounds: r.bounds };
+        scheduleDraw();
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        moveHoverBusy.current = false;
+        const q = moveHoverQueued.current;
+        moveHoverQueued.current = null;
+        if (q) fetchMoveHover(q.x, q.y, q.group);
+      });
+  }, [tabId, scheduleDraw]);
 
   /** 移动工具落笔(上游 canvas.rs Move Down 分发):
    * ① 选区像素可浮动 → 直接切浮动(不做 Auto-Select,选中的像素就是活动层的);
@@ -2325,6 +2363,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy, e.shiftKey);
     } else if (s.tool === 'move' && e.button === 0 && s.state) {
       moveSeqRef.current += 1;
+      moveHoverRef.current = null; // 拖拽开始=悬停高亮消失(上游 pressed 分支)
       beginMoveDrag(s, dx, dy, { alt: e.altKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
     } else if (s.tool === 'lasso' && e.button === 0 && s.state) {
       // 套索:按下即起笔(上游绕过拖拽阈值口径),首点入列
@@ -2551,6 +2590,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       md.pending = { x: dx, y: dy, shift: e.shiftKey };
       void flushMove();
       return;
+    }
+    // 移动工具悬停高亮(上游 move_hover::target):Auto-Select 与 Ctrl 相异=高亮点击将
+    // 拾取的层/组(同点击 pick 测试);有选区+活动层像素层=会移动选区像素,不高亮;
+    // 按住任何键(拖拽中)不高亮。缓存键=doc:rev:像素:组,resting 指针零开销。
+    if (s.tool === 'move' && s.state && !e.buttons) {
+      const active = s.state.layers.find((l) => l.id === s.state?.activeLayer);
+      const movesPixels = s.state.hasSelection && active?.kind === 'Pixel';
+      if (s.options.moveAutoSelect !== e.ctrlKey && !movesPixels) {
+        fetchMoveHover(dx, dy, s.options.moveTarget === 'group');
+      } else if (moveHoverRef.current) {
+        moveHoverRef.current = null;
+        scheduleDraw();
+      }
+    } else if (s.tool !== 'move' && moveHoverRef.current) {
+      moveHoverRef.current = null;
+      scheduleDraw();
     }
     const lb = layerBoxRef.current;
     if (lb) {

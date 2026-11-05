@@ -184,6 +184,11 @@ export async function editorDuplicateMove(doc: number, dx: number, dy: number): 
   return invoke<{ revision: number; layers: number[] }>('editor_duplicate_move', { doc, dx, dy });
 }
 
+/** 移动工具悬停高亮(上游 move_hover):点击会拾取的层/组+可见内容边界(Background 除外)。 */
+export async function editorMoveHover(doc: number, x: number, y: number, group: boolean): Promise<{ layer: number | null; bounds: [number, number, number, number] | null }> {
+  return invoke<{ layer: number | null; bounds: [number, number, number, number] | null }>('editor_move_hover', { doc, x, y, group });
+}
+
 /** Alt 拖动的历史折叠:把 before(拖拽开始前 past_len)之后的复制+平移合并成一步 "Duplicate + Move"。 */
 export async function editorFoldDuplicateMove(doc: number, before: number): Promise<{ revision: number; historyCurrent: number }> {
   return invoke<{ revision: number; historyCurrent: number }>('editor_fold_duplicate_move', { doc, before });

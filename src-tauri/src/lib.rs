@@ -2152,6 +2152,7 @@ pub fn run() {
         editor_cmds::editor_export_preview,
         editor_cmds::editor_export_estimate,
         editor_cmds::editor_export_document,
+        editor_cmds::editor_move_hover,
         editor_cmds::editor_save_as,
         editor_cmds::editor_mask_snapshot,
         editor_cmds::editor_layer_thumbnail,

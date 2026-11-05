@@ -659,6 +659,44 @@ impl EditorManager {
         Ok(Rendered { width: img.width, height: img.height, pixels: img.pixels })
     }
 
+    /// 移动工具悬停高亮(上游 move_hover):返回点击会拾取的图层/组与它的可见内容边界
+    /// (组=可见子层并集;Background 除外——填满画布且移动工具不动它)。文档零改动,
+    /// 前端按 revision+指针像素缓存, resting 指针零每帧开销。
+    pub fn move_hover(&mut self, doc: u64, x: i32, y: i32, group: bool) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let target = photocraft_engine::pick_cmds::auto_select_target(&st.doc, x, y, group);
+        let bounds = target.and_then(|id| Self::hover_outline(&st.doc, id));
+        Ok(json!({
+            "layer": target.map(|l| l.0),
+            "bounds": bounds.map(|b| [b.x0, b.y0, b.x1, b.y1]),
+        }))
+    }
+
+    /// 悬停轮廓:被拾取层(组=可见子层并集,祖先链全部可见)的内容边界。
+    fn hover_outline(doc: &photocraft_engine::doc::Document, id: photocraft_engine::doc::LayerId) -> Option<Rect> {
+        if doc.is_background(id) {
+            return None;
+        }
+        fn union_layer(l: &photocraft_engine::doc::Layer, out: &mut Rect) {
+            if !l.visible {
+                return;
+            }
+            if let Some(s) = l.surface() {
+                *out = out.union(&s.content_bounds());
+            }
+            if let Some(ch) = l.children() {
+                for c in ch {
+                    union_layer(c, out);
+                }
+            }
+        }
+        let layer = doc.layer(id)?;
+        let mut b = Rect::EMPTY;
+        union_layer(layer, &mut b);
+        (!b.is_empty()).then_some(b)
+    }
+
     /// 保存(拍板:Ctrl+S **覆盖原图 + 同名 .psd 分层伴生**):
     /// ① 平面导出覆盖原图——不传 quality,引擎 `apply_file_encoding` 按打开时的
     ///    编码质量回写(PS Save 口径);`photocraft_format::atomic_write` 原子写,
