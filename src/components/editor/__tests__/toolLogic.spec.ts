@@ -21,6 +21,7 @@ const OPTS: ToolOptions = {
   marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57, magneticPressure: false,
+  cropWidth: '', cropHeight: '', cropResolution: '', cropResolutionUnit: 'px/in' as const,
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
