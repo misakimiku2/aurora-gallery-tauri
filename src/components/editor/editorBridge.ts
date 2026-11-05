@@ -145,6 +145,28 @@ export async function editorExportLayerPng(doc: number, layer: number, path: str
   return invoke<{ path: string; bytes: number; width: number; height: number }>('editor_export_layer_png', { doc, layer, path });
 }
 
+/** 导出为预览(代理定型合成,文档零改动):[srcW][srcH][w][h][RGBA]——图层级导出的 srcW/srcH=图层内容边界。 */
+export async function editorExportPreview(doc: number, layer: number | null, f: Record<string, unknown>): Promise<{ srcW: number; srcH: number; width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> }> {
+  const buf = await invoke<ArrayBuffer>('editor_export_preview', { doc, layer: layer ?? null, f });
+  const u8 = new Uint8Array(buf);
+  const view = new DataView(buf);
+  const srcW = view.getUint32(0, true);
+  const srcH = view.getUint32(4, true);
+  const w = view.getUint32(8, true);
+  const h = view.getUint32(12, true);
+  return { srcW, srcH, width: w, height: h, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + 16) };
+}
+
+/** 导出为文件大小估计(≤40MP 全量内存编码=精确,否则代理按像素数折算)。 */
+export async function editorExportEstimate(doc: number, layer: number | null, f: Record<string, unknown>): Promise<{ bytes: number; exact: boolean }> {
+  return invoke<{ bytes: number; exact: boolean }>('editor_export_estimate', { doc, layer: layer ?? null, f });
+}
+
+/** 导出为落盘(定型+编码+原子写;文档/会话路径零改动、不入历史)。 */
+export async function editorExportDocument(doc: number, layer: number | null, path: string, f: Record<string, unknown>): Promise<{ bytes: number; width: number; height: number; warnings: string[] }> {
+  return invoke<{ bytes: number; width: number; height: number; warnings: string[] }>('editor_export_document', { doc, layer: layer ?? null, path, f });
+}
+
 /**
  * 移动工具拖拽预览帧(photocraft move_ui 口径:拖动中纯函数合成,提交才一条命令)。
  * target="float":选区像素浮动,dx/dy 为自最近一次已提交偏移以来的增量;

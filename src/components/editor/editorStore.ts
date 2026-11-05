@@ -4,9 +4,10 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorDuplicateMove, editorExportLayerPng, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, type SelectMaskStroke } from './toolLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
+import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type { ViewTransform } from './viewMath';
 
@@ -112,6 +113,16 @@ export interface EditorSession {
   cropAngle: number;
   /** Select and Mask 对话框状态(会话级;null=未打开)。预览零文档改动,OK 一步 select.refineEdge。 */
   selectMask: SelectMaskState | null;
+  /** 导出为对话框状态(会话级;null=未打开)。定型走临时 Session,文档零改动、不入历史。 */
+  exportDialog: ExportDialogState | null;
+}
+
+/** 导出为对话框字段(上游 export_dialog 的 fields;srcW/srcH=源尺寸,图层级导出
+ * 打开时未知(0),首帧预览回填后种子 W/H 字段)。 */
+export interface ExportDialogState extends ExportSettingsJson {
+  layer: number | null;
+  srcW: number;
+  srcH: number;
 }
 
 const sessions = new Map<string, EditorSession>();
@@ -169,6 +180,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
     selectMask: null,
+    exportDialog: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -396,6 +408,129 @@ export function confirmSelectMask(tabId: string): void {
   void runCommand(tabId, 'select.refineEdge', params)
     .then(() => closeSelectMask(tabId, true))
     .catch((err) => console.error('[editor] select.refineEdge 失败', err));
+}
+
+// ===== 导出为对话框(上游 export_dialog;定型走临时 Session,文档零改动、不入历史)=====
+
+const EXPORT_PREFS_KEY = 'aurora-editor:export-as';
+/** 上游 SETTINGS:记忆的 14 键(path/源尺寸/图层不记,remembering_keeps_only_the_dialog_settings)。 */
+const EXPORT_SETTING_KEYS = [
+  'format', 'quality', 'lossless', 'transparency', 'scale', 'resample', 'metadata', 'tgaBits',
+  'sizing', 'width', 'height', 'lockAspect', 'profile', 'embedProfile',
+] as const;
+
+/** 导出为保存对话框的格式过滤器(按当前所选格式单选;Windows 依此换扩展名)。 */
+const EXPORT_FILTERS: Record<string, { name: string; extensions: string[] }> = {
+  png: { name: 'PNG 图片', extensions: ['png'] },
+  jpg: { name: 'JPEG 图片', extensions: ['jpg', 'jpeg'] },
+  webp: { name: 'WebP 图片', extensions: ['webp'] },
+  tif: { name: 'TIFF 图片', extensions: ['tif', 'tiff'] },
+  tga: { name: 'TGA 图片', extensions: ['tga'] },
+  ico: { name: 'ICO 图标', extensions: ['ico'] },
+};
+
+function loadExportPrefs(): Partial<ExportDialogState> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY) ?? 'null') as Record<string, unknown> | null;
+    if (!raw) return {};
+    const out: Record<string, unknown> = {};
+    for (const k of EXPORT_SETTING_KEYS) {
+      const v = raw[k];
+      if (validSetting(k, v)) out[k] = v;
+    }
+    return out as Partial<ExportDialogState>;
+  } catch {
+    return {};
+  }
+}
+
+function saveExportPrefs(ed: ExportDialogState): void {
+  try {
+    const out: Record<string, unknown> = {};
+    for (const k of EXPORT_SETTING_KEYS) out[k] = ed[k];
+    localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(out));
+  } catch {
+    /* 存储不可用忽略 */
+  }
+}
+
+/** 打开导出为(上游 open():默认值→记忆种子覆盖;layer=图层级导出,源尺寸待首帧
+ * 预览回填)。pixels 模式的显式尺寸跟记忆走(上游同款:上次导多大这次还多大)。 */
+export function openExportDialog(tabId: string, layer: number | null = null): boolean {
+  const s = sessions.get(tabId);
+  if (!s || s.docId == null || !s.state) return false;
+  const prefs = loadExportPrefs();
+  s.exportDialog = {
+    layer,
+    srcW: layer != null ? 0 : s.state.width,
+    srcH: layer != null ? 0 : s.state.height,
+    format: prefs.format ?? 'png',
+    quality: prefs.quality ?? 85,
+    lossless: prefs.lossless ?? true,
+    transparency: prefs.transparency ?? true,
+    metadata: prefs.metadata ?? 'none',
+    profile: prefs.profile ?? 'document',
+    embedProfile: prefs.embedProfile ?? true,
+    tgaBits: prefs.tgaBits ?? 'auto',
+    sizing: prefs.sizing ?? 'scale',
+    scale: prefs.scale ?? 100,
+    width: prefs.width ?? s.state.width,
+    height: prefs.height ?? s.state.height,
+    lockAspect: prefs.lockAspect ?? true,
+    resample: prefs.resample ?? 'bicubicAutomatic',
+  };
+  notify(tabId);
+  return true;
+}
+
+/** 更新对话框字段(字段变化=预览键变化,对话框泵自动重算)。 */
+export function updateExportDialog(tabId: string, patch: Partial<ExportDialogState>): void {
+  const s = sessions.get(tabId);
+  if (!s?.exportDialog) return;
+  s.exportDialog = { ...s.exportDialog, ...patch };
+  notify(tabId);
+}
+
+/** 关闭对话框(commit=确认导出后:记忆 14 键;取消:丢弃)。 */
+export function closeExportDialog(tabId: string, commit: boolean): void {
+  const s = sessions.get(tabId);
+  if (!s?.exportDialog) return;
+  if (commit) saveExportPrefs(s.exportDialog);
+  s.exportDialog = null;
+  notify(tabId);
+}
+
+/** 确定(上游 confirm):记忆设置 → 系统保存对话框(建议名=文档名/图层名.格式)→
+ * editorExportDocument 落盘 → showEditorNotice + 广播 aurora-editor-saved
+ * (导出目标在图库目录内时单文件重扫立即可见)。取消对话框=无副作用。 */
+export async function confirmExportDialog(tabId: string): Promise<void> {
+  const s = sessions.get(tabId);
+  const ed = s?.exportDialog;
+  if (!s || !ed || s.docId == null) return;
+  saveExportPrefs(ed);
+  const docName = s.state?.name ?? 'image';
+  const stem = ed.layer != null
+    ? exportLayerName(s.state?.layers.find((l) => l.id === ed.layer)?.name ?? 'layer')
+    : exportLayerName(docName.replace(/\.[^.]+$/, ''));
+  const dir = s.path ? s.path.replace(/[^\\/]+$/, '') : '';
+  const target = await saveDialog({
+    title: '导出为',
+    defaultPath: `${dir}${stem}.${ed.format}`,
+    filters: [EXPORT_FILTERS[ed.format] ?? { name: ed.format.toUpperCase(), extensions: [ed.format] }],
+  });
+  if (!target || typeof target !== 'string') return;
+  try {
+    const { layer, srcW: _srcW, srcH: _srcH, ...f } = ed;
+    const r = await editorExportDocument(s.docId, layer, target, f as Record<string, unknown>);
+    console.log(`[editor] 已导出 ${target} (${r.bytes} 字节, ${r.width}x${r.height})`);
+    if (r.warnings.length > 0) console.warn('[editor] 导出警告:', r.warnings);
+    showEditorNotice(`已导出 ${target.replace(/^.*[\\/]/, '')}(${humanBytes(r.bytes)})`);
+    window.dispatchEvent(new CustomEvent('aurora-editor-saved', { detail: { path: target } }));
+    closeExportDialog(tabId, true);
+  } catch (err) {
+    console.error('[editor] 导出失败', err);
+    showEditorNotice(`导出失败:${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export function setTool(tabId: string, tool: EditorTool): void {

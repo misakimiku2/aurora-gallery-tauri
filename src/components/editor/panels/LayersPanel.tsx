@@ -2,7 +2,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, ChevronRight, Check, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { runCommand, exportLayerAsPng, getSession, subscribeSession } from '../editorStore';
+import { runCommand, exportLayerAsPng, getSession, openExportDialog, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 import { BLEND_ZH } from '../editorTypes';
@@ -405,6 +405,7 @@ const LayerContextMenu: React.FC<{
     { label: '从图层创建组', run: () => act('layer.groupLayers') },
     'sep',
     { label: '快速导出为 PNG', run: () => { if (layer.selected) { void exportLayerAsPng(tabId); } else { void run('layer.select', { layer: layer.id }).then(() => exportLayerAsPng(tabId)); } } },
+    { label: '导出为…', run: () => { if (layer.selected) { openExportDialog(tabId, layer.id); } else { void run('layer.select', { layer: layer.id }).then(() => openExportDialog(tabId, layer.id)); } } },
     'sep',
     ...(layer.hasMask
       ? ([

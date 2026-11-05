@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeSelectMask, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closeSelectMask, confirmExportDialog, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
 import type { EditorSession } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
@@ -1697,7 +1697,24 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         scheduleDraw();
         return;
       }
+      // 导出为对话框打开期间接管键盘:Esc 取消(输入框中也生效)/Enter 确定(非输入)/其余吞掉
+      if (s.exportDialog) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeExportDialog(tabId, false);
+        } else if (e.key === 'Enter' && !isTyping(e.target)) {
+          e.preventDefault();
+          void confirmExportDialog(tabId);
+        }
+        return;
+      }
       if (isTyping(e.target)) return;
+      // 导出为入口(Ctrl+Alt+Shift+W,上游 Cmd+Alt+Shift+W 口径)
+      if (e.code === 'KeyW' && e.ctrlKey && e.shiftKey && e.altKey) {
+        e.preventDefault();
+        openExportDialog(tabId);
+        return;
+      }
       // Select and Mask 入口(Ctrl+Alt+R,上游 Cmd+Alt+R):有选区或活动层有蒙版才可用
       if (e.code === 'KeyR' && e.ctrlKey && e.altKey) {
         e.preventDefault();

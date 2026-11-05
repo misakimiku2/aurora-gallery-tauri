@@ -15,6 +15,7 @@ use photocraft_engine::{file_cmds, Session};
 use photocraft_geom::Rect;
 use serde_json::{json, Value};
 
+pub mod export_dialog;
 pub mod histogram;
 pub mod os_clipboard;
 pub mod outline;

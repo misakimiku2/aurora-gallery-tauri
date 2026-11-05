@@ -5,13 +5,14 @@
  * 四组面板渲染在应用 RightPanel 槽位(RightPanel → EditorRightPanels)。
  */
 import React, { useEffect, useState } from 'react';
-import { Undo2, Redo2, Save, SaveAll, FileOutput, Sidebar, PanelRight } from 'lucide-react';
+import { Undo2, Redo2, Save, SaveAll, FileOutput, ImageDown, Sidebar, PanelRight } from 'lucide-react';
 import { editorOpen, editorState } from './editorBridge';
-import { disposeSession, ensureSession, exportLayerAsPng, getSession, runCommand, saveAsSession, saveSession, subscribeEditorNotice, subscribeSession, updateSession, type EditorNotice } from './editorStore';
+import { disposeSession, ensureSession, exportLayerAsPng, getSession, openExportDialog, runCommand, saveAsSession, saveSession, subscribeEditorNotice, subscribeSession, updateSession, type EditorNotice } from './editorStore';
 import { clearEditorThumbCaches } from './panels/LayersPanel';
 import { EditorToolbar } from './EditorToolbar';
 import { EditorOptionsBar } from './EditorOptionsBar';
 import { SelectMaskDialog } from './panels/SelectMaskDialog';
+import { ExportDialog } from './panels/ExportDialog';
 import { EditorCanvas } from './EditorCanvas';
 import { actualPixelsSession, fitSession, zoomSession } from './editorViewActions';
 import { ZOOM_STEP } from './viewMath';
@@ -121,6 +122,13 @@ export const EditorShell: React.FC<{
           >
             <FileOutput size={15} />
           </button>
+          <button
+            title="导出为… (Ctrl+Alt+Shift+W):格式/品质/尺寸/重采样,可带预览与大小估计"
+            onClick={() => openExportDialog(tabId)}
+            className="p-1.5 text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100 rounded disabled:opacity-30"
+          >
+            <ImageDown size={15} />
+          </button>
         </div>
         {/* 中簇:状态点 + 文件名(真居中) */}
         <div className="shrink-0 flex items-center gap-1.5 min-w-0 max-w-[45%]">
@@ -151,6 +159,7 @@ export const EditorShell: React.FC<{
         <EditorCanvas tabId={tabId} isActive={isActive} />
       </div>
       <SelectMaskDialog tabId={tabId} active={isActive && !overlayOpen} />
+      <ExportDialog tabId={tabId} active={isActive && !overlayOpen} />
       <EditorNoticeToast />
     </div>
   );

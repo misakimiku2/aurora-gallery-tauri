@@ -251,6 +251,38 @@ pub fn editor_export_layer_png(s: State<EditorState>, doc: u64, layer: u64, path
     m.export_layer_png(doc, layer, &path).map_err(|e| e.to_string())
 }
 
+/// 导出为预览(上游 export_dialog preview_proxy):代理定型后的合成 RGBA,
+/// 文档零改动。返回 [srcW:u32][srcH:u32][w:u32][h:u32][RGBA8…](图层级导出的
+/// srcW/srcH=图层内容边界,前端以此种子 W/H 字段)。
+#[tauri::command]
+pub fn editor_export_preview(s: State<EditorState>, doc: u64, layer: Option<u64>, f: Value) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let r = m.export_preview(doc, layer, &f).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(16 + r.rendered.pixels.len());
+    bytes.extend_from_slice(&(r.src_w as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.src_h as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.rendered.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.rendered.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.rendered.pixels);
+    Ok(Response::new(bytes))
+}
+
+/// 导出为文件大小估计(上游 #6595):≤40MP 全量内存编码=精确,否则代理按像素数
+/// 比例折算。返回 `{bytes, exact}`。
+#[tauri::command]
+pub fn editor_export_estimate(s: State<EditorState>, doc: u64, layer: Option<u64>, f: Value) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.export_estimate(doc, layer, &f).map_err(|e| e.to_string())
+}
+
+/// 导出为落盘(对话框确认):定型+编码+原子写;文档/会话路径零改动、不入历史。
+/// 返回 `{bytes,width,height,warnings}`。
+#[tauri::command]
+pub fn editor_export_document(s: State<EditorState>, doc: u64, layer: Option<u64>, path: String, f: Value) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.export_document_to(doc, layer, &path, &f).map_err(|e| e.to_string())
+}
+
 /// 另存为(PS 口径:按新扩展名真重编码;文档改绑新路径;平面格式带 .psd 伴生)。
 #[tauri::command]
 pub fn editor_save_as(s: State<EditorState>, doc: u64, path: String) -> Result<Value, String> {
