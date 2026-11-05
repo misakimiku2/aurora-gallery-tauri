@@ -453,7 +453,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                             setOptions(tabId, { gradientCurrent: clonePreset(p) });
                           }}
                           onDoubleClick={() => {
-                            // 双击=建层(上游 Ev::Activate → gradient.presets.apply,PS 口径)
+                            // 双击=建层(上游 Ev::Activate → gradient.presets.apply,PS 口径);
+                            // 当前渐变同步载入=色板高亮跟随双击(上游 Ev::Activate 同款
+                            // ui.selected.insert,选中态回显)
+                            setOptions(tabId, { gradientCurrent: clonePreset(p) });
                             setPresetOpen(false);
                             void runCommand(tabId, 'gradient.presets.apply', { preset: p.name })
                               .catch((err) => console.error('[editor] gradient.presets.apply 失败', err));

@@ -65,6 +65,21 @@ try {
     const [xe, ye] = pts[pts.length - 1];
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: xe, y: ye, button: btn, buttons: 0, clickCount: 1, modifiers: flags });
     console.log(cmd, 'done', mods.join('+'));
+  } else if (cmd === 'dblclick') {
+    // dblclick x y [mods]:两轮 press/release,第二击 clickCount:2 才合成原生 dblclick
+    // (React onDoubleClick 依赖原生事件;见 2026-11-04 冒烟坑)
+    const modsStr = args[2] ?? '';
+    const mods = modsStr.split(',').filter(Boolean);
+    const flags = (mods.includes('ctrl') ? 2 : 0) | (mods.includes('shift') ? 8 : 0) | (mods.includes('alt') ? 1 : 0);
+    const [x, y] = [+args[0], +args[1]];
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers: flags });
+    for (const count of [1, 2]) {
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: count, modifiers: flags });
+      await sleep(40);
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: count, modifiers: flags });
+      await sleep(40);
+    }
+    console.log('dblclick done');
   } else if (cmd === 'dragmid') {
     // drag x1 y1 x2 y2 shotfile [mods]:拖到一半截图(验证拖拽中的预览),再完成释放
     const [x1, y1, x2, y2, file] = args;
