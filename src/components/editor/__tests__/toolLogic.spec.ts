@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, chainSegments, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, constrainSquare,
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
-  cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
+  cropTurnedAngle, cropTurnCursorDir, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
   gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, layerRampCss, marqueeParams, marqueeRect,
   midpointRemap, moveBounds, moveDirtyRect, magneticPressureWidth, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
   nextGradientTool, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
@@ -178,6 +178,24 @@ describe('磁性套索压感宽度(上游 magnetic_lasso_ui::settings 口径)', 
     expect(magneticPressureWidth(10, 0.2, true, false)).toBe(10);
     expect(magneticPressureWidth(10, undefined, true, true)).toBe(10);
     expect(magneticPressureWidth(10, Number.NaN, true, true)).toBe(10);
+  });
+});
+
+describe('裁剪旋转光标弯向(上游 turn_cursor_dir 口径)', () => {
+  it('指向 p 所在象限的框角,随框转回 deg;非旋转态=null', () => {
+    const r: [number, number, number, number] = [0, 0, 100, 100];
+    // 上游公式:sx=local 左于中心?1:-1、sy=local 上于中心?1:-1(弧心=指针+toward*R,
+    // 弧贴着所在象限的框角弯)——右上象限点 → (-1,1)/√2
+    expect(cropTurnCursorDir(r, 0, [120, -20], true)).toEqual([-Math.SQRT1_2, Math.SQRT1_2]);
+    // 左下象限 → (1,-1)/√2
+    expect(cropTurnCursorDir(r, 0, [-5, 150], true)).toEqual([Math.SQRT1_2, -Math.SQRT1_2]);
+    // 框转 90°:象限轴随框转(局部点经 -deg 转正后再折回)
+    const d90 = cropTurnCursorDir(r, 90, [120, 50], true);
+    expect(d90).not.toBeNull();
+    expect(Math.hypot(d90![0], d90![1])).toBeCloseTo(1, 10);
+    // 框内/非有限坐标 → null(不画)
+    expect(cropTurnCursorDir(r, 0, [50, 50], false)).toBeNull();
+    expect(cropTurnCursorDir(r, 0, [Number.NaN, 0], true)).toBeNull();
   });
 });
 

@@ -780,6 +780,17 @@ export function cropNormalizedAngle(deg: number): number {
   return a > 180 ? a - 360 : a;
 }
 
+/** 旋转光标在文档点 p 的弯向(上游 turn_cursor_dir):指向 p 所在象限的框角、沿框自身轴的
+ * 对角线方向,随框转回 deg;四角四支光标。outside=悬停在框外或正在旋转拖拽。 */
+export function cropTurnCursorDir(r: CropRect, deg: number, p: [number, number], outside: boolean): [number, number] | null {
+  if (!outside || !p.every(Number.isFinite)) return null;
+  const c: [number, number] = [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  const local = cropTurn(p, c, -deg);
+  const sx = local[0] < c[0] ? 1.0 : -1.0;
+  const sy = local[1] < c[1] ? 1.0 : -1.0;
+  return cropTurn([sx * Math.SQRT1_2, sy * Math.SQRT1_2], [0, 0], deg);
+}
+
 /** 框从 from 度被指针绕 c 扫过 grab→p 后的新角度;⇧ 吸附 15°(上游 turned_angle)。 */
 export function cropTurnedAngle(c: [number, number], grab: number, from: number, p: [number, number], snap: boolean): number {
   const now = Math.atan2(p[1] - c[1], p[0] - c[0]);

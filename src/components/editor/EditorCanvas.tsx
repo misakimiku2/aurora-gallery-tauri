@@ -17,7 +17,7 @@ import type { EditorTool } from './editorTypes';
 import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
-  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
+  cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cropTurnCursorDir, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
   isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -171,6 +171,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     | null>(null);
   /** 裁剪把手的光标(指针命中变化时更新并触发重渲染)。 */
   const cropCursorRef = useRef<string | null>(null);
+  /** 裁剪框专属 undo/redo(上游 #3145:裁剪待定期间 Ctrl+Z/Redo 步进框快照而非文档;
+   * press=当前手势按下时的快照,松手且框变化时推入 undo)。 */
+  const cropHistoryRef = useRef<{
+    undo: { rect: [number, number, number, number]; angle: number; edited: boolean }[];
+    redo: { rect: [number, number, number, number]; angle: number; edited: boolean }[];
+    press: { rect: [number, number, number, number]; angle: number; edited: boolean } | null;
+  }>({ undo: [], redo: [], press: null });
   /** 上一次的工具(离开裁剪工具时:未动默认框丢弃、已编辑框静默提交,#3368)。 */
   const prevToolRef = useRef<string | null>(null);
   /** 渐变拖线中(上游 classic 口径:拖方向线,松手一条命令)。 */
@@ -236,6 +243,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         cropRef.current = null;
         cropDragRef.current = null;
         cropCursorRef.current = null;
+        cropHistoryRef.current = { undo: [], redo: [], press: null }; // 离开=框历史清空(上游 commit_on_leave→clear_history)
         if (f?.edited) s.runtime.cropCommit?.();
       }
     }
@@ -704,6 +712,59 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.fillStyle = '#ffffff';
         octx.fillText(`${f.angle.toFixed(1)}°`, px, py);
         octx.restore();
+      }
+      // 旋转光标:双头弧线,弯向 p 所在象限的框角、随框转(上游 CursorIcon::None +
+      // draw_turn_cursor:R=12、±0.75 rad、黑晕 3.5 + 白芯 1.5,箭头贴弧端)
+      const rotDrag = cropDragRef.current?.kind === 'rotate';
+      if (s.runtime.pointerDoc && (rotDrag || cropDragRef.current === null)) {
+        const pd: [number, number] = [s.runtime.pointerDoc.x, s.runtime.pointerDoc.y];
+        const outside = rotDrag
+          || cropHitTurned(f.rect, f.angle, pd, CROP_HANDLE_PX / v.scale).kind === 'outside';
+        const dir = cropTurnCursorDir(f.rect, f.angle, pd, outside);
+        if (dir) {
+          const ul = Math.hypot(dir[0], dir[1]);
+          const ux = dir[0] / ul;
+          const uy = dir[1] / ul;
+          const px = s.runtime.pointerDoc.x * v.scale + v.ox;
+          const py = s.runtime.pointerDoc.y * v.scale + v.oy;
+          const R = 12;
+          const HALF = 0.75;
+          const ccx = px + ux * R;
+          const ccy = py + uy * R;
+          const mid = Math.atan2(-uy, -ux);
+          const at = (a: number): [number, number] => [ccx + Math.cos(a) * R, ccy + Math.sin(a) * R];
+          octx.save();
+          octx.lineCap = 'round';
+          octx.beginPath();
+          for (let i = 0; i <= 16; i++) {
+            const [ax, ay] = at(mid - HALF + (2 * HALF * i) / 16);
+            if (i === 0) octx.moveTo(ax, ay);
+            else octx.lineTo(ax, ay);
+          }
+          octx.strokeStyle = 'rgba(0,0,0,0.8)';
+          octx.lineWidth = 3.5;
+          octx.stroke();
+          octx.strokeStyle = '#ffffff';
+          octx.lineWidth = 1.5;
+          octx.stroke();
+          for (const [a, sign] of [[mid - HALF, -1], [mid + HALF, 1]] as [number, number][]) {
+            const [tx0, ty0] = at(a);
+            const tan: [number, number] = [-Math.sin(a) * sign, Math.cos(a) * sign];
+            const nor: [number, number] = [Math.cos(a), Math.sin(a)];
+            const tip: [number, number] = [tx0 + tan[0] * 2, ty0 + tan[1] * 2];
+            octx.beginPath();
+            octx.moveTo(tip[0] + tan[0] * 3.5, tip[1] + tan[1] * 3.5);
+            octx.lineTo(tip[0] - tan[0] * 3 + nor[0] * 3.5, tip[1] - tan[1] * 3 + nor[1] * 3.5);
+            octx.lineTo(tip[0] - tan[0] * 3 - nor[0] * 3.5, tip[1] - tan[1] * 3 - nor[1] * 3.5);
+            octx.closePath();
+            octx.fillStyle = '#ffffff';
+            octx.fill();
+            octx.strokeStyle = 'rgba(0,0,0,0.8)';
+            octx.lineWidth = 1;
+            octx.stroke();
+          }
+          octx.restore();
+        }
       }
     }
 
@@ -1189,6 +1250,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       : [0, 0, s.state.width, s.state.height];
     if (rect[2] - rect[0] < 1 || rect[3] - rect[1] < 1) rect = [0, 0, s.state.width, s.state.height];
     cropRef.current = { rect, angle: 0, edited: false };
+    // 新框=框专属历史清空(上游 ensure_frame clear_history)
+    cropHistoryRef.current = { undo: [], redo: [], press: null };
   };
 
   /** 多边形套索提交(上游 commit_polygon):≥3 点走 select.lasso(与自由套索同一命令),
@@ -1366,6 +1429,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const f = cropRef.current;
     cropRef.current = null;
     cropDragRef.current = null;
+    cropHistoryRef.current = { undo: [], redo: [], press: null }; // 提交=框历史清空(上游 clear_history)
     if (s) {
       s.runtime.cropStraightenArmed = false;
       s.runtime.cropStraightenLine = null;
@@ -1406,6 +1470,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const cancelCrop = useCallback(() => {
     cropRef.current = null;
     cropDragRef.current = null;
+    cropHistoryRef.current = { undo: [], redo: [], press: null }; // 取消=框历史清空(上游 cancel clear_history)
     const s = getSession(tabId);
     if (s) {
       s.runtime.cropStraightenArmed = false;
@@ -1865,7 +1930,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
       }
       // 裁剪框方向键微移(上游 arrow keys:1px / ⇧ 10px)
-      if (s.tool === 'crop' && cropRef.current && !cropDragRef.current) {
+      if (s.tool === 'crop' && cropRef.current && !cropDragRef.current
+        && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
         e.preventDefault();
         const d = e.shiftKey ? 10 : 1;
         const ddx = e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0;
@@ -1944,6 +2010,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
               : e.code === 'KeyC' ? 'c' : e.code === 'KeyX' ? 'x' : e.code === 'KeyV' ? 'v' : k;
         if (k2 === 'z') {
           e.preventDefault();
+          // 框专属 undo(上游 #3145):裁剪工具+框栈非空时 Ctrl+Z/Redo 步进框快照而非文档;
+          // 任一栈非空即拦截两向(空向吃掉按键=上游变灰语义),两栈全空才回落文档历史
+          const hist = cropHistoryRef.current;
+          if (s.tool === 'crop' && (hist.undo.length > 0 || hist.redo.length > 0)) {
+            const redo = e.shiftKey;
+            const stack = redo ? hist.redo : hist.undo;
+            if (stack.length > 0 && cropRef.current) {
+              const cur = { rect: cropRef.current.rect, angle: cropRef.current.angle, edited: cropRef.current.edited };
+              const step = stack.pop()!;
+              (redo ? hist.undo : hist.redo).push(cur);
+              cropRef.current = { rect: step.rect, angle: step.angle, edited: step.edited };
+              if (s.cropAngle !== cropRef.current.angle) updateSession(tabId, { cropAngle: cropRef.current.angle });
+              scheduleDraw();
+            }
+            return;
+          }
           const redo = e.shiftKey;
           if (redo ? s.state?.canRedo : s.state?.canUndo) {
             void runCommand(tabId, redo ? 'edit.redo' : 'edit.undo', {}).catch(console.error);
@@ -2303,12 +2385,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 拉直 armed:按下拖画标尺线(松手按长度生效,一次性)
       if (s.runtime.cropStraightenArmed) {
         s.runtime.cropStraightenLine = { x0: dx, y0: dy, x1: dx, y1: dy };
+        // 拉直也是一次框手势(上游 straighten Down 同记 press_step)
+        const fc = cropRef.current;
+        cropHistoryRef.current.press = fc ? { rect: fc.rect, angle: fc.angle, edited: fc.edited } : { rect: [0, 0, s.state.width, s.state.height], angle: 0, edited: false };
         scheduleDraw();
         return;
       }
       ensureCropFrame(s);
       const f = cropRef.current!;
       const restore: CropRestore = { rect: f.rect, angle: f.angle, edited: f.edited };
+      // 框专属 undo:按下时快照(上游 press_step),松手且框变化时入栈
+      cropHistoryRef.current.press = { ...restore };
       const tol = CROP_HANDLE_PX / s.runtime.view.scale;
       const hit = cropHitTurned(f.rect, f.angle, [dx, dy], tol);
       if (hit.kind === 'handle') {
@@ -2324,10 +2411,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         // 未动默认框内部:拖画新框(#4461 口径)
         cropDragRef.current = { kind: 'draw', anchor: [dx, dy], restore };
       } else {
-        // 框外:绕框中心旋转(⇧ 15° 吸附)
+        // 框外:绕框中心旋转(⇧ 15° 吸附);拖拽中系统光标隐藏,自绘弧线
         const cx = (f.rect[0] + f.rect[2]) / 2;
         const cy = (f.rect[1] + f.rect[3]) / 2;
         cropDragRef.current = { kind: 'rotate', center: [cx, cy], grab: Math.atan2(dy - cy, dx - cx), from: f.angle, restore };
+        if (cropCursorRef.current !== 'none') {
+          cropCursorRef.current = 'none';
+          forceUpdate((n) => n + 1);
+        }
       }
       scheduleDraw();
     } else if (s.tool === 'gradient' && e.button === 0 && s.state) {
@@ -2527,9 +2618,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (s.tool === 'crop' && cropRef.current && cropDragRef.current === null) {
       const f = cropRef.current;
       const hit = cropHitTurned(f.rect, f.angle, [dx, dy], CROP_HANDLE_PX / s.runtime.view.scale);
+      // 框外=旋转区:系统光标隐藏,自绘双头弧线(上游 CursorIcon::None + draw_turn_cursor)
       const cur = hit.kind === 'handle'
         ? hit.hx !== 0 && hit.hy !== 0 ? (hit.hx * hit.hy > 0 ? 'nwse-resize' : 'nesw-resize') : hit.hx !== 0 ? 'ew-resize' : 'ns-resize'
-        : hit.kind === 'inside' && f.edited ? 'move' : 'crosshair';
+        : hit.kind === 'inside' && f.edited ? 'move'
+          : hit.kind === 'outside' ? 'none' : 'crosshair';
       if (cropCursorRef.current !== cur) {
         cropCursorRef.current = cur;
         forceUpdate((n) => n + 1);
@@ -2858,6 +2951,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       s.runtime.cropStraightenArmed = false; // 一次性:画完一条线自动解除(上游 toggle 口径)
       scheduleDraw();
+    }
+    // 框专属 undo 推栈(上游 push_press_step):松手且框相对按下时变化 → 按下快照入 undo、清 redo
+    const pressStep = cropHistoryRef.current.press;
+    cropHistoryRef.current.press = null;
+    const cf = cropRef.current;
+    if (pressStep && cf && (cf.rect[0] !== pressStep.rect[0] || cf.rect[1] !== pressStep.rect[1] || cf.rect[2] !== pressStep.rect[2] || cf.rect[3] !== pressStep.rect[3] || cf.angle !== pressStep.angle || cf.edited !== pressStep.edited)) {
+      cropHistoryRef.current.undo.push(pressStep);
+      cropHistoryRef.current.redo = [];
     }
     const ls = lassoRef.current;
     lassoRef.current = null;
