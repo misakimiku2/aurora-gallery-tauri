@@ -18,7 +18,7 @@ import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMa
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape,
+  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
@@ -1235,8 +1235,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   /** 追踪驱动(上游 follow):trace 末锚点→吸附目标,累计够 spacing 就自动落点(fasten),
-   * 否则整段挂 live。单飞:一条 IPC 在途时最新指针进 queued,回包后重跑。 */
-  const magneticFollow = useCallback((q: { x: number; y: number }, fasten: boolean) => {
+   * 否则整段挂 live。单飞:一条 IPC 在途时最新指针进 queued,回包后重跑。
+   * 压感:q 带触发该次追踪的指针压力(笔设备+选项开关时调制检测宽度,上游 settings)。 */
+  const magneticFollow = useCallback((q: { x: number; y: number; pressure?: number; pen?: boolean }, fasten: boolean) => {
     if (magneticBusy.current) {
       magneticQueued.current = { ...q, fasten };
       return;
@@ -1248,8 +1249,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         let m = magneticRef.current;
         if (!st?.state || !m || st.docId == null || m.freehand) return;
         const opts = magneticOpts();
+        const w = magneticPressureWidth(opts.width, q.pressure, q.pen === true, st.options.magneticPressure);
         const every = magneticSpacing(opts.frequency, st.runtime.view.scale);
-        const snapped = await editorMagneticSnap(st.docId, [q.x, q.y] as [number, number], opts.width, opts.contrast).catch(() => null);
+        const snapped = await editorMagneticSnap(st.docId, [q.x, q.y] as [number, number], w, opts.contrast).catch(() => null);
         m = magneticRef.current;
         if (!m || st.docId == null) return;
         const target: number[] = snapped?.point ?? [q.x, q.y];
@@ -1258,7 +1260,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           if (!m || st.docId == null || m.freehand) return;
           const from = m.path[m.path.length - 1];
           if (!from) return;
-          const live = await editorMagneticTrace(st.docId, from as [number, number], target as [number, number], m.trail, opts.width, opts.contrast).catch(() => null);
+          const live = await editorMagneticTrace(st.docId, from as [number, number], target as [number, number], m.trail, w, opts.contrast).catch(() => null);
           m = magneticRef.current;
           if (!m || !live) return;
           const cut = cutPathAtLength(live.points, every);
@@ -2283,7 +2285,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           mode: resolveSelectionMode(initialMods(e.shiftKey, e.altKey), s.options.selectionMode, s.state.hasSelection),
         };
         if (s.docId != null) {
-          void editorMagneticSnap(s.docId, [dx, dy] as [number, number], s.options.magneticWidth, s.options.magneticContrast)
+          const w0 = magneticPressureWidth(s.options.magneticWidth, e.pressure, e.pointerType === 'pen', s.options.magneticPressure);
+          void editorMagneticSnap(s.docId, [dx, dy] as [number, number], w0, s.options.magneticContrast)
             .then((r) => {
               const m2 = magneticRef.current;
               if (!m2) return;
@@ -2485,7 +2488,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         return;
       }
       extendTrail(mag, dx, dy, s.options.magneticWidth);
-      magneticFollow({ x: dx, y: dy }, true);
+      magneticFollow({ x: dx, y: dy, pressure: e.pressure, pen: e.pointerType === 'pen' }, true);
       return;
     }
     const cd = cropDragRef.current;

@@ -264,6 +264,14 @@ export function nextGradientTool(current: EditorTool | undefined): EditorTool {
   return current === 'gradient' ? 'bucket' : 'gradient';
 }
 
+/** 磁性套索压感宽度(上游 magnetic_lasso_ui::settings):开=笔设备压强调制检测宽度,
+ * **压得越重宽度越窄** `width=1+(base-1)*(1-pressure)`;鼠标无压感(恒 0.5)不调制——
+ * 上游 `app.stylus.sample().is_some()` 门控=只有笔设备生效。 */
+export function magneticPressureWidth(base: number, pressure: number | undefined, hasPen: boolean, enabled: boolean): number {
+  if (!enabled || !hasPen || pressure == null || !Number.isFinite(pressure)) return base;
+  return 1.0 + (base - 1.0) * (1.0 - Math.min(1, Math.max(0, pressure)));
+}
+
 /** 多边形套索 Shift 45° 约束(上游 constrained_polygon_point 逐行移植:角度取 45° 整数倍,
  * 长度保持;零长度/非有限值原样返回)。 */
 export function constrainPolygonPoint(from: number[], point: number[]): number[] {

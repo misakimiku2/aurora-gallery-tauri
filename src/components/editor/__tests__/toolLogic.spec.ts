@@ -4,7 +4,7 @@ import {
   cropCorners, cropDrawn, cropFitted, cropFittedRatio, cropFrameAngle, cropHit, cropHitTurned, cropResized, cropStraightenAngle,
   cropTurnedAngle, docToRaster, effectiveMode, gradientLiveCreateParams, gradientLiveHit, gradientLiveAt, gradientParams, gradientMidDragParams,
   gradientStopDragParams, gradientStopIndexAfter, GRADIENT_TEAR_OFF, initialMods, isMaskTarget, lassoParams, layerRampCss, marqueeParams, marqueeRect,
-  midpointRemap, moveBounds, moveDirtyRect, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
+  midpointRemap, moveBounds, moveDirtyRect, magneticPressureWidth, magneticSpacing, cutPathAtLength, pathLength, nearMagneticStart,
   nextGradientTool, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMaskPaintStroke, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
   strokeParams, TOOL_KEYS, trackMods, GRADIENT_GROUP,
@@ -20,7 +20,7 @@ const OPTS: ToolOptions = {
   gradientReverse: false, gradientDither: true, gradientOpacity: 1, gradientBlend: 'Normal',
   marqueeShape: 'rect',
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
-  magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57,
+  magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57, magneticPressure: false,
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -162,6 +162,22 @@ describe('G 键渐变组循环(上游 Tool::Gradient|PaintBucket 同键)', () =>
     expect(nextGradientTool('move')).toBe('gradient');
     expect(nextGradientTool(undefined)).toBe('gradient');
     expect(GRADIENT_GROUP.has('gradient') && GRADIENT_GROUP.has('bucket')).toBe(true);
+  });
+});
+
+describe('磁性套索压感宽度(上游 magnetic_lasso_ui::settings 口径)', () => {
+  it('压得越重越窄:width=1+(base-1)*(1-pressure)', () => {
+    expect(magneticPressureWidth(10, 0, true, true)).toBe(10);
+    expect(magneticPressureWidth(10, 1, true, true)).toBe(1);
+    expect(magneticPressureWidth(10, 0.5, true, true)).toBe(5.5);
+    expect(magneticPressureWidth(1, 0.2, true, true)).toBe(1);
+  });
+  it('鼠标无压感(恒 0.5)不调制=上游 stylus 门控;开关关=原宽', () => {
+    expect(magneticPressureWidth(10, 0.5, false, true)).toBe(10);
+    expect(magneticPressureWidth(10, 0.2, false, true)).toBe(10);
+    expect(magneticPressureWidth(10, 0.2, true, false)).toBe(10);
+    expect(magneticPressureWidth(10, undefined, true, true)).toBe(10);
+    expect(magneticPressureWidth(10, Number.NaN, true, true)).toBe(10);
   });
 });
 

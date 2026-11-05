@@ -53,6 +53,8 @@ export interface ToolOptions {
   magneticContrast: number;
   /** 磁性套索频率(上游 magnetic_frequency,0..100,默认 57):自动落点的疏密。 */
   magneticFrequency: number;
+  /** 磁性套索笔压调制检测宽度(上游 magnetic_pressure,默认关;仅笔设备生效)。 */
+  magneticPressure: boolean;
 }
 
 export interface EditorRuntime {
@@ -176,6 +178,8 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       magneticWidth: 10,
       magneticContrast: 10,
       magneticFrequency: 57,
+      /** 磁性套索笔压调制检测宽度(上游 magnetic_pressure,默认关;仅笔设备生效)。 */
+      magneticPressure: false,
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
