@@ -327,6 +327,21 @@ impl EditorManager {
             }
         }
         let result = self.session.execute(cmd, params)?;
+        // select.refineEdge 的新建文档输出:结果里的 document 是会话下标,翻成引擎 DocId
+        // 给前端(前端据它开无路径编辑标签;上游 Untitled 文档同语义)
+        let result = if cmd == "select.refineEdge" {
+            if let Some(idx) = result.get("document").and_then(Value::as_u64) {
+                let mut result = result;
+                if let Some(ds) = self.session.documents().get(idx as usize) {
+                    result["documentId"] = json!(ds.doc.id.0);
+                }
+                result
+            } else {
+                result
+            }
+        } else {
+            result
+        };
         if matches!(cmd, "edit.copy" | "edit.cut" | "edit.copyMerged") {
             self.clipboard_export();
         }

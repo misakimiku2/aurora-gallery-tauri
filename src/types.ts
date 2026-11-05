@@ -541,6 +541,8 @@ export interface TabState {
   isEditorMode?: boolean;
   /** 编辑器 v3:被编辑图片的 file id */
   editorFileId?: string;
+  /** 编辑器 v3:无路径文档(Select and Mask「新建文档」输出等)——直接绑定会话里的引擎 docId */
+  editorDocId?: number;
   sessionName?: string;
   scrollToItemId?: string;
   history: {

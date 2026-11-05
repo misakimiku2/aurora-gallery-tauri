@@ -1108,6 +1108,7 @@ export const App: React.FC = () => {
     handleOpenCompareAndClearSelection,
     handleAddToCompareCanvas,
     handleOpenEditorTab,
+    handleOpenEditorDocTab,
     handleCloseAllTabs,
     handleCloseOtherTabs,
   } = useTabHandlers({
@@ -1597,6 +1598,18 @@ export const App: React.FC = () => {
     };
     window.addEventListener('aurora-editor-renamed', onEditorRenamed);
     return () => window.removeEventListener('aurora-editor-renamed', onEditorRenamed);
+  }, []);
+
+  // 编辑器无路径文档(Select and Mask「新建文档」输出):开编辑标签直接绑定引擎 docId
+  const openEditorDocTabRef = useRef(handleOpenEditorDocTab);
+  openEditorDocTabRef.current = handleOpenEditorDocTab;
+  useEffect(() => {
+    const onEditorNewDoc = (e: Event) => {
+      const { docId } = (e as CustomEvent).detail as { docId: number };
+      openEditorDocTabRef.current(docId);
+    };
+    window.addEventListener('aurora-editor-newdoc', onEditorNewDoc);
+    return () => window.removeEventListener('aurora-editor-newdoc', onEditorNewDoc);
   }, []);
 
   // M6a 阶段 2：服务端写操作后的数据失效事件（Android 客户端在线写入 → Rust 广播

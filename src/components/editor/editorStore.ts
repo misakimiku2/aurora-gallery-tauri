@@ -421,7 +421,15 @@ export function confirmSelectMask(tabId: string): void {
     ...(sm.targetMask ? { target: 'mask' } : {}),
   };
   void runCommand(tabId, 'select.refineEdge', params)
-    .then(() => closeSelectMask(tabId, true))
+    .then((out) => {
+      closeSelectMask(tabId, true);
+      // 新建文档输出:引擎已往会话加了无路径文档,桥层把会话下标翻成 DocId(runCommand
+      // 返回值=命令结果本身)——广播给 App 开编辑标签(上游 Untitled 文档同语义)
+      const newDoc = (out as { documentId?: number } | null)?.documentId;
+      if (typeof newDoc === 'number' && Number.isFinite(newDoc)) {
+        window.dispatchEvent(new CustomEvent('aurora-editor-newdoc', { detail: { docId: newDoc, withMask: sm.output === 'newDocumentWithMask' } }));
+      }
+    })
     .catch((err) => console.error('[editor] select.refineEdge 失败', err));
 }
 

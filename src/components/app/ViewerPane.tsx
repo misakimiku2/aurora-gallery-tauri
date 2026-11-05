@@ -161,13 +161,14 @@ export const ViewerPane = ({
         <Suspense fallback={null}>
           {state.tabs.map(tab => tab.isEditorMode && (() => {
             const file = tab.editorFileId ? state.files[tab.editorFileId] : undefined;
-            if (!file?.path) return null;
+            if (!file?.path && tab.editorDocId == null) return null;
             return (
               <div key={tab.id} className={`w-full h-full flex-1 flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
                 <EditorShell
                   tabId={tab.id}
-                  fileId={file.id}
-                  filePath={file.path}
+                  fileId={file?.id ?? `doc:${tab.editorDocId}`}
+                  docId={tab.editorDocId}
+                  filePath={file?.path}
                   isActive={tab.id === state.activeTabId}
                   overlayOpen={overlayOpen}
                   sidebarVisible={state.layout.isSidebarVisible}

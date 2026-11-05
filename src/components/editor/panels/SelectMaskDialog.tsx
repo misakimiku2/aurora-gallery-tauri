@@ -241,7 +241,7 @@ export const SelectMaskDialog: React.FC<{ tabId: string; active: boolean }> = ({
             value={sm.output}
             onChange={(v) => patch({ output: v })}
             className="flex-1"
-            options={SELECT_MASK_OUTPUTS.filter((o) => o !== 'newDocument' && o !== 'newDocumentWithMask').map((o) => ({ value: o, label: SELECT_MASK_OUTPUT_ZH[o] }))}
+            options={SELECT_MASK_OUTPUTS.map((o) => ({ value: o, label: SELECT_MASK_OUTPUT_ZH[o] }))}
           />
         </label>
         <label className="flex items-center gap-1.5" title="精修采样全部图层的合成(关=仅当前层)">

@@ -35,7 +35,9 @@ const PanelToggle: React.FC<{ onClick: () => void; active: boolean; title: strin
 export const EditorShell: React.FC<{
   tabId: string;
   fileId: string;
-  filePath: string;
+  /** 无路径文档(Select and Mask 新建文档等):直接绑定会话中已有的引擎 docId,不走 editorOpen。 */
+  docId?: number;
+  filePath?: string;
   isActive: boolean;
   /** App 级覆盖层(设置页/模态)开着:编辑器内浮层对话框让位不显示。 */
   overlayOpen: boolean;
@@ -44,7 +46,7 @@ export const EditorShell: React.FC<{
   metadataVisible: boolean;
   onToggleSidebar: () => void;
   onToggleMetadata: () => void;
-}> = ({ tabId, fileId, filePath, isActive, overlayOpen, sidebarVisible, metadataVisible, onToggleSidebar, onToggleMetadata }) => {
+}> = ({ tabId, fileId, docId, filePath, isActive, overlayOpen, sidebarVisible, metadataVisible, onToggleSidebar, onToggleMetadata }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
 
@@ -52,10 +54,27 @@ export const EditorShell: React.FC<{
   useEffect(() => {
     const s = ensureSession(tabId, fileId);
     if (s.docId != null) return undefined; // 已开(标签隐藏再显示)
+    if (docId != null) {
+      // 无路径文档(Select and Mask「新建文档」输出):引擎文档已在会话里,直接绑定
+      updateSession(tabId, { docId, path: null, loading: false });
+      let cancelled = false;
+      void editorState(docId)
+        .then((st) => {
+          if (!cancelled) updateSession(tabId, { state: st });
+        })
+        .catch((e) => {
+          if (!cancelled) updateSession(tabId, { loading: false, error: `绑定文档失败:${String(e)}` });
+        });
+      return () => {
+        cancelled = true;
+        clearEditorThumbCaches(docId);
+        disposeSession(tabId); // disposeSession 会 editorClose:关标签=丢弃无路径文档
+      };
+    }
     let cancelled = false;
     (async () => {
       try {
-        const info = await editorOpen(filePath);
+        const info = await editorOpen(filePath!);
         if (cancelled) return;
         updateSession(tabId, { docId: info.docId, path: filePath, loading: false });
         const st = await editorState(info.docId);
@@ -71,7 +90,7 @@ export const EditorShell: React.FC<{
       if (docId != null) clearEditorThumbCaches(docId);
       disposeSession(tabId);
     };
-  }, [tabId, fileId, filePath]);
+  }, [tabId, fileId, filePath, docId]);
 
   const s = getSession(tabId);
 

@@ -291,6 +291,28 @@ export const useTabHandlers = ({
     setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
   }, [state.files, setState]);
 
+  /** 编辑器 v3:无路径文档(Select and Mask「新建文档」输出)开编辑标签——直接绑定
+   * 会话里已有的引擎 docId,不走 editorOpen(path)。命名 未标题-N(上游 Untitled)。 */
+  const handleOpenEditorDocTab = useCallback((docId: number) => {
+    const n = state.tabs.filter((t) => t.isEditorMode && t.editorDocId != null).length + 1;
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: state.tabs.find((t) => t.id === state.activeTabId)?.folderId || '',
+      selectedFileIds: [],
+      lastSelectedId: null,
+      isCompareMode: false,
+      isEditorMode: true,
+      editorDocId: docId,
+      sessionName: `未标题-${n}`,
+      history: {
+        stack: [{ folderId: '', viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }],
+        currentIndex: 0,
+      },
+    };
+    setState((prev) => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [state.tabs, state.activeTabId, setState]);
+
   const handleCloseAllTabs = () => {
     setState(prev => {
       if (prev.tabs.length <= 1) return prev;
@@ -316,6 +338,7 @@ export const useTabHandlers = ({
     handleOpenCompareAndClearSelection,
     handleAddToCompareCanvas,
     handleOpenEditorTab,
+    handleOpenEditorDocTab,
     handleCloseAllTabs,
     handleCloseOtherTabs,
   };
