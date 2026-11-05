@@ -2003,10 +2003,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           void runCommand(tabId, 'edit.cut', {}).catch((err) => logError('[editor] 剪切失败', err));
         } else if (k2 === 'v') {
           // Ctrl+V = 粘贴(新栅格层插入活动层上方;桥层前置读 OS 剪贴板:自家镜像→原位,
-          // 外部新图→画布居中);Ctrl+Shift+V = 原位粘贴(上游 pasteInPlace)
+          // 外部新图→画布居中);Ctrl+Shift+V = 原位粘贴;Ctrl+Alt+Shift+V = 贴入选区内
+          // (上游 pasteInto,Cmd+Alt+Shift+V 口径;贴入选区外走图层右键菜单,上游无快捷键)
           e.preventDefault();
-          void runCommand(tabId, e.shiftKey ? 'edit.pasteSpecial.pasteInPlace' : 'edit.paste', {})
-            .catch((err) => logError('[editor] 粘贴失败', err));
+          if (e.shiftKey && e.altKey) {
+            if (!s.state?.hasSelection) {
+              showEditorNotice('贴入选区内:需要先建一个选区');
+            } else {
+              void runCommand(tabId, 'edit.pasteSpecial.pasteInto', {})
+                .catch((err) => logError('[editor] 贴入选区内失败', err));
+            }
+          } else {
+            void runCommand(tabId, e.shiftKey ? 'edit.pasteSpecial.pasteInPlace' : 'edit.paste', {})
+              .catch((err) => logError('[editor] 粘贴失败', err));
+          }
         } else if (e.code === 'BracketRight' || k === ']') {
           // Ctrl+] = 上移一层;Ctrl+Shift+] = 移到最前(上游 Cmd+]/Cmd+Shift+];
           // e.code 兜底 IME 吃掉方括号键)

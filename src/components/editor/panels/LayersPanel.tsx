@@ -2,7 +2,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, ChevronRight, Check, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
-import { runCommand, exportLayerAsPng, getSession, openExportDialog, subscribeSession } from '../editorStore';
+import { runCommand, exportLayerAsPng, getSession, openExportDialog, showEditorNotice, subscribeSession } from '../editorStore';
 import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 import { BLEND_ZH } from '../editorTypes';
@@ -399,10 +399,22 @@ const LayerContextMenu: React.FC<{
   }, [colorOpen, colorAnchor]);
 
   type Item = { label: string; run: () => void; danger?: boolean; keepOpen?: boolean };
+  // 粘贴特殊(上游 Edit›Paste Special;我们无编辑器菜单栏,挂图层右键菜单——粘贴新建层
+  // 语义连贯;引擎 has_clip_and_selection 拒绝时 catch 弹提示)
+  const pasteSpecial = (cmd: string, label: string) => {
+    if (!hasSelection) {
+      showEditorNotice(`${label}:需要先建一个选区`);
+      return;
+    }
+    void run(cmd, {}).catch((err) => showEditorNotice(`${label}失败:${String(err)}`));
+  };
   const items: (Item | 'sep')[] = [
     { label: '复制图层', run: () => act('layer.duplicate') },
     { label: '删除图层', run: () => act('layer.delete'), danger: true },
     { label: '从图层创建组', run: () => act('layer.groupLayers') },
+    'sep',
+    { label: '贴入选区内', run: () => pasteSpecial('edit.pasteSpecial.pasteInto', '贴入选区内') },
+    { label: '贴入选区外', run: () => pasteSpecial('edit.pasteSpecial.pasteOutside', '贴入选区外') },
     'sep',
     { label: '快速导出为 PNG', run: () => { if (layer.selected) { void exportLayerAsPng(tabId); } else { void run('layer.select', { layer: layer.id }).then(() => exportLayerAsPng(tabId)); } } },
     { label: '导出为…', run: () => { if (layer.selected) { openExportDialog(tabId, layer.id); } else { void run('layer.select', { layer: layer.id }).then(() => openExportDialog(tabId, layer.id)); } } },
