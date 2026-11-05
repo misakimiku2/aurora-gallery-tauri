@@ -15,7 +15,7 @@ import {
 } from '../editorStore';
 import { editorExportEstimate, editorExportPreview } from '../editorBridge';
 import {
-  exportPixels, humanBytes, MAX_PX, resizeFromScale, resizeFromSide, RESAMPLE_OPTIONS,
+  exportPixels, humanBytes, MAX_PX, resizeFromScale, resizeFromSide, RESAMPLE_OPTIONS, validSetting,
 } from '../exportDialogMath';
 import { EditorSelect } from '../editorSelect';
 
@@ -53,6 +53,29 @@ const FORMAT_ZH: Record<string, string> = { png: 'PNG', jpg: 'JPG', webp: 'WebP'
 const METADATA_ZH: Record<string, string> = { none: '无', exif: 'EXIF', all: '全部' };
 const PROFILE_ZH: Record<string, string> = { document: '文档配置文件', srgb: '转换为 sRGB' };
 const TGA_BITS_ZH: Record<string, string> = { auto: '自动', '24': '24 位/像素', '32': '32 位/像素' };
+
+// ===== 导出预设(上游 file.export.presets 的对话框侧;引擎 prefs 在我们壳里不持久化,
+// 照对话框状态既有口径存 localStorage,应用重启保留)=====
+const PRESETS_KEY = 'aurora-editor:export-presets';
+interface ExportPreset {
+  name: string;
+  settings: Record<string, unknown>;
+}
+function loadPresets(): ExportPreset[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(PRESETS_KEY) ?? '[]') as ExportPreset[];
+    return Array.isArray(v) ? v.filter((p) => p && typeof p.name === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+function savePresets(list: ExportPreset[]): void {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(list.slice(-64)));
+  } catch {
+    /* 存储不可用忽略 */
+  }
+}
 
 /** 对话框位置持久化(同 SelectMaskDialog 款:跨标签/重启保留)。 */
 const POS_KEY = 'aurora-editor:export-pos';
@@ -94,6 +117,10 @@ export const ExportDialog: React.FC<{ tabId: string; active: boolean }> = ({ tab
   const [pos, setPos] = useState<{ x: number; y: number } | null>(loadPos);
   const s = getSession(tabId);
   const ed = s?.exportDialog ?? null;
+  // 导出预设(上游 Preset 区:下拉选择/Delete/Save Preset… 命名;savingInput=命名中)
+  const [presets, setPresets] = useState<ExportPreset[]>(loadPresets);
+  const [presetKey, setPresetKey] = useState('');
+  const [savingInput, setSavingInput] = useState<string | null>(null);
   // 预览/估计(泵按设置键防抖;图层级导出首帧回填源尺寸)
   const [preview, setPreview] = useState<{ srcW: number; srcH: number; width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> } | null>(null);
   const [estimate, setEstimate] = useState<{ bytes: number; exact: boolean } | null>(null);
@@ -215,6 +242,31 @@ export const ExportDialog: React.FC<{ tabId: string; active: boolean }> = ({ tab
 
   const docId = s.docId;
   const patch = (p: Partial<ExportDialogState>) => updateExportDialog(tabId, p);
+  // 预设操作(应用=validSetting 过滤后整包覆盖 14 键;保存=同名覆盖,大小写不敏感=上游口径)
+  const applyPreset = (p: ExportPreset) => {
+    const clean: Partial<ExportDialogState> = {};
+    for (const [k, v] of Object.entries(p.settings)) {
+      if (validSetting(k, v)) (clean as Record<string, unknown>)[k] = v;
+    }
+    patch(clean);
+  };
+  const confirmSavePreset = () => {
+    const name = savingInput?.trim().slice(0, 255) ?? '';
+    if (!name || !ed) return;
+    const next = presets.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+    next.push({ name, settings: settingsOf(ed) });
+    setPresets(next);
+    savePresets(next);
+    setPresetKey(name);
+    setSavingInput(null);
+  };
+  const deletePreset = () => {
+    if (!presetKey) return;
+    const next = presets.filter((p) => p.name !== presetKey);
+    setPresets(next);
+    savePresets(next);
+    setPresetKey('');
+  };
   const layerName = ed.layer != null ? s.state?.layers.find((l) => l.id === ed.layer)?.name ?? null : null;
   const isJpg = ed.format === 'jpg';
   const isWebp = ed.format === 'webp';
@@ -253,8 +305,69 @@ export const ExportDialog: React.FC<{ tabId: string; active: boolean }> = ({ tab
           <span className="text-[10px] text-neutral-500 dark:text-neutral-400">Enter 导出 · Esc 取消</span>
         </div>
         <div className="flex gap-3 min-h-0">
-          {/* 左列:文件设置 + 图像大小(上游 body 顺序) */}
+          {/* 左列:预设 + 文件设置 + 图像大小(上游 body:预设区+File Settings 顺序) */}
           <div className="flex-1 min-w-0 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <EditorSelect
+                value={presetKey}
+                onChange={(v) => {
+                  setPresetKey(v);
+                  const p = presets.find((x) => x.name === v);
+                  if (p) applyPreset(p);
+                }}
+                className="flex-1"
+                alwaysBlank
+                blankLabel="预设…"
+                title="导出预设:应用/保存/删除当前全部导出设置"
+                options={presets.map((p) => ({ value: p.name, label: p.name }))}
+              />
+              {savingInput === null ? (
+                <>
+                  <button
+                    onClick={() => setSavingInput('')}
+                    title="把当前全部导出设置存为预设"
+                    className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 shrink-0"
+                  >
+                    保存…
+                  </button>
+                  <button
+                    onClick={deletePreset}
+                    disabled={!presetKey}
+                    title="删除所选预设"
+                    className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 shrink-0 disabled:opacity-40"
+                  >
+                    删除
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input
+                    autoFocus
+                    value={savingInput}
+                    onChange={(e) => setSavingInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') confirmSavePreset();
+                      else if (e.key === 'Escape') setSavingInput(null);
+                    }}
+                    placeholder="预设名"
+                    className="flex-1 min-w-0 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1 text-[11px] text-neutral-700 dark:text-neutral-200"
+                  />
+                  <button
+                    onClick={confirmSavePreset}
+                    title="保存预设 (Enter)"
+                    className="px-2 py-0.5 rounded text-[11px] bg-sky-600 text-white hover:bg-sky-500 shrink-0"
+                  >
+                    存
+                  </button>
+                  <button
+                    onClick={() => setSavingInput(null)}
+                    className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 shrink-0"
+                  >
+                    取消
+                  </button>
+                </>
+              )}
+            </div>
             <div className={sectionCls}>文件设置</div>
             <label className="flex items-center gap-1.5">
               <span className={`${labelCls} w-16`}>格式</span>

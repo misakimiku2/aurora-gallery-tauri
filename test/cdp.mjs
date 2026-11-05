@@ -109,8 +109,10 @@ try {
     const code = VK[k] ?? keyChar(k[0]);
     const mods = (args[1] ?? '').split(',').filter(Boolean);
     const flags = (mods.includes('ctrl') ? 2 : 0) | (mods.includes('shift') ? 8 : 0) | (mods.includes('alt') ? 1 : 0);
-    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: code, code: args[2] ?? `Key${k.toUpperCase()}`, key: k, modifiers: flags });
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: code, code: args[2] ?? `Key${k.toUpperCase()}`, key: k, modifiers: flags });
+    // Windows 布局发 key:'Return',页面/DOM 标准是 e.key==='Enter'(React onKeyDown 匹配后者)
+    const keyName = k === 'Return' ? 'Enter' : k;
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: code, code: args[2] ?? `Key${keyName === 'Enter' ? 'Enter' : keyName.toUpperCase()}`, key: keyName, modifiers: flags });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: code, code: args[2] ?? `Key${keyName === 'Enter' ? 'Enter' : keyName.toUpperCase()}`, key: keyName, modifiers: flags });
     console.log('key', k, mods.join('+'), 'done');
   } else {
     console.error('unknown cmd', cmd);
