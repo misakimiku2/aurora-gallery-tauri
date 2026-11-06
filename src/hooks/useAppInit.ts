@@ -9,6 +9,7 @@ import { setScrollProfilerEnabled } from '../utils/scrollProfiler';
 import { memoryPressureMonitor } from '../utils/memoryPressureMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { pushRootHistory } from '../utils/rootHistory';
+import { pruneRescannedSubtree } from '../utils/scanPrune';
 import { getSourceUrls } from '../utils/sourceUrls';
 import { aiService } from '../services/aiService';
 import { setGlobalCacheRoot, setAndroidPlatform } from '../api/tauri-bridge';
@@ -328,7 +329,11 @@ export const useAppInit = ({
                       if (fullResult) {
                         setState(prev => ({
                           ...prev,
-                          files: { ...prev.files, ...fullResult.files },
+                          // 内存治理(重扫剪枝):全量重扫=子树全集,剪掉磁盘上已消失的条目
+                          files: {
+                            ...pruneRescannedSubtree(prev.files, fullResult.roots, fullResult.files),
+                            ...fullResult.files,
+                          },
                           roots: fullResult.roots,
                           isScanning: false,
                         }));
@@ -376,7 +381,11 @@ export const useAppInit = ({
                     if (imageResult) {
                       setState(prev => ({
                         ...prev,
-                        files: { ...prev.files, ...imageResult.files },
+                        // 内存治理(重扫剪枝):全量重扫=子树全集,剪掉磁盘上已消失的条目
+                        files: {
+                          ...pruneRescannedSubtree(prev.files, imageResult.roots, imageResult.files),
+                          ...imageResult.files,
+                        },
                         roots: imageResult.roots,
                         isScanning: false,
                       }));
@@ -463,7 +472,11 @@ export const useAppInit = ({
                     if (fullResult) {
                       setState(prev => ({
                         ...prev,
-                        files: { ...prev.files, ...fullResult.files },
+                        // 内存治理(重扫剪枝):全量重扫=子树全集,剪掉磁盘上已消失的条目
+                        files: {
+                          ...pruneRescannedSubtree(prev.files, fullResult.roots, fullResult.files),
+                          ...fullResult.files,
+                        },
                         roots: fullResult.roots,
                         sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
                         sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
@@ -517,7 +530,11 @@ export const useAppInit = ({
                   if (imageResult) {
                     setState(prev => ({
                       ...prev,
-                      files: { ...prev.files, ...imageResult.files },
+                      // 内存治理(重扫剪枝):全量重扫=子树全集,剪掉磁盘上已消失的条目
+                      files: {
+                        ...pruneRescannedSubtree(prev.files, imageResult.roots, imageResult.files),
+                        ...imageResult.files,
+                      },
                       roots: imageResult.roots,
                       sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
                       sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,

@@ -7,6 +7,7 @@ import { reloadPeople, reloadTopics } from '../utils/peopleTopics';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { pushRootHistory } from '../utils/rootHistory';
+import { pruneRescannedSubtree } from '../utils/scanPrune';
 import { getSourceUrls, normalizeSourceUrls, toSourceUrlFields } from '../utils/sourceUrls';
 import {
   scanDirectory,
@@ -95,7 +96,12 @@ export const useDirectoryScan = ({
 
       setState(prev => {
         const newRoots = Array.from(new Set([...prev.roots, ...result.roots]));
-        const newFiles = { ...prev.files, ...result.files };
+        // 内存治理(重扫剪枝):scanDirectory 返回扫描根子树全集,先按旧 children 数组
+        // 圈掉磁盘上已消失的条目再合并,AppState.files 不再只增不减
+        const newFiles = {
+          ...pruneRescannedSubtree(prev.files, [generateId(path)], result.files),
+          ...result.files,
+        };
         const updatedTabs = prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, folderId: result.roots[0], history: { stack: [{ folderId: result.roots[0], viewingId: null, viewMode: 'browser' as const, searchQuery: '', searchScope: 'all' as SearchScope, activeTags: [], activePersonId: null }], currentIndex: 0 } } : t);
         return {
           ...prev,
