@@ -241,3 +241,32 @@ export function curvePoints(
   }
   return out;
 }
+
+// -------------------------------------------------------------------------------------------
+// 已提交路径的轮廓(上游 path_lines:闭合子路径回绕首锚)
+// -------------------------------------------------------------------------------------------
+
+/** 引擎 path JSON(path.set 返回值/path.list 的 workPath;锚点为 {anchor,in,out,smooth})。 */
+export interface EnginePathJson {
+  subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[];
+}
+
+/** 文档路径 → 每子路径屏幕折线(上游 path_lines:闭合子路径段数=n,末段回绕首锚;
+ * 空子路径=首锚单点,锚点方块至少可见)。 */
+export function pathLines(
+  path: EnginePathJson,
+  toScr: (q: [number, number]) => [number, number],
+): { pts: [number, number][]; closed: boolean }[] {
+  return path.subpaths.map((s) => {
+    const n = s.knots.length;
+    const pts: [number, number][] = [];
+    const segs = s.closed ? n : Math.max(0, n - 1);
+    for (let i = 0; i < segs; i++) {
+      const a = s.knots[i];
+      const b = s.knots[(i + 1) % n];
+      pts.push(...curvePoints(a.anchor, a.out, b.in, b.anchor, toScr));
+    }
+    if (!pts.length && s.knots[0]) pts.push(toScr(s.knots[0].anchor));
+    return { pts, closed: s.closed };
+  });
+}

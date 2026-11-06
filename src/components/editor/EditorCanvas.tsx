@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -29,7 +29,8 @@ import {
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
-import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, shift45 as penShift45 } from './penLogic';
+import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, pathLines, shift45 as penShift45 } from './penLogic';
+import type { EnginePathJson as WorkPathJson } from './penLogic';
 import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
 
@@ -567,6 +568,39 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.stroke(path);
         octx.restore();
       }
+    }
+
+    // overlay:已提交工作路径常驻轮廓(上游 draw_overlay paths 段+shows_anchors:钢笔族
+    // 工具下 work path 显示 1px accent 轮廓+锚点方块,闭合子路径回绕首锚;路径本身无像素,
+    // 此轮廓即 PS 闭合后画布上能看到的东西)
+    if (s.tool === 'pen' && s.workPath && s.state) {
+      const toScr = (q: [number, number]): [number, number] => [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy];
+      const accent = isDark ? '#38bdf8' : '#0284c7';
+      octx.save();
+      octx.lineJoin = 'round';
+      octx.lineCap = 'round';
+      for (const { pts, closed } of pathLines(s.workPath, toScr)) {
+        if (pts.length < 2) continue;
+        octx.beginPath();
+        pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+        if (closed) octx.closePath();
+        octx.strokeStyle = accent;
+        octx.lineWidth = 1;
+        octx.stroke();
+      }
+      for (const sub of s.workPath.subpaths) {
+        for (const k of sub.knots) {
+          const [cx, cy] = toScr(k.anchor);
+          octx.beginPath();
+          octx.rect(cx - 3, cy - 3, 6, 6);
+          octx.fillStyle = '#ffffff';
+          octx.fill();
+          octx.strokeStyle = accent;
+          octx.lineWidth = 1;
+          octx.stroke();
+        }
+      }
+      octx.restore();
     }
 
     // overlay:钢笔草稿(上游 vector_ui draw_overlay):曲线=curve_points 自适应弦
@@ -1983,7 +2017,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   /** 提交钢笔草稿(上游 pen_commit/commit_path 的 Path 模式子集):<2 锚丢弃;
    * path.set 追加进工作路径(op:"combine"——上游提交后 selected_path="work",后续逐笔
-   * 累计同款口径;路径面板 二-4 接管选中态后按其指派)。 */
+   * 累计同款口径;路径面板 二-4 接管选中态后按其指派)。path.set 返回{name,path 全几何}
+   * =常驻轮廓数据源,就地入会话。 */
   const commitPen = (closed: boolean) => {
     const p = penRef.current;
     penRef.current = null;
@@ -1993,9 +2028,24 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       return;
     }
     void runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(p, closed) })
+      .then((r) => {
+        const s3 = getSession(tabId);
+        const path = (r as { path?: WorkPathJson } | null)?.path;
+        if (s3 && path) {
+          s3.workPath = path;
+          scheduleDraw();
+        }
+      })
       .catch((err) => logError('[editor] path.set 失败', err));
     scheduleDraw();
   };
+
+  // 钢笔激活/revision 推进时刷新工作路径(常驻轮廓数据源;上游 draw_overlay 即时读
+  // doc.work_path,我们经 path.list 拉取;commit/undo 都推进 revision=天然覆盖)
+  useEffect(() => {
+    const s = getSession(tabId);
+    if (s?.tool === 'pen' && s.docId != null) void refreshWorkPath(tabId);
+  }, [tabId, session?.tool, session?.docId, session?.revision]);
 
   // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
   useEffect(() => {

@@ -6,6 +6,7 @@
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
+import type { EnginePathJson as WorkPathJson } from './penLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -132,6 +133,10 @@ export interface EditorSession {
   exportDialog: ExportDialogState | null;
   /** 形状数值对话框状态(会话级;null=未打开)。点击形状工具=上游 shape_dialog,OK 走 shape.create。 */
   shapeDialog: ShapeDialogState | null;
+  /** 工作路径 JSON(钢笔族工具的常驻轮廓显示源;refreshWorkPath 按 revision 拉取,
+   * 上游 draw_overlay 直接读 doc.work_path 的即时模式口径)。 */
+  workPath: WorkPathJson | null;
+  workPathSeq: number;
 }
 
 /** 形状数值对话框字段(上游 shape_dialog fields;kind=对话框 MARK 名,与引擎 kind 不同名;
@@ -218,6 +223,8 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     selectMask: null,
     exportDialog: null,
     shapeDialog: null,
+    workPath: null,
+    workPathSeq: 0,
   };
   sessions.set(tabId, s);
   return s;
@@ -605,6 +612,34 @@ export function confirmShapeDialog(tabId: string): ShapeDialogState | null {
   s.shapeDialog = null;
   notify(tabId);
   return state;
+}
+
+// -------------------------------------------------------------------------------------------
+// 工作路径常驻轮廓数据(钢笔族工具;上游 draw_overlay 直接读 doc.work_path 的即时模式,
+// 我们经 path.list(journal:false)按需拉——钢笔激活与 revision 推进时刷新)
+// -------------------------------------------------------------------------------------------
+
+/** 拉取工作路径到会话(path.info{name:'work'}=完整几何;path.list 的 workPath 只有计数。
+ * 无工作路径时引擎报错=置 null;乱序回包按 seq 丢弃;失败静默不打扰)。 */
+export async function refreshWorkPath(tabId: string): Promise<void> {
+  const s = sessions.get(tabId);
+  if (!s?.docId || s.tool !== 'pen') return;
+  const seq = ++s.workPathSeq;
+  const docId = s.docId;
+  try {
+    const r = await editorRun(docId, 'path.info', { name: 'work' });
+    const s2 = sessions.get(tabId);
+    if (!s2 || s2.workPathSeq !== seq) return;
+    const result = r.result as { path?: WorkPathJson } | null;
+    s2.workPath = result?.path ?? null;
+    notify(tabId);
+  } catch {
+    const s2 = sessions.get(tabId);
+    if (s2 && s2.workPathSeq === seq) {
+      s2.workPath = null;
+      notify(tabId);
+    }
+  }
 }
 
 /** 确定(上游 confirm):记忆设置 → 系统保存对话框(建议名=文档名/图层名.格式)→
