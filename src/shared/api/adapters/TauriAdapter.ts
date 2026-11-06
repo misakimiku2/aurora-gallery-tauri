@@ -52,8 +52,13 @@ export class TauriAdapter implements SharedApi {
   }
 
   async getSpecialFormatPreview(path: string, format: 'jxl' | 'avif'): Promise<string> {
-    const cmd = format === 'jxl' ? 'get_jxl_preview' : 'get_avif_preview';
-    const result = await this.invoke(cmd, { path });
+    // get_avif_preview 已改原始字节 IPC(返 ArrayBuffer);此处兜底包成 object URL
+    // 维持 Promise<string> 契约。JXL 命令仍是 data URL 字符串,原样透传。
+    if (format === 'avif') {
+      const bytes = await this.invoke('get_avif_preview', { path }) as ArrayBuffer;
+      return URL.createObjectURL(new Blob([bytes], { type: 'image/avif' }));
+    }
+    const result = await this.invoke('get_jxl_preview', { path });
     return result as string;
   }
 

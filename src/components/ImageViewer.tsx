@@ -183,12 +183,14 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
       }
 
       if (path.toLowerCase().endsWith('.avif')) {
-        const previewUrl = await invoke<string>('get_avif_preview', { path });
-        // 同上;AVIF 回落是整个原文件的 base64,收益最大
-        const { url, bytes } = dataUrlToObjectUrl(previewUrl);
+        // 原始字节 IPC(get_avif_preview 已返 ArrayBuffer,内存治理):跳过 base64
+        // 往返,直接 ArrayBuffer→Blob——大 AVIF 不再产生 ×1.37 字符串+atob 双份瞬时
+        const bytes = await invoke<ArrayBuffer>('get_avif_preview', { path });
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'image/avif' }));
+        const size = bytes.byteLength;
         blobCache.set(path, url);
-        blobCacheSizes.set(path, bytes);
-        totalBlobBytes += bytes;
+        blobCacheSizes.set(path, size);
+        totalBlobBytes += size;
         evictBlobCache();
         return url;
       }

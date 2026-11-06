@@ -8,6 +8,28 @@ use log;
 pub static ACTIVE_HEAVY_DECODES: AtomicUsize = AtomicUsize::new(0);
 pub const MAX_CONCURRENT_HEAVY_DECODES: usize = 3;
 
+/// RAII 重解码闸:持有期间占一个 ACTIVE_HEAVY_DECODES 名额,Drop 时归还——
+/// 早退路径(?/panic)不漏名额。与 get_jxl_preview 的手动 fetch_sub 口径等价,
+/// 供带提前返回的闭包使用。
+pub struct HeavyDecodeGuard;
+
+impl Drop for HeavyDecodeGuard {
+    fn drop(&mut self) {
+        ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// 等待并占用一个重解码名额(async 等待,不占阻塞池线程)。
+/// 所有「全幅解码」入口(预览/色板提取)共用同一信号量,并发全解码峰值被钳在
+/// MAX_CONCURRENT_HEAVY_DECODES——百兆级瞬时解码缓冲不再按调用方数量叠加。
+pub async fn acquire_heavy_decode_slot() -> HeavyDecodeGuard {
+    while ACTIVE_HEAVY_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_HEAVY_DECODES {
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    ACTIVE_HEAVY_DECODES.fetch_add(1, Ordering::SeqCst);
+    HeavyDecodeGuard
+}
+
 /// 缩略图解码最大并发数：同时最多解码 5 张，保证 UI 主线程有 CPU 余量。
 /// 数值越小滚动越顺，但首次浏览大目录（或清空缓存重建）时缩略图出现越慢；
 /// 5 在排队延迟与主线程余量之间取得更好平衡。
@@ -135,16 +157,19 @@ pub fn get_image_dimensions(path: &str) -> (u32, u32) {
     }
 }
 
+/// AVIF 预览:原始字节 IPC(内存治理)。后端无 AVIF 解码器(thumbnail.rs 同口径,
+/// WebView2 原生渲染 AVIF),此前整文件 base64 data URL 透传——Rust 侧 ×1.37 编码
+/// 一份、JS 侧再 atob 解码一份,大文件双份瞬时峰值。改回原始字节:JS 拿到
+/// ArrayBuffer 直接包 Blob,零 base64 往返,画质不变。
 #[tauri::command]
-pub async fn get_avif_preview(path: String) -> Result<String, String> {
+pub async fn get_avif_preview(path: String) -> Result<tauri::ipc::Response, String> {
     use std::fs;
 
     let result = tokio::task::spawn_blocking(move || {
-        let content = fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
-        Ok(format!("data:image/avif;base64,{}", general_purpose::STANDARD.encode(content)))
+        fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))
     }).await.map_err(|e| e.to_string())?;
-    
-    result
+
+    result.map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]

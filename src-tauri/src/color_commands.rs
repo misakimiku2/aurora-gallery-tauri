@@ -31,6 +31,11 @@ pub async fn get_dominant_colors(
     let file_path_for_load = file_path.clone();
     let thumbnail_path_for_load = thumbnail_path.clone();
 
+    // 解码并发闸(内存治理):色板未命中 DB 时按原图全解码(非 JPEG 格式无降采样
+    // 快捷路径,百兆像素 PNG 一张瞬时 ~400MB)。自动提取/面板重建可能并发多张,
+    // 与 JXL/AVIF 预览共用同一信号量钳住峰值。缩略图命中本就轻量,顺带过闸无妨。
+    let _decode_guard = crate::image_utils::acquire_heavy_decode_slot().await;
+
     let results = tokio::task::spawn_blocking(move || {
         let img = if let Some(tp) = thumbnail_path_for_load {
              image::open(tp).map_err(|e| e.to_string()).or_else(|_| color_worker::load_and_resize_image_optimized(&file_path_for_load, None))
@@ -43,7 +48,8 @@ pub async fn get_dominant_colors(
     }).await.map_err(|e| e.to_string())??;
 
     let colors = results;
-    
+    drop(_decode_guard); // 解码完即还名额,DB 回写不占闸
+
     if !colors.is_empty() {
         let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
         let file_path_for_save = file_path.clone();
