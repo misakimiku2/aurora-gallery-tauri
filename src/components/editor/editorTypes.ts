@@ -103,6 +103,10 @@ export type EditorTool =
   | 'polygonShape'
   | 'lineShape'
   | 'pen'
+  | 'addAnchor'
+  | 'deleteAnchor'
+  | 'convertPoint'
+  | 'directSelect'
   | 'hand'
   | 'zoom';
 

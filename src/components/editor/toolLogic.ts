@@ -244,8 +244,18 @@ export function sampleHex(
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser',
-  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom', p: 'pen',
+  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom', a: 'directSelect',
 };
+
+/** 钢笔 P 组(上游 Tool::Pen|FreeformPen|CurvaturePen|AddAnchor|DeleteAnchor|ConvertPoint 同键
+ * 'P';自由/曲率钢笔 S6 后置)。P 键组内循环。 */
+export const PEN_GROUP_ORDER: EditorTool[] = ['pen', 'addAnchor', 'deleteAnchor', 'convertPoint'];
+
+/** P 键:组内循环;当前不在组内 → 回钢笔。 */
+export function nextPenTool(current: EditorTool | undefined): EditorTool {
+  const i = current ? PEN_GROUP_ORDER.indexOf(current) : -1;
+  return i < 0 ? 'pen' : PEN_GROUP_ORDER[(i + 1) % PEN_GROUP_ORDER.length];
+}
 
 /** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
 export const LASSO_GROUP: ReadonlySet<EditorTool> = new Set(['lasso', 'polygonLasso', 'magneticLasso']);

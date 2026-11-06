@@ -69,6 +69,16 @@ export interface ToolOptions {
   cornerRadius: number;
   polygonSides: number;
   lineWeight: number;
+  /** 钢笔 Auto Add/Delete(上游 pen_auto_add_delete,默认开):点击段=加锚、点击锚=删锚。 */
+  penAutoAddDelete: boolean;
+}
+
+/** 直接选择的选择态(上游 direct_select::DirectSelection 的持久部分;拖拽态在画布 ref)。
+ * 二-3 目标仅 work path(形状层路径/矢量蒙版/草稿直编=二-5/S6)。 */
+export interface DirectSelState {
+  target: 'work' | null;
+  anchors: [number, number][];
+  segment: [number, number] | null;
 }
 
 export interface EditorRuntime {
@@ -137,6 +147,8 @@ export interface EditorSession {
    * 上游 draw_overlay 直接读 doc.work_path 的即时模式口径)。 */
   workPath: WorkPathJson | null;
   workPathSeq: number;
+  /** 直接选择的选择态(工具/键事件改;拖拽态在画布 ref,不入 store)。 */
+  directSel: DirectSelState;
 }
 
 /** 形状数值对话框字段(上游 shape_dialog fields;kind=对话框 MARK 名,与引擎 kind 不同名;
@@ -217,6 +229,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       cornerRadius: 0,
       polygonSides: 5,
       lineWeight: 3,
+      penAutoAddDelete: true,
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
@@ -225,6 +238,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     shapeDialog: null,
     workPath: null,
     workPathSeq: 0,
+    directSel: { target: null, anchors: [], segment: null },
   };
   sessions.set(tabId, s);
   return s;
@@ -619,11 +633,14 @@ export function confirmShapeDialog(tabId: string): ShapeDialogState | null {
 // 我们经 path.list(journal:false)按需拉——钢笔激活与 revision 推进时刷新)
 // -------------------------------------------------------------------------------------------
 
+/** 路径编辑族工具(工作路径常驻轮廓的显示者;上游 shows_anchors 集合的 work path 子集)。 */
+export const PATH_TOOLS: ReadonlySet<string> = new Set(['pen', 'directSelect', 'addAnchor', 'deleteAnchor', 'convertPoint']);
+
 /** 拉取工作路径到会话(path.info{name:'work'}=完整几何;path.list 的 workPath 只有计数。
  * 无工作路径时引擎报错=置 null;乱序回包按 seq 丢弃;失败静默不打扰)。 */
 export async function refreshWorkPath(tabId: string): Promise<void> {
   const s = sessions.get(tabId);
-  if (!s?.docId || s.tool !== 'pen') return;
+  if (!s?.docId || !PATH_TOOLS.has(s.tool)) return;
   const seq = ++s.workPathSeq;
   const docId = s.docId;
   try {
@@ -733,6 +750,7 @@ export function subscribeSession(tabId: string, fn: () => void): () => void {
 export async function runCommand(tabId: string, cmd: string, params: Record<string, unknown> = {}, opts: { noPull?: boolean } = {}): Promise<unknown> {
   const s = sessions.get(tabId);
   if (!s || s.docId == null) throw new Error('editor session not open');
+  // TODO(二-3 冒烟探针,验证后删)
   const out = await editorRun(s.docId, cmd, params);
   // layer.pickAt/selectInRect 只改图层选择(不入史不推进 revision),选择一变面板就要跟上
   const pull = !opts.noPull && (out.revision > 0 || /^(tools|view|channel)\./.test(cmd) || /^layer\.(pickAt|selectInRect)$/.test(cmd));

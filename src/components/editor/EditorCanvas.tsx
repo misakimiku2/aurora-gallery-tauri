@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -19,7 +19,7 @@ import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMa
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cropTurnCursorDir, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextShapeTool,
+  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextPenTool, nextShapeTool,
   isShapeClick, SHAPE_GROUP, shapeBounds, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, shapeGeometry,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -29,12 +29,20 @@ import {
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
-import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, pathLines, shift45 as penShift45 } from './penLogic';
+import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penFromJson, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, pathLines, shift45 as penShift45 } from './penLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
+import {
+  addAnchor as peAddAnchor, anchorsIn as peAnchorsIn, bendSegment as peBendSegment, clonePath as peClone, convertPoint as peConvertPoint,
+  deleteAnchor as peDeleteAnchor, evalSeg as peEval, hitPath as peHit, moveAnchors as peMoveAnchors, moveHandle as peMoveHandle,
+  shownHandles as peShownHandles, subpathAnchors as peSubpathAnchors,
+  type EditPath, type Handle as PeHandle, type KnotRef, type PathHit, type Pt,
+} from './pathEdit';
 import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
+/** 直接选择族工具(上游 direct_select/anchor_tools 的指针接管者)。 */
+const DS_TOOLS: ReadonlySet<string> = new Set(['directSelect', 'addAnchor', 'deleteAnchor', 'convertPoint']);
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
 /** 交互期降载(PS「低分辨率预览」同款)的视口像素上限(约 4MP):拖动滑杆/渐变时泵按
@@ -198,6 +206,18 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const shapeDragRef = useRef<{ tool: EditorTool; sx: number; sy: number; ex: number; ey: number; maxDev: number } | null>(null);
   /** 钢笔草稿(二期 二-2,上游 app.ui.pen:编辑器态,Enter/闭合/切工具才提交)。 */
   const penRef = useRef<PenDraft | null>(null);
+  /** 直接选择拖拽(二期 二-3,上游 direct_select::Drag):编辑预览或框选。 */
+  const dsDragRef = useRef<
+    | { kind: 'edit'; edit: DsEdit; base: EditPath; start: Pt; end: Pt; preview: EditPath | null }
+    | { kind: 'marquee'; start: Pt; end: Pt; add: boolean }
+    | null
+  >(null);
+  /** 直接选择的段点选(与 store.directSel.segment 同源,press 时写入)。 */
+  type DsEdit =
+    | { kind: 'anchors'; anchors: KnotRef[] }
+    | { kind: 'handle'; knot: KnotRef; handle: PeHandle; from: Pt; independent: boolean }
+    | { kind: 'segment'; knot: KnotRef; t: number }
+    | { kind: 'convert'; knot: KnotRef };
   /** Live 渐变:选中渐变填充图层的信息(gradient.fill.get,revision 过期自动重拉)。 */
   const liveFillRef = useRef<GradientFillInfo | null>(null);
   /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线,
@@ -254,7 +274,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (prevToolRef.current !== s.tool) {
       const leavingCrop = prevToolRef.current === 'crop' && s.tool !== 'crop';
       const leavingPen = prevToolRef.current === 'pen' && s.tool !== 'pen';
+      // 离开直接选择族=清空选择(上游 direct_selection 随工具语义)
+      const leavingDs = prevToolRef.current !== null && DS_TOOLS.has(prevToolRef.current) && !DS_TOOLS.has(s.tool) && s.tool !== 'pen';
       prevToolRef.current = s.tool;
+      if (leavingDs && (s.directSel.anchors.length || s.directSel.segment)) {
+        updateSession(tabId, { directSel: { target: null, anchors: [], segment: null } });
+      }
       if (leavingCrop) {
         const f = cropRef.current;
         cropRef.current = null;
@@ -601,6 +626,128 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
       }
       octx.restore();
+    }
+
+    // overlay:直接选择族(上游 direct_select::draw_overlay):轮廓(编辑拖拽中=预览替换)+
+    // 显示手柄(选中锚双手柄+点中段出入口,收回的不显)+锚点(选中 accent 实心)+框选蚂蚁线
+    // +加/删锚悬停高亮(段 2.5px+预览锚 / 11px 框)。
+    if (DS_TOOLS.has(s.tool) && s.state) {
+      const toScr = (q: [number, number]): [number, number] => [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy];
+      const accent = isDark ? '#38bdf8' : '#0284c7';
+      const dg = dsDragRef.current;
+      const shown = dg?.kind === 'edit' && dg.preview ? dg.preview : s.workPath;
+      if (shown) {
+        octx.save();
+        octx.lineJoin = 'round';
+        octx.lineCap = 'round';
+        for (const { pts, closed } of pathLines(shown, toScr)) {
+          if (pts.length < 2) continue;
+          octx.beginPath();
+          pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+          if (closed) octx.closePath();
+          octx.strokeStyle = accent;
+          octx.lineWidth = 1;
+          octx.stroke();
+        }
+        if (s.directSel.target === 'work') {
+          for (const { knot: r, handle: h } of peShownHandles(s.directSel, shown)) {
+            const kn = shown.subpaths[r[0]]?.knots[r[1]];
+            if (!kn) continue;
+            const c: Pt = h === 'in' ? kn.in : kn.out;
+            const [ax, ay] = toScr(kn.anchor);
+            const [hx, hy] = toScr(c);
+            octx.beginPath();
+            octx.moveTo(ax, ay);
+            octx.lineTo(hx, hy);
+            octx.strokeStyle = accent;
+            octx.lineWidth = 1;
+            octx.stroke();
+            octx.beginPath();
+            octx.arc(hx, hy, 3, 0, Math.PI * 2);
+            octx.fillStyle = accent;
+            octx.fill();
+          }
+        }
+        shown.subpaths.forEach((sp, si) => {
+          sp.knots.forEach((kn, ki) => {
+            const [cx, cy] = toScr(kn.anchor);
+            const selected = s.directSel.target === 'work' && s.directSel.anchors.some((a) => a[0] === si && a[1] === ki);
+            octx.beginPath();
+            octx.rect(cx - 3, cy - 3, 6, 6);
+            octx.fillStyle = selected ? accent : '#ffffff';
+            octx.fill();
+            octx.strokeStyle = accent;
+            octx.lineWidth = 1;
+            octx.stroke();
+          });
+        });
+        // 悬停高亮(上游 anchor_tools::draw_hover:加=段高亮+预览锚,删=11px 框)
+        const hov = s.runtime.pointerDoc;
+        if (hov && !dg) {
+          const tol = 6.0 / Math.max(v.scale, 1e-3);
+          const effective: 'addAnchor' | 'deleteAnchor' | null = s.tool === 'addAnchor' ? (altRef.current ? 'deleteAnchor' : 'addAnchor') : s.tool === 'deleteAnchor' ? (altRef.current ? 'addAnchor' : 'deleteAnchor') : null;
+          if (effective) {
+            const hit = peHit(shown, [hov.x, hov.y], tol, []);
+            const ok = hit && (effective === 'addAnchor' ? hit.kind === 'segment' : hit.kind === 'anchor');
+            if (ok && hit.kind === 'segment') {
+              const seg = (si => { const sp = shown.subpaths[si[0]]; if (!sp) return null; const n = sp.knots.length; const j = si[1] + 1 < n ? si[1] + 1 : sp.closed && n > 1 ? 0 : null; return j == null ? null : [sp.knots[si[1]].anchor, sp.knots[si[1]].out, sp.knots[j].in, sp.knots[j].anchor] as [Pt, Pt, Pt, Pt]; })(hit.knot);
+              if (seg) {
+                octx.beginPath();
+                for (let i = 0; i <= 48; i++) {
+                  const q = toScr(peEval(seg, i / 48));
+                  if (i === 0) octx.moveTo(q[0], q[1]);
+                  else octx.lineTo(q[0], q[1]);
+                }
+                octx.strokeStyle = accent;
+                octx.lineWidth = 2.5;
+                octx.stroke();
+                const q = toScr(peEval(seg, hit.t));
+                octx.beginPath();
+                octx.rect(q[0] - 3, q[1] - 3, 6, 6);
+                octx.fillStyle = '#ffffff';
+                octx.fill();
+                octx.strokeStyle = accent;
+                octx.lineWidth = 1;
+                octx.stroke();
+              }
+            } else if (ok && hit.kind === 'anchor') {
+              const kn = shown.subpaths[hit.knot[0]]?.knots[hit.knot[1]];
+              if (kn) {
+                const [cx, cy] = toScr(kn.anchor);
+                octx.beginPath();
+                octx.rect(cx - 5.5, cy - 5.5, 11, 11);
+                octx.strokeStyle = accent;
+                octx.lineWidth = 1.5;
+                octx.stroke();
+                octx.beginPath();
+                octx.rect(cx - 3, cy - 3, 6, 6);
+                octx.fillStyle = accent;
+                octx.fill();
+              }
+            }
+          }
+        }
+        octx.restore();
+      }
+      // 框选蚂蚁线
+      if (dg?.kind === 'marquee') {
+        const pts = [dg.start, [dg.end[0], dg.start[1]] as Pt, dg.end, [dg.start[0], dg.end[1]] as Pt].map(toScr);
+        octx.save();
+        octx.setLineDash([4, 3]);
+        octx.strokeStyle = isDark ? '#e5e5e5' : '#111111';
+        octx.lineWidth = 1;
+        octx.beginPath();
+        pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+        octx.closePath();
+        octx.stroke();
+        octx.setLineDash([]);
+        octx.strokeStyle = 'rgba(0,0,0,0.5)';
+        octx.beginPath();
+        pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+        octx.closePath();
+        octx.stroke();
+        octx.restore();
+      }
     }
 
     // overlay:钢笔草稿(上游 vector_ui draw_overlay):曲线=curve_points 自适应弦
@@ -2040,11 +2187,198 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   };
 
-  // 钢笔激活/revision 推进时刷新工作路径(常驻轮廓数据源;上游 draw_overlay 即时读
-  // doc.work_path,我们经 path.list 拉取;commit/undo 都推进 revision=天然覆盖)
+  // -------------------------------------------------------------------------------------------
+  // 直接选择/锚点工具(二期 二-3,上游 direct_select.rs + anchor_tools.rs;目标=work path)
+  // -------------------------------------------------------------------------------------------
+
+  /** 钢笔 Auto Add/Delete 的命中目标(上游 anchor_tools::pen_auto 的无修饰键调用方):
+   * 草稿在画(非拖拽)=只对草稿(#6140),否则对工作路径;开放子路径端点留给钢笔
+   * (首锚=闭合,末锚=断柄)。返回 null=钢笔自己处理(落新锚)。 */
+  const penAutoTarget = (s: NonNullable<ReturnType<typeof getSession>>, x: number, y: number, tol: number): { onDraft: boolean; path: EditPath; hit: PathHit } | null => {
+    if (penRef.current && !penRef.current.dragging) {
+      const path = penToJson(penRef.current, false) as EditPath;
+      const hit = peHit(path, [x, y], tol, []);
+      if (!hit) return null;
+      if (hit.kind === 'anchor') {
+        const sp = path.subpaths[hit.knot[0]];
+        if (sp && !sp.closed && (hit.knot[1] === 0 || hit.knot[1] + 1 === sp.knots.length)) return null;
+      }
+      if (hit.kind === 'handle') return null;
+      return { onDraft: true, path, hit };
+    }
+    if (!penRef.current && s.workPath) {
+      const hit = peHit(s.workPath, [x, y], tol, []);
+      if (!hit) return null;
+      if (hit.kind === 'anchor') {
+        const sp = s.workPath.subpaths[hit.knot[0]];
+        if (sp && !sp.closed && (hit.knot[1] === 0 || hit.knot[1] + 1 === sp.knots.length)) return null;
+      }
+      if (hit.kind === 'handle') return null;
+      return { onDraft: false, path: s.workPath, hit };
+    }
+    return null;
+  };
+
+  /** 执行 Auto Add/Delete(上游 anchor_tools::edit_pen/apply):草稿=几何直改后重建;
+   * 工作路径=一条命令一步历史;选中态里锚会移位→重置(上游 apply 同款)。 */
+  const applyPenAuto = (auto: { onDraft: boolean; path: EditPath; hit: PathHit }): void => {
+    const { hit } = auto;
+    if (auto.onDraft && penRef.current) {
+      const edited = hit.kind === 'segment'
+        ? peAddAnchor(auto.path, hit.knot, hit.t)
+        : hit.kind === 'anchor'
+          ? peDeleteAnchor(auto.path, hit.knot)
+          : null;
+      if (edited !== null) {
+        penRef.current = penFromJson(auto.path);
+        updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+      }
+      return;
+    }
+    if (hit.kind === 'segment') {
+      void runCommand(tabId, 'path.addAnchor', { subpath: hit.knot[0], knot: hit.knot[1], t: hit.t, name: 'work' })
+        .catch((err) => logError('[editor] path.addAnchor 失败', err));
+    } else if (hit.kind === 'anchor') {
+      void runCommand(tabId, 'path.deleteAnchor', { subpath: hit.knot[0], knot: hit.knot[1], name: 'work' })
+        .catch((err) => logError('[editor] path.deleteAnchor 失败', err));
+    } else {
+      return;
+    }
+    const s2 = getSession(tabId);
+    if (s2?.directSel.target === 'work') updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+  };
+
+  /** 直接选择按下(上游 direct_select::press;convert=Pen+⌥/转换点工具;ownTool=转换点
+   * 工具未命中也吃掉按下)。返回是否接管。 */
+  const dsPress = (x: number, y: number, mods: { shift: boolean; alt: boolean }, convert: boolean, ownTool: boolean): boolean => {
+    const s = getSession(tabId);
+    if (!s) return false;
+    const tol = 6.0 / Math.max(s.runtime.view.scale, 1e-3);
+    const base = s.workPath;
+    const handles = s.directSel.target === 'work' && base ? peShownHandles(s.directSel, base) : [];
+    const found = base ? peHit(base, [x, y], tol, handles) : null;
+    if (!found) {
+      if (convert) return ownTool;
+      dsDragRef.current = { kind: 'marquee', start: [x, y], end: [x, y], add: mods.shift };
+      return true;
+    }
+    if (s.directSel.target !== 'work') updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+    let edit: DsEdit;
+    if (found.kind === 'handle') {
+      const kn = base!.subpaths[found.knot[0]].knots[found.knot[1]];
+      const from: Pt = found.handle === 'in' ? [...kn.in] as Pt : [...kn.out] as Pt;
+      edit = { kind: 'handle', knot: found.knot, handle: found.handle, from, independent: mods.alt || convert };
+    } else if (found.kind === 'anchor' && convert) {
+      if (ownTool) updateSession(tabId, { directSel: { target: 'work', anchors: [found.knot], segment: null } });
+      edit = { kind: 'convert', knot: found.knot };
+    } else if (found.kind === 'segment' && convert) {
+      // Pen+⌥ 在段上=无事(上游 Hit::Segment if convert => return true)
+      return true;
+    } else if (found.kind === 'anchor') {
+      const ds = getSession(tabId)!.directSel;
+      let anchors = [...ds.anchors];
+      let noDrag = false;
+      if (mods.alt) {
+        anchors = peSubpathAnchors(base!, found.knot[0]);
+      } else if (mods.shift) {
+        const i = anchors.findIndex((a) => a[0] === found.knot[0] && a[1] === found.knot[1]);
+        if (i >= 0) anchors.splice(i, 1);
+        else anchors.push(found.knot);
+        noDrag = i >= 0; // ⇧ 点选取消选中=不拖(上游同)
+      } else if (!anchors.some((a) => a[0] === found.knot[0] && a[1] === found.knot[1])) {
+        anchors = [found.knot];
+      }
+      updateSession(tabId, { directSel: { target: 'work', anchors, segment: null } });
+      if (noDrag) return true;
+      edit = { kind: 'anchors', anchors };
+    } else if (found.kind === 'segment' && mods.alt) {
+      const anchors = peSubpathAnchors(base!, found.knot[0]);
+      updateSession(tabId, { directSel: { target: 'work', anchors, segment: null } });
+      edit = { kind: 'anchors', anchors };
+    } else {
+      updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: found.knot } });
+      edit = { kind: 'segment', knot: found.knot, t: found.t };
+    }
+    dsDragRef.current = { kind: 'edit', edit, base: peClone(base!), start: [x, y], end: [x, y], preview: null };
+    return true;
+  };
+
+  /** 编辑拖拽的预览(上游 Edit::preview:base 应用同一几何=预览即提交内容)。 */
+  const dsPreview = (d: { edit: DsEdit; base: EditPath; start: Pt; end: Pt }): EditPath | null => {
+    const p = peClone(d.base);
+    const dd: Pt = [d.end[0] - d.start[0], d.end[1] - d.start[1]];
+    switch (d.edit.kind) {
+      case 'anchors': return peMoveAnchors(p, d.edit.anchors, dd);
+      case 'handle': return peMoveHandle(p, d.edit.knot, d.edit.handle, [d.edit.from[0] + dd[0], d.edit.from[1] + dd[1]], d.edit.independent);
+      case 'segment': return peBendSegment(p, d.edit.knot, d.edit.t, dd);
+      case 'convert': return peConvertPoint(p, d.edit.knot, [d.end[0], d.end[1]]);
+    }
+  };
+
+  /** 编辑拖拽/点击提交(上游 direct_select::release):位移 ≥1 屏幕px 才提交;Convert 点击
+   * (未动)=收回成角点;⇧ 锚点拖拽 45° 锁定。 */
+  const dsRelease = (x: number, y: number, shift: boolean, zoom: number): void => {
+    const dg = dsDragRef.current;
+    if (!dg || dg.kind !== 'edit') return;
+    dsDragRef.current = null;
+    const end: Pt = dg.edit.kind === 'anchors' && shift ? penShift45(dg.start, [x, y], true) : [x, y];
+    const moved = Math.hypot(end[0] - dg.start[0], end[1] - dg.start[1]) * zoom >= 1.0;
+    let cmd: string;
+    let params: Record<string, unknown>;
+    if (dg.edit.kind === 'convert' && !moved) {
+      cmd = 'path.convertPoint';
+      params = { subpath: dg.edit.knot[0], knot: dg.edit.knot[1] };
+    } else if (!moved) {
+      return;
+    } else {
+      const dd: Pt = [end[0] - dg.start[0], end[1] - dg.start[1]];
+      switch (dg.edit.kind) {
+        case 'anchors':
+          cmd = 'path.moveAnchors';
+          params = { anchors: dg.edit.anchors, move: dd };
+          break;
+        case 'handle':
+          cmd = 'path.moveHandle';
+          params = { subpath: dg.edit.knot[0], knot: dg.edit.knot[1], handle: dg.edit.handle, to: [dg.edit.from[0] + dd[0], dg.edit.from[1] + dd[1]], independent: dg.edit.independent };
+          break;
+        case 'segment':
+          cmd = 'path.bendSegment';
+          params = { subpath: dg.edit.knot[0], knot: dg.edit.knot[1], t: dg.edit.t, move: dd };
+          break;
+        case 'convert':
+          cmd = 'path.convertPoint';
+          params = { subpath: dg.edit.knot[0], knot: dg.edit.knot[1], out: end };
+          break;
+      }
+    }
+    void runCommand(tabId, cmd, { ...params, name: 'work' })
+      .catch((err) => logError(`[editor] ${cmd} 失败`, err));
+    scheduleDraw();
+  };
+
+  /** 框选收尾(上游 direct_select::marquee):首个有锚的路径(work)框内锚;⇧ 累加;
+   * 空白点击=取消选择。 */
+  const dsMarqueeEnd = (start: Pt, end: Pt, add: boolean): void => {
+    const s = getSession(tabId);
+    if (!s) return;
+    const hits = s.workPath ? peAnchorsIn(s.workPath, [start[0], start[1], end[0], end[1]]) : [];
+    const ds = s.directSel;
+    if (hits.length && add && ds.target === 'work') {
+      const merged = [...ds.anchors];
+      for (const a of hits) if (!merged.some((b) => b[0] === a[0] && b[1] === a[1])) merged.push(a);
+      updateSession(tabId, { directSel: { target: 'work', anchors: merged, segment: null } });
+    } else if (hits.length) {
+      updateSession(tabId, { directSel: { target: 'work', anchors: hits, segment: null } });
+    } else if (!add) {
+      updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+    }
+  };
+
+  // 路径编辑族激活/revision 推进时刷新工作路径(常驻轮廓数据源;上游 draw_overlay 即时读
+  // doc.work_path,我们经 path.info 拉取;commit/undo 都推进 revision=天然覆盖)
   useEffect(() => {
     const s = getSession(tabId);
-    if (s?.tool === 'pen' && s.docId != null) void refreshWorkPath(tabId);
+    if (s && PATH_TOOLS.has(s.tool) && s.docId != null) void refreshWorkPath(tabId);
   }, [tabId, session?.tool, session?.docId, session?.revision]);
 
   // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
@@ -2271,6 +2605,18 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 方向键微移(上游 arrow_keys/move_mods::nudge 口径:1px / Shift 10px):
       // 有选区 → 浮动选区像素(零历史,落定时一步 Move);无选区/不可浮 → 整层 translate;
       // Alt = 复制后微移(浮动像素:落定再浮副本移动;整层:桥层原子复制+平移+折叠一步)
+      if (s.tool === 'directSelect' && s.directSel.anchors.length > 0 && !dsDragRef.current
+        && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        // 直接选择箭头微移(上游 arrow_keys #4486):选中锚 1px(⇧10px),每按一步=一条
+        // path.moveAnchors 命令=一步历史
+        e.preventDefault();
+        const dist = e.shiftKey ? 10 : 1;
+        const ddx = e.key === 'ArrowLeft' ? -dist : e.key === 'ArrowRight' ? dist : 0;
+        const ddy = e.key === 'ArrowUp' ? -dist : e.key === 'ArrowDown' ? dist : 0;
+        void runCommand(tabId, 'path.moveAnchors', { anchors: s.directSel.anchors, move: [ddx, ddy], name: 'work' })
+          .catch((err) => logError('[editor] 锚点微移失败', err));
+        return;
+      }
       if (s.tool === 'move' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
         e.preventDefault();
         const dist = e.shiftKey ? 10 : 1;
@@ -2501,6 +2847,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'u') {
         // U 键形状组循环:矩形→椭圆→三角形→多边形→直线(上游 Tool 组同键 'U' 口径)
         setTool(tabId, nextShapeTool(getSession(tabId)?.tool));
+      } else if (k === 'p') {
+        // P 键钢笔组循环:钢笔→添加锚点→删除锚点→转换点(上游 Tool P 组同键口径)
+        setTool(tabId, nextPenTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -2830,10 +3179,68 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       shapeDragRef.current = { tool: s.tool, sx: dx, sy: dy, ex: dx, ey: dy, maxDev: 0 };
       scheduleDraw();
     } else if (s.tool === 'pen' && e.button === 0 && s.state) {
-      // 钢笔(上游 canvas.rs 派发序):Alt 按在末锚手柄上=抓单柄;否则加锚/闭合替身/断末锚
+      // 钢笔(上游 canvas.rs 派发序):Auto Add/Delete → ⌘ 直接选择 → ⌥ 转换点 → 落锚
       const tol = 6.0 / Math.max(s.runtime.view.scale, 1e-3);
-      if (!(e.altKey && penRef.current && penGrabHandle(penRef.current, dx, dy, tol))) {
-        penRef.current = penDown(penRef.current, dx, dy, e.shiftKey, tol);
+      const mods = { shift: e.shiftKey, alt: e.altKey };
+      if (!mods.shift && !mods.alt && !e.ctrlKey && !e.metaKey && s.options.penAutoAddDelete) {
+        const auto = penAutoTarget(s, dx, dy, tol);
+        if (auto) {
+          applyPenAuto(auto);
+          scheduleDraw();
+          return;
+        }
+      }
+      // ⌘/Ctrl=直接选择(草稿在画时的草稿直编=S6 后置;无草稿=编辑工作路径)
+      if ((e.ctrlKey || e.metaKey) && !penRef.current) {
+        dsPress(dx, dy, mods, false, false);
+        scheduleDraw();
+        return;
+      }
+      // Pen+⌥(无草稿)=转换点:锚上=角点/拖出平滑手柄;未命中=落新锚(上游 converting)
+      if (mods.alt && !penRef.current) {
+        if (dsPress(dx, dy, mods, true, false)) {
+          scheduleDraw();
+          return;
+        }
+      }
+      // Alt 按在末锚手柄上=抓单柄;否则加锚/闭合替身/断末锚
+      if (e.altKey && penRef.current && penGrabHandle(penRef.current, dx, dy, tol)) {
+        scheduleDraw();
+        return;
+      }
+      penRef.current = penDown(penRef.current, dx, dy, e.shiftKey, tol);
+      scheduleDraw();
+    } else if (s.tool === 'directSelect' && e.button === 0 && s.state) {
+      dsPress(dx, dy, { shift: e.shiftKey, alt: e.altKey }, false, false);
+      scheduleDraw();
+    } else if ((s.tool === 'addAnchor' || s.tool === 'deleteAnchor' || s.tool === 'convertPoint') && e.button === 0 && s.state) {
+      // 锚点工具(上游 anchor_tools::click/convert):⌘=直接选择;⌥ 换加/删;转换点未命中=吃掉按下
+      const mods = { shift: e.shiftKey, alt: e.altKey };
+      if (e.ctrlKey || e.metaKey) {
+        dsPress(dx, dy, mods, false, false);
+        scheduleDraw();
+        return;
+      }
+      const tol = 6.0 / Math.max(s.runtime.view.scale, 1e-3);
+      if (s.tool === 'convertPoint') {
+        dsPress(dx, dy, mods, true, true);
+        scheduleDraw();
+        return;
+      }
+      // add/delete:命中各自目标才动(段=加/锚=删,⌥ 互换=未命中时无事)
+      const effective: 'addAnchor' | 'deleteAnchor' = s.tool === 'addAnchor' ? (mods.alt ? 'deleteAnchor' : 'addAnchor') : mods.alt ? 'addAnchor' : 'deleteAnchor';
+      if (s.workPath) {
+        const hit = peHit(s.workPath, [dx, dy], tol, []);
+        const ok = hit && (effective === 'addAnchor' ? hit.kind === 'segment' : hit.kind === 'anchor');
+        if (ok && hit.kind === 'segment') {
+          void runCommand(tabId, 'path.addAnchor', { subpath: hit.knot[0], knot: hit.knot[1], t: hit.t, name: 'work' })
+            .catch((err) => logError('[editor] path.addAnchor 失败', err));
+          if (s.directSel.target === 'work') updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+        } else if (ok && hit.kind === 'anchor') {
+          void runCommand(tabId, 'path.deleteAnchor', { subpath: hit.knot[0], knot: hit.knot[1], name: 'work' })
+            .catch((err) => logError('[editor] path.deleteAnchor 失败', err));
+          if (s.directSel.target === 'work') updateSession(tabId, { directSel: { target: 'work', anchors: [], segment: null } });
+        }
       }
       scheduleDraw();
     } else if (s.tool === 'marquee' && e.button === 0) {
@@ -2997,6 +3404,24 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       sd.ex = dx;
       sd.ey = dy;
       sd.maxDev = Math.max(sd.maxDev, Math.hypot(dx - sd.sx, dy - sd.sy));
+      scheduleDraw();
+      return;
+    }
+    if (DS_TOOLS.has(s.tool)) {
+      // 直接选择族:编辑拖拽预览/框选跟随;纯悬停也要重绘(高亮随指针,上游即时模式)
+      const dg = dsDragRef.current;
+      if (dg?.kind === 'edit') {
+        const end: Pt = dg.edit.kind === 'anchors' && e.shiftKey ? penShift45(dg.start, [dx, dy], true) : [dx, dy];
+        dg.end = end;
+        dg.preview = dsPreview({ edit: dg.edit, base: dg.base, start: dg.start, end });
+        scheduleDraw();
+        return;
+      }
+      if (dg?.kind === 'marquee') {
+        dg.end = [dx, dy];
+        scheduleDraw();
+        return;
+      }
       scheduleDraw();
       return;
     }
@@ -3337,6 +3762,19 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const r = penUp(penRef.current, jitter);
       if (r.closed) commitPen(true);
       scheduleDraw();
+    }
+    if (s && dsDragRef.current) {
+      // 直接选择抬笔:编辑拖拽=一条命令一步历史(位移≥1 屏幕px);框选=选锚
+      const rect = wrapRef.current!.getBoundingClientRect();
+      const [ux, uy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+      const dg = dsDragRef.current;
+      if (dg.kind === 'edit') {
+        dsRelease(ux, uy, e.shiftKey, s.runtime.view.scale);
+      } else {
+        dsDragRef.current = null;
+        dsMarqueeEnd(dg.start, [ux, uy], dg.add);
+        scheduleDraw();
+      }
     }
     if (s && cd && s.state) {
       const f = cropRef.current!;

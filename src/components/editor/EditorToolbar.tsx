@@ -9,7 +9,7 @@ import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
 import { EditorIcon, type EditorIconName } from './editorIcons';
 import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
-import { nextLassoTool, nextMarqueeShape, nextShapeTool } from './toolLogic';
+import { nextLassoTool, nextMarqueeShape, nextPenTool, nextShapeTool } from './toolLogic';
 
 /** 选框组子形态(M 键组内循环,PS 口径四形态;图标=上游 assets/icons 同名)。 */
 const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: EditorIconName }[] = [
@@ -35,6 +35,14 @@ const SHAPE_TOOLS: { tool: EditorTool; label: string; icon: EditorIconName }[] =
   { tool: 'lineShape', label: '直线工具 (U)', icon: 'slash' },
 ];
 
+/** 钢笔 P 组子工具(P 键组内循环,上游 Tool::Pen 族同键;自由/曲率钢笔 S6 后置)。 */
+const PEN_TOOLS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
+  { tool: 'pen', label: '钢笔 (P)', icon: 'pen-tool' },
+  { tool: 'addAnchor', label: '添加锚点 (P)', icon: 'pen-add-anchor' },
+  { tool: 'deleteAnchor', label: '删除锚点 (P)', icon: 'pen-delete-anchor' },
+  { tool: 'convertPoint', label: '转换点 (P)', icon: 'convert-point' },
+];
+
 const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'move', label: '移动 (V)', icon: 'move' },
   { tool: 'crop', label: '裁剪 (C)', icon: 'crop' },
@@ -46,7 +54,6 @@ const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'blur', label: '模糊 (R)', icon: 'droplet' },
   { tool: 'sharpen', label: '锐化', icon: 'triangle' },
   { tool: 'smudge', label: '涂抹 (S)', icon: 'pointer' },
-  { tool: 'pen', label: '钢笔 (P)', icon: 'pen-tool' },
 ];
 /** 形状组排在涂抹与抓手之间(PS 工具栏次序);尾组恒手/缩放。 */
 const GROUPS_TAIL: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
@@ -65,7 +72,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
   /** 子形态弹层(屏幕坐标 + 归属组;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
-  const [menu, setMenu] = useState<{ kind: 'marquee' | 'lasso' | 'shape'; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ kind: 'marquee' | 'lasso' | 'shape' | 'pen'; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   /** 长按弹层(上游 0.35s 口径):计时器 + "本次长按已开弹层"标记(抑制定击的选工具)。 */
   const pressTimer = useRef<number | null>(null);
@@ -106,8 +113,13 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     setTool(tabId, tool);
     setMenu(null);
   };
+  const penActive = PEN_TOOLS.find((t) => t.tool === s.tool) ?? PEN_TOOLS[0];
+  const pickPen = (tool: EditorTool) => {
+    setTool(tabId, tool);
+    setMenu(null);
+  };
   /** 长按 0.35s 开弹层(上游 panels.rs 口径);短按仍走 onClick 选工具。 */
-  const startPress = (kind: 'marquee' | 'lasso' | 'shape') => (e: React.PointerEvent) => {
+  const startPress = (kind: 'marquee' | 'lasso' | 'shape' | 'pen') => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     pressPosRef.current = { x: r.right + 4, y: r.top };
@@ -125,7 +137,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     }
   };
   /** 组槽位公共 props:长按/右键弹层 + 双击循环 + 短按选中(长按刚开弹层时抑制)。 */
-  const groupSlot = (kind: 'marquee' | 'lasso' | 'shape', title: string, onDoubleClick: () => void, onShortClick: () => void) => ({
+  const groupSlot = (kind: 'marquee' | 'lasso' | 'shape' | 'pen', title: string, onDoubleClick: () => void, onShortClick: () => void) => ({
     title: `${title} — 右键/长按切换形态`,
     onClick: () => {
       if (pressOpenedRef.current) {
@@ -264,6 +276,52 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
           ))}
         </div>
       )}
+      <button
+        key="pen"
+        {...groupSlot(
+          'pen',
+          penActive.label,
+          () => setTool(tabId, nextPenTool(s.tool)),
+          () => setTool(tabId, penActive.tool),
+        )}
+        className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
+          penActive.tool === s.tool
+            ? 'bg-sky-600 text-white'
+            : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
+        }`}
+      >
+        <EditorIcon name={penActive.icon} />
+      </button>
+      {menu?.kind === 'pen' && (
+        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
+          {PEN_TOOLS.map(({ tool, label, icon }) => (
+            <button
+              key={tool}
+              onClick={() => pickPen(tool)}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
+                tool === s.tool
+                  ? 'text-sky-700 dark:text-sky-300'
+                  : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+              }`}
+            >
+              <EditorIcon name={icon} size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        key="directSelect"
+        title="直接选择 (A) — 点选/框选锚点,拖锚/手柄/段编辑"
+        onClick={() => setTool(tabId, 'directSelect')}
+        className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
+          s.tool === 'directSelect'
+            ? 'bg-sky-600 text-white'
+            : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
+        }`}
+      >
+        <EditorIcon name="direct-select" />
+      </button>
       {GROUPS_TAIL.map(({ tool, label, icon }) => (
         <button
           key={tool}

@@ -194,6 +194,19 @@ export function penToJson(pen: PenPath, closed: boolean): { subpaths: [{ closed:
   };
 }
 
+/** 引擎单子路径 JSON → 草稿(上游 pen_replace 的逆:Auto Add/Delete 直接改草稿后重建;
+ * smooth=false 的锚=尖角入 unlinked)。 */
+export function penFromJson(p: { subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[] }): PenPath {
+  const knots = p.subpaths[0]?.knots ?? [];
+  return {
+    knots: knots.map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.in] as [number, number], out: [...k.out] as [number, number] })),
+    unlinked: knots.map((k, i) => (k.smooth ? -1 : i)).filter((i) => i >= 0),
+    dragging: false,
+    adjustingLast: false,
+    adjustingIn: false,
+  };
+}
+
 // -------------------------------------------------------------------------------------------
 // 曲线细分(上游 curve_points:屏幕空间自适应弦数,#4084)
 // -------------------------------------------------------------------------------------------

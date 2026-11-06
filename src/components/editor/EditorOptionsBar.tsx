@@ -609,8 +609,23 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
           </label>
         </>
       ) : s.tool === 'pen' ? (
-        // 上游钢笔选项条的操作提示文案(控件 二-4/二-5 随 vector_mode/路径面板接入)
-        <span className="text-neutral-500 dark:text-neutral-400">单击=加锚点 · 拖拽=拉出手柄 · 点击首锚=闭合 · Alt=断开/抓柄 · Ctrl+Z/⌫=退点 · Enter/Esc=保留开放路径 · 切工具自动提交</span>
+        <>
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="点击段=加锚、点击锚=删锚(开放子路径端点除外);⇧/⌥/⌘ 按住时关闭">
+            <input
+              type="checkbox" checked={s.options.penAutoAddDelete}
+              onChange={(e) => setOptions(tabId, { penAutoAddDelete: e.target.checked })}
+              className="accent-sky-600"
+            />
+            自动添加/删除
+          </label>
+          <span className="text-neutral-500 dark:text-neutral-400">单击=加锚点 · 拖拽=拉出手柄 · 点击首锚=闭合 · Alt=断开/抓柄/转换点 · Ctrl=直接选择 · Ctrl+Z/⌫=退点 · Enter/Esc=保留开放路径</span>
+        </>
+      ) : s.tool === 'directSelect' ? (
+        <span className="text-neutral-500 dark:text-neutral-400">点选锚点(⇧ 加减 / Alt 整条子路径)· 空白拖拽=框选 · 拖锚/手柄/段编辑 · 方向键微移(⇧×10)</span>
+      ) : s.tool === 'addAnchor' || s.tool === 'deleteAnchor' ? (
+        <span className="text-neutral-500 dark:text-neutral-400">{s.tool === 'addAnchor' ? '点击段=加锚点(曲线原形分割) · Alt=换删除锚点 · Ctrl=直接选择' : '点击锚=删除(邻锚以原手柄接续) · Alt=换添加锚点 · Ctrl=直接选择'}</span>
+      ) : s.tool === 'convertPoint' ? (
+        <span className="text-neutral-500 dark:text-neutral-400">点击锚=转角点 · 从锚拖拽=拉出平滑手柄 · 拖手柄=单独动 · Ctrl=直接选择</span>
       ) : SHAPE_GROUP.has(s.tool) ? (
         <>
           {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;

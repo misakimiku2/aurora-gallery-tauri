@@ -26,13 +26,18 @@ import rectangleHorizontal from '../../assets/editor-icons/rectangle-horizontal.
 import circle from '../../assets/editor-icons/circle.svg?raw';
 import slash from '../../assets/editor-icons/slash.svg?raw';
 import penTool from '../../assets/editor-icons/pen-tool.svg?raw';
+import penAddAnchor from '../../assets/editor-icons/pen-add-anchor.svg?raw';
+import penDeleteAnchor from '../../assets/editor-icons/pen-delete-anchor.svg?raw';
+import convertPoint from '../../assets/editor-icons/convert-point.svg?raw';
+import directSelect from '../../assets/editor-icons/direct-select.svg?raw';
 
 /** 图标名 = 上游 assets/icons 文件名(icons.rs tool_icon 同名)。 */
 export type EditorIconName =
   | 'move' | 'square-dashed' | 'ellipse-dashed' | 'marquee-row' | 'marquee-column'
   | 'lasso' | 'pentagon' | 'lasso-magnetic' | 'crop' | 'pipette' | 'brush' | 'eraser'
   | 'gradient' | 'paint-bucket' | 'droplet' | 'triangle' | 'pointer' | 'hand' | 'zoom-in'
-  | 'rectangle-horizontal' | 'circle' | 'slash' | 'pen-tool';
+  | 'rectangle-horizontal' | 'circle' | 'slash' | 'pen-tool'
+  | 'pen-add-anchor' | 'pen-delete-anchor' | 'convert-point' | 'direct-select';
 
 const ICONS: Record<EditorIconName, string> = {
   move, 'square-dashed': squareDashed, 'ellipse-dashed': ellipseDashed,
@@ -41,6 +46,8 @@ const ICONS: Record<EditorIconName, string> = {
   crop, pipette, brush, eraser, gradient, 'paint-bucket': paintBucket,
   droplet, triangle, pointer, hand, 'zoom-in': zoomIn,
   'rectangle-horizontal': rectangleHorizontal, circle, slash, 'pen-tool': penTool,
+  'pen-add-anchor': penAddAnchor, 'pen-delete-anchor': penDeleteAnchor,
+  'convert-point': convertPoint, 'direct-select': directSelect,
 };
 
 export const EditorIcon: FC<{ name: EditorIconName; size?: number; className?: string }> = ({
