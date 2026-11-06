@@ -238,11 +238,13 @@ export function sampleHex(
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M/L/G 键不在表内:选框/套索/渐变组内循环,由画布层处理。 */
+/** 工具单键快捷键(输入框聚焦时不触发,由调用方过滤)。M/L/G/U 键不在表内:选框/套索/渐变/
+ * 形状组内循环,由画布层处理。上游 Blur/Sharpen/Smudge 无单键(state.rs key()='\0'),我们
+ * phase-1 曾自造 u→锐化,二期形状组要占用 U,锐化回上游口径(仅工具栏可达)。 */
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser',
-  r: 'blur', u: 'sharpen', s: 'smudge', h: 'hand', z: 'zoom',
+  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom',
 };
 
 /** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
@@ -271,6 +273,183 @@ export function magneticPressureWidth(base: number, pressure: number | undefined
   if (!enabled || !hasPen || pressure == null || !Number.isFinite(pressure)) return base;
   return 1.0 + (base - 1.0) * (1.0 - Math.min(1, Math.max(0, pressure)));
 }
+
+// -------------------------------------------------------------------------------------------
+// 形状族(二期矢量线 二-1,上游 vector_ui.rs shape_geometry/shape_bounds + shape_dialog)
+// -------------------------------------------------------------------------------------------
+
+/** 形状组工具(U 键循环,上游 Tool::Rectangle|EllipseShape|Triangle|Polygon|Line 同键 'U';
+ * CustomShape 依赖预设库,后置另做)。 */
+export const SHAPE_GROUP: ReadonlySet<EditorTool> = new Set(['rectShape', 'ellipseShape', 'triangleShape', 'polygonShape', 'lineShape']);
+
+/** U 键:组内循环(上游 Tool::ALL 顺序 Rectangle→EllipseShape→Triangle→Polygon→Line;
+ * 当前不在组内 → 回矩形)。 */
+export function nextShapeTool(current: EditorTool | undefined): EditorTool {
+  const order: EditorTool[] = ['rectShape', 'ellipseShape', 'triangleShape', 'polygonShape', 'lineShape'];
+  const i = current ? order.indexOf(current) : -1;
+  return i < 0 ? 'rectShape' : order[(i + 1) % order.length];
+}
+
+/** shape.create 的几何参数(不含 fill/stroke;上游 shape_geometry 逐行移植)。
+ * **修饰键=实时状态**(上游传 d.live,与选区族的 press/fresh 语义不同):⇧ 等比(直线=45°
+ * 吸附)、⌥ 从中心。几何过小(<1px/长度<1)返回 null=不提交不预览。 */
+export interface ShapeGeom {
+  kind: 'rect' | 'roundedRect' | 'ellipse' | 'polygon' | 'line';
+  rect?: [number, number, number, number];
+  radii?: number[];
+  sides?: number;
+  starRatio?: number;
+  from?: [number, number];
+  to?: [number, number];
+  weight?: number;
+}
+
+export function shapeGeometry(
+  o: Pick<ToolOptions, 'cornerRadius' | 'polygonSides' | 'lineWeight'>,
+  tool: EditorTool,
+  start: [number, number],
+  end: [number, number],
+  shift: boolean,
+  alt: boolean,
+): ShapeGeom | null {
+  if (tool === 'lineShape') {
+    let [dx, dy] = [end[0] - start[0], end[1] - start[1]];
+    if (shift) {
+      // Snap to 45°.
+      const a = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      const len = Math.hypot(dx, dy);
+      [dx, dy] = [len * Math.cos(a), len * Math.sin(a)];
+    }
+    if (Math.hypot(dx, dy) < 1.0) return null;
+    return { kind: 'line', from: [start[0], start[1]], to: [start[0] + dx, start[1] + dy], weight: Math.max(1.0, o.lineWeight) };
+  }
+  let [w, h] = [end[0] - start[0], end[1] - start[1]];
+  if (shift) {
+    const m = Math.max(Math.abs(w), Math.abs(h));
+    [w, h] = [m * Math.sign(w), m * Math.sign(h)];
+  }
+  const [x0, y0] = alt ? [start[0] - w, start[1] - h] : [start[0], start[1]];
+  const [ww, hh] = alt ? [w * 2.0, h * 2.0] : [w, h];
+  const rect: [number, number, number, number] = [
+    Math.round(Math.min(x0, x0 + ww)),
+    Math.round(Math.min(y0, y0 + hh)),
+    Math.round(Math.abs(ww)),
+    Math.round(Math.abs(hh)),
+  ];
+  if (rect[2] < 1.0 || rect[3] < 1.0) return null;
+  if (tool === 'rectShape' && o.cornerRadius > 0) return { kind: 'roundedRect', rect, radii: [o.cornerRadius, o.cornerRadius, o.cornerRadius, o.cornerRadius] };
+  if (tool === 'rectShape') return { kind: 'rect', rect };
+  if (tool === 'ellipseShape') return { kind: 'ellipse', rect };
+  if (tool === 'triangleShape') return { kind: 'polygon', rect, sides: 3 };
+  return { kind: 'polygon', rect, sides: Math.max(3, Math.round(o.polygonSides)) };
+}
+
+/** 形状拖拽的外接框 [x0,y0,x1,y1](直线的=两端点的外接);过小几何返回 null。 */
+export function shapeBounds(g: ShapeGeom): [number, number, number, number] | null {
+  if (g.kind === 'line' && g.from && g.to) {
+    return [Math.min(g.from[0], g.to[0]), Math.min(g.from[1], g.to[1]), Math.max(g.from[0], g.to[0]), Math.max(g.from[1], g.to[1])];
+  }
+  if (!g.rect) return null;
+  return [g.rect[0], g.rect[1], g.rect[0] + g.rect[2], g.rect[1] + g.rect[3]];
+}
+
+/** 点击 vs 拖拽:全程位移都在 3px/zoom 内=点击(上游 shape_dialog::is_click;
+ * zoom=point_zoom,文档像素距离)。直线点击无对话框=直接无操作(上游 open 对 Line 返 None)。 */
+export const SHAPE_CLICK_SLOP = 3.0;
+
+export function isShapeClick(maxDeviation: number, zoom: number): boolean {
+  return maxDeviation <= SHAPE_CLICK_SLOP / Math.max(0.01, zoom);
+}
+
+/** 形状数值对话框的上限(上游 shape_dialog MAX_PX,Width/Height 1..300000)。 */
+export const SHAPE_DIALOG_MAX_PX = 300_000.0;
+
+export interface ShapeDialogValues {
+  width: number;
+  height: number;
+  fromCenter: boolean;
+  /** 仅 rectangle:四角圆角(联动时同值)。 */
+  radii?: [number, number, number, number];
+  linkRadii?: boolean;
+  /** 仅 polygon(含 triangle 无此项):边数 3..100、星形比率 %(1..100,引擎 /100)。 */
+  sides?: number;
+  starRatio?: number;
+}
+
+/** 点击落点的对话框默认值(上游 shape_dialog::open;width/height=100、fromCenter=false、
+ * radii 取选项 cornerRadius、sides 取选项 polygonSides 钳 3..100、starRatio=100;
+ * Line 无对话框返回 null)。偏好记忆(上游 prefs.dialogs 按 kind)由组件层 localStorage 合并。 */
+export function shapeDialogDefaults(o: Pick<ToolOptions, 'cornerRadius' | 'polygonSides'>, tool: EditorTool): ShapeDialogValues | null {
+  if (tool === 'lineShape') return null;
+  const base: ShapeDialogValues = { width: 100.0, height: 100.0, fromCenter: false };
+  if (tool === 'rectShape') {
+    base.radii = [o.cornerRadius, o.cornerRadius, o.cornerRadius, o.cornerRadius];
+    base.linkRadii = true;
+  } else if (tool === 'polygonShape') {
+    base.sides = Math.min(100, Math.max(3, Math.round(o.polygonSides)));
+    base.starRatio = 100.0;
+  }
+  return base;
+}
+
+/** 对话框 kind 名(上游 shape_dialog MARK,与引擎 kind 不同名)。 */
+export function shapeDialogKind(tool: EditorTool): 'rectangle' | 'ellipse' | 'triangle' | 'polygon' | null {
+  if (tool === 'rectShape') return 'rectangle';
+  if (tool === 'ellipseShape') return 'ellipse';
+  if (tool === 'triangleShape') return 'triangle';
+  if (tool === 'polygonShape') return 'polygon';
+  return null;
+}
+
+/** 对话框值 → shape.create 几何(上游 shape_dialog::geometry 逐行移植:width/height 钳
+ * 1..300000 否则报错文案;fromCenter 以落点为中心展开;radii 每项钳 0..min(w,h)/2、
+ * 全 0=rect;triangle 恒 sides=3;polygon sides round 钳 3..100、starRatio 钳 1..100→/100)。
+ * 返回 [几何, null] 或 [null, 错误文案]。 */
+export function shapeDialogGeometry(
+  kind: 'rectangle' | 'ellipse' | 'triangle' | 'polygon',
+  at: [number, number],
+  v: ShapeDialogValues,
+): [ShapeGeom | null, string | null] {
+  const ok = (x: number) => Number.isFinite(x) && x >= 1.0 && x <= SHAPE_DIALOG_MAX_PX;
+  if (!ok(v.width)) return [null, `宽度必须在 1 到 ${SHAPE_DIALOG_MAX_PX} 像素之间`];
+  if (!ok(v.height)) return [null, `高度必须在 1 到 ${SHAPE_DIALOG_MAX_PX} 像素之间`];
+  if (!(Math.abs(at[0]) <= SHAPE_DIALOG_MAX_PX && Math.abs(at[1]) <= SHAPE_DIALOG_MAX_PX)) return [null, '形状位置超出范围'];
+  const [x0, y0] = v.fromCenter ? [at[0] - v.width / 2.0, at[1] - v.height / 2.0] : [at[0], at[1]];
+  const rect: [number, number, number, number] = [x0, y0, v.width, v.height];
+  if (kind === 'rectangle') {
+    const cap = Math.min(v.width, v.height) / 2.0;
+    const radii = (v.radii ?? [0, 0, 0, 0]).map((r) => Math.min(cap, Math.max(0.0, Number.isFinite(r) ? r : 0.0)));
+    return [radii.some((r) => r > 0) ? { kind: 'roundedRect', rect, radii } : { kind: 'rect', rect }, null];
+  }
+  if (kind === 'ellipse') return [{ kind: 'ellipse', rect }, null];
+  if (kind === 'triangle') return [{ kind: 'polygon', rect, sides: 3 }, null];
+  const sides = Math.min(100, Math.max(3, Math.round(Number.isFinite(v.sides ?? 5) ? (v.sides as number) : 5)));
+  const ratio = Math.min(100, Math.max(1, Number.isFinite(v.starRatio ?? 100) ? (v.starRatio as number) : 100));
+  return [{ kind: 'polygon', rect, sides, starRatio: ratio / 100.0 }, null];
+}
+
+/** shape.create 的 fill/stroke 参数(上游 create_shape/stroke_param:fill=选项开时取前景色、
+ * 关时不传;stroke=宽度>0 时取背景色+引擎默认描边属性,=0 不传)。 */
+export function shapeFillStroke(
+  o: Pick<ToolOptions, 'shapeFill' | 'strokeWidth'>,
+  foreground: number[] | undefined,
+  background: number[] | undefined,
+): { fill?: string; stroke?: Record<string, unknown> } {
+  const hex = (c: number[] | undefined): string | undefined =>
+    c && c.length >= 3 ? `#${[c[0], c[1], c[2]].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}` : undefined;
+  const out: { fill?: string; stroke?: Record<string, unknown> } = {};
+  if (o.shapeFill) out.fill = hex(foreground);
+  if (o.strokeWidth > 0) {
+    out.stroke = {
+      width: o.strokeWidth,
+      color: hex(background),
+      // 引擎 ShapeStroke::default(上游 StrokeOptions::params 恒带全套)
+      align: 'center', cap: 'butt', join: 'miter', miterLimit: 100, dashes: [], dashOffset: 0, opacity: 100,
+    };
+  }
+  return out;
+}
+
 
 /** 多边形套索 Shift 45° 约束(上游 constrained_polygon_point 逐行移植:角度取 45° 整数倍,
  * 长度保持;零长度/非有限值原样返回)。 */

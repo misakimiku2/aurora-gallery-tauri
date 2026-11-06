@@ -8,6 +8,7 @@ import {
   nextGradientTool, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMaskPaintStroke, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
   strokeParams, TOOL_KEYS, trackMods, GRADIENT_GROUP,
+  nextShapeTool, isShapeClick, shapeGeometry, shapeBounds, shapeDialogDefaults, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, SHAPE_GROUP,
 } from '../toolLogic';
 import type { SelectMaskStroke, StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -22,6 +23,7 @@ const OPTS: ToolOptions = {
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57, magneticPressure: false,
   cropWidth: '', cropHeight: '', cropResolution: '', cropResolutionUnit: 'px/in' as const,
+  shapeFill: true, strokeWidth: 0, cornerRadius: 0, polygonSides: 5, lineWeight: 3,
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -147,12 +149,13 @@ describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)'
 });
 
 describe('TOOL_KEYS', () => {
-  it('覆盖一期全部工具(M/L/G 键在画布层做组内循环,不在表内)', () => {
+  it('覆盖一期全部工具(M/L/G/U 键在画布层做组内循环,不在表内;锐化回上游无单键口径)', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
     expect(TOOL_KEYS.l).toBeUndefined();
     expect(TOOL_KEYS.g).toBeUndefined();
-    expect(Object.keys(TOOL_KEYS)).toHaveLength(10);
+    expect(TOOL_KEYS.u).toBeUndefined();
+    expect(Object.keys(TOOL_KEYS)).toHaveLength(9);
   });
 });
 
@@ -747,5 +750,96 @@ describe('selectMaskPaintStroke(上游 select_mask_view::paint 口径)', () => {
     expect(selectMaskPaintStroke(full, [1, 1], true, false, 30)).toBe(full);
     const strokes = selectMaskPaintStroke([], [NaN, 5], true, false, 30);
     expect(strokes).toHaveLength(0);
+  });
+});
+
+describe('形状组(二期 二-1,上游 vector_ui.rs shape_geometry + shape_dialog)', () => {
+  it('U 键组循环:按上游 ALL 顺序,不在组内回矩形', () => {
+    expect(nextShapeTool('rectShape')).toBe('ellipseShape');
+    expect(nextShapeTool('ellipseShape')).toBe('triangleShape');
+    expect(nextShapeTool('triangleShape')).toBe('polygonShape');
+    expect(nextShapeTool('polygonShape')).toBe('lineShape');
+    expect(nextShapeTool('lineShape')).toBe('rectShape');
+    expect(nextShapeTool('brush')).toBe('rectShape');
+    expect(nextShapeTool(undefined)).toBe('rectShape');
+    expect(TOOL_KEYS.u).toBeUndefined(); // U 不在单键表(组内循环由画布层处理)
+  });
+
+  it('矩形拖拽:归一化取整;cornerRadius>0 → roundedRect', () => {
+    expect(shapeGeometry(OPTS, 'rectShape', [10, 10], [30, 25], false, false)).toEqual({ kind: 'rect', rect: [10, 10, 20, 15] });
+    expect(shapeGeometry({ ...OPTS, cornerRadius: 8 }, 'rectShape', [10, 10], [30, 25], false, false)).toEqual({
+      kind: 'roundedRect', rect: [10, 10, 20, 15], radii: [8, 8, 8, 8],
+    });
+  });
+
+  it('Shift 等比(实时语义):取较大边保方向;Alt 从中心:两端对称加倍', () => {
+    expect(shapeGeometry(OPTS, 'rectShape', [10, 10], [30, 25], true, false)).toEqual({ kind: 'rect', rect: [10, 10, 20, 20] });
+    expect(shapeGeometry(OPTS, 'rectShape', [10, 10], [30, 25], false, true)).toEqual({ kind: 'rect', rect: [-10, -5, 40, 30] });
+  });
+
+  it('直线:Shift 吸附 45°,长度 <1 为 null,weight 取选项', () => {
+    expect(shapeGeometry(OPTS, 'lineShape', [0, 0], [30, 25], false, false)).toEqual({ kind: 'line', from: [0, 0], to: [30, 25], weight: 3 });
+    const g = shapeGeometry(OPTS, 'lineShape', [0, 0], [30, 25], true, false)!;
+    expect(g.kind).toBe('line');
+    // 45° 吸附:角度取整到 45°,长度不变(hypot(30,25)≈39.05 → to=(27.61,27.61))
+    expect(g.to![0]).toBeCloseTo(g.to![1], 6);
+    expect(Math.hypot(g.to![0], g.to![1])).toBeCloseTo(Math.hypot(30, 25), 6);
+    expect(shapeGeometry(OPTS, 'lineShape', [5, 5], [5.5, 5.4], false, false)).toBeNull();
+  });
+
+  it('三角形恒 sides=3;多边形取选项边数钳 ≥3;椭圆 rect;过小 null', () => {
+    expect(shapeGeometry(OPTS, 'triangleShape', [0, 0], [30, 20], false, false)).toEqual({ kind: 'polygon', rect: [0, 0, 30, 20], sides: 3 });
+    expect(shapeGeometry({ ...OPTS, polygonSides: 2 }, 'polygonShape', [0, 0], [30, 20], false, false)).toEqual({ kind: 'polygon', rect: [0, 0, 30, 20], sides: 3 });
+    expect(shapeGeometry({ ...OPTS, polygonSides: 6 }, 'polygonShape', [0, 0], [30, 20], false, false)).toEqual({ kind: 'polygon', rect: [0, 0, 30, 20], sides: 6 });
+    expect(shapeGeometry(OPTS, 'ellipseShape', [0, 0], [30, 20], false, false)).toEqual({ kind: 'ellipse', rect: [0, 0, 30, 20] });
+    expect(shapeGeometry(OPTS, 'rectShape', [5, 5], [5.2, 5.3], false, false)).toBeNull();
+  });
+
+  it('shapeBounds:矩形/椭圆=外接框,直线=端点外接', () => {
+    expect(shapeBounds(shapeGeometry(OPTS, 'ellipseShape', [10, 10], [30, 25], false, false)!)).toEqual([10, 10, 30, 25]);
+    expect(shapeBounds(shapeGeometry(OPTS, 'lineShape', [0, 0], [-30, 25], false, false)!)).toEqual([-30, 0, 0, 25]);
+  });
+
+  it('is_click:全程位移 ≤3px/zoom;zoom 越小文档域容差越大', () => {
+    expect(isShapeClick(2.9, 1)).toBe(true);
+    expect(isShapeClick(3.1, 1)).toBe(false);
+    expect(isShapeClick(29, 0.1)).toBe(true); // 3/0.1=30 文档 px
+  });
+
+  it('对话框:kind 映射+默认值+Line 无对话框', () => {
+    expect(shapeDialogKind('rectShape')).toBe('rectangle');
+    expect(shapeDialogKind('polygonShape')).toBe('polygon');
+    expect(shapeDialogKind('lineShape')).toBeNull();
+    expect(shapeDialogDefaults(OPTS, 'rectShape')).toEqual({ width: 100, height: 100, fromCenter: false, radii: [0, 0, 0, 0], linkRadii: true });
+    expect(shapeDialogDefaults({ ...OPTS, polygonSides: 9 }, 'polygonShape')).toEqual({ width: 100, height: 100, fromCenter: false, sides: 9, starRatio: 100 });
+    expect(shapeDialogDefaults(OPTS, 'lineShape')).toBeNull();
+  });
+
+  it('对话框 geometry:fromCenter 以落点展开;radii 钳 min(w,h)/2;starRatio %→0..1;越界报错', () => {
+    const [g1] = shapeDialogGeometry('rectangle', [50, 60], { width: 20, height: 10, fromCenter: true, radii: [4, 4, 4, 4] });
+    expect(g1).toEqual({ kind: 'roundedRect', rect: [40, 55, 20, 10], radii: [4, 4, 4, 4] });
+    const [g2] = shapeDialogGeometry('rectangle', [0, 0], { width: 10, height: 4, fromCenter: false, radii: [99, 0, 0, 0] });
+    expect(g2).toEqual({ kind: 'roundedRect', rect: [0, 0, 10, 4], radii: [2, 0, 0, 0] }); // 钳 min(w,h)/2
+    const [g3] = shapeDialogGeometry('rectangle', [0, 0], { width: 10, height: 4, fromCenter: false, radii: [0, 0, 0, 0] });
+    expect(g3).toEqual({ kind: 'rect', rect: [0, 0, 10, 4] }); // 全 0=普通矩形
+    const [g4] = shapeDialogGeometry('triangle', [0, 0], { width: 30, height: 20, fromCenter: false });
+    expect(g4).toEqual({ kind: 'polygon', rect: [0, 0, 30, 20], sides: 3 });
+    const [g5] = shapeDialogGeometry('polygon', [0, 0], { width: 30, height: 20, fromCenter: false, sides: 5.6, starRatio: 250 });
+    expect(g5).toEqual({ kind: 'polygon', rect: [0, 0, 30, 20], sides: 6, starRatio: 1 });
+    const [, e1] = shapeDialogGeometry('ellipse', [0, 0], { width: 0.5, height: 20, fromCenter: false });
+    expect(e1).toContain('宽度');
+  });
+
+  it('fill/stroke:填充=前景;描边=背景+引擎默认属性;宽度 0 不带描边', () => {
+    const fg = [1, 0, 0, 1];
+    const bg = [0, 0.5, 1, 1];
+    expect(shapeFillStroke({ ...OPTS, shapeFill: true, strokeWidth: 0 }, fg, bg)).toEqual({ fill: '#ff0000' });
+    const s = shapeFillStroke({ ...OPTS, shapeFill: false, strokeWidth: 12 }, fg, bg).stroke as Record<string, unknown>;
+    expect(s).toMatchObject({ width: 12, color: '#0080ff', align: 'center', cap: 'butt', join: 'miter', miterLimit: 100, dashes: [], dashOffset: 0, opacity: 100 });
+  });
+
+  it('SHAPE_GROUP 与工具栏/画布判定一致', () => {
+    expect(SHAPE_GROUP.has('rectShape')).toBe(true);
+    expect(SHAPE_GROUP.has('brush')).toBe(false);
   });
 });

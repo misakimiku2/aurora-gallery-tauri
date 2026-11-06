@@ -22,12 +22,16 @@ import triangle from '../../assets/editor-icons/triangle.svg?raw';
 import pointer from '../../assets/editor-icons/pointer.svg?raw';
 import hand from '../../assets/editor-icons/hand.svg?raw';
 import zoomIn from '../../assets/editor-icons/zoom-in.svg?raw';
+import rectangleHorizontal from '../../assets/editor-icons/rectangle-horizontal.svg?raw';
+import circle from '../../assets/editor-icons/circle.svg?raw';
+import slash from '../../assets/editor-icons/slash.svg?raw';
 
 /** 图标名 = 上游 assets/icons 文件名(icons.rs tool_icon 同名)。 */
 export type EditorIconName =
   | 'move' | 'square-dashed' | 'ellipse-dashed' | 'marquee-row' | 'marquee-column'
   | 'lasso' | 'pentagon' | 'lasso-magnetic' | 'crop' | 'pipette' | 'brush' | 'eraser'
-  | 'gradient' | 'paint-bucket' | 'droplet' | 'triangle' | 'pointer' | 'hand' | 'zoom-in';
+  | 'gradient' | 'paint-bucket' | 'droplet' | 'triangle' | 'pointer' | 'hand' | 'zoom-in'
+  | 'rectangle-horizontal' | 'circle' | 'slash';
 
 const ICONS: Record<EditorIconName, string> = {
   move, 'square-dashed': squareDashed, 'ellipse-dashed': ellipseDashed,
@@ -35,6 +39,7 @@ const ICONS: Record<EditorIconName, string> = {
   lasso, pentagon, 'lasso-magnetic': lassoMagnetic,
   crop, pipette, brush, eraser, gradient, 'paint-bucket': paintBucket,
   droplet, triangle, pointer, hand, 'zoom-in': zoomIn,
+  'rectangle-horizontal': rectangleHorizontal, circle, slash,
 };
 
 export const EditorIcon: FC<{ name: EditorIconName; size?: number; className?: string }> = ({

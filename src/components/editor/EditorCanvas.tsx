@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closeSelectMask, confirmExportDialog, confirmSelectMask, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, refreshSelectionOutline, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -19,7 +19,8 @@ import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMa
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cropTurnCursorDir, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape,
+  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextShapeTool,
+  isShapeClick, SHAPE_GROUP, shapeBounds, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, shapeGeometry,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
@@ -27,6 +28,7 @@ import {
 } from './toolLogic';
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
+import { ShapeDialog } from './ShapeDialog';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
@@ -189,6 +191,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const prevToolRef = useRef<string | null>(null);
   /** 渐变拖线中(上游 classic 口径:拖方向线,松手一条命令)。 */
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
+  /** 形状族拖拽中(二期 二-1,上游 Drag:起点+当前点+全程最大位移[is_click 判定])。 */
+  const shapeDragRef = useRef<{ tool: EditorTool; sx: number; sy: number; ex: number; ey: number; maxDev: number } | null>(null);
   /** Live 渐变:选中渐变填充图层的信息(gradient.fill.get,revision 过期自动重拉)。 */
   const liveFillRef = useRef<GradientFillInfo | null>(null);
   /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线,
@@ -481,6 +485,81 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.fill();
       }
       octx.restore();
+    }
+
+    // overlay:形状族拖拽预览(上游 draw_shape_preview:按最终几何画真填充+描边,再叠
+    // accent 轮廓对比线;修饰键=实时状态。描边宽随 zoom 缩放,align=中心为近似——
+    // 提交后由引擎 cache 出真渲染)。
+    if (shapeDragRef.current && s.state) {
+      const sd = shapeDragRef.current;
+      const geom = shapeGeometry(s.options, sd.tool, [sd.sx, sd.sy], [sd.ex, sd.ey], shiftRef.current, altRef.current);
+      if (geom) {
+        const toScr = (x: number, y: number): [number, number] => [x * v.scale + v.ox, y * v.scale + v.oy];
+        const path = new Path2D();
+        if (geom.kind === 'line' && geom.from && geom.to) {
+          const [ax, ay] = toScr(geom.from[0], geom.from[1]);
+          const [bx, by] = toScr(geom.to[0], geom.to[1]);
+          path.moveTo(ax, ay);
+          path.lineTo(bx, by);
+        } else if (geom.rect) {
+          const [x, y, w, h] = geom.rect;
+          const [sx, sy] = toScr(x, y);
+          const sw = w * v.scale;
+          const sh = h * v.scale;
+          if (geom.kind === 'ellipse') {
+            path.ellipse(sx + sw / 2, sy + sh / 2, sw / 2, sh / 2, 0, 0, Math.PI * 2);
+          } else if (geom.kind === 'roundedRect' && geom.radii) {
+            // 圆角矩形(TS DOM 未含 roundRect 的兼容环境手动构路径)
+            const r = Math.min(geom.radii[0] * v.scale, sw / 2, sh / 2);
+            path.moveTo(sx + r, sy);
+            path.lineTo(sx + sw - r, sy);
+            path.arcTo(sx + sw, sy, sx + sw, sy + r, r);
+            path.lineTo(sx + sw, sy + sh - r);
+            path.arcTo(sx + sw, sy + sh, sx + sw - r, sy + sh, r);
+            path.lineTo(sx + r, sy + sh);
+            path.arcTo(sx, sy + sh, sx, sy + sh - r, r);
+            path.lineTo(sx, sy + r);
+            path.arcTo(sx, sy, sx + r, sy, r);
+            path.closePath();
+          } else if (geom.kind === 'polygon' && geom.sides) {
+            // 内接正多边形(顶点均分,起始角朝上)
+            const n = geom.sides;
+            const cx = sx + sw / 2;
+            const cy = sy + sh / 2;
+            for (let i = 0; i < n; i++) {
+              const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+              const px = cx + (sw / 2) * Math.cos(a);
+              const py = cy + (sh / 2) * Math.sin(a);
+              if (i === 0) path.moveTo(px, py);
+              else path.lineTo(px, py);
+            }
+            path.closePath();
+          } else {
+            path.rect(sx, sy, sw, sh);
+          }
+        }
+        const { fill, stroke } = shapeFillStroke(s.options, s.state.foreground, s.state.background);
+        octx.save();
+        if (geom.kind !== 'line' && fill) {
+          octx.fillStyle = fill;
+          octx.fill(path);
+        }
+        if (stroke && typeof stroke.width === 'number') {
+          octx.strokeStyle = typeof stroke.color === 'string' ? stroke.color : '#000000';
+          octx.lineWidth = Math.max(1, stroke.width * v.scale);
+          octx.lineJoin = 'miter';
+          octx.stroke(path);
+        }
+        // accent 轮廓对比线(黑晕垫底,任意像素上可见;上游 contrast_path 口径)
+        octx.beginPath();
+        octx.strokeStyle = 'rgba(0,0,0,0.55)';
+        octx.lineWidth = 3;
+        octx.stroke(path);
+        octx.strokeStyle = isDark ? '#38bdf8' : '#0284c7';
+        octx.lineWidth = 1;
+        octx.stroke(path);
+        octx.restore();
+      }
     }
 
     // overlay:Live 渐变 widget(上游 gradient_ui::draw_overlay):非经典模式下恒显示——
@@ -1787,6 +1866,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return () => ro.disconnect();
   }, [tabId, scheduleDraw]);
 
+  /** 形状数值对话框确定(上游 shape_dialog::confirm:记忆偏好→geometry 校验→shape.create
+   * 带选项条 fill/stroke;校验失败提示不入历史)。 */
+  const commitShapeDialog = () => {
+    const s = getSession(tabId);
+    const st = confirmShapeDialog(tabId);
+    if (!s || !st || !s.state) return;
+    const [geom, err] = shapeDialogGeometry(st.kind, st.at, st);
+    if (!geom || err) {
+      if (err) showEditorNotice(`形状创建失败:${err}`);
+      return;
+    }
+    const { fill, stroke } = shapeFillStroke(s.options, s.state.foreground, s.state.background);
+    void runCommand(tabId, 'shape.create', { ...geom, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}) })
+      .catch((e2) => logError('[editor] shape.create 失败', e2));
+  };
+
   // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
   useEffect(() => {
     if (!isActive) return undefined;
@@ -1820,6 +1915,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         } else if (e.key === 'Enter' && !isTyping(e.target)) {
           e.preventDefault();
           void confirmExportDialog(tabId);
+        }
+        return;
+      }
+      // 形状数值对话框:Enter 确定(非输入框中)/Esc 取消;其余键放行给输入框
+      if (s.shapeDialog) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeShapeDialog(tabId);
+        } else if (e.key === 'Enter' && !isTyping(e.target)) {
+          e.preventDefault();
+          commitShapeDialog();
         }
         return;
       }
@@ -2206,6 +2312,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'g') {
         // G 键渐变组循环:渐变 ⇄ 油漆桶(上游 Tool::Gradient|PaintBucket 同键 'G' 口径)
         setTool(tabId, nextGradientTool(getSession(tabId)?.tool));
+      } else if (k === 'u') {
+        // U 键形状组循环:矩形→椭圆→三角形→多边形→直线(上游 Tool 组同键 'U' 口径)
+        setTool(tabId, nextShapeTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -2530,6 +2639,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         void runCommand(tabId, 'paint.bucket', bucketParams(dx, dy, s.options, rgbToHex(s.state.foreground), isMaskTarget(s.state)))
           .catch((err) => logError('[editor] paint.bucket 失败', err));
       }
+    } else if (SHAPE_GROUP.has(s.tool) && e.button === 0 && s.state) {
+      // 形状族(上游 shape 工具):记起点拖拽;直线点击无对话框=无操作,其余点击松手开数值对话框
+      shapeDragRef.current = { tool: s.tool, sx: dx, sy: dy, ex: dx, ey: dy, maxDev: 0 };
+      scheduleDraw();
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -2682,6 +2795,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (s.tool === 'crop' && s.runtime.cropStraightenLine) {
       const line = s.runtime.cropStraightenLine;
       s.runtime.cropStraightenLine = { ...line, x1: dx, y1: dy };
+      scheduleDraw();
+      return;
+    }
+    const sd = shapeDragRef.current;
+    if (sd) {
+      // 形状族拖拽:实时更新终点+累计最大位移(is_click 判定用),修饰键=实时状态(上游 d.live)
+      sd.ex = dx;
+      sd.ey = dy;
+      sd.maxDev = Math.max(sd.maxDev, Math.hypot(dx - sd.sx, dy - sd.sy));
       scheduleDraw();
       return;
     }
@@ -2992,6 +3114,23 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       scheduleDraw();
     }
+    const sd = shapeDragRef.current;
+    shapeDragRef.current = null;
+    if (s && sd && s.state) {
+      const zoom = s.runtime.view.scale;
+      const geom = shapeGeometry(s.options, sd.tool, [sd.sx, sd.sy], [sd.ex, sd.ey], e.shiftKey, e.altKey);
+      if (isShapeClick(sd.maxDev, zoom)) {
+        // 点击=数值创建对话框(上游 shape_dialog::open;直线无对话框=无操作)
+        openShapeDialog(tabId, sd.tool, [Math.round(sd.sx), Math.round(sd.sy)]);
+        forceUpdate((n) => n + 1);
+      } else if (geom) {
+        // 拖拽=按选项条 fill/stroke 直接创建(上游 finish_shape→create_shape)
+        const { fill, stroke } = shapeFillStroke(s.options, s.state.foreground, s.state.background);
+        void runCommand(tabId, 'shape.create', { ...geom, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}) })
+          .catch((err) => logError('[editor] shape.create 失败', err));
+      }
+      scheduleDraw();
+    }
     if (s && cd && s.state) {
       const f = cropRef.current!;
       if (cd.kind === 'draw' || cd.kind === 'resize') {
@@ -3145,7 +3284,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [stopPicker]);
 
   if (!session) return null;
-  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket']);
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP]);
   const cursor =
     session.selectMask?.open
       ? // 对话框模态:边刷开=自绘圆环(原生光标隐藏),关=普通箭头(上游模态画布口径)
@@ -3186,6 +3325,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     >
       <canvas ref={displayRef} className="absolute inset-0" />
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
+      {session.shapeDialog && <ShapeDialog tabId={tabId} />}
       {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">正在打开…</div>}
       {session.error && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-400 p-8 text-center">{session.error}</div>}
       {stopPicker &&

@@ -5,7 +5,7 @@
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
-import { chainSegments, selectMaskPaintStroke, type SelectMaskStroke } from './toolLogic';
+import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -62,6 +62,12 @@ export interface ToolOptions {
   magneticFrequency: number;
   /** 磁性套索笔压调制检测宽度(上游 magnetic_pressure,默认关;仅笔设备生效)。 */
   magneticPressure: boolean;
+  /** 形状族:填充(前景色)、描边宽度 0..288px(0=无)、矩形圆角半径、多边形边数、直线粗细。 */
+  shapeFill: boolean;
+  strokeWidth: number;
+  cornerRadius: number;
+  polygonSides: number;
+  lineWeight: number;
 }
 
 export interface EditorRuntime {
@@ -124,6 +130,15 @@ export interface EditorSession {
   selectMask: SelectMaskState | null;
   /** 导出为对话框状态(会话级;null=未打开)。定型走临时 Session,文档零改动、不入历史。 */
   exportDialog: ExportDialogState | null;
+  /** 形状数值对话框状态(会话级;null=未打开)。点击形状工具=上游 shape_dialog,OK 走 shape.create。 */
+  shapeDialog: ShapeDialogState | null;
+}
+
+/** 形状数值对话框字段(上游 shape_dialog fields;kind=对话框 MARK 名,与引擎 kind 不同名;
+ * at=点击落点文档 px)。偏好按 kind 记 localStorage(上游 prefs.dialogs 同口径)。 */
+export interface ShapeDialogState extends ShapeDialogValues {
+  kind: 'rectangle' | 'ellipse' | 'triangle' | 'polygon';
+  at: [number, number];
 }
 
 /** 导出为对话框字段(上游 export_dialog 的 fields;srcW/srcH=源尺寸,图层级导出
@@ -191,11 +206,18 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       magneticFrequency: 57,
       /** 磁性套索笔压调制检测宽度(上游 magnetic_pressure,默认关;仅笔设备生效)。 */
       magneticPressure: false,
+      /** 形状族(上游 shape_fill/stroke_width/corner_radius/polygon_sides/line_weight 默认值)。 */
+      shapeFill: true,
+      strokeWidth: 0,
+      cornerRadius: 0,
+      polygonSides: 5,
+      lineWeight: 3,
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
+    shapeDialog: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -521,6 +543,68 @@ export function closeExportDialog(tabId: string, commit: boolean): void {
   if (commit) saveExportPrefs(s.exportDialog);
   s.exportDialog = null;
   notify(tabId);
+}
+
+// -------------------------------------------------------------------------------------------
+// 形状数值对话框(二期 二-1,上游 shape_dialog:点击形状工具=数值创建)
+// -------------------------------------------------------------------------------------------
+
+const SHAPE_DIALOG_PREF_KEY = (kind: string) => `aurora-editor:shape-dialog:${kind}`;
+
+function loadShapeDialogPrefs(kind: 'rectangle' | 'ellipse' | 'triangle' | 'polygon'): Partial<ShapeDialogValues> {
+  try {
+    return JSON.parse(localStorage.getItem(SHAPE_DIALOG_PREF_KEY(kind)) || '{}') as Partial<ShapeDialogValues>;
+  } catch {
+    return {};
+  }
+}
+
+function saveShapeDialogPrefs(state: ShapeDialogState): void {
+  // 上游只记 KEYS=[width,height,fromCenter,starRatio](radii/sides 等结构性字段不记)。
+  const { width, height, fromCenter, starRatio } = state;
+  try {
+    localStorage.setItem(SHAPE_DIALOG_PREF_KEY(state.kind), JSON.stringify({ width, height, fromCenter, starRatio }));
+  } catch { /* 隐私模式等写入失败静默 */ }
+}
+
+/** 打开形状数值对话框(点击落点;上游 shape_dialog::open:默认值+按 kind 合并偏好)。 */
+export function openShapeDialog(tabId: string, tool: EditorTool, at: [number, number]): boolean {
+  const s = sessions.get(tabId);
+  if (!s) return false;
+  const defaults = shapeDialogDefaults(s.options, tool);
+  const kind = defaults ? (tool === 'rectShape' ? 'rectangle' : tool === 'ellipseShape' ? 'ellipse' : tool === 'triangleShape' ? 'triangle' : 'polygon') : null;
+  if (!defaults || !kind) return false;
+  const prefs = loadShapeDialogPrefs(kind);
+  s.shapeDialog = { kind, at, ...defaults, ...prefs };
+  notify(tabId);
+  return true;
+}
+
+/** 更新对话框字段。 */
+export function updateShapeDialog(tabId: string, patch: Partial<ShapeDialogState>): void {
+  const s = sessions.get(tabId);
+  if (!s?.shapeDialog) return;
+  s.shapeDialog = { ...s.shapeDialog, ...patch };
+  notify(tabId);
+}
+
+/** 关闭(取消=无副作用;OK 由调用方先 confirm 落盘再关闭)。 */
+export function closeShapeDialog(tabId: string): void {
+  const s = sessions.get(tabId);
+  if (!s?.shapeDialog) return;
+  s.shapeDialog = null;
+  notify(tabId);
+}
+
+/** 确认:记忆偏好(上游 confirm)→ 由调用方执行 shape.create。返回当前状态供调用方构建参数。 */
+export function confirmShapeDialog(tabId: string): ShapeDialogState | null {
+  const s = sessions.get(tabId);
+  if (!s?.shapeDialog) return null;
+  const state = s.shapeDialog;
+  saveShapeDialogPrefs(state);
+  s.shapeDialog = null;
+  notify(tabId);
+  return state;
 }
 
 /** 确定(上游 confirm):记忆设置 → 系统保存对话框(建议名=文档名/图层名.格式)→

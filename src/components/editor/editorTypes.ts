@@ -97,6 +97,11 @@ export type EditorTool =
   | 'blur'
   | 'sharpen'
   | 'smudge'
+  | 'rectShape'
+  | 'ellipseShape'
+  | 'triangleShape'
+  | 'polygonShape'
+  | 'lineShape'
   | 'hand'
   | 'zoom';
 

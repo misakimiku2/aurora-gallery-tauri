@@ -13,8 +13,16 @@ import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magn
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
 import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetFields } from './cropSize';
+import { SHAPE_GROUP } from './toolLogic';
 import { EditorSelect } from './editorSelect';
 import { runCommand } from './editorStore';
+
+/** [r,g,b] 0..1 → css(色芯片显示)。 */
+const rgbCss = (c: number[] | undefined): string => {
+  if (!c || c.length < 3) return '#000000';
+  const [r, g, b] = c;
+  return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+};
 
 /** 选区四态(上游 selection_mode 的选项条;无修饰键时用它,修饰键优先)。 */
 const SEL_MODES: { mode: 'replace' | 'add' | 'subtract' | 'intersect'; label: string; icon: React.ReactNode }[] = [
@@ -599,6 +607,64 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             消除锯齿
           </label>
+        </>
+      ) : SHAPE_GROUP.has(s.tool) ? (
+        <>
+          {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;
+           * 描边样式按钮(虚线/端点/箭头)与选中形状联动编辑后置 */}
+          <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="填充=前景色(工具栏色芯片换色)">
+            <input
+              type="checkbox" checked={s.options.shapeFill}
+              onChange={(e) => setOptions(tabId, { shapeFill: e.target.checked })}
+              className="accent-sky-600"
+            />
+            填充
+            <span className="inline-block w-3.5 h-3.5 rounded-sm border border-black/30 dark:border-neutral-500"
+              style={{ background: rgbCss(s.state?.foreground) }} />
+          </label>
+          <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="描边=背景色;0=无描边">
+            描边
+            <span className="inline-block w-3.5 h-3.5 rounded-sm border border-black/30 dark:border-neutral-500"
+              style={{ background: rgbCss(s.state?.background) }} />
+            <input
+              type="number" min={0} max={288} value={s.options.strokeWidth}
+              onChange={(e) => setOptions(tabId, { strokeWidth: Math.max(0, Math.min(288, Number(e.target.value) || 0)) })}
+              className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-gray-200 outline-none tabular-nums"
+            />
+            <span className="text-neutral-500 dark:text-neutral-400">px</span>
+          </label>
+          {s.tool === 'rectShape' && (
+            <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
+              半径
+              <input
+                type="number" min={0} max={1000} value={s.options.cornerRadius}
+                onChange={(e) => setOptions(tabId, { cornerRadius: Math.max(0, Number(e.target.value) || 0) })}
+                className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-gray-200 outline-none tabular-nums"
+              />
+              <span className="text-neutral-500 dark:text-neutral-400">px</span>
+            </label>
+          )}
+          {s.tool === 'polygonShape' && (
+            <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="3..100">
+              边数
+              <input
+                type="number" min={3} max={100} value={s.options.polygonSides}
+                onChange={(e) => setOptions(tabId, { polygonSides: Math.max(3, Math.min(100, Math.round(Number(e.target.value)) || 3)) })}
+                className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-gray-200 outline-none tabular-nums"
+              />
+            </label>
+          )}
+          {s.tool === 'lineShape' && (
+            <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="1..1000">
+              粗细
+              <input
+                type="number" min={1} max={1000} value={s.options.lineWeight}
+                onChange={(e) => setOptions(tabId, { lineWeight: Math.max(1, Math.min(1000, Number(e.target.value) || 1)) })}
+                className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-gray-200 outline-none tabular-nums"
+              />
+              <span className="text-neutral-500 dark:text-neutral-400">px</span>
+            </label>
+          )}
         </>
       ) : s.tool === 'move' ? (
         <>
