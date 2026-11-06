@@ -1612,6 +1612,12 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('aurora-editor-newdoc', onEditorNewDoc);
   }, []);
 
+  // 编辑器性能偏好(内存治理):设置页改动/启动恢复即推送引擎 prefs。未设置时
+  // 桥接层直接跳过(不提前创建引擎);动态 import 维持浏览态不加载编辑器代码。
+  useEffect(() => {
+    import('./components/editor/editorBridge').then((m) => m.applyEditorPerformancePrefs(state.settings.performance));
+  }, [state.settings.performance]);
+
   // M6a 阶段 2：服务端写操作后的数据失效事件（Android 客户端在线写入 → Rust 广播
   // `lan-share-data-changed`，payload 仅 {kind}，无大数据——收到后按 kind 回拉，
   // 用数据库/磁盘上的新行整体替换内存旧行，后续桌面整行 upsert 才会带上远端改动）。

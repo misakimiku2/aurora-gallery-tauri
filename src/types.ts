@@ -446,6 +446,10 @@ export interface AppSettings {
   performance: {
     refreshInterval: number; // 毫秒
     scrollProfiling?: boolean; // 滚动性能记录（默认关闭）
+    /** 编辑器历史字节预算(MB),引擎 pref performance.memoryUsageMb;未设=桥默认 2048 */
+    editorMemoryUsageMb?: number;
+    /** 编辑器历史步数上限(撤销层数),引擎 pref performance.historyStates;未设=引擎默认 50 */
+    editorHistoryStates?: number;
   };
   lanShare: LanShareSettings;
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析

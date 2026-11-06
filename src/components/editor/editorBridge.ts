@@ -189,6 +189,23 @@ export async function editorMoveHover(doc: number, x: number, y: number, group: 
   return invoke<{ layer: number | null; bounds: [number, number, number, number] | null }>('editor_move_hover', { doc, x, y, group });
 }
 
+/** 性能偏好(内存治理):历史字节预算(MB)/历史步数上限。None=不改该项,引擎范围钳制。 */
+export async function editorSetPerformance(memoryUsageMb: number | null, historyStates: number | null): Promise<void> {
+  await invoke('editor_set_performance', { memoryUsageMb, historyStates });
+}
+
+/** 把设置页存的编辑器性能偏好推给引擎(设置改动与编辑器挂载时调用)。未设置的字段跳过。 */
+export async function applyEditorPerformancePrefs(perf?: { editorMemoryUsageMb?: number; editorHistoryStates?: number }): Promise<void> {
+  const mb = perf?.editorMemoryUsageMb;
+  const states = perf?.editorHistoryStates;
+  if (mb == null && states == null) return;
+  try {
+    await editorSetPerformance(mb ?? null, states ?? null);
+  } catch (e) {
+    console.warn('[editor] applyEditorPerformancePrefs failed:', e);
+  }
+}
+
 /** Alt 拖动的历史折叠:把 before(拖拽开始前 past_len)之后的复制+平移合并成一步 "Duplicate + Move"。 */
 export async function editorFoldDuplicateMove(doc: number, before: number): Promise<{ revision: number; historyCurrent: number }> {
   return invoke<{ revision: number; historyCurrent: number }>('editor_fold_duplicate_move', { doc, before });

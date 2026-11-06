@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BarChart2, Database, MemoryStick, FileText, Timer, RefreshCw, FolderOpen, Trash2 } from 'lucide-react';
-import { AppSettings } from '../../types';
+import { AppSettings, AppState } from '../../types';
 import { performanceMonitor } from '../../utils/performanceMonitor';
 import { setScrollProfilerEnabled, isScrollProfilerEnabled } from '../../utils/scrollProfiler';
 import { getGlobalCacheRoot } from '../../api/tauri-bridge';
@@ -8,7 +8,7 @@ import { getGlobalCacheRoot } from '../../api/tauri-bridge';
 // 性能监控面板组件
 interface PerformancePanelProps {
   t: (key: string) => string;
-  performance: { refreshInterval: number; scrollProfiling?: boolean } | undefined;
+  performance: AppState['settings']['performance'];
   onUpdateSettingsData: (updates: Partial<AppSettings>) => void;
   onShowToast?: (msg: string, duration?: number) => void;
   isAndroid: boolean;
@@ -392,6 +392,7 @@ const PerformancePanel: React.FC<PerformancePanelProps> = ({ t, performance, onU
                   const newValue = !(performance?.scrollProfiling ?? isScrollProfilerEnabled());
                   onUpdateSettingsData({
                     performance: {
+                      ...performance,
                       refreshInterval: performance?.refreshInterval || 5000,
                       scrollProfiling: newValue
                     }
@@ -445,6 +446,58 @@ const PerformancePanel: React.FC<PerformancePanelProps> = ({ t, performance, onU
                 <Trash2 size={14} className="mr-2" />
                 {t('settings.performance.clearLogs')}
               </button>
+            </div>
+          </div>
+
+          {/* 编辑器历史预算(内存治理):历史字节预算/撤销步数,推送引擎 prefs 即时生效 */}
+          <div className="bg-surface rounded-xl p-4 border border-subtle mt-4">
+            <div className="flex items-center mb-3">
+              <h4 className="text-md font-semibold text-gray-800 dark:text-white flex items-center">
+                <BarChart2 size={16} className="mr-2 text-blue-500" />
+                {t('settings.performance.editorSection')}
+              </h4>
+            </div>
+
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('settings.performance.editorDesc')}</p>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.editorMemoryUsageMb')}</span>
+                <input
+                  type="number"
+                  min={256}
+                  max={65536}
+                  step={256}
+                  value={performance?.editorMemoryUsageMb ?? ''}
+                  placeholder="2048"
+                  onChange={(e) => {
+                    const v = Number.parseInt(e.target.value, 10);
+                    const next = Number.isFinite(v) && v > 0 ? v : undefined;
+                    onUpdateSettingsData({ performance: { ...performance, editorMemoryUsageMb: next } });
+                    import('../editor/editorBridge').then((m) => m.applyEditorPerformancePrefs({ editorMemoryUsageMb: next }));
+                  }}
+                  className="bg-panel rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200 w-24 text-right"
+                />
+              </div>
+
+              <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.editorHistoryStates')}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={performance?.editorHistoryStates ?? ''}
+                  placeholder="50"
+                  onChange={(e) => {
+                    const v = Number.parseInt(e.target.value, 10);
+                    const next = Number.isFinite(v) && v > 0 ? v : undefined;
+                    onUpdateSettingsData({ performance: { ...performance, editorHistoryStates: next } });
+                    import('../editor/editorBridge').then((m) => m.applyEditorPerformancePrefs({ editorHistoryStates: next }));
+                  }}
+                  className="bg-panel rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200 w-24 text-right"
+                />
+              </div>
             </div>
           </div>
 

@@ -548,7 +548,11 @@ export const translations = {
         clearLogs: '清空日志',
         clearLogsConfirm: '确定要清空所有日志文件吗？此操作不可撤销。',
         clearLogsSuccess: '日志已清空',
-        clearLogsEmpty: '日志目录为空或不存在'
+        clearLogsEmpty: '日志目录为空或不存在',
+        editorSection: '编辑器历史',
+        editorDesc: '历史内存预算与撤销步数上限。历史超出预算时按最旧记录丢弃；改动即时生效。',
+        editorMemoryUsageMb: '历史内存预算 (MB)',
+        editorHistoryStates: '历史步数上限'
       },
       theme: '颜色主题',
       themeLight: '浅色',
@@ -1803,7 +1807,11 @@ export const translations = {
         clearLogs: 'Clear Logs',
         clearLogsConfirm: 'Clear all log files? This action cannot be undone.',
         clearLogsSuccess: 'Logs cleared',
-        clearLogsEmpty: 'Log directory is empty or does not exist'
+        clearLogsEmpty: 'Log directory is empty or does not exist',
+        editorSection: 'Editor History',
+        editorDesc: 'History memory budget and undo depth limit. Once over budget, the oldest history is dropped; changes apply immediately.',
+        editorMemoryUsageMb: 'History memory budget (MB)',
+        editorHistoryStates: 'History states limit'
       },
       theme: 'Color Theme',
       themeLight: 'Light',

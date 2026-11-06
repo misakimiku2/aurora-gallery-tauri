@@ -73,6 +73,14 @@ pub fn editor_move_hover(s: State<EditorState>, doc: u64, x: i32, y: i32, group:
     m.move_hover(doc, x, y, group).map_err(|e| e.to_string())
 }
 
+/// 性能偏好(内存治理):历史字节预算(MB)/历史步数上限。None=不改该项;
+/// 设置页改动与编辑器挂载时由前端推送。
+#[tauri::command]
+pub fn editor_set_performance(s: State<EditorState>, memory_usage_mb: Option<u64>, history_states: Option<u64>) -> Result<(), String> {
+    let mut m = lock(&s)?;
+    m.set_performance(memory_usage_mb, history_states).map_err(|e| e.to_string())
+}
+
 /// 合成画布位图:给 maxW/maxH 时降采样(导航器/大图首屏),否则全分辨率。
 /// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
 #[tauri::command]

@@ -168,6 +168,25 @@ impl EditorManager {
         Ok(self.magnetic.as_mut().unwrap())
     }
 
+    /// 性能偏好(内存治理):历史字节预算/历史步数上限,引擎范围钳制
+    /// (memoryUsageMb 256..=1048576、historyStates 1..=1000)。None=不改动该项。
+    /// prefs.set 即时生效:预算/步数在引擎 apply 时挂到每个文档,历史超限按引擎口径丢最旧。
+    pub fn set_performance(&mut self, memory_usage_mb: Option<u64>, history_states: Option<u64>) -> Result<()> {
+        if let Some(mb) = memory_usage_mb {
+            self.session.execute(
+                "prefs.set",
+                json!({ "path": "performance.memoryUsageMb", "value": mb }),
+            )?;
+        }
+        if let Some(states) = history_states {
+            self.session.execute(
+                "prefs.set",
+                json!({ "path": "performance.historyStates", "value": states }),
+            )?;
+        }
+        Ok(())
+    }
+
     /// 磁性套索:沿 `guide`(指针路径)把 `from`→`to` 描在边上(上游 EdgeSource::trace)。
     /// width 1..=256 px、contrast 1..=100%(引擎域换算 /100),越界钳制(上游 tool_memory::fit 口径)。
     pub fn magnetic_trace(&mut self, doc: u64, from: [f64; 2], to: [f64; 2], guide: Vec<[f64; 2]>, width: f64, contrast: f64) -> Result<Vec<[f64; 2]>> {
