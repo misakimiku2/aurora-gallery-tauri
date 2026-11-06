@@ -608,6 +608,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             消除锯齿
           </label>
         </>
+      ) : s.tool === 'pen' ? (
+        // 上游钢笔选项条的操作提示文案(控件 二-4/二-5 随 vector_mode/路径面板接入)
+        <span className="text-neutral-500 dark:text-neutral-400">单击=加锚点 · 拖拽=拉出手柄 · 点击首锚=闭合 · Alt=断开/抓柄 · Ctrl+Z/⌫=退点 · Enter/Esc=保留开放路径 · 切工具自动提交</span>
       ) : SHAPE_GROUP.has(s.tool) ? (
         <>
           {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;

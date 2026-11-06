@@ -46,6 +46,7 @@ const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'blur', label: '模糊 (R)', icon: 'droplet' },
   { tool: 'sharpen', label: '锐化', icon: 'triangle' },
   { tool: 'smudge', label: '涂抹 (S)', icon: 'pointer' },
+  { tool: 'pen', label: '钢笔 (P)', icon: 'pen-tool' },
 ];
 /** 形状组排在涂抹与抓手之间(PS 工具栏次序);尾组恒手/缩放。 */
 const GROUPS_TAIL: { tool: EditorTool; label: string; icon: EditorIconName }[] = [

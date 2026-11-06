@@ -149,13 +149,14 @@ describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)'
 });
 
 describe('TOOL_KEYS', () => {
-  it('覆盖一期全部工具(M/L/G/U 键在画布层做组内循环,不在表内;锐化回上游无单键口径)', () => {
+  it('覆盖一期+钢笔(M/L/G/U 键在画布层做组内循环,不在表内;锐化回上游无单键口径)', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
     expect(TOOL_KEYS.l).toBeUndefined();
     expect(TOOL_KEYS.g).toBeUndefined();
     expect(TOOL_KEYS.u).toBeUndefined();
-    expect(Object.keys(TOOL_KEYS)).toHaveLength(9);
+    expect(TOOL_KEYS.p).toBe('pen'); // 上游 P 组(Pen/Freeform/Curvature)循环后置,先直选钢笔
+    expect(Object.keys(TOOL_KEYS)).toHaveLength(10);
   });
 });
 

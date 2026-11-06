@@ -244,7 +244,7 @@ export function sampleHex(
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser',
-  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom',
+  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom', p: 'pen',
 };
 
 /** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */

@@ -29,6 +29,8 @@ import {
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
+import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, shift45 as penShift45 } from './penLogic';
+import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
@@ -193,6 +195,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   /** 形状族拖拽中(二期 二-1,上游 Drag:起点+当前点+全程最大位移[is_click 判定])。 */
   const shapeDragRef = useRef<{ tool: EditorTool; sx: number; sy: number; ex: number; ey: number; maxDev: number } | null>(null);
+  /** 钢笔草稿(二期 二-2,上游 app.ui.pen:编辑器态,Enter/闭合/切工具才提交)。 */
+  const penRef = useRef<PenDraft | null>(null);
   /** Live 渐变:选中渐变填充图层的信息(gradient.fill.get,revision 过期自动重拉)。 */
   const liveFillRef = useRef<GradientFillInfo | null>(null);
   /** Live 渐变手势:Draw=拖出新线(选中渐变图层时 redraw 它),Edit=拖选中图层的起止点/线,
@@ -248,6 +252,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 工具切换检测:离开裁剪工具时未动默认框丢弃、已编辑框静默提交(上游 #3368 commit_on_leave)
     if (prevToolRef.current !== s.tool) {
       const leavingCrop = prevToolRef.current === 'crop' && s.tool !== 'crop';
+      const leavingPen = prevToolRef.current === 'pen' && s.tool !== 'pen';
       prevToolRef.current = s.tool;
       if (leavingCrop) {
         const f = cropRef.current;
@@ -257,6 +262,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         cropHistoryRef.current = { undo: [], redo: [], press: null }; // 离开=框历史清空(上游 commit_on_leave→clear_history)
         if (f?.edited) s.runtime.cropCommit?.();
       }
+      // 离开钢笔=草稿自动提交保留开放路径(上游 lib.rs commit_on_leave 口径)
+      if (leavingPen) commitPen(false);
     }
     const dpr = window.devicePixelRatio || 1;
     const cssW = wrap.clientWidth;
@@ -560,6 +567,96 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         octx.stroke(path);
         octx.restore();
       }
+    }
+
+    // overlay:钢笔草稿(上游 vector_ui draw_overlay):曲线=curve_points 自适应弦
+    // (黑晕垫底+1.5 accent);橡皮带虚线 4/3(非拖拽且指针在画布;终点=⇧ 时 45° 投影);
+    // 末锚双手柄(仅 out 已拉出);锚点 6px 方块(末锚 accent 实心,余白底 accent 描边);
+    // 悬停首锚=闭合提示(8px 实心+右下 11,11 处 3.5px 圆环,#4596)。
+    if (s.tool === 'pen' && penRef.current && s.state) {
+      const pen = penRef.current;
+      const toScr = (q: [number, number]): [number, number] => [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy];
+      const accent = isDark ? '#38bdf8' : '#0284c7';
+      const knots = pen.knots.map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.in] as [number, number], out: [...k.out] as [number, number] }));
+      if (penClosing(pen)) {
+        // 闭合拖拽:首段随手柄弯曲(替身 out 临时接到首锚)
+        const lastK = knots[knots.length - 1];
+        const firstK = knots[0];
+        if (lastK && firstK && (lastK.out[0] !== lastK.anchor[0] || lastK.out[1] !== lastK.anchor[1])) firstK.out = [...lastK.out];
+      }
+      octx.save();
+      octx.lineJoin = 'round';
+      octx.lineCap = 'round';
+      if (knots.length >= 2) {
+        const pts: [number, number][] = [];
+        for (let i = 0; i + 1 < knots.length; i++) {
+          pts.push(...curvePoints(knots[i].anchor, knots[i].out, knots[i + 1].in, knots[i + 1].anchor, toScr));
+        }
+        for (const [w, col] of [[3, 'rgba(0,0,0,0.55)'], [1.5, accent]] as const) {
+          octx.beginPath();
+          pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+          octx.strokeStyle = col;
+          octx.lineWidth = w;
+          octx.stroke();
+        }
+      }
+      const hov = s.runtime.pointerDoc;
+      const lastKnot = pen.knots[pen.knots.length - 1];
+      if (!pen.dragging && hov && lastKnot) {
+        // 橡皮带:终点=⇧ 单击会落锚的位置
+        const h = penShift45(lastKnot.anchor, [hov.x, hov.y], shiftRef.current);
+        const [ax, ay] = toScr(lastKnot.anchor);
+        const [bx, by] = toScr(h);
+        octx.setLineDash([4, 3]);
+        for (const [w, col] of [[3, 'rgba(0,0,0,0.55)'], [1, accent]] as const) {
+          octx.beginPath();
+          octx.moveTo(ax, ay);
+          octx.lineTo(bx, by);
+          octx.strokeStyle = col;
+          octx.lineWidth = w;
+          octx.stroke();
+        }
+        octx.setLineDash([]);
+      }
+      if (lastKnot && (lastKnot.out[0] !== lastKnot.anchor[0] || lastKnot.out[1] !== lastKnot.anchor[1])) {
+        // 末锚双手柄:1px 线+3px 圆(上游 draw_handle)
+        const [ax, ay] = toScr(lastKnot.anchor);
+        for (const hnd of [lastKnot.in, lastKnot.out]) {
+          const [hx, hy] = toScr(hnd);
+          octx.beginPath();
+          octx.moveTo(ax, ay);
+          octx.lineTo(hx, hy);
+          octx.strokeStyle = accent;
+          octx.lineWidth = 1;
+          octx.stroke();
+          octx.beginPath();
+          octx.arc(hx, hy, 3, 0, Math.PI * 2);
+          octx.fillStyle = accent;
+          octx.fill();
+        }
+      }
+      pen.knots.forEach((k, i) => {
+        // 锚点 6px 方块(上游 draw_anchor:末锚 accent 实心,余白底 1px accent 描边)
+        const [cx, cy] = toScr(k.anchor);
+        octx.beginPath();
+        octx.rect(cx - 3, cy - 3, 6, 6);
+        octx.fillStyle = i + 1 === pen.knots.length ? accent : '#ffffff';
+        octx.fill();
+        octx.strokeStyle = accent;
+        octx.lineWidth = 1;
+        octx.stroke();
+      });
+      if (hov && overFirstAnchor(pen, [hov.x, hov.y], 6.0 / Math.max(v.scale, 1e-3)) && pen.knots[0]) {
+        const [cx, cy] = toScr(pen.knots[0].anchor);
+        octx.fillStyle = accent;
+        octx.fillRect(cx - 4, cy - 4, 8, 8);
+        octx.beginPath();
+        octx.arc(cx + 11, cy + 11, 3.5, 0, Math.PI * 2);
+        octx.strokeStyle = accent;
+        octx.lineWidth = 1.5;
+        octx.stroke();
+      }
+      octx.restore();
     }
 
     // overlay:Live 渐变 widget(上游 gradient_ui::draw_overlay):非经典模式下恒显示——
@@ -1841,6 +1938,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       s.runtime.offscreen = null;
     }
     bitmapKeyRef.current = '';
+    // 切走标签:钢笔草稿提交回它所属的文档(runCommand 按 tabId 命中文档,上游 cancel_stale 保草稿口径)
+    if (penRef.current) commitPen(false);
   }, [isActive, tabId]);
   useEffect(() => {
     if (!isActive) return;
@@ -1882,6 +1981,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       .catch((e2) => logError('[editor] shape.create 失败', e2));
   };
 
+  /** 提交钢笔草稿(上游 pen_commit/commit_path 的 Path 模式子集):<2 锚丢弃;
+   * path.set 追加进工作路径(op:"combine"——上游提交后 selected_path="work",后续逐笔
+   * 累计同款口径;路径面板 二-4 接管选中态后按其指派)。 */
+  const commitPen = (closed: boolean) => {
+    const p = penRef.current;
+    penRef.current = null;
+    const s2 = getSession(tabId);
+    if (!s2 || !p || p.knots.length < 2) {
+      scheduleDraw();
+      return;
+    }
+    void runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(p, closed) })
+      .catch((err) => logError('[editor] path.set 失败', err));
+    scheduleDraw();
+  };
+
   // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
   useEffect(() => {
     if (!isActive) return undefined;
@@ -1904,6 +2019,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // Alt 按住态:Select and Mask 边刷光标的 +/- 形态随键即时切换
       if (e.key === 'Alt') {
         altRef.current = true;
+        // 钢笔拖拽中按 Alt=断开手柄对,此后只有 out 跟指针(上游 pen_break_handle,#3306)
+        if (penRef.current?.dragging && !penRef.current.adjustingLast) penBreakHandle(penRef.current);
         scheduleDraw();
         return;
       }
@@ -1927,6 +2044,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           e.preventDefault();
           commitShapeDialog();
         }
+        return;
+      }
+      // 钢笔草稿:Enter/Esc=提交并保留开放路径(上游 shortcuts.rs #1769,Esc 非丢弃)
+      if (s.tool === 'pen' && penRef.current && (e.key === 'Enter' || e.key === 'Escape')) {
+        e.preventDefault();
+        commitPen(false);
         return;
       }
       if (isTyping(e.target)) return;
@@ -2133,6 +2256,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 挡住 webview 的后退/删词默认行为
       if (e.key === 'Backspace' || e.key === 'Delete' || e.code === 'Backspace' || e.code === 'Delete') {
         e.preventDefault();
+        if (s.tool === 'pen' && penRef.current) {
+          // 钢笔草稿:⌫=退上一锚(上游 pen_undo_last_point;空=草稿取消)
+          penRef.current = penUndoLastPoint(penRef.current);
+          scheduleDraw();
+          return;
+        }
         if (s.tool === 'magneticLasso' && magneticRef.current) {
           // 磁性套索:⌫ 删上一锚点并从指针位置重追(不动指针可连按连删;上游 remove_last_point)
           magneticBusy.current = false;
@@ -2164,6 +2293,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
               : e.code === 'KeyC' ? 'c' : e.code === 'KeyX' ? 'x' : e.code === 'KeyV' ? 'v' : k;
         if (k2 === 'z') {
           e.preventDefault();
+          // 钢笔草稿逐点回退(上游 pen_undo_last_point):草稿锚是编辑器态非文档历史,
+          // Ctrl+Z 优先吃掉;草稿不存在才落到文档 undo(重做不拦=上游同)
+          if (s.tool === 'pen' && penRef.current && !e.shiftKey) {
+            penRef.current = penUndoLastPoint(penRef.current);
+            scheduleDraw();
+            return;
+          }
           // 框专属 undo(上游 #3145):裁剪工具+框栈非空时 Ctrl+Z/Redo 步进框快照而非文档;
           // 任一栈非空即拦截两向(空向吃掉按键=上游变灰语义),两栈全空才回落文档历史
           const hist = cropHistoryRef.current;
@@ -2643,6 +2779,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 形状族(上游 shape 工具):记起点拖拽;直线点击无对话框=无操作,其余点击松手开数值对话框
       shapeDragRef.current = { tool: s.tool, sx: dx, sy: dy, ex: dx, ey: dy, maxDev: 0 };
       scheduleDraw();
+    } else if (s.tool === 'pen' && e.button === 0 && s.state) {
+      // 钢笔(上游 canvas.rs 派发序):Alt 按在末锚手柄上=抓单柄;否则加锚/闭合替身/断末锚
+      const tol = 6.0 / Math.max(s.runtime.view.scale, 1e-3);
+      if (!(e.altKey && penRef.current && penGrabHandle(penRef.current, dx, dy, tol))) {
+        penRef.current = penDown(penRef.current, dx, dy, e.shiftKey, tol);
+      }
+      scheduleDraw();
     } else if (s.tool === 'marquee' && e.button === 0) {
       // 按下时的修饰键定选区运算模式;拖拽中途新按的键做形状约束(trackMods 跟踪)
       marqueeRef.current = { x0: dx, y0: dy, x1: dx, y1: dy, mods: initialMods(e.shiftKey, e.altKey) };
@@ -2804,6 +2947,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       sd.ex = dx;
       sd.ey = dy;
       sd.maxDev = Math.max(sd.maxDev, Math.hypot(dx - sd.sx, dy - sd.sy));
+      scheduleDraw();
+      return;
+    }
+    if (s.tool === 'pen') {
+      // 钢笔拖拽:拉出末锚手柄(⇧ 实时 45°,上游 pen_move 读实时修饰键);
+      // 纯悬停也要重绘(橡皮带/闭合提示跟指针,上游即时模式每帧画,我们靠指针驱动重绘)
+      if (penRef.current?.dragging) penMove(penRef.current, dx, dy, e.shiftKey);
       scheduleDraw();
       return;
     }
@@ -3131,6 +3281,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       scheduleDraw();
     }
+    if (s && penRef.current?.dragging) {
+      // 钢笔抬笔:闭合拖拽(松手抖动内替身手柄收回)→ 提交闭合;否则继续画(上游 pen_up)
+      const jitter = 2.0 / Math.max(s.runtime.view.scale, 1e-3);
+      const r = penUp(penRef.current, jitter);
+      if (r.closed) commitPen(true);
+      scheduleDraw();
+    }
     if (s && cd && s.state) {
       const f = cropRef.current!;
       if (cd.kind === 'draw' || cd.kind === 'resize') {
@@ -3284,7 +3441,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [stopPicker]);
 
   if (!session) return null;
-  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP]);
+  const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP, 'pen']);
   const cursor =
     session.selectMask?.open
       ? // 对话框模态:边刷开=自绘圆环(原生光标隐藏),关=普通箭头(上游模态画布口径)

@@ -102,6 +102,7 @@ export type EditorTool =
   | 'triangleShape'
   | 'polygonShape'
   | 'lineShape'
+  | 'pen'
   | 'hand'
   | 'zoom';
 
