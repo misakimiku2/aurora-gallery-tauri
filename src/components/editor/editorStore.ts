@@ -7,6 +7,7 @@ import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
+import type { PathListSummary } from './pathsPanelLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -147,8 +148,29 @@ export interface EditorSession {
    * 上游 draw_overlay 直接读 doc.work_path 的即时模式口径)。 */
   workPath: WorkPathJson | null;
   workPathSeq: number;
+  /** 路径面板摘要(path.list;refreshPathsList 按 docId/revision 拉取)。 */
+  pathsList: PathListSummary | null;
+  pathsListSeq: number;
+  /** 路径面板选中键("work"/"layer"/已存路径名;null=未选,显示与命令回落工作路径)。 */
+  selectedPath: string | null;
+  /** 路径面板对话框(描边路径/建立选区;会话级,Enter/Esc 由画布键盘接管)。 */
+  pathsDialog: PathsDialogState | null;
   /** 直接选择的选择态(工具/键事件改;拖拽态在画布 ref,不入 store)。 */
   directSel: DirectSelState;
+}
+
+/** 路径面板对话框字段(上游 stroke_path_dialog + path.toSelection 的 pen_dialog spec)。 */
+export interface PathsDialogState {
+  kind: 'stroke' | 'selection';
+  /** 路径键:"work" / "layer" / 已存路径名。 */
+  name: string;
+  /** stroke:描边工具(上游 STROKE_PATH_SPEC 全表,brush 默认)。 */
+  tool: string;
+  simulatePressure: boolean;
+  /** selection:羽化 0..250 px(上游对话框 spec 上限;引擎钳 0..1000)。 */
+  feather: number;
+  antiAlias: boolean;
+  mode: 'replace' | 'add' | 'subtract' | 'intersect';
 }
 
 /** 形状数值对话框字段(上游 shape_dialog fields;kind=对话框 MARK 名,与引擎 kind 不同名;
@@ -238,6 +260,10 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     shapeDialog: null,
     workPath: null,
     workPathSeq: 0,
+    pathsList: null,
+    pathsListSeq: 0,
+    selectedPath: null,
+    pathsDialog: null,
     directSel: { target: null, anchors: [], segment: null },
   };
   sessions.set(tabId, s);
@@ -656,6 +682,115 @@ export async function refreshWorkPath(tabId: string): Promise<void> {
       s2.workPath = null;
       notify(tabId);
     }
+  }
+}
+
+/** 拉取路径面板摘要到会话(path.list;journal:false 不推 revision,按 docId/revision
+ * 驱动。失败静默——无文档时面板显示空态)。乱序回包按 seq 丢弃。 */
+export async function refreshPathsList(tabId: string): Promise<void> {
+  const s = sessions.get(tabId);
+  if (!s?.docId) return;
+  const seq = ++s.pathsListSeq;
+  const docId = s.docId;
+  try {
+    const r = await editorRun(docId, 'path.list', {});
+    const s2 = sessions.get(tabId);
+    if (!s2 || s2.pathsListSeq !== seq) return;
+    s2.pathsList = (r.result as PathListSummary | null) ?? { paths: [], workPath: null, layerPath: null };
+    notify(tabId);
+  } catch {
+    const s2 = sessions.get(tabId);
+    if (s2 && s2.pathsListSeq === seq) {
+      s2.pathsList = null;
+      notify(tabId);
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------------
+// 路径面板对话框(描边路径/建立选区;Enter/Esc 由画布键盘接管,与 shapeDialog 同模式)
+// -------------------------------------------------------------------------------------------
+
+/** 上游 STROKE_PATH_SPEC 的工具全表(canvas_tool_menu.rs #2978;引擎按 tool 路由
+ * paint.* 或画笔/铅笔/橡皮)。 */
+export const PATH_STROKE_TOOLS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: 'brush', label: '画笔' },
+  { id: 'pencil', label: '铅笔' },
+  { id: 'eraser', label: '橡皮擦' },
+  { id: 'backgroundEraser', label: '背景橡皮擦' },
+  { id: 'cloneStamp', label: '仿制图章' },
+  { id: 'patternStamp', label: '图案图章' },
+  { id: 'healingBrush', label: '修复画笔' },
+  { id: 'spotHealingBrush', label: '污点修复画笔' },
+  { id: 'historyBrush', label: '历史记录画笔' },
+  { id: 'blur', label: '模糊' },
+  { id: 'sharpen', label: '锐化' },
+  { id: 'smudge', label: '涂抹' },
+  { id: 'dodge', label: '减淡' },
+  { id: 'burn', label: '加深' },
+  { id: 'sponge', label: '海绵' },
+  { id: 'colorReplacement', label: '颜色替换' },
+  { id: 'mixerBrush', label: '混合器画笔' },
+];
+
+/** 打开对话框(描边=当前选项条口径预填工具;选区=上游默认 feather 0/antiAlias/repl)。 */
+export function openPathsDialog(tabId: string, init: { kind: 'stroke' | 'selection'; name: string; tool?: string }): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.pathsDialog = init.kind === 'stroke'
+    ? { kind: 'stroke', name: init.name, tool: init.tool ?? 'brush', simulatePressure: false, feather: 0, antiAlias: true, mode: 'replace' }
+    : { kind: 'selection', name: init.name, tool: 'brush', simulatePressure: false, feather: 0, antiAlias: true, mode: 'replace' };
+  notify(tabId);
+}
+
+/** 更新对话框字段。 */
+export function updatePathsDialog(tabId: string, patch: Partial<PathsDialogState>): void {
+  const s = sessions.get(tabId);
+  if (!s?.pathsDialog) return;
+  s.pathsDialog = { ...s.pathsDialog, ...patch };
+  notify(tabId);
+}
+
+/** 关闭(取消=无副作用)。 */
+export function closePathsDialog(tabId: string): void {
+  const s = sessions.get(tabId);
+  if (!s?.pathsDialog) return;
+  s.pathsDialog = null;
+  notify(tabId);
+}
+
+/** 确定并执行(上游对话框 OK→app.run):stroke=画笔族带选项条当前值(引擎会话 tools
+ * 不镜像我们的选项条,显式传参=同一份"当前选项");retouch 族带 strength;
+ * selection=feather/antiAlias/mode。返回是否已发命令(供错误提示)。 */
+export async function confirmPathsDialog(tabId: string): Promise<void> {
+  const s = sessions.get(tabId);
+  const dlg = s?.pathsDialog;
+  if (!s || !dlg) return;
+  s.pathsDialog = null;
+  notify(tabId);
+  try {
+    if (dlg.kind === 'stroke') {
+      const params: Record<string, unknown> = { name: dlg.name, tool: dlg.tool, simulatePressure: dlg.simulatePressure };
+      // 画笔族:引擎默认读会话 tools.brush,但我们的笔径/硬度/不透明度在前端——显式带上
+      if (dlg.tool === 'brush' || dlg.tool === 'pencil' || dlg.tool === 'eraser') {
+        params.size = s.options.brushSize;
+        params.hardness = s.options.brushHardness;
+        params.opacity = Math.round(s.options.brushOpacity * 100);
+      } else if (['blur', 'sharpen', 'smudge', 'dodge', 'burn', 'sponge'].includes(dlg.tool)) {
+        params.strength = s.options.retouchStrength;
+      }
+      await runCommand(tabId, 'path.stroke', params);
+    } else {
+      await runCommand(tabId, 'path.toSelection', {
+        name: dlg.name,
+        feather: Math.min(1000, Math.max(0, Math.round(dlg.feather))),
+        antiAlias: dlg.antiAlias,
+        mode: dlg.mode,
+      });
+    }
+  } catch (err) {
+    console.error('[editor] 路径对话框命令失败', err);
+    showEditorNotice(`路径命令失败:${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

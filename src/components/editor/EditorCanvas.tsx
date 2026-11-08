@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -30,6 +30,7 @@ import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
 import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penFromJson, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, pathLines, shift45 as penShift45 } from './penLogic';
+import { activePathName, pathRows } from './pathsPanelLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
 import {
   addAnchor as peAddAnchor, anchorsIn as peAnchorsIn, bendSegment as peBendSegment, clonePath as peClone, convertPoint as peConvertPoint,
@@ -2187,6 +2188,41 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   };
 
+  /** Ctrl+Enter(上游 path_to_selection,#306):钢笔草稿在画先提交为工作路径,再把当前
+   * 路径(面板选中→工作路径→活动层路径,上游 active_path_name)载入选区。 */
+  const makeSelectionFromActivePath = async () => {
+    const s = getSession(tabId);
+    if (!s) return;
+    const pen = penRef.current;
+    if (pen && pen.knots.length >= 2) {
+      penRef.current = null;
+      try {
+        const r = await runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(pen, false) });
+        const path = (r as { path?: WorkPathJson } | null)?.path;
+        const s2 = getSession(tabId);
+        if (s2 && path) {
+          s2.workPath = path;
+          scheduleDraw();
+        }
+      } catch (err) {
+        logError('[editor] path.set 失败', err);
+        return;
+      }
+      updateSession(tabId, { selectedPath: 'work' });
+    }
+    const s2 = getSession(tabId);
+    const name = activePathName(pathRows(s2?.pathsList ?? null), s2?.selectedPath ?? null);
+    if (!name) {
+      showEditorNotice('没有可建立选区的路径:先用钢笔画一条,或在路径面板选中一条。');
+      return;
+    }
+    try {
+      await runCommand(tabId, 'path.toSelection', { name });
+    } catch (err) {
+      showEditorNotice(`建立选区失败:${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   // -------------------------------------------------------------------------------------------
   // 直接选择/锚点工具(二期 二-3,上游 direct_select.rs + anchor_tools.rs;目标=work path)
   // -------------------------------------------------------------------------------------------
@@ -2430,13 +2466,31 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         return;
       }
-      // 钢笔草稿:Enter/Esc=提交并保留开放路径(上游 shortcuts.rs #1769,Esc 非丢弃)
-      if (s.tool === 'pen' && penRef.current && (e.key === 'Enter' || e.key === 'Escape')) {
+      // 路径面板对话框(描边路径/建立选区):Enter 确定(非输入框中)/Esc 取消;其余放行
+      if (s.pathsDialog) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closePathsDialog(tabId);
+        } else if (e.key === 'Enter' && !isTyping(e.target)) {
+          e.preventDefault();
+          void confirmPathsDialog(tabId);
+        }
+        return;
+      }
+      // 钢笔草稿:Enter/Esc=提交并保留开放路径(上游 shortcuts.rs #1769,Esc 非丢弃);
+      // Ctrl/Cmd+Enter 不在此提交——落到下方「当前路径载入选区」(先提交再选,上游 #306)
+      if (s.tool === 'pen' && penRef.current && (e.key === 'Enter' || e.key === 'Escape') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         commitPen(false);
         return;
       }
       if (isTyping(e.target)) return;
+      // Ctrl+Enter(上游 Cmd+Enter,#306):当前路径载入选区(钢笔草稿在画先提交)
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        void makeSelectionFromActivePath();
+        return;
+      }
       // 导出为入口(Ctrl+Alt+Shift+W,上游 Cmd+Alt+Shift+W 口径)
       if (e.code === 'KeyW' && e.ctrlKey && e.shiftKey && e.altKey) {
         e.preventDefault();
