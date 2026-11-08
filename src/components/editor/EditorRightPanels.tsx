@@ -77,13 +77,30 @@ const GROW = [0.2, 0.26, 0.24, 0.3];
 const GROUP_TITLES = ['颜色', '属性 · 调整 · 历史记录', '导航器 · 信息', '图层 · 路径'];
 /** 分隔条高度(px)。 */
 const DIVIDER_H = 10;
-/** 路径面板定高(组 4 下半;行列表内部滚动,默认露出 3 行,页脚按钮恒可见)。 */
-const PATHS_PANEL_H = 172;
-const PathsPanelWrapper: React.FC<{ tabId: string }> = ({ tabId }) => (
-  <div className="shrink-0 flex flex-col" style={{ height: PATHS_PANEL_H }}>
-    <PathsPanel tabId={tabId} />
-  </div>
-);
+
+/** 图层·路径组:页签切换(路径并入图层组,不再单独占垂直空间——用户拍板;
+ * 页签样式同 MidPanel,组 4 保持恒弹性不参与折叠)。 */
+const LayersPathsGroup: React.FC<{ tabId: string }> = ({ tabId }) => {
+  const [tab, setTab] = useState<'layers' | 'paths'>('layers');
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex shrink-0 border-b border-black/10 dark:border-white/10">
+        {([['layers', '图层'], ['paths', '路径']] as const).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`px-2.5 py-1 text-[11px] ${tab === k ? 'text-sky-700 dark:text-neutral-100 border-b-2 border-sky-500' : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-300'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col">
+        {tab === 'layers' ? <LayersPanel tabId={tabId} /> : <PathsPanel tabId={tabId} />}
+      </div>
+    </div>
+  );
+};
 
 export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -208,12 +225,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
       collapsed={collapsed[2]}
       onToggle={() => toggleCollapse(2)}
     />,
-    // 图层组=图层(弹性)+路径面板(定高);分隔线视觉上属于组内分节
-    <div key="layers" className="h-full flex flex-col">
-      <LayersPanel tabId={tabId} />
-      <div className="h-px bg-black/10 dark:bg-white/10 shrink-0" />
-      <PathsPanelWrapper tabId={tabId} />
-    </div>,
+    <LayersPathsGroup key="layers" tabId={tabId} />,
   ];
 
   // 权重(容器高的百分比)只作为前三组的初始布局;图层组恒 flex-grow 吸满剩余高

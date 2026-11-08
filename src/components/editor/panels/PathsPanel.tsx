@@ -420,7 +420,6 @@ export const PathsPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      <div className="px-2 py-1 text-[11px] text-gray-500 dark:text-neutral-400 shrink-0">路径</div>
       <div className="flex-1 min-h-0 overflow-y-auto px-1 pb-1 flex flex-col">
         {rows.length === 0 && (
           <div className="px-1.5 py-1.5 text-[11px] leading-snug text-gray-500 dark:text-neutral-400 shrink-0">

@@ -729,7 +729,6 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
 
   return (
     <div className="flex flex-col min-h-0 flex-1">
-      <div className="px-2 py-1 text-[11px] text-gray-500 dark:text-neutral-400 shrink-0">图层</div>
       {/* 混合模式(当前层) */}
       <div className="px-2 pb-1 shrink-0">
         <EditorSelect
