@@ -9,7 +9,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { editorRun } from '../editorBridge';
 import {
-  confirmPathsDialog, closePathsDialog, getSession, openPathsDialog, refreshPathsList, runCommand,
+  confirmPathsDialog, closePathsDialog, getSession, openPathsDialog, runCommand,
   showEditorNotice, subscribeSession, updatePathsDialog, updateSession, PATH_STROKE_TOOLS,
 } from '../editorStore';
 import { freePathName, pathContextActions, pathRows, panelTargetPath, type PathMenuAction, type PathRow } from '../pathsPanelLogic';
@@ -305,11 +305,7 @@ export const PathsPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
     };
   }, [tabId, rowsSig]);
 
-  // path.list 摘要按 docId/revision 刷新(journal:false,不推 revision,由此 effect 驱动)
-  useEffect(() => {
-    const s2 = getSession(tabId);
-    if (s2?.docId != null) void refreshPathsList(tabId);
-  }, [tabId, s?.docId, s?.revision]);
+  // path.list 摘要由画布常驻 effect 刷新(路径页签不挂载时也要新鲜——选项条按钮/Ctrl+Enter 吃它)
 
   const [renaming, setRenaming] = useState<{ key: string; text: string } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; row: PathRow } | null>(null);

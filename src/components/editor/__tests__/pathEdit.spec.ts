@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   addAnchor, anchorsIn, bendSegment, convertPoint, deleteAnchor, evalSeg, hitPath, moveAnchors, moveHandle,
-  segmentEnd, subpathAnchors, subpathSegments, type EditPath,
+  segmentEnd, subpathAnchors, subpathSegments, translatePath,
+  pickShapeAt, pointInSubpath, type EditPath,
 } from '../pathEdit';
 
 /** 三个角点的三角(上游 tri)。 */
@@ -137,5 +138,44 @@ describe('pathEdit(二期 二-3,上游 crates/vector/src/edit.rs 移植)', () =>
     if (s.kind === 'segment') expect(s.t).toBeCloseTo(0.5, 1);
     // 全部脱靶
     expect(hitPath(p, [500, 500], 8, [])).toBeNull();
+  });
+});
+
+describe('translatePath(二-5,上游 Path::transform translate 分支)', () => {
+  it('锚与双手柄同移;原路径不动(纯函数)', () => {
+    const src = tri();
+    const out = translatePath(src, [5, -3])!;
+    expect(out.subpaths[0].knots[0].anchor).toEqual([5, 7]);
+    expect(out.subpaths[0].knots[1].anchor).toEqual([105, -3]);
+    expect(out.subpaths[0].knots[1].in).toEqual([105, -3]);
+    // 原路径不被修改
+    expect(src.subpaths[0].knots[1].anchor).toEqual([100, 0]);
+    // 负位移与平滑标记保持
+    expect(out.subpaths[0].knots[2].anchor).toEqual([55, 87]);
+    expect(out.subpaths[0].knots[1].smooth).toBe(src.subpaths[0].knots[1].smooth);
+  });
+});
+
+describe('pickShapeAt / pointInSubpath(二-5,上游 pick_shape_at 移植)', () => {
+  it('pointInSubpath:闭合三角形内部真/外部假;开放或 <3 锚恒假', () => {
+    const triSp = tri().subpaths[0];
+    expect(pointInSubpath(triSp, [50, 40])).toBe(true);
+    expect(pointInSubpath(triSp, [200, 40])).toBe(false);
+    expect(pointInSubpath({ closed: false, knots: triSp.knots }, [50, 40])).toBe(false);
+  });
+
+  it('pickShapeAt:自上而下首个命中胜;描边几何容差内命中(无填充不测内部);填充矩形/子路径内部命中', () => {
+    const a = { id: 1, path: tri(), fill: true, live: null };
+    // 描边线(无填充):线外 4px 容差内命中,10px 外不中
+    const line = { id: 2, path: { subpaths: [{ closed: false, knots: [
+      { anchor: [0, 100] as [number, number], in: [0, 100] as [number, number], out: [100, 100] as [number, number], smooth: false },
+      { anchor: [100, 100] as [number, number], in: [100, 100] as [number, number], out: [200, 100] as [number, number], smooth: false },
+    ] }] }, fill: false, live: null };
+    expect(pickShapeAt([line], [50, 103], 4)).toBe(2);
+    expect(pickShapeAt([line], [50, 113], 4)).toBeNull();
+    // a 在前:a 的填充内部命中(即使线也在下面)
+    expect(pickShapeAt([a, line], [50, 40], 4)).toBe(1);
+    // a 内部不中、线中 → 2
+    expect(pickShapeAt([a, line], [50, 103], 4)).toBe(2);
   });
 });

@@ -72,6 +72,9 @@ export interface ToolOptions {
   lineWeight: number;
   /** 钢笔 Auto Add/Delete(上游 pen_auto_add_delete,默认开):点击段=加锚、点击锚=删锚。 */
   penAutoAddDelete: boolean;
+  /** 钢笔模式(上游 vector_mode,"path"|"shape",默认 path):shape=提交建形状层
+   * (shape.create kind:path),path=进工作路径。 */
+  penVectorMode: 'path' | 'shape';
 }
 
 /** 直接选择的选择态(上游 direct_select::DirectSelection 的持久部分;拖拽态在画布 ref)。
@@ -122,6 +125,8 @@ export interface EditorRuntime {
   cropFitRatio: (() => void) | null;
   /** 设置裁剪框角度(选项条角度输入框;画布注册,归一 (-180,180],无框先建默认框)。 */
   cropSetAngle: ((deg: number) => void) | null;
+  /** 当前路径载入选区(选项条「建立选区」按钮;画布注册——钢笔草稿在画布 ref)。 */
+  makeSelection: (() => void) | null;
 }
 
 export interface EditorSession {
@@ -252,8 +257,9 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       polygonSides: 5,
       lineWeight: 3,
       penAutoAddDelete: true,
+      penVectorMode: 'path',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -659,8 +665,9 @@ export function confirmShapeDialog(tabId: string): ShapeDialogState | null {
 // 我们经 path.list(journal:false)按需拉——钢笔激活与 revision 推进时刷新)
 // -------------------------------------------------------------------------------------------
 
-/** 路径编辑族工具(工作路径常驻轮廓的显示者;上游 shows_anchors 集合的 work path 子集)。 */
-export const PATH_TOOLS: ReadonlySet<string> = new Set(['pen', 'directSelect', 'addAnchor', 'deleteAnchor', 'convertPoint']);
+/** 路径编辑族工具(工作路径常驻轮廓的显示者;上游 shows_anchors 集合的 work path 子集;
+ * 路径选择工具同样显示并编辑工作路径)。 */
+export const PATH_TOOLS: ReadonlySet<string> = new Set(['pen', 'directSelect', 'addAnchor', 'deleteAnchor', 'convertPoint', 'pathSelect']);
 
 /** 拉取工作路径到会话(path.info{name:'work'}=完整几何;path.list 的 workPath 只有计数。
  * 无工作路径时引擎报错=置 null;乱序回包按 seq 丢弃;失败静默不打扰)。 */

@@ -8,7 +8,7 @@ import {
   nextGradientTool, nextLassoTool, nextMarqueeShape, normalizeRect, projectOn, reflectFromCenter,
   resolveSelectionMode, rgbToHex, sampleHex, sampleLayerRamp, selectMaskPaintStroke, selectMode, singleLineParams, snap45, snappedDir, strokeCommand, stopIndexAfterEdit,
   strokeParams, TOOL_KEYS, trackMods, GRADIENT_GROUP,
-  nextShapeTool, isShapeClick, shapeGeometry, shapeBounds, shapeDialogDefaults, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, SHAPE_GROUP,
+  nextPathTool, nextShapeTool, isShapeClick, shapeGeometry, shapeBounds, shapeDialogDefaults, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, SHAPE_GROUP,
 } from '../toolLogic';
 import type { SelectMaskStroke, StrokeAxis } from '../toolLogic';
 import type { ToolOptions } from '../editorStore';
@@ -23,7 +23,7 @@ const OPTS: ToolOptions = {
   selectionMode: 'replace', moveAutoSelect: true, moveTarget: 'layer', cropRatio: '', cropSnapAngle: false,
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57, magneticPressure: false,
   cropWidth: '', cropHeight: '', cropResolution: '', cropResolutionUnit: 'px/in' as const,
-  shapeFill: true, strokeWidth: 0, cornerRadius: 0, polygonSides: 5, lineWeight: 3, penAutoAddDelete: true,
+  shapeFill: true, strokeWidth: 0, cornerRadius: 0, polygonSides: 5, lineWeight: 3, penAutoAddDelete: true, penVectorMode: 'path',
 };
 
 describe('constrainSquare / reflectFromCenter', () => {
@@ -149,15 +149,24 @@ describe('chainSegments(边界段 → 连续折线,蚂蚁线虚线沿路径跑)'
 });
 
 describe('TOOL_KEYS', () => {
-  it('覆盖一期+直接选择(M/L/G/U/P 键在画布层做组内循环,不在表内;锐化回上游无单键口径)', () => {
+  it('覆盖一期(M/L/G/U/P/A 键在画布层做组内循环,不在表内;锐化回上游无单键口径)', () => {
     expect(TOOL_KEYS.v).toBe('move');
     expect(TOOL_KEYS.m).toBeUndefined();
     expect(TOOL_KEYS.l).toBeUndefined();
     expect(TOOL_KEYS.g).toBeUndefined();
     expect(TOOL_KEYS.u).toBeUndefined();
     expect(TOOL_KEYS.p).toBeUndefined(); // P=钢笔组循环(钢笔/加删锚/转换点)
-    expect(TOOL_KEYS.a).toBe('directSelect'); // 上游 A 组(路径选择 二-5 加入后改组循环)
-    expect(Object.keys(TOOL_KEYS)).toHaveLength(10);
+    expect(TOOL_KEYS.a).toBeUndefined(); // A=路径选择↔直接选择循环(上游 Tool::PathSelection|DirectSelection 同键)
+    expect(Object.keys(TOOL_KEYS)).toHaveLength(9);
+  });
+});
+
+describe('A 键路径组循环(二-5,上游 Tool::PathSelection|Tool::DirectSelection 同键)', () => {
+  it('路径选择↔直接选择互切;不在组内回路径选择', () => {
+    expect(nextPathTool('pathSelect')).toBe('directSelect');
+    expect(nextPathTool('directSelect')).toBe('pathSelect');
+    expect(nextPathTool('move')).toBe('pathSelect');
+    expect(nextPathTool(undefined)).toBe('pathSelect');
   });
 });
 

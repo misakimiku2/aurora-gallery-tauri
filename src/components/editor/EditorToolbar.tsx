@@ -9,7 +9,7 @@ import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 import type { EditorTool } from './editorTypes';
 import { EditorIcon, type EditorIconName } from './editorIcons';
 import { getSession, setOptions, setTool, subscribeSession, runCommand } from './editorStore';
-import { nextLassoTool, nextMarqueeShape, nextPenTool, nextShapeTool } from './toolLogic';
+import { nextLassoTool, nextMarqueeShape, nextPathTool, nextPenTool, nextShapeTool } from './toolLogic';
 
 /** 选框组子形态(M 键组内循环,PS 口径四形态;图标=上游 assets/icons 同名)。 */
 const MARQUEE_SHAPES: { shape: 'rect' | 'ellipse' | 'row' | 'column'; label: string; icon: EditorIconName }[] = [
@@ -43,6 +43,12 @@ const PEN_TOOLS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'convertPoint', label: '转换点 (P)', icon: 'convert-point' },
 ];
 
+/** A 组子工具(上游 Tool::PathSelection|Tool::DirectSelection 同键 'A',组内循环)。 */
+const DSEL_TOOLS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
+  { tool: 'pathSelect', label: '路径选择 (A)', icon: 'mouse-pointer-2' },
+  { tool: 'directSelect', label: '直接选择 (A)', icon: 'direct-select' },
+];
+
 const GROUPS: { tool: EditorTool; label: string; icon: EditorIconName }[] = [
   { tool: 'move', label: '移动 (V)', icon: 'move' },
   { tool: 'crop', label: '裁剪 (C)', icon: 'crop' },
@@ -72,7 +78,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
   /** 子形态弹层(屏幕坐标 + 归属组;fixed 定位,不被工具栏 overflow 裁剪/被画布盖住)。 */
-  const [menu, setMenu] = useState<{ kind: 'marquee' | 'lasso' | 'shape' | 'pen'; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ kind: 'marquee' | 'lasso' | 'shape' | 'pen' | 'dsel'; x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   /** 长按弹层(上游 0.35s 口径):计时器 + "本次长按已开弹层"标记(抑制定击的选工具)。 */
   const pressTimer = useRef<number | null>(null);
@@ -118,8 +124,13 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     setTool(tabId, tool);
     setMenu(null);
   };
+  const dselActive = DSEL_TOOLS.find((t) => t.tool === s.tool) ?? DSEL_TOOLS[0];
+  const pickDsel = (tool: EditorTool) => {
+    setTool(tabId, tool);
+    setMenu(null);
+  };
   /** 长按 0.35s 开弹层(上游 panels.rs 口径);短按仍走 onClick 选工具。 */
-  const startPress = (kind: 'marquee' | 'lasso' | 'shape' | 'pen') => (e: React.PointerEvent) => {
+  const startPress = (kind: 'marquee' | 'lasso' | 'shape' | 'pen' | 'dsel') => (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     pressPosRef.current = { x: r.right + 4, y: r.top };
@@ -137,7 +148,7 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
     }
   };
   /** 组槽位公共 props:长按/右键弹层 + 双击循环 + 短按选中(长按刚开弹层时抑制)。 */
-  const groupSlot = (kind: 'marquee' | 'lasso' | 'shape' | 'pen', title: string, onDoubleClick: () => void, onShortClick: () => void) => ({
+  const groupSlot = (kind: 'marquee' | 'lasso' | 'shape' | 'pen' | 'dsel', title: string, onDoubleClick: () => void, onShortClick: () => void) => ({
     title: `${title} — 右键/长按切换形态`,
     onClick: () => {
       if (pressOpenedRef.current) {
@@ -311,17 +322,39 @@ export const EditorToolbar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </div>
       )}
       <button
-        key="directSelect"
-        title="直接选择 (A) — 点选/框选锚点,拖锚/手柄/段编辑"
-        onClick={() => setTool(tabId, 'directSelect')}
+        key="dsel"
+        {...groupSlot(
+          'dsel',
+          dselActive.label,
+          () => setTool(tabId, nextPathTool(s.tool)),
+          () => setTool(tabId, dselActive.tool),
+        )}
         className={`w-9 h-9 shrink-0 rounded flex items-center justify-center transition-colors ${
-          s.tool === 'directSelect'
+          dselActive.tool === s.tool
             ? 'bg-sky-600 text-white'
             : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 hover:text-neutral-900 dark:hover:text-neutral-100'
         }`}
       >
-        <EditorIcon name="direct-select" />
+        <EditorIcon name={dselActive.icon} />
       </button>
+      {menu?.kind === 'dsel' && (
+        <div ref={menuRef} className="fixed z-[80] w-36 py-0.5 rounded-md shadow-lg bg-surface border border-black/10 dark:border-white/15" style={{ left: menu.x, top: menu.y }}>
+          {DSEL_TOOLS.map(({ tool, label, icon }) => (
+            <button
+              key={tool}
+              onClick={() => pickDsel(tool)}
+              className={`w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-sm ${
+                tool === s.tool
+                  ? 'text-sky-700 dark:text-sky-300'
+                  : 'text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10'
+              }`}
+            >
+              <EditorIcon name={icon} size={15} />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       {GROUPS_TAIL.map(({ tool, label, icon }) => (
         <button
           key={tool}

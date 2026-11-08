@@ -244,7 +244,8 @@ export function sampleHex(
 export const TOOL_KEYS: Record<string, string> = {
   v: 'move', c: 'crop', i: 'eyedropper',
   b: 'brush', e: 'eraser',
-  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom', a: 'directSelect',
+  r: 'blur', s: 'smudge', h: 'hand', z: 'zoom',
+  // a 不在此:A 键=路径选择↔直接选择循环(上游 Tool::PathSelection|DirectSelection 同键),画布特判
 };
 
 /** 钢笔 P 组(上游 Tool::Pen|FreeformPen|CurvaturePen|AddAnchor|DeleteAnchor|ConvertPoint 同键
@@ -255,6 +256,11 @@ export const PEN_GROUP_ORDER: EditorTool[] = ['pen', 'addAnchor', 'deleteAnchor'
 export function nextPenTool(current: EditorTool | undefined): EditorTool {
   const i = current ? PEN_GROUP_ORDER.indexOf(current) : -1;
   return i < 0 ? 'pen' : PEN_GROUP_ORDER[(i + 1) % PEN_GROUP_ORDER.length];
+}
+
+/** A 键组(上游 Tool::PathSelection|Tool::DirectSelection 同键 'A'):路径选择↔直接选择循环。 */
+export function nextPathTool(current: EditorTool | undefined): EditorTool {
+  return current === 'pathSelect' ? 'directSelect' : 'pathSelect';
 }
 
 /** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */

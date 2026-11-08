@@ -320,3 +320,72 @@ export function shownHandles(sel: SelectionLike, p: EditPath): { knot: KnotRef; 
     return k && !retracted(k, h);
   });
 }
+
+/** 整体平移(上游 Path::transform 的 translate 分支):锚与双手柄同移,PathSelection
+ * 拖移工作路径用(整数位移,与 shape.edit move 同口径)。 */
+export function translatePath(p: EditPath, d: Pt): EditPath {
+  return {
+    subpaths: p.subpaths.map((sp) => ({
+      ...sp,
+      knots: sp.knots.map((k) => ({
+        anchor: [k.anchor[0] + d[0], k.anchor[1] + d[1]] as Pt,
+        in: [k.in[0] + d[0], k.in[1] + d[1]] as Pt,
+        out: [k.out[0] + d[0], k.out[1] + d[1]] as Pt,
+        smooth: k.smooth,
+      })),
+    })),
+  };
+}
+
+/** 点是否在闭合子路径内(上游 point_in_subpath:偶奇射线;闭合并 ≥3 锚才有效)。 */
+export function pointInSubpath(sp: EditSubpath, pt: Pt): boolean {
+  if (!sp.closed || sp.knots.length < 3) return false;
+  let inside = false;
+  const n = sp.knots.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const xi = sp.knots[i].anchor[0];
+    const yi = sp.knots[i].anchor[1];
+    const xj = sp.knots[j].anchor[0];
+    const yj = sp.knots[j].anchor[1];
+    const intersect = yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** 路径选择的光标拾取(上游 pick_shape_at 的几何部分,自上而下首个命中胜):
+ * path 几何命中容差内(peHit 手柄不参战),有填充时 Live 矩形/椭圆与闭合子路径
+ * 内部点也算(逐像素面探查交由 layer.pickAt 快路径,这里纯几何)。 */
+export function pickShapeAt(
+  candidates: { id: number; path: EditPath; fill: boolean; live?: { kind?: string; rect?: [number, number, number, number] } | null }[],
+  at: Pt,
+  tol: number,
+): number | null {
+  for (const c of candidates) {
+    if (hitPath(c.path, at, tol, [])) return c.id;
+    if (!c.fill) continue;
+    const live = c.live;
+    if (live?.rect) {
+      const [x, y, w, h] = live.rect;
+      const x0 = Math.min(x, x + w);
+      const x1 = Math.max(x, x + w);
+      const y0 = Math.min(y, y + h);
+      const y1 = Math.max(y, y + h);
+      if (at[0] >= x0 && at[0] <= x1 && at[1] >= y0 && at[1] <= y1) return c.id;
+      if (live.kind === 'ellipse') {
+        const rx = Math.abs(w) / 2;
+        const ry = Math.abs(h) / 2;
+        if (rx > 1e-6 && ry > 1e-6) {
+          const cx = x + w / 2;
+          const cy = y + h / 2;
+          const dx = (at[0] - cx) / rx;
+          const dy = (at[1] - cy) / ry;
+          if (dx * dx + dy * dy <= 1.0) return c.id;
+        }
+      }
+    }
+    if (c.path.subpaths.some((sp) => pointInSubpath(sp, at))) return c.id;
+  }
+  return null;
+}

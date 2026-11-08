@@ -11,7 +11,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -19,7 +19,7 @@ import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMa
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cropTurnCursorDir, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextPenTool, nextShapeTool,
+  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextPathTool, nextPenTool, nextShapeTool,
   isShapeClick, SHAPE_GROUP, shapeBounds, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, shapeGeometry,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
@@ -35,15 +35,28 @@ import type { EnginePathJson as WorkPathJson } from './penLogic';
 import {
   addAnchor as peAddAnchor, anchorsIn as peAnchorsIn, bendSegment as peBendSegment, clonePath as peClone, convertPoint as peConvertPoint,
   deleteAnchor as peDeleteAnchor, evalSeg as peEval, hitPath as peHit, moveAnchors as peMoveAnchors, moveHandle as peMoveHandle,
-  shownHandles as peShownHandles, subpathAnchors as peSubpathAnchors,
+  shownHandles as peShownHandles, subpathAnchors as peSubpathAnchors, translatePath as peTranslate, pickShapeAt,
   type EditPath, type Handle as PeHandle, type KnotRef, type PathHit, type Pt,
 } from './pathEdit';
+import type { EditorLayer } from './editorTypes';
 import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 直接选择族工具(上游 direct_select/anchor_tools 的指针接管者)。 */
 const DS_TOOLS: ReadonlySet<string> = new Set(['directSelect', 'addAnchor', 'deleteAnchor', 'convertPoint']);
+/** 图层树里按 id 找层(路径选择按下拾取后查 kind;inspect 树顶层=最上层,同序遍历)。 */
+const findLayerTree = (layers: { id: number; kind: string; children?: { id: number; kind: string; children?: unknown[] }[] }[], id: number | null): { id: number; kind: string } | null => {
+  if (id == null) return null;
+  for (const l of layers) {
+    if (l.id === id) return l;
+    if (l.children) {
+      const found = findLayerTree(l.children as never, id);
+      if (found) return found;
+    }
+  }
+  return null;
+};
 /** 离屏位图像素上限(约 36MP);超过则首屏降采样,信息面板取色按 rasterScale 折算。 */
 const RASTER_PIXEL_BUDGET = 36_000_000;
 /** 交互期降载(PS「低分辨率预览」同款)的视口像素上限(约 4MP):拖动滑杆/渐变时泵按
@@ -205,6 +218,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const gradientRef = useRef<(DragPoint & { mods: DragMods }) | null>(null);
   /** 形状族拖拽中(二期 二-1,上游 Drag:起点+当前点+全程最大位移[is_click 判定])。 */
   const shapeDragRef = useRef<{ tool: EditorTool; sx: number; sy: number; ex: number; ey: number; maxDev: number } | null>(null);
+  // 路径选择(二-5):按下起点 + pickAt 代次(防探测回来前已抬起,Auto-Select 同款)
+  const psDragRef = useRef<{ sx: number; sy: number } | null>(null);
+  const psSeqRef = useRef(0);
   /** 钢笔草稿(二期 二-2,上游 app.ui.pen:编辑器态,Enter/闭合/切工具才提交)。 */
   const penRef = useRef<PenDraft | null>(null);
   /** 直接选择拖拽(二期 二-3,上游 direct_select::Drag):编辑预览或框选。 */
@@ -598,8 +614,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
     // overlay:已提交工作路径常驻轮廓(上游 draw_overlay paths 段+shows_anchors:钢笔族
     // 工具下 work path 显示 1px accent 轮廓+锚点方块,闭合子路径回绕首锚;路径本身无像素,
-    // 此轮廓即 PS 闭合后画布上能看到的东西)
-    if (s.tool === 'pen' && s.workPath && s.state) {
+    // 此轮廓即 PS 闭合后画布上能看到的东西。路径选择工具同样编辑工作路径,同款显示)
+    if ((s.tool === 'pen' || s.tool === 'pathSelect') && s.workPath && s.state) {
       const toScr = (q: [number, number]): [number, number] => [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy];
       const accent = isDark ? '#38bdf8' : '#0284c7';
       octx.save();
@@ -1949,6 +1965,103 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     return () => { cancelled = true; };
   }, [tabId, activeLayer?.kind, session?.docId, session?.revision, session?.state?.activeLayer, scheduleDraw, activeLayer]);
 
+  /** 提交钢笔草稿(上游 pen_commit/commit_path 的 Path 模式子集):<2 锚丢弃;
+   * path.set 追加进工作路径(op:"combine"——上游提交后 selected_path="work",后续逐笔
+   * 累计同款口径;路径面板 二-4 接管选中态后按其指派)。path.set 返回{name,path 全几何}
+   * =常驻轮廓数据源,就地入会话。 */
+  const commitPen = (closed: boolean) => {
+    const p = penRef.current;
+    penRef.current = null;
+    const s2 = getSession(tabId);
+    if (!s2 || !p || p.knots.length < 2) {
+      scheduleDraw();
+      return;
+    }
+    // 形状模式(上游 commit_path shape 分支):shape.create kind:path 一步「New Shape Layer」;
+    // 闭合=填充(前景,选项条开)+描边(背景,宽度>0);开放=无填充,描边=前景且宽度至少 1
+    if (s2.options.penVectorMode === 'shape' && s2.state) {
+      const fg = s2.state.foreground;
+      const bg = s2.state.background;
+      let fill: string | undefined;
+      let stroke: Record<string, unknown> | undefined;
+      if (closed) {
+        const r = shapeFillStroke(s2.options, fg, bg);
+        fill = r.fill;
+        stroke = r.stroke;
+      } else {
+        stroke = shapeFillStroke({ ...s2.options, shapeFill: false, strokeWidth: Math.max(s2.options.strokeWidth, 1) }, fg, bg).stroke;
+        if (stroke) stroke = { ...stroke, color: rgbToHex(fg) };
+      }
+      void runCommand(tabId, 'shape.create', { kind: 'path', path: penToJson(p, closed), ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}) })
+        .catch((err) => logError('[editor] shape.create 失败', err));
+      scheduleDraw();
+      return;
+    }
+    void runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(p, closed) })
+      .then((r) => {
+        const s3 = getSession(tabId);
+        const path = (r as { path?: WorkPathJson } | null)?.path;
+        if (s3 && path) {
+          s3.workPath = path;
+          scheduleDraw();
+        }
+      })
+      .catch((err) => logError('[editor] path.set 失败', err));
+    scheduleDraw();
+  };
+
+  /** Ctrl+Enter/选项条「建立选区」(上游 path_to_selection,#306):钢笔草稿在画先提交,
+   * 再把当前路径(面板选中→工作路径→活动层路径,上游 active_path_name)载入选区。
+   * 形状模式=草稿提交为形状层,选区从该层路径建立(上游 pending_layer→"layer")。 */
+  const makeSelectionFromActivePath = async () => {
+    const s = getSession(tabId);
+    if (!s) return;
+    const pen = penRef.current;
+    if (pen && pen.knots.length >= 2) {
+      penRef.current = null;
+      if (s.options.penVectorMode === 'shape' && s.state) {
+        const fg = s.state.foreground;
+        const bg = s.state.background;
+        const r0 = shapeFillStroke(s.options, fg, bg);
+        try {
+          await runCommand(tabId, 'shape.create', { kind: 'path', path: penToJson(pen, false), ...(r0.fill ? { fill: r0.fill } : {}), ...(r0.stroke ? { stroke: r0.stroke } : {}) });
+        } catch (err) {
+          logError('[editor] shape.create 失败', err);
+          return;
+        }
+        updateSession(tabId, { selectedPath: 'layer' });
+        await refreshPathsList(tabId);
+      } else {
+        try {
+          const r = await runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(pen, false) });
+          const path = (r as { path?: WorkPathJson } | null)?.path;
+          const s2 = getSession(tabId);
+          if (s2 && path) {
+            s2.workPath = path;
+            scheduleDraw();
+          }
+        } catch (err) {
+          logError('[editor] path.set 失败', err);
+          return;
+        }
+        updateSession(tabId, { selectedPath: 'work' });
+      }
+    }
+    // 行表是异步摘要,提交后立即读会撞陈旧(新工作路径行还没到):强制刷新再判
+    await refreshPathsList(tabId);
+    const s2 = getSession(tabId);
+    const name = activePathName(pathRows(s2?.pathsList ?? null), s2?.selectedPath ?? null);
+    if (!name) {
+      showEditorNotice('没有可建立选区的路径:先用钢笔画一条,或在路径面板选中一条。');
+      return;
+    }
+    try {
+      await runCommand(tabId, 'path.toSelection', { name });
+    } catch (err) {
+      showEditorNotice(`建立选区失败:${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   // 注册裁剪回调(选项条 ✓/⊘/比例 用)。会话可能在画布挂载后才创建:除挂载时注册外,
   // 订阅回调里每次通知补注册(requestDraw 同款模式),卸载时清掉。
   useEffect(() => {
@@ -1957,6 +2070,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropCancel !== cancelCrop) s.runtime.cropCancel = cancelCrop;
       if (s.runtime.cropFitRatio !== cropFitRatio) s.runtime.cropFitRatio = cropFitRatio;
       if (s.runtime.cropSetAngle !== cropSetAngle) s.runtime.cropSetAngle = cropSetAngle;
+      if (s.runtime.makeSelection !== makeSelectionFromActivePath) s.runtime.makeSelection = makeSelectionFromActivePath;
     };
     const s0 = getSession(tabId);
     if (s0) register(s0);
@@ -1976,8 +2090,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropCancel === cancelCrop) s.runtime.cropCancel = null;
       if (s.runtime.cropFitRatio === cropFitRatio) s.runtime.cropFitRatio = null;
       if (s.runtime.cropSetAngle === cropSetAngle) s.runtime.cropSetAngle = null;
+      if (s.runtime.makeSelection === makeSelectionFromActivePath) s.runtime.makeSelection = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath]);
 
   // 注册重绘请求 + 初始适配
   useEffect(() => {
@@ -2161,66 +2276,6 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const { fill, stroke } = shapeFillStroke(s.options, s.state.foreground, s.state.background);
     void runCommand(tabId, 'shape.create', { ...geom, ...(fill ? { fill } : {}), ...(stroke ? { stroke } : {}) })
       .catch((e2) => logError('[editor] shape.create 失败', e2));
-  };
-
-  /** 提交钢笔草稿(上游 pen_commit/commit_path 的 Path 模式子集):<2 锚丢弃;
-   * path.set 追加进工作路径(op:"combine"——上游提交后 selected_path="work",后续逐笔
-   * 累计同款口径;路径面板 二-4 接管选中态后按其指派)。path.set 返回{name,path 全几何}
-   * =常驻轮廓数据源,就地入会话。 */
-  const commitPen = (closed: boolean) => {
-    const p = penRef.current;
-    penRef.current = null;
-    const s2 = getSession(tabId);
-    if (!s2 || !p || p.knots.length < 2) {
-      scheduleDraw();
-      return;
-    }
-    void runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(p, closed) })
-      .then((r) => {
-        const s3 = getSession(tabId);
-        const path = (r as { path?: WorkPathJson } | null)?.path;
-        if (s3 && path) {
-          s3.workPath = path;
-          scheduleDraw();
-        }
-      })
-      .catch((err) => logError('[editor] path.set 失败', err));
-    scheduleDraw();
-  };
-
-  /** Ctrl+Enter(上游 path_to_selection,#306):钢笔草稿在画先提交为工作路径,再把当前
-   * 路径(面板选中→工作路径→活动层路径,上游 active_path_name)载入选区。 */
-  const makeSelectionFromActivePath = async () => {
-    const s = getSession(tabId);
-    if (!s) return;
-    const pen = penRef.current;
-    if (pen && pen.knots.length >= 2) {
-      penRef.current = null;
-      try {
-        const r = await runCommand(tabId, 'path.set', { name: 'work', op: 'combine', path: penToJson(pen, false) });
-        const path = (r as { path?: WorkPathJson } | null)?.path;
-        const s2 = getSession(tabId);
-        if (s2 && path) {
-          s2.workPath = path;
-          scheduleDraw();
-        }
-      } catch (err) {
-        logError('[editor] path.set 失败', err);
-        return;
-      }
-      updateSession(tabId, { selectedPath: 'work' });
-    }
-    const s2 = getSession(tabId);
-    const name = activePathName(pathRows(s2?.pathsList ?? null), s2?.selectedPath ?? null);
-    if (!name) {
-      showEditorNotice('没有可建立选区的路径:先用钢笔画一条,或在路径面板选中一条。');
-      return;
-    }
-    try {
-      await runCommand(tabId, 'path.toSelection', { name });
-    } catch (err) {
-      showEditorNotice(`建立选区失败:${err instanceof Error ? err.message : String(err)}`);
-    }
   };
 
   // -------------------------------------------------------------------------------------------
@@ -2411,10 +2466,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   };
 
   // 路径编辑族激活/revision 推进时刷新工作路径(常驻轮廓数据源;上游 draw_overlay 即时读
-  // doc.work_path,我们经 path.info 拉取;commit/undo 都推进 revision=天然覆盖)
+  // doc.work_path,我们经 path.info 拉取;commit/undo 都推进 revision=天然覆盖)。
+  // 路径面板摘要则任何工具下都刷新——选项条「建立选区」/Ctrl+Enter/路径页签都吃它,
+  // 刷新不能只挂在路径页签挂载期(否则其他页签下永远陈旧,按钮恒灰)
   useEffect(() => {
     const s = getSession(tabId);
-    if (s && PATH_TOOLS.has(s.tool) && s.docId != null) void refreshWorkPath(tabId);
+    if (!s || s.docId == null) return;
+    if (PATH_TOOLS.has(s.tool)) void refreshWorkPath(tabId);
+    void refreshPathsList(tabId);
   }, [tabId, session?.tool, session?.docId, session?.revision]);
 
   // 键盘:空格临时抓手、[/] 笔径、工具单键、选区/颜色命令键
@@ -2712,6 +2771,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           scheduleDraw();
           return;
         }
+        if ((s.tool === 'pen' || s.tool === 'pathSelect') && !penRef.current && s.workPath && s.state) {
+          // ⌫ 删工作路径(上游 delete_key_deletes_work_path #5702):钢笔/路径选择+无草稿+
+          // 目标是工作路径(活动形状层挡在前面时不删——target_path 优先级)
+          const active = findLayerTree(s.state.layers, s.state.activeLayer);
+          if (active?.kind !== 'Shape') {
+            void runCommand(tabId, 'path.delete', { name: 'work' }).catch((err) => logError('[editor] path.delete 失败', err));
+            return;
+          }
+        }
         if (s.tool === 'magneticLasso' && magneticRef.current) {
           // 磁性套索:⌫ 删上一锚点并从指针位置重追(不动指针可连按连删;上游 remove_last_point)
           magneticBusy.current = false;
@@ -2904,6 +2972,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'p') {
         // P 键钢笔组循环:钢笔→添加锚点→删除锚点→转换点(上游 Tool P 组同键口径)
         setTool(tabId, nextPenTool(getSession(tabId)?.tool));
+      } else if (k === 'a') {
+        // A 键路径组循环:路径选择↔直接选择(上游 Tool::PathSelection|DirectSelection 同键)
+        setTool(tabId, nextPathTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -3266,6 +3337,50 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       scheduleDraw();
     } else if (s.tool === 'directSelect' && e.button === 0 && s.state) {
       dsPress(dx, dy, { shift: e.shiftKey, alt: e.altKey }, false, false);
+      scheduleDraw();
+    } else if (s.tool === 'pathSelect' && e.button === 0 && s.state && s.docId != null) {
+      // 路径选择(上游 canvas.rs 按下分发=pick_shape_at):①layer.pickAt 像素快路径;
+      // ②未中→几何拾取兜底(细描边/容差内,上游 pick_shape_at 口径):自上而下逐形状层
+      // shape.info 拉路径,首个命中即选。代次防探测回来前已抬起。
+      const tol = 6.0 / Math.max(s.runtime.view.scale, 1e-3);
+      const seq = ++psSeqRef.current;
+      const at: [number, number] = [dx, dy];
+      void (async () => {
+        try {
+          const r = await runCommand(tabId, 'layer.pickAt', { x: dx, y: dy, select: false }, { noPull: true });
+          const picked = (r as { layer?: number | null } | null)?.layer ?? null;
+          const s2 = getSession(tabId);
+          if (!s2 || psSeqRef.current !== seq) return;
+          if (picked != null && findLayerTree(s2.state?.layers ?? [], picked)?.kind === 'Shape') {
+            void runCommand(tabId, 'layer.select', { layer: picked }).catch(() => undefined);
+            return;
+          }
+          // 几何兜底:收集形状层(树序=自上而下),逐层 shape.info 后命中测试
+          const shapeIds: number[] = [];
+          const collect = (ls: EditorLayer[]): void => {
+            for (const l of ls) {
+              if (l.visible && l.kind === 'Shape') shapeIds.push(l.id);
+              if (l.children) collect(l.children);
+            }
+          };
+          if (s2.state) collect(s2.state.layers);
+          for (const id of shapeIds) {
+            const info = await editorRun(s2.docId!, 'shape.info', { layer: id });
+            const s3 = getSession(tabId);
+            if (!s3 || psSeqRef.current !== seq) return;
+            const inf = info.result as { path?: EditPath; fill?: unknown; live?: { kind?: string; rect?: [number, number, number, number] } | null } | null;
+            if (!inf?.path) continue;
+            const hit = pickShapeAt([{ id, path: inf.path, fill: inf.fill != null, live: inf.live ?? null }], at, tol);
+            if (hit != null) {
+              void runCommand(tabId, 'layer.select', { layer: hit }).catch(() => undefined);
+              return;
+            }
+          }
+        } catch {
+          // 拾取失败=当作未命中(不选层,拖拽仍可移目标路径)
+        }
+      })();
+      psDragRef.current = { sx: dx, sy: dy };
       scheduleDraw();
     } else if ((s.tool === 'addAnchor' || s.tool === 'deleteAnchor' || s.tool === 'convertPoint') && e.button === 0 && s.state) {
       // 锚点工具(上游 anchor_tools::click/convert):⌘=直接选择;⌥ 换加/删;转换点未命中=吃掉按下
@@ -3829,6 +3944,38 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         dsMarqueeEnd(dg.start, [ux, uy], dg.add);
         scheduleDraw();
       }
+    }
+    const ps = psDragRef.current;
+    psDragRef.current = null;
+    if (s && ps && s.state) {
+      // 路径选择抬笔(上游 path_selection_finish):点击(<0.5px)=按下已拾取,无事;
+      // 拖拽=目标路径整体移动(活动形状层→shape.edit move;否则工作路径→path.set 平移)。
+      // 矢量蒙版目标=二-5b(需先有蒙版目标入口)。
+      const rect = wrapRef.current!.getBoundingClientRect();
+      const [ux, uy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+      const dx = ux - ps.sx;
+      const dy = uy - ps.sy;
+      if (Math.abs(dx) + Math.abs(dy) >= 0.5) {
+        const rx = Math.round(dx);
+        const ry = Math.round(dy);
+        const active = findLayerTree(s.state.layers, s.state.activeLayer);
+        if (active?.kind === 'Shape') {
+          void runCommand(tabId, 'shape.edit', { layer: active.id, move: [rx, ry] })
+            .catch((err) => logError('[editor] shape.edit 失败', err));
+        } else if (s.workPath) {
+          void runCommand(tabId, 'path.set', { name: 'work', path: peTranslate(s.workPath, [rx, ry]) })
+            .then((r) => {
+              const path = (r as { path?: WorkPathJson } | null)?.path;
+              const s2 = getSession(tabId);
+              if (s2 && path) {
+                s2.workPath = path;
+                scheduleDraw();
+              }
+            })
+            .catch((err) => logError('[editor] path.set 失败', err));
+        }
+      }
+      scheduleDraw();
     }
     if (s && cd && s.state) {
       const f = cropRef.current!;

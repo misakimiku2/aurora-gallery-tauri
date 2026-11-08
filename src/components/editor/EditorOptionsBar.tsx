@@ -14,6 +14,7 @@ import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
 import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetFields } from './cropSize';
 import { SHAPE_GROUP } from './toolLogic';
+import { activePathName, pathRows } from './pathsPanelLogic';
 import { EditorSelect } from './editorSelect';
 import { runCommand } from './editorStore';
 
@@ -123,6 +124,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   }, [ratioOpen, ratioPos]);
   const s = getSession(tabId);
   if (!s) return null;
+  // 建立选区按钮的可用性(上游 has_path:面板选中→工作路径→活动层路径;钢笔草稿在画
+  // 的情形由画布侧 Ctrl+Enter 兜底,按钮不为此追踪草稿)
+  const hasPathForSelection = activePathName(pathRows(s.pathsList), s.selectedPath) != null;
   // 渐变工具当前渐变的色板(前景/背景活引用按当前颜色解析;棋盘格垫底显透明)
   const gradCss = s.tool === 'gradient'
     ? presetCss(s.options.gradientCurrent, s.state?.foreground, s.state?.background)
@@ -610,6 +614,27 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         </>
       ) : s.tool === 'pen' ? (
         <>
+          {/* 钢笔模式(上游 vector_mode 下拉):形状=提交建形状层;路径=进工作路径 */}
+          <EditorSelect
+            value={s.options.penVectorMode}
+            onChange={(v) => setOptions(tabId, { penVectorMode: v as 'path' | 'shape' })}
+            className="w-20"
+            title="钢笔绘制目标"
+            options={[{ value: 'path', label: '路径' }, { value: 'shape', label: '形状' }]}
+          />
+          {s.options.penVectorMode === 'shape' && (
+            <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400" title="描边=背景色;0=无描边;开放路径描边=前景色且宽度至少 1">
+              描边
+              <span className="inline-block w-3.5 h-3.5 rounded-sm border border-black/30 dark:border-neutral-500"
+                style={{ background: rgbCss(s.state?.background) }} />
+              <input
+                type="number" min={0} max={288} value={s.options.strokeWidth}
+                onChange={(e) => setOptions(tabId, { strokeWidth: Math.max(0, Math.min(288, Number(e.target.value) || 0)) })}
+                className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-gray-200 outline-none tabular-nums"
+              />
+              <span className="text-neutral-500 dark:text-neutral-400">px</span>
+            </label>
+          )}
           <label className="flex items-center gap-1 text-neutral-500 dark:text-neutral-400" title="点击段=加锚、点击锚=删锚(开放子路径端点除外);⇧/⌥/⌘ 按住时关闭">
             <input
               type="checkbox" checked={s.options.penAutoAddDelete}
@@ -618,6 +643,16 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
             />
             自动添加/删除
           </label>
+          {s.options.penVectorMode === 'path' && (
+            <button
+              title="把当前路径(钢笔草稿先提交)作为选区载入 (Ctrl+Enter)"
+              disabled={!hasPathForSelection}
+              onClick={() => getSession(tabId)?.runtime.makeSelection?.()}
+              className="px-2 py-0.5 text-[11px] rounded border border-subtle text-gray-600 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30"
+            >
+              建立选区
+            </button>
+          )}
           <span className="text-neutral-500 dark:text-neutral-400">单击=加锚点 · 拖拽=拉出手柄 · 点击首锚=闭合 · Alt=断开/抓柄/转换点 · Ctrl=直接选择 · Ctrl+Z/⌫=退点 · Enter/Esc=保留开放路径</span>
         </>
       ) : s.tool === 'directSelect' ? (

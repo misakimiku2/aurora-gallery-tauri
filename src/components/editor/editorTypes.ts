@@ -106,6 +106,7 @@ export type EditorTool =
   | 'addAnchor'
   | 'deleteAnchor'
   | 'convertPoint'
+  | 'pathSelect'
   | 'directSelect'
   | 'hand'
   | 'zoom';
