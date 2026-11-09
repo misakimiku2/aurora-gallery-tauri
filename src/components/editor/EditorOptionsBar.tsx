@@ -16,7 +16,7 @@ import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetF
 import { SHAPE_GROUP } from './toolLogic';
 import { TYPE_TOOLS } from './typeLogic';
 import { activePathName, pathRows } from './pathsPanelLogic';
-import { EditorSelect } from './editorSelect';
+import { EditorSelect, attachWheelCycle } from './editorSelect';
 import { ColorPicker } from './panels/ColorPicker';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
@@ -77,6 +77,32 @@ const CROP_MENU: { v: string; label: string }[] = [
   { v: 'front', label: '前景图像' },
 ];
 
+/** 应用一个比例菜单项(菜单点击与悬停滚轮共用):'front'=前景图像即用即弃回填字段;
+ * 尺寸预设=回填 W/H/分辨率并切 W×H×分辨率;其余只换比例键(v 非空才内缩适配)。 */
+const applyCropMenu = (tabId: string, v: string): void => {
+  const s = getSession(tabId);
+  if (!s) return;
+  if (v === 'front') {
+    const doc = s.state;
+    if (doc) {
+      setOptions(tabId, {
+        cropRatio: 'whr',
+        cropWidth: `${doc.width} px`,
+        cropHeight: `${doc.height} px`,
+        cropResolution: doc.resolution ? String(Math.round(doc.resolution)) : '',
+      });
+      s.runtime.cropFitRatio?.();
+    }
+    return;
+  }
+  const preset = whrPresetFields(v);
+  setOptions(tabId, {
+    cropRatio: preset ? 'whr' : v,
+    ...(preset ? { cropWidth: preset.w, cropHeight: preset.h, cropResolution: preset.res, cropResolutionUnit: 'px/in' as const } : {}),
+  });
+  if (v) s.runtime.cropFitRatio?.();
+};
+
 export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
@@ -128,6 +154,14 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
     el.style.left = `${Math.max(4, Math.min(ratioPos.left, window.innerWidth - r.width - 4))}px`;
     el.style.top = `${Math.max(4, Math.min(ratioPos.top, window.innerHeight - r.height - 4))}px`;
   }, [ratioOpen, ratioPos]);
+  // 比例按钮悬停滚轮=步进应用菜单项(与 EditorSelect 滚轮同口径;弹层开着交给菜单滚动)。
+  // deps 带 isCrop:按钮只在裁剪工具分支挂载,工具切换后需重跑才能绑上
+  const isCrop = getSession(tabId)?.tool === 'crop';
+  useEffect(() => {
+    const el = ratioBtnRef.current;
+    if (!el || ratioOpen || !isCrop) return undefined;
+    return attachWheelCycle(el, CROP_MENU.length, () => CROP_MENU.findIndex((r) => r.v === getSession(tabId)?.options.cropRatio), (i) => applyCropMenu(tabId, CROP_MENU[i].v));
+  }, [tabId, ratioOpen, isCrop]);
   const s = getSession(tabId);
   if (!s) return null;
   // 建立选区按钮的可用性(上游 has_path:面板选中→工作路径→活动层路径;钢笔草稿在画
@@ -415,35 +449,12 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
                 className="fixed z-[1000] rounded-md bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 py-1.5 w-max"
               >
                 {CROP_MENU.map((r) => {
-                  const preset = whrPresetFields(r.v);
                   return (
                     <div
                       key={r.v || 'free'}
                       className="mx-1.5 px-3 py-1.5 rounded hover:bg-blue-600 hover:text-white cursor-pointer whitespace-nowrap text-[12px] flex items-center gap-2"
                       onClick={() => {
-                        if (r.v === 'front') {
-                          // 前景图像:按文档尺寸(px)+文档分辨率回填字段并立即应用
-                          // (上游 Front Image 即用即弃,裁剪工具内 I 键同款)
-                          const doc = s.state;
-                          if (doc) {
-                            setOptions(tabId, {
-                              cropRatio: 'whr',
-                              cropWidth: `${doc.width} px`,
-                              cropHeight: `${doc.height} px`,
-                              cropResolution: doc.resolution ? String(Math.round(doc.resolution)) : '',
-                            });
-                            s.runtime.cropFitRatio?.();
-                          }
-                          setRatioOpen(false);
-                          return;
-                        }
-                        // 尺寸预设:字段一并回填并切到 W×H×分辨率模式(preset key 不保留,
-                        // 上游 crop_size::chosen 口径);比例预设只换 key
-                        setOptions(tabId, {
-                          cropRatio: preset ? 'whr' : r.v,
-                          ...(preset ? { cropWidth: preset.w, cropHeight: preset.h, cropResolution: preset.res, cropResolutionUnit: 'px/in' as const } : {}),
-                        });
-                        if (r.v) s.runtime.cropFitRatio?.();
+                        applyCropMenu(tabId, r.v);
                         setRatioOpen(false);
                       }}
                     >
@@ -947,7 +958,7 @@ const TypeOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
           onClick={() => s.runtime.commitTextEdit?.()}
           className={btn + idle + ' ml-1 text-emerald-600 dark:text-emerald-400'}
         >
-          ✓
+          <Check size={13} />
         </button>
       )}
     </>

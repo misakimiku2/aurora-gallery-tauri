@@ -16,6 +16,30 @@ export interface EditorSelectOption {
   group?: string;
 }
 
+/** 悬停滚轮步进换值(所有下拉通用,用户拍板):deltaY 累积 ≥40px(鼠标一格≈100px=一步)
+ *  才切换,触摸板小增量累积不抖;钳在首尾不回绕,到端点不再触发 onChange。
+ *  getCurrent 返回当前序号(未命中=-1:下滚取首项/上滚取末项)。返回解绑函数。 */
+export function attachWheelCycle(
+  el: HTMLElement,
+  count: number,
+  getCurrent: () => number,
+  step: (idx: number) => void,
+): () => void {
+  let acc = 0;
+  const onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    acc += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+    if (Math.abs(acc) < 40) return;
+    const dir = acc > 0 ? 1 : -1;
+    acc = 0;
+    const cur = getCurrent();
+    const next = cur < 0 ? (dir > 0 ? 0 : count - 1) : Math.max(0, Math.min(count - 1, cur + dir));
+    if (next !== cur) step(next);
+  };
+  el.addEventListener('wheel', onWheel, { passive: false });
+  return () => el.removeEventListener('wheel', onWheel);
+}
+
 export const EditorSelect: React.FC<{
   value: string;
   options: readonly EditorSelectOption[];
@@ -29,13 +53,19 @@ export const EditorSelect: React.FC<{
   blankLabel?: string;
   /** 弹层顶部加过滤输入框(长列表:字体目录上千项)。 */
   searchable?: boolean;
-}> = ({ value, options, onChange, className = '', title, disabled, alwaysBlank, blankLabel = '预设…', searchable }) => {
+  /** 只画箭头不画文字(窄触发器:字距预设小箭头=上游 kerning_field 的 16px ComboBox)。 */
+  iconOnly?: boolean;
+}> = ({ value, options, onChange, className = '', title, disabled, alwaysBlank, blankLabel = '预设…', searchable, iconOnly }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0 });
   const [query, setQuery] = useState('');
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // 滚轮步进恒读最新 props(连滚时 render/重挂可能滞后于事件;options 内 value 可重复——
+  // 最近使用组与全量族同名,取 lastIndexOf 以主序列为准)
+  const wheelDataRef = useRef({ options, value, onChange });
+  wheelDataRef.current = { options, value, onChange };
 
   useEffect(() => {
     if (!open) return;
@@ -57,6 +87,20 @@ export const EditorSelect: React.FC<{
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [open]);
+  // 悬停滚轮步进换值(用户拍板:编辑器所有下拉都支持);弹层开着=菜单自身滚动,不抢
+  useEffect(() => {
+    const el = btnRef.current;
+    if (!el || disabled || open || options.length < 2) return undefined;
+    return attachWheelCycle(
+      el,
+      options.length,
+      () => wheelDataRef.current.options.map((o) => o.value).lastIndexOf(wheelDataRef.current.value),
+      (i) => {
+        const d = wheelDataRef.current;
+        if (i >= 0 && i < d.options.length) d.onChange(d.options[i].value);
+      },
+    );
+  }, [open, disabled, options]);
   useLayoutEffect(() => {
     if (!open) return;
     const el = menuRef.current;
@@ -131,10 +175,11 @@ export const EditorSelect: React.FC<{
         disabled={disabled}
         title={title}
         onClick={() => (open ? setOpen(false) : openMenu())}
-        className={`inline-flex items-center gap-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent px-1.5 text-[11px] text-gray-800 dark:text-neutral-200 min-w-0 disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
+        className={`inline-flex items-center gap-1 h-6 rounded border border-black/15 dark:border-white/15 bg-transparent ${iconOnly ? 'px-1' : 'px-1.5'} text-[11px] text-gray-800 dark:text-neutral-200 min-w-0 disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
       >
-        <span className="truncate">{label}</span>
-        <ChevronDown size={12} className="shrink-0 opacity-60" />
+        {!iconOnly && <span className="truncate">{label}</span>}
+        {/* ml-auto:定宽触发器上箭头贴右缘(文字左、箭头右),内容自适应宽度时即随文字 */}
+        <ChevronDown size={12} className="ml-auto shrink-0 opacity-60" />
       </button>
       {open &&
         createPortal(

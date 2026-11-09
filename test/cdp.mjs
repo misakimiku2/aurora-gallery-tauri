@@ -35,7 +35,9 @@ try {
     const r = await send('Runtime.evaluate', { expression: args[0], awaitPromise: true, returnByValue: true });
     console.log(JSON.stringify(r.result?.value ?? r.result, null, 1));
   } else if (cmd === 'shot') {
-    const r = await send('Page.captureScreenshot', { format: 'png' });
+    // shot <file> [x y w h]:可选视口裁剪(放大核对局部)
+    const clip = args.length >= 5 ? { x: +args[1], y: +args[2], width: +args[3], height: +args[4], scale: 2 } : undefined;
+    const r = await send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip } : {}) });
     const { writeFileSync } = await import('node:fs');
     writeFileSync(args[0], Buffer.from(r.data, 'base64'));
     console.log('saved', args[0]);
@@ -110,6 +112,15 @@ try {
     await sleep(80);
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: +x2, y: +y2, button: 'left', buttons: 0, clickCount: 1, modifiers: flags });
     console.log('dragmid done, mid shot at', file);
+  } else if (cmd === 'wheel') {
+    // wheel <x> <y> <deltaY> [n]:Input.dispatchMouseEvent type=mouseWheel(悬停滚轮换值
+    // 测试;一格 ≈100px,n=连发次数)
+    const [x, y, dy, n] = args;
+    for (let i = 0; i < Math.max(1, Number(n) || 1); i++) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: +x, y: +y, deltaX: 0, deltaY: +dy });
+      await sleep(40);
+    }
+    console.log('wheel done', dy, '×', Math.max(1, Number(n) || 1));
   } else if (cmd === 'key') {
     const k = args[0];
     const code = VK[k] ?? keyChar(k[0]);

@@ -15,11 +15,13 @@ import {
 } from '../editorStore';
 import {
   AA_OPTIONS, ALIGN_ITEMS, aaKey, axisLabel, axisValue, fauxToggleProps, kerningAt, kerningLabel,
-  leadingShown, selectedStyleName, sliderAxes, styleAt, styleColorHex,
+  leadingShown, parseKerning, selectedStyleName, sliderAxes, styleAt, styleColorHex,
   styleLabel, styleNames, shownScale, type CharStyleJson, type FaceInfoJson, type ParaStyleJson,
 } from '../typeStyle';
 
-/** 标签+数值输入行(上游 num_field 的 icon+value 对;blur/Enter 提交,Esc 还原)。 */
+/** 标签+数值输入行(上游 num_field 的 icon+value 对;blur/Enter 提交,Esc 还原)。
+ *  字段 flex 填满所在格(上游 field_width 口径,列线跨行对齐);单位画进输入框内右侧
+ *  (上游 value_field 的 suffix 同位,不占外宽)。 */
 const NumField: React.FC<{
   label: string;
   tip: string;
@@ -27,9 +29,8 @@ const NumField: React.FC<{
   min: number;
   max: number;
   unit?: string;
-  width?: string;
   onCommit: (v: number) => void;
-}> = ({ label, tip, value, min, max, unit = '', width = 'w-16', onCommit }) => {
+}> = ({ label, tip, value, min, max, unit = '', onCommit }) => {
   const [buf, setBuf] = useState<string>(String(Math.round(value * 100) / 100));
   // 外部值变化时无条件同步显示(引擎回写/样式切换;deps=value,用户敲字不触发)。
   // 条件同步(focusRef 跳过)会让过期 buf 在 blur 时把默认值写回文档——冒烟实证。
@@ -47,31 +48,81 @@ const NumField: React.FC<{
   return (
     <label className="flex items-center gap-1 min-w-0" title={tip}>
       <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">{label}</span>
+      <span className="relative min-w-0 flex-1">
+        <input
+          value={buf}
+          onChange={(e) => setBuf(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            // Enter=就地提交(保持焦点,后续可继续改);Escape=还原并离开。
+            // 不用 blur 触发提交:React onBlur 委托在编程 blur 的链路上不可靠(冒烟实证)。
+            e.stopPropagation();
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            else if (e.key === 'Escape') { setBuf(String(Math.round(value * 100) / 100)); (e.target as HTMLInputElement).blur(); }
+          }}
+          className={`w-full min-w-0 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-neutral-200 outline-none focus:border-sky-500 tabular-nums ${unit ? 'pr-4' : ''}`}
+        />
+        {unit && (
+          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-[10px] text-neutral-400 dark:text-neutral-500 tabular-nums">{unit}</span>
+        )}
+      </span>
+    </label>
+  );
+};
+
+/** 字距预设表(上游 kerning_field 菜单同序同量)。 */
+const KERN_PRESETS: { value: string; label: string }[] = [
+  { value: 'metrics', label: 'Metrics' },
+  { value: 'optical', label: 'Optical' },
+  ...['0', '-100', '-75', '-50', '-25', '-10', '-5', '5', '10', '25', '50', '75', '100', '200'].map((n) => ({ value: n, label: n })),
+];
+
+/** 字距组合体(上游 kerning_field):输入框显 Metrics/Optical/数字,右侧小箭头开预设菜单;
+ *  键入提交经 parseKerning,Esc 还原。 */
+const KerningField: React.FC<{ tip: string; shown: string; onCommit: (v: string | number) => void }> = ({ tip, shown, onCommit }) => {
+  const [buf, setBuf] = useState(shown);
+  useEffect(() => {
+    setBuf(shown);
+  }, [shown]);
+  const commit = () => {
+    if (buf.trim() === shown) { setBuf(shown); return; }
+    const v = parseKerning(buf);
+    if (v != null) onCommit(v);
+    else setBuf(shown);
+  };
+  return (
+    <label className="flex items-center gap-1 min-w-0" title={tip}>
+      <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">K</span>
       <input
         value={buf}
         onChange={(e) => setBuf(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
-          // Enter=就地提交(保持焦点,后续可继续改);Escape=还原并离开。
-          // 不用 blur 触发提交:React onBlur 委托在编程 blur 的链路上不可靠(冒烟实证)。
           e.stopPropagation();
           if (e.key === 'Enter') { e.preventDefault(); commit(); }
-          else if (e.key === 'Escape') { setBuf(String(Math.round(value * 100) / 100)); (e.target as HTMLInputElement).blur(); }
+          else if (e.key === 'Escape') { setBuf(shown); (e.target as HTMLInputElement).blur(); }
         }}
-        className={`${width} min-w-0 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-neutral-200 outline-none focus:border-sky-500 tabular-nums`}
+        className="min-w-0 flex-1 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-neutral-200 outline-none focus:border-sky-500"
       />
-      {unit && <span className="text-[10px] text-neutral-500 dark:text-neutral-400">{unit}</span>}
+      <EditorSelect
+        iconOnly
+        value=""
+        options={KERN_PRESETS}
+        onChange={(v) => onCommit(v === 'metrics' || v === 'optical' ? v : Number(v))}
+        className="w-5 shrink-0"
+        title="字距预设"
+      />
     </label>
   );
 };
 
-/** 伪样式切换小按钮(T 字符组;上游 toggle_cell)。 */
-const ToggleCell: React.FC<{ on: boolean; title: string; children: React.ReactNode; onClick: () => void }> = ({ on, title, children, onClick }) => (
+/** 伪样式切换小按钮(T 字符组;上游 toggle_cell)。className 覆盖宽度(网格里=w-full)。 */
+const ToggleCell: React.FC<{ on: boolean; title: string; children: React.ReactNode; onClick: () => void; className?: string }> = ({ on, title, children, onClick, className = 'w-8' }) => (
   <button
     type="button"
     title={title}
     onClick={onClick}
-    className={`w-8 h-6 rounded text-[12px] flex items-center justify-center transition-colors ${
+    className={`${className} h-6 rounded text-[12px] flex items-center justify-center transition-colors ${
       on
         ? 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/40'
         : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 border border-transparent'
@@ -193,68 +244,48 @@ export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
             disabled={faces.length === 0}
           />
         </div>
-        {/* 字号 + 行高 */}
-        <div className="flex items-center gap-1.5">
+        {/* 尺寸字段(上游两列网格:行=T|行距、字距|追踪、⇕T|↔T、Aª|色;格=标签+填满列宽
+            的字段,列线跨行对齐;字距=输入框+预设小箭头组合体=上游 kerning_field) */}
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1.5">
           <NumField label="T" tip="字号" value={(c?.size_pt ?? s.options.typeSize) * scale} min={0.1} max={1296}
             onCommit={(v) => { if (hasTarget) apply({ size: v / scale, metricsAsShown: true }); else apply({ size: v }); }} />
           <NumField label="A↕" tip="行距(字号×自动行距=自动)" value={c ? leadingShown(c, para, scale) : (Number(s.options.typeStyleDefaults.leading) || 12) * scale} min={0.1} max={5000}
             onCommit={(v) => apply({ leading: hasTarget && scale !== 1 ? v / scale : v, metricsAsShown: scale !== 1 ? true : undefined })} />
-        </div>
-        {/* 字距 + 追踪 */}
-        <div className="flex items-center gap-1.5">
-          <NumField label="K" tip="字距:Metrics/Optical 或 1/1000 em(编辑会话折叠 caret=前一对)" value={Number(kerningLabel(k)) || 0} min={-1000} max={10000}
+          <KerningField tip="字距:Metrics/Optical 或 1/1000 em(编辑会话折叠 caret=前一对)" shown={kerningLabel(k)}
             onCommit={(v) => apply({ kerning: v })} />
-          <EditorSelect
-            value=""
-            alwaysBlank
-            blankLabel="字距预设…"
-            options={[
-              { value: 'metrics', label: 'Metrics' },
-              { value: 'optical', label: 'Optical' },
-              ...[-100, -75, -50, -25, -10, 0, 10, 25, 50, 100, 200].map((n) => ({ value: String(n), label: String(n) })),
-            ]}
-            onChange={(v) => apply({ kerning: v === 'metrics' || v === 'optical' ? v : Number(v) })}
-            className="w-24 shrink-0"
-            title="字距预设"
-          />
-          <NumField label="VA" tip="字距追踪(1/1000 em)" value={c?.tracking ?? 0} min={-1000} max={10000} width="w-14"
+          <NumField label="VA" tip="字距追踪(1/1000 em)" value={c?.tracking ?? 0} min={-1000} max={10000}
             onCommit={(v) => apply({ tracking: v })} />
-        </div>
-        {/* 垂直/水平缩放 + 基线偏移 */}
-        <div className="flex items-center gap-1.5">
           <NumField label="↕T" tip="垂直缩放 %" value={(c?.vertical_scale ?? 1) * 100} min={0} max={1000} unit="%"
             onCommit={(v) => apply({ verticalScale: v })} />
           <NumField label="↔T" tip="水平缩放 %" value={(c?.horizontal_scale ?? 1) * 100} min={0} max={1000} unit="%"
             onCommit={(v) => apply({ horizontalScale: v })} />
           <NumField label="Aª" tip="基线偏移(pt)" value={(c?.baseline_shift_pt ?? 0) * scale} min={-1296} max={1296}
             onCommit={(v) => apply({ baselineShift: scale !== 1 ? v / scale : v })} />
+          {/* 色块占满第二列(上游同款;swatch 填满列余宽) */}
+          <div className="flex items-center gap-1 min-w-0" title="文字颜色(编辑中选区字符/整层)">
+            <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">色</span>
+            <button
+              type="button"
+              className="min-w-0 flex-1 h-5 rounded-sm border border-black/30 dark:border-neutral-500"
+              style={{ background: c ? styleColorHex(c.color) : '#000000' }}
+              onClick={() => c && setColorPick({ rgb: (() => { const h = styleColorHex(c.color); return [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255]; })() })}
+            />
+          </div>
         </div>
-        {/* 颜色 */}
-        <div className="flex items-center gap-1.5">
-          <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">色</span>
-          <button
-            type="button"
-            title="文字颜色(编辑中选区字符/整层)"
-            className="w-8 h-5 rounded-sm border border-black/30 dark:border-neutral-500"
-            style={{ background: c ? styleColorHex(c.color) : '#000000' }}
-            onClick={() => c && setColorPick({ rgb: (() => { const h = styleColorHex(c.color); return [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255]; })() })}
-          />
-          <span className="text-[10px] text-neutral-500 dark:text-neutral-400">{c ? styleColorHex(c.color).toUpperCase() : ''}</span>
-        </div>
-        {/* 伪样式 6 toggle */}
-        <div className="flex items-center gap-0.5">
+        {/* 伪样式 6 toggle(均分整行,上游 cell_width(full,6)) */}
+        <div className="grid grid-cols-6 gap-0.5">
           {toggles.map((t, i) => (
-            <ToggleCell key={t.label} on={t.on} title={t.label} onClick={() => apply(t.props)}>
+            <ToggleCell key={t.label} on={t.on} title={t.label} onClick={() => apply(t.props)} className="w-full">
               {['B', 'I', 'TT', 'ᴛT', 'U', 'S'][i]}
             </ToggleCell>
           ))}
         </div>
       </div>
 
-      {/* 段落:对齐 7 态 + 方向 3 态(点文本禁 justify=上游 #7713) */}
+      {/* 段落:对齐 7 态 + 方向 3 态(点文本禁 justify=上游 #7713;均分整行) */}
       <div className={SECTION}>段落</div>
       <div className="p-2 space-y-1.5">
-        <div className="flex items-center gap-0.5">
+        <div className="grid grid-cols-7 gap-0.5">
           {ALIGN_ITEMS.map((a) => {
             const justify = a.key.startsWith('justify');
             const disabled = !hasTarget || (pointText && justify);
@@ -266,7 +297,7 @@ export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
                 title={a.label}
                 disabled={disabled}
                 onClick={() => apply({ align: a.key })}
-                className={`w-8 h-6 rounded text-[10px] flex items-center justify-center transition-colors ${
+                className={`w-full h-6 rounded text-[10px] flex items-center justify-center transition-colors ${
                   on ? 'bg-sky-500/15 text-sky-700 dark:text-sky-300 border border-sky-500/40'
                     : disabled ? 'text-neutral-300 dark:text-neutral-600'
                       : 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 border border-transparent'
@@ -277,9 +308,9 @@ export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
             );
           })}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="grid grid-cols-3 gap-0.5">
           {['auto', 'ltr', 'rtl'].map((d) => (
-            <ToggleCell key={d} on={para?.direction === d} title={d === 'auto' ? '自动段落方向' : d === 'ltr' ? '从左到右' : '从右到左'} onClick={() => apply({ direction: d })}>
+            <ToggleCell key={d} on={para?.direction === d} title={d === 'auto' ? '自动段落方向' : d === 'ltr' ? '从左到右' : '从右到左'} onClick={() => apply({ direction: d })} className="w-full">
               {d === 'auto' ? '¶↔' : d === 'ltr' ? '¶→' : '←¶'}
             </ToggleCell>
           ))}
