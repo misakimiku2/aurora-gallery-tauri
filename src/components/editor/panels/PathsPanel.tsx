@@ -28,6 +28,11 @@ function geoCachePut(key: string, geo: EnginePathJson): void {
   }
 }
 
+/** 供画布续画取选中路径的缓存几何(面板缩略图拉取时填充;缺失=不续画,画新路径)。 */
+export function getCachedPathGeo(docId: number, key: string, rev: number): EnginePathJson | null {
+  return geoCache.get(`${docId}:${key}:${rev}`) ?? null;
+}
+
 /** 行的删除命令(拖到垃圾桶与右键删除共用;上游 delete 映射)。层形状路径不可拖。 */
 function rowDeleteAction(row: PathRow, layerId: number | null): { cmd: string; params: Record<string, unknown> } | null {
   if (row.kind === 'work') return { cmd: 'path.delete', params: { name: 'work' } };

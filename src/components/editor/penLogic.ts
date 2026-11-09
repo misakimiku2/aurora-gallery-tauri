@@ -21,9 +21,13 @@ export interface PenPath {
   adjustingLast: boolean;
   /** Alt 拖末锚的 in 手柄:它单独转(上游 #6077)。 */
   adjustingIn: boolean;
+  /** 续画来源(上游 Resumed,二-5b):从某路径的开放子路径端点接着画;提交时原位替换
+   * 该子路径(keep 闭合与 op);退点到 ≤原锚数=放弃草稿。was 含 op(引擎恒序列化,
+   * 提交比对需要)。 */
+  resumes?: { docId: number; path: string; index: number; was: { closed: boolean; op?: string; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] } } | null;
 }
 
-export const emptyPen = (): PenPath => ({ knots: [], unlinked: [], dragging: false, adjustingLast: false, adjustingIn: false });
+export const emptyPen = (): PenPath => ({ knots: [], unlinked: [], dragging: false, adjustingLast: false, adjustingIn: false, resumes: null });
 
 const dist = (a: [number, number], b: [number, number]): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -144,12 +148,48 @@ export function penGrabHandle(pen: PenPath, x: number, y: number, tol: number): 
   return true;
 }
 
-/** 撤销最后一锚(上游 pen_undo_last_point 的无 resume/无直选子集):空了=草稿取消。 */
+/** 撤销最后一锚(上游 pen_undo_last_point):**先查续画守卫**——续画草稿锚数不高于
+ * 原子路径锚数=已退到接点,整笔放弃(路径原样不动,上游 #6593);否则退一锚,空=取消。 */
 export function penUndoLastPoint(pen: PenPath): PenPath | null {
+  if (pen.resumes && pen.knots.length <= pen.resumes.was.knots.length) return null;
   pen.knots.pop();
   pen.unlinked = pen.unlinked.filter((i) => i < pen.knots.length);
   pen.dragging = false;
   return pen.knots.length ? pen : null;
+}
+
+/** 续画起点(上游 resume_at,#6593):开放子路径的端点在 `(x,y)` 附近 → 以**整条子路径**
+ * 建草稿继续画(末锚起=顺向;首锚起=反转+双手柄互换);smooth=false 的锚=尖角。 */
+export function resumeAt(
+  path: EnginePathJson,
+  docId: number,
+  pathName: string,
+  x: number,
+  y: number,
+  tol: number,
+): PenPath | null {
+  for (let index = 0; index < path.subpaths.length; index++) {
+    const s = path.subpaths[index];
+    if (s.closed) continue;
+    const near = (k: { anchor: [number, number] }): boolean => Math.hypot(k.anchor[0] - x, k.anchor[1] - y) < tol;
+    let reversed: boolean;
+    if (s.knots.length && near(s.knots[s.knots.length - 1])) reversed = false;
+    else if (s.knots.length && near(s.knots[0])) reversed = true;
+    else continue;
+    const carried = reversed
+      ? [...s.knots].reverse().map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.out] as [number, number], out: [...k.in] as [number, number] }))
+      : s.knots.map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.in] as [number, number], out: [...k.out] as [number, number] }));
+    const was = { closed: s.closed, op: s.op, knots: s.knots.map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.in] as [number, number], out: [...k.out] as [number, number], smooth: k.smooth })) };
+    return {
+      knots: carried,
+      unlinked: carried.map((k, i) => (s.knots[reversed ? carried.length - 1 - i : i].smooth ? -1 : i)).filter((i) => i >= 0),
+      dragging: false,
+      adjustingLast: false,
+      adjustingIn: false,
+      resumes: { docId, path: pathName, index, was },
+    };
+  }
+  return null;
 }
 
 /** 闭合替身折进首锚:替身的手柄交给首锚(smooth,⌥ 断开后为尖角);非闭合=null(上游 fold_close)。 */
@@ -195,8 +235,8 @@ export function penToJson(pen: PenPath, closed: boolean): { subpaths: [{ closed:
 }
 
 /** 引擎单子路径 JSON → 草稿(上游 pen_replace 的逆:Auto Add/Delete 直接改草稿后重建;
- * smooth=false 的锚=尖角入 unlinked)。 */
-export function penFromJson(p: { subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[] }): PenPath {
+ * smooth=false 的锚=尖角入 unlinked;续画来源经 resumes 透传保持)。 */
+export function penFromJson(p: { subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[] }, resumes?: PenPath['resumes']): PenPath {
   const knots = p.subpaths[0]?.knots ?? [];
   return {
     knots: knots.map((k) => ({ anchor: [...k.anchor] as [number, number], in: [...k.in] as [number, number], out: [...k.out] as [number, number] })),
@@ -204,6 +244,7 @@ export function penFromJson(p: { subpaths: { closed: boolean; knots: { anchor: [
     dragging: false,
     adjustingLast: false,
     adjustingIn: false,
+    resumes: resumes ?? null,
   };
 }
 
@@ -259,9 +300,9 @@ export function curvePoints(
 // 已提交路径的轮廓(上游 path_lines:闭合子路径回绕首锚)
 // -------------------------------------------------------------------------------------------
 
-/** 引擎 path JSON(path.set 返回值/path.list 的 workPath;锚点为 {anchor,in,out,smooth})。 */
+/** 引擎 path JSON(path.set 返回值/path.info;op=子路径布尔运算名,恒序列化)。 */
 export interface EnginePathJson {
-  subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[];
+  subpaths: { closed: boolean; op?: string; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[];
 }
 
 /** 文档路径 → 每子路径屏幕折线(上游 path_lines:闭合子路径段数=n,末段回绕首锚;

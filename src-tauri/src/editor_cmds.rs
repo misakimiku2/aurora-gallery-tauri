@@ -319,6 +319,13 @@ pub fn editor_mask_snapshot(s: State<EditorState>, doc: u64, layer: u64, maxW: u
     Ok(Response::new(bytes))
 }
 
+/// 矢量蒙版路径信息(图层行矢量蒙版缩略图/画布蒙版轮廓/路径目标用):零历史零副作用。
+#[tauri::command]
+pub fn editor_vector_mask_path(s: State<EditorState>, doc: u64, layer: u64) -> Result<Value, String> {
+    let mut m = lock(&s)?;
+    m.vector_mask_path(doc, layer).map_err(|e| e.to_string())
+}
+
 /// 图层内容缩略图(图层自身像素,内容边界裁剪,最长边 ≤maxSide,透明 straight alpha)。
 /// 返回 [w:u32 LE][h:u32 LE][RGBA8…]。
 #[tauri::command]

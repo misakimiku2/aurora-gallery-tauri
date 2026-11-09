@@ -915,6 +915,21 @@ impl EditorManager {
         Ok(Rendered { width: ow, height: oh, pixels: px })
     }
 
+    /// 矢量蒙版路径信息(图层行矢量蒙版缩略图/画布蒙版轮廓/路径目标用):直读文档层,
+    /// 零历史零副作用——引擎 `layer.vectorMask.edit` 无参会入一次历史,不能当 getter。
+    /// shape 层的路径即其内容(shape=true 标记);无蒙版返回 vectorMask:null。
+    pub fn vector_mask_path(&mut self, doc: u64, layer: u64) -> Result<Value> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let l = find_layer(&st.doc.layers, layer)
+            .ok_or_else(|| EditorError(format!("no layer {layer}")))?;
+        Ok(match (&l.vector_mask, &l.content) {
+            (Some(v), _) => json!({ "layer": layer, "path": photocraft_engine::vector_cmds::path_json(&v.path), "enabled": v.enabled, "linked": v.linked, "density": v.density * 100.0, "feather": v.feather }),
+            (None, photocraft_engine::doc::LayerContent::Shape(sh)) => json!({ "layer": layer, "path": photocraft_engine::vector_cmds::path_json(&sh.path), "enabled": true, "linked": true, "shape": true, "density": sh.density * 100.0, "feather": sh.feather }),
+            _ => json!({ "layer": layer, "vectorMask": null }),
+        })
+    }
+
     /// 图层内容缩略图:图层自身像素(不含蒙版/混合,PS 口径——蒙版有自己的缩略图),
     /// 帧取内容边界∩画布(空内容回退整幅画布),最长边采样 ≤maxSide;透明区 straight alpha。
     /// 非像素层(调整/编组/文字等无 raster surface)报错,前端按 kind 显示图标。

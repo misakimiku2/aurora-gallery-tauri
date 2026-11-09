@@ -10,6 +10,9 @@ export interface EditorLayer {
   blend: string;
   clipped: boolean;
   hasMask: boolean;
+  /** 矢量蒙版(inspect hasVectorMask/vectorMaskEnabled 透传;shape 层的路径是其内容不算蒙版)。 */
+  hasVectorMask?: boolean;
+  vectorMaskEnabled?: boolean | null;
   bounds: [number, number, number, number] | null;
   selected: boolean;
   /** 图层颜色标记(inspect labelColor;none/red/.../gray,PS 行染色口径)。 */

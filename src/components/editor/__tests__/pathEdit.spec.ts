@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addAnchor, anchorsIn, bendSegment, convertPoint, deleteAnchor, evalSeg, hitPath, moveAnchors, moveHandle,
   segmentEnd, subpathAnchors, subpathSegments, translatePath,
-  pickShapeAt, pointInSubpath, type EditPath,
+  pickShapeAt, pointInSubpath, withResumedSubpath, type EditPath,
 } from '../pathEdit';
 
 /** 三个角点的三角(上游 tri)。 */
@@ -177,5 +177,29 @@ describe('pickShapeAt / pointInSubpath(二-5,上游 pick_shape_at 移植)', () =
     expect(pickShapeAt([a, line], [50, 40], 4)).toBe(1);
     // a 内部不中、线中 → 2
     expect(pickShapeAt([a, line], [50, 103], 4)).toBe(2);
+  });
+});
+
+describe('withResumedSubpath(二-5b,上游 with_resumed_subpath #6593)', () => {
+  const drawn = (): EditPath => ({
+    subpaths: [{ closed: true, knots: [
+      { anchor: [10, 10], in: [10, 10], out: [40, 10], smooth: false },
+      { anchor: [60, 10], in: [60, 10], out: [60, 10], smooth: false },
+    ] }],
+  });
+
+  it('原位顶替指定子路径(只换 closed/knots,保 op);子路径已变=null', () => {
+    const base: EditPath = { subpaths: [
+      { closed: false, knots: tri().subpaths[0].knots, op: 'subtract' },
+      { closed: false, knots: tri().subpaths[0].knots },
+    ] };
+    const out = withResumedSubpath(base, 0, base.subpaths[0], drawn())!;
+    expect(out.subpaths[0].closed).toBe(true);
+    expect(out.subpaths[0].op).toBe('subtract');
+    expect(out.subpaths[0].knots[0].anchor).toEqual([10, 10]);
+    expect(out.subpaths[1]).toBe(base.subpaths[1] && out.subpaths[1]);
+    // 子路径被编辑过(锚变了)→ null
+    const moved: EditPath = { subpaths: [{ closed: false, knots: base.subpaths[0].knots.map((k) => ({ ...k, anchor: [k.anchor[0] + 1, k.anchor[1]] as [number, number] })), op: 'subtract' }] };
+    expect(withResumedSubpath(moved, 0, base.subpaths[0], drawn())).toBeNull();
   });
 });

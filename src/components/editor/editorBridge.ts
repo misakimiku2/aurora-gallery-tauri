@@ -225,6 +225,23 @@ export async function editorMaskSnapshot(doc: number, layer: number, maxW: numbe
   return { width: w, height: h, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + 8) };
 }
 
+/** 矢量蒙版路径信息(图层行矢量蒙版缩略图/画布蒙版轮廓用):零历史零副作用。
+ * shape 层返回其内容路径(shape=true);无蒙版返回 vectorMask:null。 */
+export interface VectorMaskInfoJson {
+  layer: number;
+  path?: { subpaths: { closed: boolean; knots: { anchor: [number, number]; in: [number, number]; out: [number, number]; smooth: boolean }[] }[] };
+  enabled?: boolean;
+  linked?: boolean;
+  density?: number;
+  feather?: number;
+  shape?: boolean;
+  vectorMask?: null;
+}
+
+export async function editorVectorMaskPath(doc: number, layer: number): Promise<VectorMaskInfoJson> {
+  return invoke('editor_vector_mask_path', { doc, layer });
+}
+
 /** 图层内容缩略图(图层自身像素,内容边界裁剪,最长边 ≤maxSide,透明 straight alpha)。 */
 export async function editorLayerThumbnail(doc: number, layer: number, maxSide: number): Promise<RenderedBitmap> {
   const buf = await invoke<ArrayBuffer>('editor_layer_thumbnail', { doc, layer, maxSide });

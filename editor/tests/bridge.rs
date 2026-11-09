@@ -421,3 +421,46 @@ fn alt_drag_duplicate_and_translate_fold_via_fold_duplicate_move() {
     assert_eq!(px(&img, 26, 20), [255, 255, 255], "undo takes back copy and move together");
     assert_eq!(m.state(doc).unwrap()["layers"].as_array().unwrap().len(), 2, "background + A only");
 }
+
+#[test]
+fn vector_mask_path_reads_geometry_without_history() {
+    let mut m = EditorManager::new();
+    let doc = m.new_document(64, 64, "white").unwrap();
+    let layer_id = m.state(doc).unwrap()["layers"][0]["id"].as_u64().unwrap();
+
+    // 无蒙版:vectorMask=null(零副作用)
+    let r = m.vector_mask_path(doc, layer_id).unwrap();
+    assert_eq!(r["vectorMask"], serde_json::Value::Null);
+
+    // 从工作路径建矢量蒙版:读回几何与状态;不入历史
+    m.run(doc, "path.set", json!({ "name": "work", "path": { "subpaths": [{ "closed": true, "knots": [
+        { "anchor": [10, 10], "in": [10, 10], "out": [10, 10], "smooth": false },
+        { "anchor": [50, 10], "in": [50, 10], "out": [50, 10], "smooth": false },
+        { "anchor": [50, 50], "in": [50, 50], "out": [50, 50], "smooth": false },
+    ] }] } })).unwrap();
+    m.run(doc, "layer.vectorMask.fromPath", json!({ "layer": layer_id, "name": "work" })).unwrap();
+    let before = m.state(doc).unwrap()["historyCurrent"].as_u64().unwrap();
+
+    let r = m.vector_mask_path(doc, layer_id).unwrap();
+    let knots = r["path"]["subpaths"][0]["knots"].as_array().unwrap();
+    assert_eq!(knots.len(), 3);
+    assert_eq!(r["enabled"], json!(true));
+    assert_eq!(r["linked"], json!(true));
+
+    // inspect 透传 hasVectorMask
+    let st = m.state(doc).unwrap();
+    let l = st["layers"].as_array().unwrap().iter().find(|l| l["id"].as_u64() == Some(layer_id)).unwrap();
+    assert_eq!(l["hasVectorMask"], json!(true));
+
+    // 纯读取不入历史(vector_mask_path 直读文档,不落 s.edit)
+    let after = m.state(doc).unwrap()["historyCurrent"].as_u64().unwrap();
+    assert_eq!(before, after, "vector_mask_path must not journal");
+
+    // shape 层:vector_mask_path 返回其内容路径(shape=true)
+    m.run(doc, "shape.create", json!({ "kind": "rect", "rect": [0, 0, 20, 20] })).unwrap();
+    let st = m.state(doc).unwrap();
+    let shape_id = st["layers"][0]["id"].as_u64().unwrap();
+    let r = m.vector_mask_path(doc, shape_id).unwrap();
+    assert_eq!(r["shape"], json!(true));
+    assert!(r["path"]["subpaths"].as_array().unwrap().len() >= 1);
+}

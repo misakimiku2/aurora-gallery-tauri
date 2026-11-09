@@ -153,6 +153,9 @@ export interface EditorSession {
    * 上游 draw_overlay 直接读 doc.work_path 的即时模式口径)。 */
   workPath: WorkPathJson | null;
   workPathSeq: number;
+  /** 活动层被定向的矢量蒙版路径(channel.target=vectorMask 时按 revision 拉取;
+   * 画布轮廓显示/钢笔追加/路径选择拖移的数据源)。 */
+  vectorMaskPath: WorkPathJson | null;
   /** 路径面板摘要(path.list;refreshPathsList 按 docId/revision 拉取)。 */
   pathsList: PathListSummary | null;
   pathsListSeq: number;
@@ -266,6 +269,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     shapeDialog: null,
     workPath: null,
     workPathSeq: 0,
+    vectorMaskPath: null,
     pathsList: null,
     pathsListSeq: 0,
     selectedPath: null,

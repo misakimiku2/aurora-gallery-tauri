@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   closing, curvePoints, foldClose, onClosingAnchor, overFirstAnchor, penBreakHandle, penDown, penGrabHandle,
-  penMove, penToJson, penUndoLastPoint, penUp,
+  penMove, penToJson, penUndoLastPoint, penUp, resumeAt, emptyPen,
 } from '../penLogic';
 
 const TOL = 6; // 命中半径(文档 px;zoom=1)
@@ -145,3 +145,46 @@ describe('钢笔状态机(上游 vector_ui.rs PenPath 移植)', () => {
 function penUp2(pen: ReturnType<typeof penDown>): void {
   penUp(pen, 2);
 }
+
+describe('resumeAt / 续画退点(二-5b,上游 resume_at + pen_undo_last_point #6593)', () => {
+  const openPath = () => ({
+    subpaths: [{
+      closed: false,
+      knots: [
+        { anchor: [0, 0] as [number, number], in: [0, 0] as [number, number], out: [30, 0] as [number, number], smooth: true },
+        { anchor: [100, 0] as [number, number], in: [70, 0] as [number, number], out: [100, 40] as [number, number], smooth: false },
+      ],
+    }],
+  });
+
+  it('按到末锚=携整条子路径顺向续画;按到首锚=反转+双手柄互换;closed 子路径跳过', () => {
+    const fwd = resumeAt(openPath(), 1, 'work', 98, 2, 6)!;
+    // 上游口径:整条子路径进草稿(不是只有端点锚)
+    expect(fwd.knots.map((k) => k.anchor)).toEqual([[0, 0], [100, 0]]);
+    expect(fwd.resumes).toMatchObject({ docId: 1, path: 'work', index: 0 });
+    expect(fwd.resumes?.was.knots).toHaveLength(2);
+    // 立即退点=锚数不高于原子路径 → 整笔放弃(路径原样)
+    expect(penUndoLastPoint(fwd)).toBeNull();
+
+    const rev = resumeAt(openPath(), 1, 'work', 2, 2, 6)!;
+    expect(rev.knots.map((k) => k.anchor)).toEqual([[100, 0], [0, 0]]);
+    // 反转后手柄互换:反转首锚(原末锚)的 out=原 in;次锚(原首锚)的 out=原 in
+    expect(rev.knots[0].out).toEqual([70, 0]);
+    expect(rev.knots[1].out).toEqual([0, 0]);
+    expect(rev.unlinked).toEqual([0]); // 原 smooth=false 的锚反转后在第一位
+
+    const closed = { subpaths: [{ closed: true, knots: openPath().subpaths[0].knots }] };
+    expect(resumeAt(closed, 1, 'work', 0, 0, 6)).toBeNull();
+  });
+
+  it('续画后再加锚可退(不低于原锚数);非续画草稿退空=取消', () => {
+    const fwd = resumeAt(openPath(), 1, 'work', 98, 2, 6)!;
+    fwd.knots.push({ anchor: [150, 20], in: [120, 10], out: [150, 20] });
+    const once = penUndoLastPoint(fwd)!;
+    expect(once).not.toBeNull();
+    expect(once.knots).toHaveLength(2);
+    const plain = emptyPen();
+    plain.knots.push({ anchor: [1, 1], in: [1, 1], out: [1, 1] });
+    expect(penUndoLastPoint(plain)).toBeNull();
+  });
+});

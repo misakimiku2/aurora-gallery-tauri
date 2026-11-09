@@ -389,3 +389,33 @@ export function pickShapeAt(
   }
   return null;
 }
+
+/** 续画提交的原位替换(上游 with_resumed_subpath,#6593):`drawn` 的唯一子路径顶替
+ * 路径中 `index` 处的子路径(只换 closed/knots,保留其 op 等设置);该子路径已变
+ * (另一文档/被编辑)= null,草稿退化为新子路径由调用方兜底。 */
+export function withResumedSubpath(
+  p: EditPath,
+  index: number,
+  was: EditSubpath,
+  drawn: EditPath,
+): EditPath | null {
+  const cur = p.subpaths[index];
+  if (!cur || !subpathEqual(cur, was)) return null;
+  const sp = drawn.subpaths[0];
+  if (!sp) return null;
+  const out = clonePath(p);
+  out.subpaths[index] = { ...out.subpaths[index], closed: sp.closed, knots: sp.knots.map((k) => ({ ...k })) };
+  return out;
+}
+
+/** 子路径结构相等(引擎 PartialEq 口径:closed/knots/op 逐值)。 */
+function subpathEqual(a: EditSubpath, b: EditSubpath): boolean {
+  if (a.closed !== b.closed || (a.op ?? null) !== (b.op ?? null) || a.knots.length !== b.knots.length) return false;
+  return a.knots.every((k, i) => {
+    const q = b.knots[i];
+    return k.smooth === q.smooth
+      && k.anchor[0] === q.anchor[0] && k.anchor[1] === q.anchor[1]
+      && k.in[0] === q.in[0] && k.in[1] === q.in[1]
+      && k.out[0] === q.out[0] && k.out[1] === q.out[1];
+  });
+}

@@ -2,8 +2,9 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, EyeOff, Plus, Copy, Trash2, ChevronUp, ChevronDown, ChevronRight, Check, Lock, Link2, Link2Off, Contrast, Folder, Droplet, Type, Shapes, Box, Image as ImageIcon, type LucideIcon } from 'lucide-react';
+import { pathLines, type EnginePathJson } from '../penLogic';
 import { runCommand, exportLayerAsPng, getSession, openExportDialog, showEditorNotice, subscribeSession } from '../editorStore';
-import { editorLayerThumbnail, editorMaskSnapshot, type RenderedBitmap } from '../editorBridge';
+import { editorLayerThumbnail, editorMaskSnapshot, editorVectorMaskPath, type RenderedBitmap, type VectorMaskInfoJson } from '../editorBridge';
 import type { EditorLayer } from '../editorTypes';
 import { BLEND_ZH } from '../editorTypes';
 import { EditorSelect } from '../editorSelect';
@@ -338,6 +339,133 @@ const LAYER_LABEL_COLORS: { id: string; label: string; swatch: string; eye: stri
   { id: 'gray', label: '灰', swatch: '#9C9C9C', eye: '#575757' },
 ];
 
+/** 矢量蒙版信息缓存(前缀 V 语义的独立表):docId:layerId:revision → bridge 读数。 */
+const vmCache = new Map<string, VectorMaskInfoJson>();
+const VM_CACHE_MAX = 200;
+
+/**
+ * 矢量蒙版缩略图(上游 mask_thumbs_ui 的 Vector 种):路径线稿(文档比例,深灰线)+
+ * 禁用红叉。点=把编辑目标切到该矢量蒙版(channel.target vectorMask——钢笔追加/路径选择
+ * 拖移随之作用于它,PS 目标框口径);⇧点=启停;Ctrl+点=按蒙版载入选区。
+ */
+const VectorMaskThumb: React.FC<{
+  tabId: string;
+  docId: number;
+  layer: EditorLayer;
+  revision: number;
+  targeted: boolean;
+  docW: number;
+  docH: number;
+  onInfo: (info: VectorMaskInfoJson) => void;
+}> = ({ tabId, docId, layer, revision, targeted, docW, docH, onInfo }) => {
+  const ref = useRef<HTMLCanvasElement | null>(null);
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  const info = vmCache.get(`${docId}:${layer.id}:${revision}`);
+
+  useEffect(() => {
+    const key = `${docId}:${layer.id}:${revision}`;
+    if (vmCache.has(key)) return;
+    let cancelled = false;
+    void editorVectorMaskPath(docId, layer.id)
+      .then((info2) => {
+        if (cancelled || !info2.path) return;
+        vmCache.set(key, info2);
+        if (vmCache.size > VM_CACHE_MAX) {
+          const first = vmCache.keys().next().value;
+          if (first !== undefined) vmCache.delete(first);
+        }
+        onInfo(info2);
+        forceUpdate((n) => n + 1);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, layer.id, revision, onInfo]);
+
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const S = 18;
+    cv.width = S * dpr;
+    cv.height = S * dpr;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, S, S);
+    ctx.fillStyle = '#f0f0f0';
+    ctx.fillRect(0, 0, S, S);
+    const geo = info?.path as EnginePathJson | undefined;
+    if (!geo || docW < 1 || docH < 1) return;
+    const scale = Math.min(S / docW, S / docH);
+    const ox = S / 2 - (docW * scale) / 2;
+    const oy = S / 2 - (docH * scale) / 2;
+    ctx.strokeStyle = '#282828';
+    ctx.lineWidth = 1;
+    for (const { pts, closed } of pathLines(geo, (q) => [ox + q[0] * scale, oy + q[1] * scale])) {
+      if (pts.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      if (closed) ctx.closePath();
+      ctx.stroke();
+    }
+    if (info && info.enabled === false) {
+      ctx.strokeStyle = '#ff3b30';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(2, 2);
+      ctx.lineTo(S - 2, S - 2);
+      ctx.moveTo(S - 2, 2);
+      ctx.lineTo(2, S - 2);
+      ctx.stroke();
+    }
+  }, [info, docW, docH]);
+
+  const run = (cmd: string, params: Record<string, unknown> = {}) =>
+    runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
+
+  const linked = info?.linked ?? true;
+
+  return (
+    <>
+      {/* 蒙版链接链条(上游:每个蒙版缩略图前各一节;点=layer.vectorMask.linked) */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          void run('layer.vectorMask.linked', { layer: layer.id });
+        }}
+        title={linked ? '已链接矢量蒙版(点此解链)' : '未链接矢量蒙版(点此重新链接)'}
+        className={`shrink-0 ${linked ? 'text-gray-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100' : 'text-amber-600 dark:text-amber-400 hover:text-amber-500'}`}
+      >
+        {linked ? <Link2 size={10} /> : <Link2Off size={10} />}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.shiftKey) {
+            void run('layer.vectorMask.enabled', { layer: layer.id });
+            return;
+          }
+          if (e.ctrlKey || e.metaKey) {
+            void run('select.loadSelection', { channel: 'vectorMask', layer: layer.id });
+            return;
+          }
+          void run('layer.select', { layer: layer.id });
+          void run('channel.target', { channel: 'vectorMask' });
+        }}
+        title="矢量蒙版(点=以此为编辑目标,钢笔/路径选择作用于它 / ⇧点=停用或启用 / Ctrl+点=载入选区)"
+        className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
+        style={{ width: 20, height: 20 }}
+      >
+        <canvas ref={ref} style={{ width: 18, height: 18 }} className="block" />
+      </button>
+    </>
+  );
+};
+
 /**
  * 图层行右键菜单(上游 layer_menu_ui.rs show 的移植子集;样式同图库 ContextMenu 设计语言):
  * 复制/删除/从图层创建组 | 快速导出为 PNG | 蒙版区(应用/禁启/删除 或 添加) | 剪贴蒙版 |
@@ -517,11 +645,15 @@ const Row: React.FC<{
   revision: number;
   maskInfo?: Record<string, { enabled: boolean; linked: boolean; density?: number; feather?: number }>;
   maskTargeted: boolean;
+  /** 矢量蒙版被定向(当前层+channel.target=vectorMask):缩略图目标框。 */
+  vmTargeted: boolean;
+  docW: number;
+  docH: number;
   hasSelection: boolean;
   docHasMultipleLayers: boolean;
   /** 链接组 → 全组成员名(链接标识的悬停提示;面板层摊平一次算好)。 */
   linkPeers?: Map<number, string[]>;
-}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted, hasSelection, docHasMultipleLayers, linkPeers }) => {
+}> = ({ tabId, layer, depth, docId, revision, maskInfo, maskTargeted, vmTargeted, docW, docH, hasSelection, docHasMultipleLayers, linkPeers }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const [editing, setEditing] = useState(false);
@@ -590,6 +722,19 @@ const Row: React.FC<{
             targeted={layer.selected && maskTargeted}
           />
         </>
+      )}
+      {/* 矢量蒙版(上游像素蒙版之后;shape 层路径是其内容,不算蒙版——hasVectorMask 口径) */}
+      {layer.hasVectorMask && (
+        <VectorMaskThumb
+          tabId={tabId}
+          docId={docId}
+          layer={layer}
+          revision={revision}
+          targeted={layer.selected && vmTargeted}
+          docW={docW}
+          docH={docH}
+          onInfo={() => undefined}
+        />
       )}
       {layer.clipped && <span className="shrink-0 text-[9px] text-gray-500 dark:text-neutral-400" title="剪贴蒙版">↳</span>}
       {editing ? (
@@ -719,6 +864,9 @@ export const LayersPanel: React.FC<{ tabId: string }> = ({ tabId }) => {
           revision={s.revision}
           maskInfo={st.maskInfo}
           maskTargeted={maskTargeted}
+          vmTargeted={st.channels?.target?.kind === 'vectorMask' && st.activeLayer === l.id}
+          docW={st.width || 1}
+          docH={st.height || 1}
           hasSelection={st.hasSelection}
           docHasMultipleLayers={st.layers.length > 1 || st.layers.some((x) => x.children?.length)}
           linkPeers={linkPeers}
