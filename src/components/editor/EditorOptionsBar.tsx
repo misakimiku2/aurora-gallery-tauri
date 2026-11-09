@@ -18,6 +18,7 @@ import { TYPE_TOOLS } from './typeLogic';
 import { activePathName, pathRows } from './pathsPanelLogic';
 import { EditorSelect, attachWheelCycle } from './editorSelect';
 import { ColorPicker } from './panels/ColorPicker';
+import { PickerCard } from './panels/PickerCard';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
   AA_OPTIONS, aaKey, selectedStyleName, styleAt, styleColorHex, styleLabel, styleNames, shownScale,
@@ -930,27 +931,19 @@ const TypeOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
         style={{ background: hex || rgbCss(s.state?.foreground) }}
         onClick={() => { const h = hex || '#000000'; setColorPick([parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255]); }}
       />
-      {colorPick && createPortal(
-        <div
-          className="fixed z-[1000] w-56 rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-2"
-          style={{ left: Math.max(4, window.innerWidth / 2 - 112), top: Math.max(4, window.innerHeight / 2 - 140) }}
+      {colorPick && (
+        <PickerCard
+          title="文字颜色"
+          onClose={() => setColorPick(null)}
         >
-          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mb-1">文字颜色</div>
-          <div className="h-44">
-            <ColorPicker
-              value={colorPick}
-              onCommit={(rgb) => {
-                const h = `#${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
-                apply({ color: h });
-              }}
-              label="文字颜色"
-            />
-          </div>
-          <div className="flex justify-end mt-1.5">
-            <button type="button" onClick={() => setColorPick(null)} className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">关闭</button>
-          </div>
-        </div>,
-        document.body,
+          <ColorPicker
+            value={colorPick}
+            onCommit={(rgb) => {
+              const h = `#${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+              apply({ color: h });
+            }}
+          />
+        </PickerCard>
       )}
       {ed && (
         <button

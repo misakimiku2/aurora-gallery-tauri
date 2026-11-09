@@ -6,9 +6,9 @@
  * 段落字段(缩进/段距)与 OpenType 特征行后置(切片表口径)。
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { EditorSelect, type EditorSelectOption } from '../editorSelect';
 import { ColorPicker } from './ColorPicker';
+import { PickerCard } from './PickerCard';
 import {
   applyTypeStyle, fetchFontFaces, fetchFontFamilies, getSession, noteRecentFont, setOptions,
   subscribeSession, runCommand, updateSession,
@@ -361,28 +361,17 @@ export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
         ));
       })()}
 
-      {/* 取色卡(渐变 stop 同款 portal 卡) */}
-      {colorPick && createPortal(
-        <div
-          className="fixed z-[1000] w-56 rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-2"
-          style={{ left: Math.max(4, window.innerWidth / 2 - 112), top: Math.max(4, window.innerHeight / 2 - 140) }}
-        >
-          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mb-1">文字颜色</div>
-          <div className="h-44">
-            <ColorPicker
-              value={colorPick.rgb}
-              onCommit={(rgb) => {
-                const hex = `#${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
-                apply({ color: hex });
-              }}
-              label="文字颜色"
-            />
-          </div>
-          <div className="flex justify-end mt-1.5">
-            <button type="button" onClick={() => setColorPick(null)} className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">关闭</button>
-          </div>
-        </div>,
-        document.body,
+      {/* 取色卡(PickerCard 可拖壳:SV 满高,标题栏拖动) */}
+      {colorPick && (
+        <PickerCard title="文字颜色" onClose={() => setColorPick(null)}>
+          <ColorPicker
+            value={colorPick.rgb}
+            onCommit={(rgb) => {
+              const hex = `#${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+              apply({ color: hex });
+            }}
+          />
+        </PickerCard>
       )}
     </div>
   );

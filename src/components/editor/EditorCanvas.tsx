@@ -8,7 +8,6 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
@@ -35,6 +34,7 @@ import {
 import { CHAR_TOGGLE_KEYS, styleAt, type CharStyleJson } from './typeStyle';
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
+import { PickerCard } from './panels/PickerCard';
 import { ShapeDialog } from './ShapeDialog';
 import { closing as penClosing, overFirstAnchor, penBreakHandle, penDown, penFromJson, penGrabHandle, penMove, penToJson, penUndoLastPoint, penUp, curvePoints, pathLines, resumeAt, shift45 as penShift45, type EnginePathJson } from './penLogic';
 import { withResumedSubpath, type EditSubpath } from './pathEdit';
@@ -324,7 +324,6 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, []);
   /** 双击色标/端点的取色卡(上游 Color Picker (Stop Color) 对话框:确定一条命令,取消不动)。 */
   const [stopPicker, setStopPicker] = useState<{ layer: number; index: number; rgb: RGB; x: number; y: number } | null>(null);
-  const stopPickerRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<EditorSession | undefined>(undefined);
   /** 位图位图代数:docId+revision 变化时刷新离屏画布。 */
   const bitmapKeyRef = useRef('');
@@ -5117,31 +5116,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   };
 
-  // 取色卡:外点/Esc=取消(确定才发命令);位置钳进视口(useLayoutEffect 按实际尺寸,弹层统一口径)
-  useEffect(() => {
-    if (!stopPicker) return;
-    const close = (ev: MouseEvent) => {
-      if (stopPickerRef.current?.contains(ev.target as Node)) return;
-      setStopPicker(null);
-    };
-    const esc = (ev: KeyboardEvent) => {
-      if (ev.key === 'Escape') setStopPicker(null);
-    };
-    window.addEventListener('mousedown', close);
-    window.addEventListener('keydown', esc);
-    return () => {
-      window.removeEventListener('mousedown', close);
-      window.removeEventListener('keydown', esc);
-    };
-  }, [stopPicker]);
-  useLayoutEffect(() => {
-    if (!stopPicker) return;
-    const el = stopPickerRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    el.style.left = `${Math.max(4, Math.min(stopPicker.x, window.innerWidth - r.width - 4))}px`;
-    el.style.top = `${Math.max(4, Math.min(stopPicker.y, window.innerHeight - r.height - 4))}px`;
-  }, [stopPicker]);
+  // 取色卡外点/Esc/钳位/拖动全在 PickerCard 壳内(2026-11-10 与文字颜色卡共用)
 
   if (!session) return null;
   const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP, 'pen']);
@@ -5203,22 +5178,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       {session.shapeDialog && <ShapeDialog tabId={tabId} />}
       {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">正在打开…</div>}
       {session.error && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-400 p-8 text-center">{session.error}</div>}
-      {stopPicker &&
-        createPortal(
-          <div
-            ref={stopPickerRef}
-            className="fixed z-[1000] w-56 rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-2"
-            style={{ left: stopPicker.x, top: stopPicker.y }}
-          >
-            <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mb-1">拾色器(色标颜色)</div>
-            <div className="h-44 flex flex-col">
-              <ColorPicker
-                value={stopPicker.rgb}
-                onCommit={(rgb) => setStopPicker((sp) => (sp ? { ...sp, rgb } : sp))}
-                label={`色标 #${stopPicker.index + 1}`}
-              />
-            </div>
-            <div className="flex justify-end gap-1.5 mt-2">
+      {stopPicker && (
+        <PickerCard
+          title="拾色器(色标颜色)"
+          at={{ left: stopPicker.x, top: stopPicker.y }}
+          closeOnOutside
+          onClose={() => setStopPicker(null)}
+          footer={
+            <>
               <button
                 onClick={() => setStopPicker(null)}
                 className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300"
@@ -5228,10 +5195,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
               <button onClick={commitStopColor} className="px-2 py-0.5 rounded text-[11px] bg-sky-600 text-white hover:bg-sky-500">
                 确定
               </button>
-            </div>
-          </div>,
-          document.body,
-        )}
+            </>
+          }
+        >
+          <ColorPicker
+            value={stopPicker.rgb}
+            onCommit={(rgb) => setStopPicker((sp) => (sp ? { ...sp, rgb } : sp))}
+            label={`色标 #${stopPicker.index + 1}`}
+          />
+        </PickerCard>
+      )}
     </div>
   );
 };
