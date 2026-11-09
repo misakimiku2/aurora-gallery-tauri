@@ -263,6 +263,15 @@ export function nextPathTool(current: EditorTool | undefined): EditorTool {
   return current === 'pathSelect' ? 'directSelect' : 'pathSelect';
 }
 
+/** T 键组(上游 Tool::Type|Tool::VerticalType 同键 'T';Type Mask 族 S6 后置):横排↔竖排循环。 */
+export const TYPE_GROUP_ORDER: EditorTool[] = ['type', 'typeVertical'];
+
+/** T 键:组内循环;当前不在组内 → 回横排。 */
+export function nextTypeTool(current: EditorTool | undefined): EditorTool {
+  const i = current ? TYPE_GROUP_ORDER.indexOf(current) : -1;
+  return i < 0 ? 'type' : TYPE_GROUP_ORDER[(i + 1) % TYPE_GROUP_ORDER.length];
+}
+
 /** 套索组工具(L 键循环,上游 Tool::Lasso/PolygonLasso/MagneticLasso 同键)。 */
 export const LASSO_GROUP: ReadonlySet<EditorTool> = new Set(['lasso', 'polygonLasso', 'magneticLasso']);
 

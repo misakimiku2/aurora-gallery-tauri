@@ -15,17 +15,23 @@ import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, 
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
-import { clampPan, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
+import { clampPan, docToScreen, fitToView, screenToDoc, zoomAbout, ZOOM_STEP } from './viewMath';
 import {
   BRUSH_FAMILY, brushSizeStep, bucketParams, constrain45, constrainMove, constrainPolygonPoint, constrainStrokePoint, cropCorners, cropDrawn,
   cropFitted, cropFittedRatio, cropFrameAngle, cropHitTurned, cropNormalizedAngle, cropResizedTurned, cropTurnedAngle, cropTurnCursorDir, cutPathAtLength, effectiveMode, gradientLiveCreateParams, gradientLiveAt, gradientLiveHit, gradientMidDragParams, gradientParams, gradientStopDragParams, gradientStopIndexAfter, initialMods,
-  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextPathTool, nextPenTool, nextShapeTool,
+  isMaskTarget, lassoParams, magneticPressureWidth, magneticSpacing, marqueeParams, marqueeRect, moveBounds, moveDirtyRect, movePickParams, moveSelectRectParams, nearMagneticStart, nextGradientTool, nextLassoTool, nextMarqueeShape, nextPathTool, nextPenTool, nextShapeTool, nextTypeTool,
   isShapeClick, SHAPE_GROUP, shapeBounds, shapeDialogGeometry, shapeDialogKind, shapeFillStroke, shapeGeometry,
   pathLength, resolveSelectionMode, rgbToHex, sampleHex, selectMode, singleLineParams, snap45, strokeCommand,
   strokeParams, TOOL_KEYS, trackMods,
   CROP_HANDLE_PX, CROP_MIN_FRAME, CROP_MIN_LINE_PX,
   type BrushFamilyTool, type CropRect, type DragPoint, type DragMods, type StrokeAxis,
 } from './toolLogic';
+import {
+  affApply, affInvert, applyReplace, boxHandleAt, boxOfShape, CARET_BLINK_MS, charCount, clickSelection,
+  columnWidthVec, flowKey, imeRange, insideBox, layerNameFromText, lineSelectionSpan, lineToText, makesBox,
+  MAX_CLICKS, normText, resizeBoxCalc, smartQuotes, TYPE_PLACEHOLDER, TYPE_TOOLS, wordBoundary,
+  type CaretSegment, type TextEditSession, type TypeInfoLine, type TextShapeBox,
+} from './typeLogic';
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
@@ -77,6 +83,22 @@ const CROSSHAIR_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(CROSSHAIR
 
 /** 裁剪手势的回退快照(press 时的框;尺寸不满足/取消时恢复)。 */
 type CropRestore = { rect: CropRect; angle: number; edited: boolean };
+
+/** type.info 返回(引擎 journal:false 查询;字符索引=Unicode 标量,行盒=文字空间 px,
+ * transform=引擎 Affine 六元组 [a,b,c,d,e,f])。 */
+interface TypeInfoJson {
+  layer: number;
+  text: string;
+  /** serde 外标签:'Point' | {Box:{x,y,width,height}} | {Path:…} | {Area:…}。 */
+  shape: unknown;
+  transform: number[];
+  antialias: string;
+  orientation: string;
+  lines: TypeInfoLine[];
+  runs: { start: number; end: number; style: Record<string, unknown> }[];
+  bounds: [number, number, number, number] | null;
+  pxPerPt: number;
+}
 
 /** 裁剪比例预设 key → width/height(上游 chrome_ui::crop_ratio;'original'=文档尺寸;
  * whr/preset:*=W×H×分辨率模式,按字段换算,上游 crop_size::ratio)。 */
@@ -261,6 +283,44 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const gradHoldTimerRef = useRef<number | null>(null);
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
+  // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
+  /** type.info 缓存(上游 app.type_layout 的 key=docId:layer:revision 等价)。 */
+  const typeInfoRef = useRef<{ key: string; info: TypeInfoJson } | null>(null);
+  /** type.caret 段缓存(per revision;overlay 亮块/隐藏 input 定位共用)。 */
+  const caretSegRef = useRef<{ key: string; segs: Map<number, CaretSegment> } | null>(null);
+  /** 会话侧文本镜像(smartQuotes 前字符/提交判空;真值在引擎,info 刷新对齐)。 */
+  const typeTextRef = useRef('');
+  /** 段落框把手拖缩(上游 BoxResize:按下时的 shape/transform 快照+节流尾沿)。 */
+  const typeResizeRef = useRef<{ handle: number; shape: TextShapeBox; transform: number[]; lastSent: number; pending: [number, number, number, number] | null } | null>(null);
+  /** 文字工具空白处按下:拖框手势(松手 makesBox 判定,上游 pointer_up)。 */
+  const typeDragRef = useRef<{ start: [number, number] } | null>(null);
+  /** 可能是编辑既有文字的按下(异步 hitTest 确认期间挂起;上游 pointer_down 同步判定的 Web 等价)。 */
+  const typePendingRef = useRef<{ start: [number, number]; detail: number; down: boolean } | null>(null);
+  /** Move 双击进编辑时的返回工具(上游 text_edit_return_tool)。 */
+  const typeReturnToolRef = useRef<EditorTool | null>(null);
+  /** 会话键序号+caret 闪烁起点(上游 caret_blink_time)。 */
+  const typeSeqRef = useRef(0);
+  const typeBlinkRef = useRef(0);
+  /** 承接 IME 的隐藏 textarea(候选窗锚定其元素矩形;上游 egui IMEOutput 的 Web 等价)。 */
+  const typeInputRef = useRef<HTMLTextAreaElement>(null);
+  /** 拖拽选字 caret 命中的节流时间戳(60ms;hitTest 是 journal:false 便宜查询,仍防洪水)。 */
+  const typeMoveHitRef = useRef({ last: 0 });
+  /** beforeinput 原生处理器(每渲染更新;React 的 onBeforeInput 是合成事件,Chromium 的
+   * 原生 beforeinput 不派发它——insertText/insertParagraph 只能走原生监听)。 */
+  const typeBeforeInputRef = useRef<(ev: InputEvent) => void>(() => undefined);
+  /** 隐藏 textarea 的 ref 回调:元素出现/替换即挂原生监听(不能靠 effect——首渲染
+   * session 未建时组件 return null,textarea 缺席,effect 空跑后 deps 不变不再重试)。 */
+  const typeInputUnbindRef = useRef<(() => void) | null>(null);
+  const attachTypeInput = useCallback((el: HTMLTextAreaElement | null) => {
+    typeInputUnbindRef.current?.();
+    typeInputUnbindRef.current = null;
+    (typeInputRef as { current: HTMLTextAreaElement | null }).current = el;
+    if (el) {
+      const listener = (ev: Event) => typeBeforeInputRef.current(ev as InputEvent);
+      el.addEventListener('beforeinput', listener);
+      typeInputUnbindRef.current = () => el.removeEventListener('beforeinput', listener);
+    }
+  }, []);
   /** 双击色标/端点的取色卡(上游 Color Picker (Stop Color) 对话框:确定一条命令,取消不动)。 */
   const [stopPicker, setStopPicker] = useState<{ layer: number; index: number; rgb: RGB; x: number; y: number } | null>(null);
   const stopPickerRef = useRef<HTMLDivElement | null>(null);
@@ -1329,6 +1389,135 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       octx.restore();
     }
 
+    // overlay:文字编辑会话(二-6,上游 type_tool::draw_overlay):段落框+8 把手/点文本
+    // 行下划线;选区亮块(逐行 caret 段拼四边形,竖排=列宽盒近似);caret 白晕黑芯闪烁;
+    // IME 组字下划线。caret/边界段由 ensureTypeOverlay 异步补齐,缺段本帧跳过不画。
+    const ted = s.textEdit;
+    if (ted && s.state) {
+      const info = typeInfoRef.current?.info;
+      const segs = caretSegRef.current?.segs;
+      const scr = (p: [number, number]): [number, number] => docToScreen(v, p[0], p[1]);
+      const taccent = isDark ? '#38bdf8' : '#0284c7';
+      if (info) {
+        const shape = boxOfShape(info.shape);
+        // 帧:段落文本=框+把手(角+边中点,上游 7px 白底 accent 描边);点文本=逐行下划线
+        if (shape) {
+          const corners = [
+            [shape[0], shape[1]], [shape[0] + shape[2], shape[1]],
+            [shape[0] + shape[2], shape[1] + shape[3]], [shape[0], shape[1] + shape[3]],
+          ].map(([x, y]) => scr(affApply(info.transform, x, y)));
+          octx.beginPath();
+          corners.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+          octx.closePath();
+          octx.strokeStyle = taccent;
+          octx.lineWidth = 1;
+          octx.stroke();
+          const mids = corners.map((p, i) => {
+            const q = corners[(i + 1) % 4];
+            return [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] as [number, number];
+          });
+          for (const [hx, hy] of [...corners, ...mids]) {
+            octx.fillStyle = '#ffffff';
+            octx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
+            octx.strokeStyle = taccent;
+            octx.lineWidth = 1;
+            octx.strokeRect(hx - 3.5, hy - 3.5, 7, 7);
+          }
+        } else {
+          const vertical = info.orientation === 'Vertical';
+          for (const ln of info.lines) {
+            // 行空间→文字空间(竖排 to_text (x,y)→(−y,x));横排=基线下 25% descent,竖排=列中线
+            const y = vertical ? ln.baseline : ln.baseline + ln.descent * 0.25;
+            const [tx0, ty0] = lineToText(Math.min(ln.x0, 0), y, vertical);
+            const [tx1, ty1] = lineToText(Math.max(ln.x1, ln.x0 + 1), y, vertical);
+            const [ax, ay] = scr(affApply(info.transform, tx0, ty0));
+            const [bx, by] = scr(affApply(info.transform, tx1, ty1));
+            octx.beginPath();
+            octx.moveTo(ax, ay);
+            octx.lineTo(bx, by);
+            octx.strokeStyle = taccent;
+            octx.globalAlpha = 0.8;
+            octx.lineWidth = 1;
+            octx.stroke();
+            octx.globalAlpha = 1;
+          }
+        }
+        const n0 = charCount(info.text);
+        const a0 = Math.min(ted.caret, ted.anchor, n0);
+        const b0 = Math.max(ted.caret, ted.anchor, n0);
+        if (a0 < b0) {
+          // 选区亮块:逐行 [span 起,止) 的 caret 段拼四边形;竖排列宽盒加宽(部分选中画整列)
+          const vertical = info.orientation === 'Vertical';
+          octx.fillStyle = taccent;
+          octx.globalAlpha = 0.43;
+          for (const ln of info.lines) {
+            const sp = lineSelectionSpan(ln, a0, b0);
+            if (!sp) continue;
+            const sa = segs?.get(sp.span[0]);
+            const sb = segs?.get(sp.span[1]);
+            if (!sa || !sb) continue;
+            const pts = vertical
+              ? (() => {
+                  const [wx, wy] = columnWidthVec(info.transform, ln, vertical);
+                  return [
+                    [sa[0][0] + wx / 2, sa[0][1] + wy / 2],
+                    [sb[0][0] + wx / 2, sb[0][1] + wy / 2],
+                    [sb[1][0] - wx / 2, sb[1][1] - wy / 2],
+                    [sa[1][0] - wx / 2, sa[1][1] - wy / 2],
+                  ] as [number, number][];
+                })()
+              : [sa[0], sb[0], sb[1], sa[1]];
+            octx.beginPath();
+            pts.map(scr).forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+            octx.closePath();
+            octx.fill();
+          }
+          octx.globalAlpha = 1;
+        } else {
+          // caret 闪烁(上游 530ms 节奏;拖拽选字/交互后恒亮),白晕 3px+黑芯 1px(#6085)
+          const elapsed = performance.now() - typeBlinkRef.current;
+          if (ted.dragging || elapsed % (CARET_BLINK_MS * 2) < CARET_BLINK_MS) {
+            const seg = segs?.get(Math.min(ted.caret, n0));
+            if (seg) {
+              const [x0, y0] = scr(seg[0]);
+              const [x1, y1] = scr(seg[1]);
+              octx.lineCap = 'round';
+              octx.beginPath();
+              octx.moveTo(x0, y0);
+              octx.lineTo(x1, y1);
+              octx.strokeStyle = '#ffffff';
+              octx.lineWidth = 3;
+              octx.stroke();
+              octx.beginPath();
+              octx.moveTo(x0, y0);
+              octx.lineTo(x1, y1);
+              octx.strokeStyle = '#000000';
+              octx.lineWidth = 1;
+              octx.stroke();
+            }
+          }
+        }
+        // IME 组字下划线(上游逐簇;按组字边界 caret 段中点连线近似)
+        if (ted.preedit) {
+          const sa = segs?.get(ted.preedit[0]);
+          const sb = segs?.get(ted.preedit[0] + ted.preedit[1]);
+          if (sa && sb) {
+            const mid = (q: CaretSegment): [number, number] => [(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2];
+            const [ax, ay] = scr(mid(sa));
+            const [bx, by] = scr(mid(sb));
+            octx.beginPath();
+            octx.moveTo(ax, ay);
+            octx.lineTo(bx, by);
+            octx.strokeStyle = taccent;
+            octx.lineWidth = 1.5;
+            octx.stroke();
+          }
+        }
+      }
+      // 隐藏 textarea 跟随视图(平移/缩放后 IME 候选窗仍锚在 caret 上)
+      positionTypeInput(caretSegRef.current?.segs.get(Math.min(ted.caret, charCount(typeTextRef.current))) ?? null);
+    }
+
     // 蚂蚁线动画:有选区或拖拽预览时逐帧推进相位(≈15px/s,近 photocraft 上游 10);
     // 选区消失后本循环自然停
     if (s.state.hasSelection || marqueeRef.current || layerBoxRef.current) {
@@ -2139,6 +2328,433 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   };
 
+  // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs 逐条移植;编辑=带 coalesce 的
+  // type.edit,整会话一条「编辑文字」历史步;caret 几何/命中/导航走引擎 journal:false 查询) =====
+
+  /** type.info(缓存 per docId:layer:revision;journal:false)。 */
+  const fetchTypeInfo = async (layer: number): Promise<TypeInfoJson | null> => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null) return null;
+    const key = `${s.docId}:${layer}:${s.revision}`;
+    if (typeInfoRef.current?.key === key) return typeInfoRef.current.info;
+    try {
+      const info = await runCommand(tabId, 'type.info', { layer }, { noPull: true }) as TypeInfoJson;
+      typeInfoRef.current = { key, info };
+      return info;
+    } catch {
+      return null;
+    }
+  };
+
+  /** type.caret 段(缓存 per revision;journal:false,文档 px)。 */
+  const fetchCaretSeg = async (layer: number, index: number): Promise<CaretSegment | null> => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null) return null;
+    const key = `${s.docId}:${layer}:${s.revision}`;
+    if (caretSegRef.current?.key !== key) caretSegRef.current = { key, segs: new Map() };
+    const hit = caretSegRef.current.segs.get(index);
+    if (hit) return hit;
+    try {
+      const r = await runCommand(tabId, 'type.caret', { layer, index }, { noPull: true }) as { segment?: CaretSegment };
+      const seg = r.segment ?? null;
+      if (seg) caretSegRef.current.segs.set(index, seg);
+      return seg;
+    } catch {
+      return null;
+    }
+  };
+
+  /** 隐藏 textarea 摆到 caret 屏幕位(IME 候选窗锚定元素矩形;上游 egui IMEOutput 的 Web 等价)。 */
+  const positionTypeInput = (seg: CaretSegment | null) => {
+    const el = typeInputRef.current;
+    const s = getSession(tabId);
+    if (!el || !s) return;
+    if (!seg) {
+      el.style.left = '-100px';
+      el.style.top = '-100px';
+      return;
+    }
+    const [x0, y0] = docToScreen(s.runtime.view, seg[0][0], seg[0][1]);
+    const [x1, y1] = docToScreen(s.runtime.view, seg[1][0], seg[1][1]);
+    el.style.left = `${Math.min(x0, x1)}px`;
+    el.style.top = `${Math.min(y0, y1)}px`;
+    el.style.width = `${Math.max(1, Math.abs(x1 - x0))}px`;
+    el.style.height = `${Math.max(1, Math.abs(y1 - y0))}px`;
+  };
+
+  /** 编辑会话仍归属本文档且层未变(上游 end_if_left 的家判定)。 */
+  const typeSessionHome = (s: EditorSession): boolean =>
+    !!s.textEdit && s.textEdit.docId === s.docId && s.state?.activeLayer === s.textEdit.layer;
+
+  /** 树中查层(顶层=最上;返回首个 kind==='Type' 且可见且 bounds±tol 命中的层 id)。
+   * inspect 的 bounds=[x0,y0,width,height](inspect.rs 口径,非 x1y1)。 */
+  const topmostTypeLayerAt = (s: EditorSession, x: number, y: number, tol: number, want: number | null = null): number | null => {
+    const walk = (ls: EditorLayer[]): number | null => {
+      for (const l of ls) {
+        if (l.kind === 'Type' && l.visible !== false && l.bounds) {
+          const [bx, by, bw, bh] = l.bounds;
+          if (x >= bx - tol && x <= bx + bw + tol && y >= by - tol && y <= by + bh + tol && (want == null || l.id === want)) return l.id;
+        }
+        if (l.children) {
+          const f = walk(l.children as EditorLayer[]);
+          if (f != null) return f;
+        }
+      }
+      return null;
+    };
+    return walk(s.state?.layers ?? []);
+  };
+
+  /** 文字替换(上游 insert):选区 [a,b) → t;coalesce 并进会话历史步。 */
+  const insertTypeText = async (t0: string) => {
+    const s = getSession(tabId);
+    const ed = s?.textEdit;
+    if (!s || !ed) return;
+    const a = Math.min(ed.caret, ed.anchor);
+    const b = Math.max(ed.caret, ed.anchor);
+    const t = normText(t0);
+    if (a === b && t === '') return;
+    const len = charCount(t);
+    try {
+      await runCommand(tabId, 'type.edit', { layer: ed.layer, replace: { start: a, end: b, text: t }, coalesce: ed.session });
+      const s2 = getSession(tabId);
+      if (s2?.textEdit) updateSession(tabId, { textEdit: { ...s2.textEdit, caret: a + len, anchor: a + len } });
+      typeTextRef.current = applyReplace(typeTextRef.current, a, b, t);
+      typeBlinkRef.current = performance.now();
+      scheduleDraw();
+    } catch (err) {
+      logError('[editor] type.edit 失败', err);
+    }
+  };
+
+  /** 键入(上游 insert_typed):智能引号(偏好默认开);IME 组字不走这里。 */
+  const insertTyped = (s0: string) => {
+    const s = getSession(tabId);
+    if (!s?.textEdit) return;
+    const at = Math.min(s.textEdit.caret, s.textEdit.anchor);
+    const prev = at > 0 ? [...typeTextRef.current][at - 1] : undefined;
+    void insertTypeText(smartQuotes(s0, prev));
+  };
+
+  /** IME 组字(上游 ime_update):preedit 写入图层排版回流,每次更新原位替换;提交定型。
+   * 空组字且无进行中=输入法状态扰动(#1381),不动。 */
+  const imeUpdateType = async (s0: string, commit: boolean) => {
+    const s = getSession(tabId);
+    const ed = s?.textEdit;
+    if (!s || !ed) return;
+    const t = normText(s0);
+    const r = imeRange(ed.preedit, ed.caret, ed.anchor, charCount(typeTextRef.current), t);
+    if (!r) return;
+    const [start, end, len] = r;
+    try {
+      await runCommand(tabId, 'type.edit', { layer: ed.layer, replace: { start, end, text: t }, coalesce: ed.session });
+      const s2 = getSession(tabId);
+      if (!s2?.textEdit) return;
+      updateSession(tabId, { textEdit: { ...s2.textEdit, caret: start + len, anchor: start + len, preedit: commit || len === 0 ? null : [start, len] } });
+      typeTextRef.current = applyReplace(typeTextRef.current, start, end, t);
+      typeBlinkRef.current = performance.now();
+      scheduleDraw();
+    } catch (err) {
+      logError('[editor] IME 组字失败', err);
+    }
+  };
+
+  /** 连击选词(上游 multi_click):2=词 3=行 4=段落 5=全选;命中点经 type.hitTest 定 caret。
+   * count 由按下处的连击判定给出(pointerdown.detail 恒 1,靠时距自计)。 */
+  const applyTypeClicks = async (layer: number, count: number, at: [number, number] | null, fallbackCaret: number) => {
+    const s = getSession(tabId);
+    const ed = s?.textEdit;
+    if (!s || !ed || ed.layer !== layer) return;
+    updateSession(tabId, { typeClicks: { layer, count, t: performance.now(), at: at ?? [0, 0] } });
+    if (count < 2) return;
+    const info = await fetchTypeInfo(layer);
+    if (!info) return;
+    let caret = fallbackCaret;
+    let lineIdx: number | null = null;
+    if (at) {
+      try {
+        const h = await runCommand(tabId, 'type.hitTest', { layer, x: at[0], y: at[1] }, { noPull: true }) as { index?: number; line?: number };
+        if (typeof h.index === 'number') {
+          caret = h.index;
+          lineIdx = typeof h.line === 'number' ? h.line : null;
+        }
+      } catch {
+        /* 脱靶=落回 fallback caret */
+      }
+    }
+    const [a, b] = clickSelection(info.text, caret, info.lines, lineIdx, count);
+    const s2 = getSession(tabId);
+    if (s2?.textEdit && s2.textEdit.layer === layer) {
+      updateSession(tabId, { textEdit: { ...s2.textEdit, caret: b, anchor: a } });
+      typeBlinkRef.current = performance.now();
+      scheduleDraw();
+    }
+  };
+
+  /** 连击判定(上游 next_click_count 的时距语义,egui 自带时限/距离;Web 用自计时:
+   * 同层 450ms 内且 ≤4 屏幕 px=连击递增到 5 后循环,否则重置为 1)。 */
+  const typeClickCount = (s: EditorSession, layer: number, at: [number, number]): number => {
+    const prev = s.typeClicks;
+    if (prev && prev.layer === layer && prev.at && performance.now() - prev.t < 450
+      && Math.hypot(prev.at[0] - at[0], prev.at[1] - at[1]) < 4 / Math.max(0.01, s.runtime.view.scale)) {
+      return (prev.count % MAX_CLICKS) + 1;
+    }
+    return 1;
+  };
+
+  /** 开既有文字层的编辑会话(上游 pointer_down 命中分支/edit_at;count=连击判定)。 */
+  const beginTypeEdit = (layer: number, offset: number, count: number, at: [number, number] | null, returnTool: EditorTool | null) => {
+    const s = getSession(tabId);
+    if (!s) return;
+    typeReturnToolRef.current = returnTool;
+    typeTextRef.current = '';
+    updateSession(tabId, {
+      textEdit: { layer, docId: s.docId, caret: offset, anchor: offset, session: `type-${Date.now()}-${++typeSeqRef.current}`, created: false, preedit: null, dragging: false },
+    });
+    void fetchTypeInfo(layer).then((info) => {
+      if (info) typeTextRef.current = info.text;
+      void applyTypeClicks(layer, count, at, offset);
+      scheduleDraw();
+    });
+    typeInputRef.current?.focus();
+    typeBlinkRef.current = performance.now();
+    scheduleDraw();
+  };
+
+  /** 新建文字(type.create;上游 pointer_up):拖 ≥4 屏幕 px=段落框,否则点文本;
+   * 占位文本默认开(偏好 fill_new_type_layers_with_placeholder),选中态,键入即替换。 */
+  const createTypeText = async (start: [number, number], end: [number, number], vertical: boolean) => {
+    const s = getSession(tabId);
+    if (!s || s.textEdit) return;
+    const minPx = 4 / Math.max(0.01, s.runtime.view.scale);
+    const coalesce = `type-${Date.now()}-${++typeSeqRef.current}`;
+    const base: Record<string, unknown> = { text: TYPE_PLACEHOLDER, orientation: vertical ? 'vertical' : 'horizontal', coalesce };
+    const params = makesBox(start, end, minPx)
+      ? { ...base, box: [Math.round(Math.min(start[0], end[0])), Math.round(Math.min(start[1], end[1])), Math.round(Math.abs(end[0] - start[0])), Math.round(Math.abs(end[1] - start[1]))] }
+      : { ...base, x: Math.round(start[0]), y: Math.round(start[1]) };
+    try {
+      const r = await runCommand(tabId, 'type.create', params) as { layer?: number };
+      if (typeof r.layer !== 'number') return;
+      const s2 = getSession(tabId);
+      if (!s2) return;
+      typeTextRef.current = TYPE_PLACEHOLDER;
+      updateSession(tabId, { textEdit: { layer: r.layer, docId: s2.docId, caret: charCount(TYPE_PLACEHOLDER), anchor: 0, session: coalesce, created: true, preedit: null, dragging: false } });
+      void fetchTypeInfo(r.layer).then((info) => {
+        if (info) {
+          typeTextRef.current = info.text;
+          scheduleDraw();
+        }
+      });
+      typeInputRef.current?.focus();
+      typeBlinkRef.current = performance.now();
+      scheduleDraw();
+    } catch (err) {
+      logError('[editor] type.create 失败', err);
+    }
+  };
+
+  /** 提交会话(上游 commit/commit_here,无 Type Mask 分支——S6 后置):新层空=删层,
+   * 新层=按文字重命名;既有层只收尾。 */
+  const commitType = async () => {
+    const s = getSession(tabId);
+    const ed = s?.textEdit;
+    if (!s || !ed) return;
+    updateSession(tabId, { textEdit: null, typeClicks: null });
+    if (typeReturnToolRef.current && TYPE_TOOLS.has(s.tool)) setTool(tabId, typeReturnToolRef.current);
+    typeReturnToolRef.current = null;
+    typeInputRef.current?.blur();
+    try {
+      const info = await fetchTypeInfo(ed.layer);
+      const text = info?.text ?? typeTextRef.current;
+      if (ed.created) {
+        if (text.trim() === '') {
+          await runCommand(tabId, 'layer.delete', { layer: ed.layer });
+        } else {
+          await runCommand(tabId, 'type.edit', { layer: ed.layer, name: layerNameFromText(text), coalesce: ed.session });
+        }
+      }
+    } catch (err) {
+      logError('[editor] 文字提交失败', err);
+    }
+    scheduleDraw();
+  };
+
+  /** 文字工具按下(上游 pointer_down):会话中=把手/框内落 caret/框外提交;无会话=命中
+   * 既有文字层(异步 hitTest 确认,期间挂起)或拖框手势。 */
+  const typePointerDown = async (s: EditorSession, dx: number, dy: number, e: React.PointerEvent) => {
+    const tol = 6 / Math.max(0.01, s.runtime.view.scale);
+    const ed = s.textEdit;
+    if (ed) {
+      if (!typeSessionHome(s)) {
+        // 编辑被留在别的文档/层(#6483 口径):提交后再按新点起字
+        await commitType();
+      }
+      const info = await fetchTypeInfo(ed.layer);
+      const s1 = getSession(tabId);
+      if (!s1?.textEdit) return;
+      if (info) {
+        const shape = boxOfShape(info.shape);
+        const h = shape ? boxHandleAt(shape, info.transform, dx, dy, tol) : null;
+        if (h != null) {
+          // 把手:快照按下时的框(上游 BoxResize;⌥ 镜像中心由此固定)
+          typeResizeRef.current = { handle: h, shape: shape!, transform: [...info.transform], lastSent: 0, pending: null };
+          return;
+        }
+        const [tx, ty] = affApply(affInvert(info.transform), dx, dy);
+        const inBox = shape ? insideBox(shape, tx, ty) : false;
+        const onGlyphs = topmostTypeLayerAt(s1, dx, dy, tol, ed.layer) != null;
+        if (inBox || onGlyphs) {
+          updateSession(tabId, { textEdit: { ...s1.textEdit, dragging: true } });
+          const count = typeClickCount(s1, ed.layer, [dx, dy]);
+          try {
+            const ht = await runCommand(tabId, 'type.hitTest', { layer: ed.layer, x: dx, y: dy }, { noPull: true }) as { index?: number };
+            const s2 = getSession(tabId);
+            if (s2?.textEdit && s2.textEdit.layer === ed.layer) {
+              const off = typeof ht.index === 'number' ? ht.index : s2.textEdit.caret;
+              updateSession(tabId, { textEdit: { ...s2.textEdit, caret: off, anchor: e.shiftKey ? s2.textEdit.anchor : off, dragging: true } });
+            }
+          } catch {
+            /* 脱靶:保持 caret,拖拽仍成立(上游 hit_char 最近点) */
+          }
+          typeBlinkRef.current = performance.now();
+          void applyTypeClicks(ed.layer, count, [dx, dy], ed.caret);
+          // 点击落 caret 后把焦点收回隐藏 input(浏览器点非可聚焦元素会掉到 body)
+          typeInputRef.current?.focus();
+          return;
+        }
+        // 框外点击=提交不起新文字(上游 commit_with + return true)
+        void commitType();
+        return;
+      }
+      return;
+    }
+    // ⇧点击=新文字盖旧字(上游 mods.shift 早退 → 落 box 手势)
+    if (e.shiftKey) {
+      typeDragRef.current = { start: [dx, dy] };
+      return;
+    }
+    const id = topmostTypeLayerAt(s, dx, dy, tol);
+    if (id != null) {
+      // 命中像素 bounds:异步 hitTest 确认(命中=编辑;脱靶=转拖框/点文本)
+      typePendingRef.current = { start: [dx, dy], detail: e.detail, down: true };
+      try {
+        const ht = await runCommand(tabId, 'type.hitTest', { layer: id, x: dx, y: dy }, { noPull: true }) as { index?: number; inside?: boolean };
+        const pend = typePendingRef.current;
+        typePendingRef.current = null;
+        const s2 = getSession(tabId);
+        if (!s2 || s2.textEdit) return;
+        if (ht.inside) {
+          await runCommand(tabId, 'layer.select', { layer: id });
+          beginTypeEdit(id, typeof ht.index === 'number' ? ht.index : 0, typeClickCount(s, id, [dx, dy]), [dx, dy], null);
+          return;
+        }
+        if (pend?.down) {
+          // 未命中字形/框:按住中=转拖框;已抬起=点文本(上游 pointer_down false→box 手势)
+          if (pend.down) typeDragRef.current = { start: pend.start };
+        }
+      } catch {
+        const pend = typePendingRef.current;
+        typePendingRef.current = null;
+        if (pend?.down) typeDragRef.current = { start: pend.start };
+      }
+      return;
+    }
+    typeDragRef.current = { start: [dx, dy] };
+  };
+
+  /** 文字工具移动:把手拖缩(节流 80ms+尾沿,Live 同款)/拖拽选字 caret(60ms 节流)。 */
+  const typePointerMove = (s: EditorSession, dx: number, dy: number, alt: boolean) => {
+    const ed = s.textEdit;
+    const rs = typeResizeRef.current;
+    if (rs && ed) {
+      const [px, py] = affApply(affInvert(rs.transform), dx, dy);
+      const [x0, y0, w, h] = resizeBoxCalc(rs.handle, rs.shape, px, py, alt);
+      const [ox, oy] = affApply(rs.transform, x0, y0);
+      const box: [number, number, number, number] = [ox, oy, w, h];
+      const now = performance.now();
+      if (now - rs.lastSent > 80) {
+        rs.lastSent = now;
+        rs.pending = null;
+        markInteractiveRender(tabId, 1200);
+        void runCommand(tabId, 'type.edit', { layer: ed.layer, box, coalesce: ed.session }, { noPull: true }).catch(() => undefined);
+      } else {
+        rs.pending = box;
+      }
+      return;
+    }
+    if (ed?.dragging) {
+      const now = performance.now();
+      if (now - typeMoveHitRef.current.last > 60) {
+        typeMoveHitRef.current.last = now;
+        void runCommand(tabId, 'type.hitTest', { layer: ed.layer, x: dx, y: dy }, { noPull: true })
+          .then((h) => {
+            const s2 = getSession(tabId);
+            const off = (h as { index?: number }).index;
+            if (s2?.textEdit?.dragging && typeof off === 'number') {
+              updateSession(tabId, { textEdit: { ...s2.textEdit, caret: off } });
+              typeBlinkRef.current = performance.now();
+              scheduleDraw();
+            }
+          })
+          .catch(() => undefined);
+      }
+    }
+  };
+
+  /** 文字工具抬起(上游 pointer_up):框=拖缩尾沿补发/选字结束/拖框判定→type.create。 */
+  const typePointerUp = (s: EditorSession, dx: number, dy: number) => {
+    const ed = s.textEdit;
+    const rs = typeResizeRef.current;
+    if (rs) {
+      typeResizeRef.current = null;
+      if (rs.pending && ed) {
+        void runCommand(tabId, 'type.edit', { layer: ed.layer, box: rs.pending, coalesce: ed.session }).catch(() => undefined);
+      }
+      return;
+    }
+    if (ed?.dragging) {
+      updateSession(tabId, { textEdit: { ...ed, dragging: false } });
+      typeBlinkRef.current = performance.now();
+      scheduleDraw();
+      return;
+    }
+    if (typePendingRef.current) {
+      typePendingRef.current.down = false; // hitTest 确认回来后收尾(脱靶=点文本)
+      return;
+    }
+    const drag = typeDragRef.current;
+    typeDragRef.current = null;
+    if (drag) void createTypeText(drag.start, [dx, dy], s.tool === 'typeVertical');
+  };
+
+  /** overlay 数据保障(上游 layout 缓存等价):info 文本镜像+caret 钳制+选区/组字边界段。 */
+  const ensureTypeOverlay = async (ed: TextEditSession) => {
+    const info = await fetchTypeInfo(ed.layer);
+    if (!info) return;
+    typeTextRef.current = info.text;
+    const n = charCount(info.text);
+    const cur = getSession(tabId);
+    if (cur?.textEdit && cur.textEdit.layer === ed.layer && (cur.textEdit.caret > n || cur.textEdit.anchor > n)) {
+      updateSession(tabId, { textEdit: { ...cur.textEdit, caret: Math.min(cur.textEdit.caret, n), anchor: Math.min(cur.textEdit.anchor, n) } });
+    }
+    const a = Math.min(ed.caret, ed.anchor, n);
+    const b = Math.max(ed.caret, ed.anchor, n);
+    const idxs = new Set<number>([Math.min(ed.caret, n)]);
+    for (const ln of info.lines) {
+      const sp = lineSelectionSpan(ln, a, b);
+      if (sp) {
+        idxs.add(sp.span[0]);
+        idxs.add(sp.span[1]);
+      }
+    }
+    if (ed.preedit) {
+      idxs.add(ed.preedit[0]);
+      idxs.add(ed.preedit[0] + ed.preedit[1]);
+    }
+    await Promise.all([...idxs].map((i) => fetchCaretSeg(ed.layer, i)));
+    scheduleDraw();
+  };
+
   // 注册裁剪回调(选项条 ✓/⊘/比例 用)。会话可能在画布挂载后才创建:除挂载时注册外,
   // 订阅回调里每次通知补注册(requestDraw 同款模式),卸载时清掉。
   useEffect(() => {
@@ -2148,6 +2764,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropFitRatio !== cropFitRatio) s.runtime.cropFitRatio = cropFitRatio;
       if (s.runtime.cropSetAngle !== cropSetAngle) s.runtime.cropSetAngle = cropSetAngle;
       if (s.runtime.makeSelection !== makeSelectionFromActivePath) s.runtime.makeSelection = makeSelectionFromActivePath;
+      if (s.runtime.commitTextEdit !== commitType) s.runtime.commitTextEdit = commitType;
     };
     const s0 = getSession(tabId);
     if (s0) register(s0);
@@ -2168,8 +2785,57 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropFitRatio === cropFitRatio) s.runtime.cropFitRatio = null;
       if (s.runtime.cropSetAngle === cropSetAngle) s.runtime.cropSetAngle = null;
       if (s.runtime.makeSelection === makeSelectionFromActivePath) s.runtime.makeSelection = null;
+      if (s.runtime.commitTextEdit === commitType) s.runtime.commitTextEdit = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType]);
+
+  // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
+  // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
+  const ted = session?.textEdit;
+  const tedKey = ted && session ? `${session.docId}:${ted.layer}:${ted.caret}:${ted.anchor}:${ted.preedit?.join(',') ?? ''}` : '';
+  const tedRev = session?.revision ?? 0;
+  useEffect(() => {
+    const s = getSession(tabId);
+    if (!s?.textEdit || s.docId == null) return;
+    const ed = s.textEdit;
+    let alive = true;
+    void ensureTypeOverlay(ed).then(() => {
+      if (!alive) return;
+      const s2 = getSession(tabId);
+      if (!s2?.textEdit || s2.textEdit.layer !== ed.layer) return;
+      void fetchCaretSeg(ed.layer, Math.min(s2.textEdit.caret, charCount(typeTextRef.current))).then((seg) => {
+        if (alive) positionTypeInput(seg);
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [tabId, tedKey, tedRev]);
+
+  // caret 闪烁节拍(上游 request_repaint_after 0.530s 等价:会话活跃期间周期重绘)
+  const blinkOn = ted ? 1 : 0;
+  useEffect(() => {
+    if (!blinkOn) return undefined;
+    const t = window.setInterval(() => scheduleDraw(), CARET_BLINK_MS);
+    return () => window.clearInterval(t);
+  }, [blinkOn, scheduleDraw]);
+
+  // 活动层/文档离开编辑会话即提交(上游 end_if_left:另一层/另一文档激活=Photoshop 提交)
+  const homeKey = ted && session ? `${session.docId}:${session.state?.activeLayer}:${ted.layer}:${ted.docId}` : '';
+  useEffect(() => {
+    const s = getSession(tabId);
+    if (!s?.textEdit) return;
+    if (!typeSessionHome(s)) void commitType();
+  }, [tabId, homeKey]);
+
+  // beforeinput 原生监听走 attachTypeInput ref 回调(元素缺席时 effect 空跑问题,见上)
+  typeBeforeInputRef.current = (ev: InputEvent) => {
+    // 组字文本让位(compositionupdate 接管);其余一律吞掉(文档才是真值)
+    if (ev.inputType === 'insertCompositionText') return;
+    ev.preventDefault();
+    if (ev.inputType === 'insertText' && ev.data) insertTyped(ev.data);
+    else if (ev.inputType === 'insertParagraph' || ev.inputType === 'insertLineBreak') void insertTypeText('\n');
+  };
 
   // 注册重绘请求 + 初始适配
   useEffect(() => {
@@ -2580,7 +3246,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const down = (e: KeyboardEvent) => {
       const s = getSession(tabId);
       if (!s) return;
-      if (e.code === 'Space') {
+      if (e.code === 'Space' && !s.textEdit) {
+        // 文字会话中空格=键入空格(上游 Event::Text " "),不做平移
         spaceRef.current = true;
         scheduleDraw();
         return;
@@ -2637,6 +3304,134 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.tool === 'pen' && penRef.current && (e.key === 'Enter' || e.key === 'Escape') && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         commitPen(false);
+        return;
+      }
+      // 文字编辑会话键盘(上游 handle_keys):会话活跃时单键工具快捷键必须让位。
+      // IME 组字中(keyCode 229/isComposing)不拦——组合文本走 textarea composition 事件。
+      if (s.textEdit && TYPE_TOOLS.has(s.tool)) {
+        const ed = s.textEdit;
+        if (e.isComposing) return;
+        const n = charCount(typeTextRef.current);
+        const a = Math.min(ed.caret, ed.anchor, n);
+        const b = Math.max(ed.caret, ed.anchor, n);
+        const setTo = (to: number, extend: boolean) => {
+          const s2 = getSession(tabId);
+          if (!s2?.textEdit) return;
+          updateSession(tabId, { textEdit: { ...s2.textEdit, caret: Math.min(to, n), anchor: extend ? s2.textEdit.anchor : Math.min(to, n) } });
+          typeBlinkRef.current = performance.now();
+          scheduleDraw();
+        };
+        const nav = (index: number, move: string, x?: number) =>
+          runCommand(tabId, 'type.navigate', { layer: ed.layer, index, move, ...(x != null ? { x } : {}) }, { noPull: true }) as Promise<{ index?: number }>;
+        if (e.ctrlKey || e.metaKey) {
+          const code = e.code;
+          if (code === 'KeyA') {
+            // ⌘A 全选(上游 Key::A if m.command)
+            e.preventDefault();
+            updateSession(tabId, { textEdit: { ...ed, anchor: 0, caret: n } });
+            typeBlinkRef.current = performance.now();
+            scheduleDraw();
+            return;
+          }
+          if (code === 'KeyZ' || code === 'KeyY') {
+            // ⌘Z/⌘⇧Z/⌘Y 透传文档 undo/redo(上游 _ if m.command → handled=false);
+            // undo 缩文后 caret 由 info 刷新钳制
+            e.preventDefault();
+            const redo = code === 'KeyY' || e.shiftKey;
+            if (redo ? s.state?.canRedo : s.state?.canUndo) void runCommand(tabId, redo ? 'edit.redo' : 'edit.undo', {}).catch(console.error);
+            return;
+          }
+          if (e.key === 'Enter') {
+            // ⌘Enter 提交(上游 Key::Enter if m.command → commit_with)
+            e.preventDefault();
+            void commitType();
+            return;
+          }
+          return; // 其余 Ctrl 组合同输入框口径不进工具
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          void insertTypeText('\n');
+          return;
+        }
+        if (e.key === 'Escape') {
+          // 偏好「Esc 提交」默认开(上游 use_esc_to_commit 默认 true)
+          e.preventDefault();
+          void commitType();
+          return;
+        }
+        if (e.key === 'Tab' && !e.shiftKey) {
+          // Tab 键入制表符(上游 Key::Tab → insert "\t")
+          e.preventDefault();
+          void insertTypeText('\t');
+          return;
+        }
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+          e.preventDefault();
+          if (a !== b) {
+            void insertTypeText('');
+            return;
+          }
+          const fwd = e.key === 'Delete';
+          if (!fwd && e.ctrlKey) {
+            // Ctrl+退格=删到行首(上游 (false,_,true)→line_edge start)
+            void nav(a, 'lineStart').then((r) => {
+              const s2 = getSession(tabId);
+              if (s2?.textEdit && typeof r.index === 'number' && r.index !== s2.textEdit.caret) {
+                updateSession(tabId, { textEdit: { ...s2.textEdit, anchor: r.index, caret: s2.textEdit.caret } });
+                void insertTypeText('');
+              }
+            }).catch(() => undefined);
+            return;
+          }
+          // Alt=词边界(上游 word_boundary);裸=±1
+          const to = fwd
+            ? (e.altKey ? wordBoundary(typeTextRef.current, a, true) : Math.min(a + 1, n))
+            : (e.altKey ? wordBoundary(typeTextRef.current, a, false) : Math.max(a - 1, 0));
+          if (to !== a) {
+            updateSession(tabId, { textEdit: { ...ed, anchor: to, caret: a } });
+            void insertTypeText('');
+          }
+          return;
+        }
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+          // 竖排字流映射(上游 flow_key)后走横排同义分支;词/行导航=type.navigate 查询
+          e.preventDefault();
+          const fk = flowKey(e.key, s.tool === 'typeVertical');
+          const cur = ed.caret;
+          if (fk === 'ArrowLeft' || fk === 'ArrowRight') {
+            const fwd = fk === 'ArrowRight';
+            if (e.ctrlKey || e.metaKey || e.altKey) {
+              void nav(cur, fwd ? 'wordNext' : 'wordPrev').then((r) => {
+                if (typeof r.index === 'number') setTo(r.index, e.shiftKey);
+              }).catch(() => undefined);
+            } else if (a !== b && !e.shiftKey) {
+              setTo(fwd ? b : a, false);
+            } else {
+              setTo(fwd ? cur + 1 : cur - 1, e.shiftKey);
+            }
+            return;
+          }
+          if (fk === 'ArrowUp' || fk === 'ArrowDown') {
+            if (e.ctrlKey || e.metaKey) {
+              setTo(fk === 'ArrowUp' ? 0 : n, e.shiftKey);
+            } else {
+              // 行步进保持列位:先取 caret 段的文档 x(上游 column 的 doc_x)
+              void fetchCaretSeg(ed.layer, Math.min(cur, n)).then((seg) => {
+                const x = seg ? seg[0][0] : undefined;
+                return nav(Math.min(cur, n), fk === 'ArrowUp' ? 'linePrev' : 'lineNext', x);
+              }).then((r) => {
+                if (typeof r.index === 'number') setTo(r.index, e.shiftKey);
+              }).catch(() => undefined);
+            }
+            return;
+          }
+          void nav(Math.min(cur, n), e.key === 'End' ? 'lineEnd' : 'lineStart').then((r) => {
+            if (typeof r.index === 'number') setTo(r.index, e.shiftKey);
+          }).catch(() => undefined);
+          return;
+        }
+        // 其余单键不拦:textarea beforeinput 接文字(insertTyped),工具快捷键被 isTyping 让位
         return;
       }
       if (isTyping(e.target)) return;
@@ -3071,6 +3866,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       } else if (k === 'a') {
         // A 键路径组循环:路径选择↔直接选择(上游 Tool::PathSelection|DirectSelection 同键)
         setTool(tabId, nextPathTool(getSession(tabId)?.tool));
+      } else if (k === 't') {
+        // T 键文字组循环:横排↔竖排(上游 Tool::Type|VerticalType 同键)
+        setTool(tabId, nextTypeTool(getSession(tabId)?.tool));
       } else if (TOOL_KEYS[k]) {
         setTool(tabId, TOOL_KEYS[k] as EditorTool);
       }
@@ -3223,10 +4021,33 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const rect = wrapRef.current!.getBoundingClientRect();
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    // 文字工具(二-6,上游 pointer_down 分发):会话中=把手/落 caret/框外提交;
+    // 空白/既有字层=拖框/编辑。整个手势消费掉,不再落画笔/形状分支。
+    if (TYPE_TOOLS.has(s.tool) && e.button === 0 && s.state) {
+      void typePointerDown(s, dx, dy, e);
+      return;
+    }
     if (BRUSH_TOOLS.has(s.tool) && e.button === 0 && s.state) {
       // 一笔进行中时忽略再次按下(鼠标不会出现;触屏多指防把进行中描边的 live 顶掉)
       if (!strokeRef.current) beginStroke(s, s.tool as BrushFamilyTool, dx, dy, e.shiftKey);
     } else if (s.tool === 'move' && e.button === 0 && s.state) {
+      // Move 双击编辑文字层(上游 edit_at,#1132):命中文字=选中并进文字工具编辑,
+      // 提交后回到移动工具;未命中=普通双击(无视)
+      if (e.detail >= 2) {
+        void (async () => {
+          try {
+            const h = await runCommand(tabId, 'type.hitTest', { x: dx, y: dy }, { noPull: true }) as { layer?: number; index?: number };
+            if (typeof h.layer !== 'number' || getSession(tabId)?.textEdit) return;
+            await runCommand(tabId, 'layer.select', { layer: h.layer });
+            if (getSession(tabId)?.textEdit) return;
+            beginTypeEdit(h.layer, typeof h.index === 'number' ? h.index : 0, 1, [dx, dy], 'move');
+            setTool(tabId, 'type');
+          } catch {
+            /* 无文字层在指针下 */
+          }
+        })();
+        return;
+      }
       moveSeqRef.current += 1;
       moveHoverRef.current = null; // 拖拽开始=悬停高亮消失(上游 pressed 分支)
       beginMoveDrag(s, dx, dy, { alt: e.altKey, ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
@@ -3542,6 +4363,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    // 文字工具(二-6,上游 pointer_move):段落框把手拖缩(节流)/拖拽选字 caret(节流)。
+    if (TYPE_TOOLS.has(s.tool) && (typeResizeRef.current || s.textEdit?.dragging)) {
+      typePointerMove(s, dx, dy, e.altKey);
+      scheduleDraw();
+      return;
+    }
     // Select and Mask 边刷:按住拖动连续涂抹(Alt 即时反向;近点由纯函数按 max(size/8,1)
     // 点距过滤=零通知,跨过阈值才 updateSelectMask→泵重算预览)
     if (s.selectMask?.open) {
@@ -3811,6 +4638,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 交互期降载在此收口(渐变拖动等画布交互;滑杆类在各自 flushNow):mark(0) 的
     // notify 唤醒泵,随后的终提交 revision 推进即以全分辨率出图
     markInteractiveRender(tabId, 0);
+    // 文字工具抬起(二-6,上游 pointer_up):拖缩尾沿补发/选字结束/拖框判定→type.create
+    if (s && TYPE_TOOLS.has(s.tool) && s.state) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
+      typePointerUp(s, dx, dy);
+      return;
+    }
     // 磁性自由画线段(⌥ 拖)抬起=段末设锚点(上游 end_freehand)
     if (s && magneticRef.current?.freehand) {
       const m = magneticRef.current;
@@ -4217,6 +5051,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     marqueeRef.current = null;
     eyedropRef.current = null;
     panRef.current = null;
+    // 文字手势中断:拖缩/拖框/挂起确认丢弃;编辑会话本身保留(仍可键入)
+    typeResizeRef.current = null;
+    typeDragRef.current = null;
+    typePendingRef.current = null;
+    const st = getSession(tabId);
+    if (st?.textEdit?.dragging) updateSession(tabId, { textEdit: { ...st.textEdit, dragging: false } });
     (e.target as Element).releasePointerCapture?.(e.pointerId);
     scheduleDraw();
   };
@@ -4265,8 +5105,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       : session.tool === 'zoom' ? 'zoom-in'
         : BRUSH_TOOLS.has(session.tool) ? 'none'
           : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')
-            : CROSSHAIR_TOOLS.has(session.tool) ? CROSSHAIR_CURSOR
-              : 'default';
+            : TYPE_TOOLS.has(session.tool) ? 'text'
+              : CROSSHAIR_TOOLS.has(session.tool) ? CROSSHAIR_CURSOR
+                : 'default';
 
   return (
     <div
@@ -4297,6 +5138,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     >
       <canvas ref={displayRef} className="absolute inset-0" />
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" />
+      {/* IME 承接(二-6):隐藏 textarea 摆到 caret 屏幕位——OS 候选窗锚定其元素矩形
+          (上游 egui IMEOutput 的 Web 等价);pointer-events 关掉,指针手势全走画布;
+          beforeinput 走原生监听(typeBeforeInputRef),组字让位给 composition 事件 */}
+      <textarea
+        ref={attachTypeInput}
+        className="pointer-events-none absolute z-0 m-0 resize-none overflow-hidden border-0 bg-transparent p-0 opacity-0 outline-none"
+        style={{ left: '-100px', top: '-100px', width: 1, height: 1 }}
+        spellCheck={false}
+        aria-hidden
+        tabIndex={-1}
+        onChange={() => undefined}
+        onCompositionUpdate={(e) => void imeUpdateType(e.data, false)}
+        onCompositionEnd={(e) => void imeUpdateType(e.data, true)}
+      />
       {session.shapeDialog && <ShapeDialog tabId={tabId} />}
       {session.loading && <div className="absolute inset-0 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">正在打开…</div>}
       {session.error && <div className="absolute inset-0 flex items-center justify-center text-sm text-red-400 p-8 text-center">{session.error}</div>}

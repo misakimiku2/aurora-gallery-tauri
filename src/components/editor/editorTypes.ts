@@ -111,6 +111,8 @@ export type EditorTool =
   | 'convertPoint'
   | 'pathSelect'
   | 'directSelect'
+  | 'type'
+  | 'typeVertical'
   | 'hand'
   | 'zoom';
 

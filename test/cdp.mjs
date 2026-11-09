@@ -120,6 +120,16 @@ try {
     await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', windowsVirtualKeyCode: code, code: args[2] ?? `Key${keyName === 'Enter' ? 'Enter' : keyName.toUpperCase()}`, key: keyName, modifiers: flags });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', windowsVirtualKeyCode: code, code: args[2] ?? `Key${keyName === 'Enter' ? 'Enter' : keyName.toUpperCase()}`, key: keyName, modifiers: flags });
     console.log('key', k, mods.join('+'), 'done');
+  } else if (cmd === 'text') {
+    // text <str>:Input.insertText(不走键击,直接插入;等价 IME 上屏,触发 beforeinput
+    // insertText 与组字中的 compositionend)
+    await send('Input.insertText', { text: args[0] });
+    console.log('text done');
+  } else if (cmd === 'ime') {
+    // ime <str>:Input.imeSetComposition(真实 IME 组字管线;preedit 进入 compositionupdate)
+    const t = args[0];
+    await send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length });
+    console.log('ime done');
   } else {
     console.error('unknown cmd', cmd);
   }

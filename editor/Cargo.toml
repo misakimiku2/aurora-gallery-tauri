@@ -13,6 +13,8 @@ photocraft-color = { path = "../photocraft-vendor/crates/color" }
 photocraft-raster = { path = "../photocraft-vendor/crates/raster" }
 photocraft-io = { path = "../photocraft-vendor/crates/io" }
 photocraft-format = { path = "../photocraft-vendor/crates/format" }
+# 文字引擎后台预热(上游 warm_fonts 同款;type.* 命令本身经 engine 依赖可达)
+photocraft-text = { path = "../photocraft-vendor/crates/text" }
 serde_json = "1"
 rayon = "1"
 # OS 剪贴板位图桥(上游 app 壳同款;引擎不碰系统剪贴板,镜像/导入在桥层)

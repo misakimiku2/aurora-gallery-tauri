@@ -7,6 +7,7 @@ import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
+import { TYPE_TOOLS, type TextEditSession } from './typeLogic';
 import type { PathListSummary } from './pathsPanelLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
@@ -127,6 +128,8 @@ export interface EditorRuntime {
   cropSetAngle: ((deg: number) => void) | null;
   /** 当前路径载入选区(选项条「建立选区」按钮;画布注册——钢笔草稿在画布 ref)。 */
   makeSelection: (() => void) | null;
+  /** 文字编辑会话提交(换工具时 store 调;画布注册——会话态/隐藏 input 在画布)。 */
+  commitTextEdit: (() => void) | null;
 }
 
 export interface EditorSession {
@@ -165,6 +168,12 @@ export interface EditorSession {
   pathsDialog: PathsDialogState | null;
   /** 直接选择的选择态(工具/键事件改;拖拽态在画布 ref,不入 store)。 */
   directSel: DirectSelState;
+  /** 文字编辑会话(上游 ui.text_edit;输入法组字/选区即文档态,会话本身是编辑器态)。
+   * 挂 store 让面板/选项条可读;caret 推进与 IME 事件在画布接线。 */
+  textEdit: TextEditSession | null;
+  /** 文字连击计数(上游 type_clicks):同层同点连击 2=词 3=行 4=段落 5=全选。
+   * t/at=上次按下时间与文档位(pointerdown.detail 不携带连击数,自行判定时距)。 */
+  typeClicks: { layer: number; count: number; t: number; at: [number, number] } | null;
 }
 
 /** 路径面板对话框字段(上游 stroke_path_dialog + path.toSelection 的 pen_dialog spec)。 */
@@ -262,7 +271,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       penAutoAddDelete: true,
       penVectorMode: 'path',
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -275,6 +284,8 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     selectedPath: null,
     pathsDialog: null,
     directSel: { target: null, anchors: [], segment: null },
+    textEdit: null,
+    typeClicks: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -841,7 +852,11 @@ export async function confirmExportDialog(tabId: string): Promise<void> {
 export function setTool(tabId: string, tool: EditorTool): void {
   const s = sessions.get(tabId);
   if (!s || s.tool === tool) return;
+  // 离开文字工具即提交编辑会话(Photoshop 口径:换工具提交在打文字;钩子由画布注册,
+  // 会话态/隐藏 input 都在画布 ref——同 cropCommit/makeSelection 模式)。
+  const wasType = TYPE_TOOLS.has(s.tool);
   s.tool = tool;
+  if (wasType && !TYPE_TOOLS.has(tool)) s.runtime.commitTextEdit?.();
   notify(tabId);
 }
 
@@ -959,6 +974,11 @@ export function listDirtySessions(): DirtySessionInfo[] {
 export function debugSessions(): { tabId: string; tool: string; docId: number | null; path: string | null }[] {
   return [...sessions.values()].map((s) => ({ tabId: s.tabId, tool: s.tool, docId: s.docId, path: s.path }));
 }
+
+// 冒烟/调试:活模块挂 window(HMR 后动态 import 拿到的是副本,sessions map 不共享)。
+(window as unknown as { __editorStoreLive?: unknown }).__editorStoreLive = {
+  getSession, debugSessions, runCommand, updateSession,
+};
 
 /** 指定 Tab 的编辑器会话是否有未保存修改(无会话=false)。 */
 export function isSessionDirty(tabId: string): boolean {

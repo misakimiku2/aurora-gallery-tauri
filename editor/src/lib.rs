@@ -155,6 +155,9 @@ impl EditorManager {
             "prefs.set",
             json!({ "values": { "performance.memoryUsageMb": 2048 } }),
         );
+        // 文字引擎后台预热(上游 warm_fonts 口径):系统字体扫描进后台线程,
+        // 首个 type.* 命令不再同步阻塞等扫描完成。
+        photocraft_text::warm_shared();
         Self { session, live: None, os_clip_sig: None, magnetic: None }
     }
 

@@ -35,6 +35,7 @@ import square from '../../assets/editor-icons/square.svg?raw';
 import squarePlus from '../../assets/editor-icons/square-plus.svg?raw';
 import trash from '../../assets/editor-icons/trash.svg?raw';
 import mousePointer2 from '../../assets/editor-icons/mouse-pointer-2.svg?raw';
+import typeIcon from '../../assets/editor-icons/type.svg?raw';
 
 /** 图标名 = 上游 assets/icons 文件名(icons.rs tool_icon 同名)。 */
 export type EditorIconName =
@@ -43,7 +44,7 @@ export type EditorIconName =
   | 'gradient' | 'paint-bucket' | 'droplet' | 'triangle' | 'pointer' | 'hand' | 'zoom-in'
   | 'rectangle-horizontal' | 'circle' | 'slash' | 'pen-tool'
   | 'pen-add-anchor' | 'pen-delete-anchor' | 'convert-point' | 'direct-select'
-  | 'spline' | 'square' | 'square-plus' | 'trash' | 'mouse-pointer-2';
+  | 'spline' | 'square' | 'square-plus' | 'trash' | 'mouse-pointer-2' | 'type';
 
 const ICONS: Record<EditorIconName, string> = {
   move, 'square-dashed': squareDashed, 'ellipse-dashed': ellipseDashed,
@@ -55,6 +56,7 @@ const ICONS: Record<EditorIconName, string> = {
   'pen-add-anchor': penAddAnchor, 'pen-delete-anchor': penDeleteAnchor,
   'convert-point': convertPoint, 'direct-select': directSelect,
   spline, square, 'square-plus': squarePlus, trash, 'mouse-pointer-2': mousePointer2,
+  type: typeIcon,
 };
 
 export const EditorIcon: FC<{ name: EditorIconName; size?: number; className?: string }> = ({

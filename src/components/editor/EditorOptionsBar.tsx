@@ -14,6 +14,7 @@ import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
 import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetFields } from './cropSize';
 import { SHAPE_GROUP } from './toolLogic';
+import { TYPE_TOOLS } from './typeLogic';
 import { activePathName, pathRows } from './pathsPanelLogic';
 import { EditorSelect } from './editorSelect';
 import { runCommand } from './editorStore';
@@ -661,6 +662,11 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
         <span className="text-neutral-500 dark:text-neutral-400">{s.tool === 'addAnchor' ? '点击段=加锚点(曲线原形分割) · Alt=换删除锚点 · Ctrl=直接选择' : '点击锚=删除(邻锚以原手柄接续) · Alt=换添加锚点 · Ctrl=直接选择'}</span>
       ) : s.tool === 'convertPoint' ? (
         <span className="text-neutral-500 dark:text-neutral-400">点击锚=转角点 · 从锚拖拽=拉出平滑手柄 · 拖手柄=单独动 · Ctrl=直接选择</span>
+      ) : TYPE_TOOLS.has(s.tool) ? (
+        // 文字工具(二-6;字体/字号/颜色条=二-7 字符面板)。横竖排由工具本身决定(T 组循环)。
+        <span className="text-neutral-500 dark:text-neutral-400">
+          {s.tool === 'typeVertical' ? '竖排 · ' : ''}点击=点文本(占位文字,键入替换) · 拖动=段落框 · 点击文字=编辑 · Esc/Ctrl+Enter/点别处=提交 · 双击=选词
+        </span>
       ) : SHAPE_GROUP.has(s.tool) ? (
         <>
           {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;
