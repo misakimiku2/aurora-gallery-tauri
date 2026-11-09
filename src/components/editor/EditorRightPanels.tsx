@@ -24,8 +24,8 @@ import { getSession, subscribeSession } from './editorStore';
 /** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。
  * 双击蒙版缩略图等入口经 `aurora-editor-panel` 窗口事件请求切页(与 aurora-editor-saved 同款跨组件信号)。
  * 折叠口径:点已激活页签=收起/展开本组内容;折叠中点任意页签=展开并切换。 */
-const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => void }> = ({
-  tabId, collapsed, onToggle,
+const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => void; active?: boolean }> = ({
+  tabId, collapsed, onToggle, active = true,
 }) => {
   const [tab, setTab] = useState<'props' | 'adjust' | 'history' | 'type'>('history');
   const collapsedRef = useRef(!!collapsed);
@@ -65,7 +65,7 @@ const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => 
           {tab === 'history' && <HistoryPanel tabId={tabId} />}
           {tab === 'props' && <AdjustmentProps tabId={tabId} />}
           {tab === 'adjust' && <AdjustmentGrid tabId={tabId} onAdded={() => setTab('props')} />}
-          {tab === 'type' && <TypePanel tabId={tabId} />}
+          {tab === 'type' && <TypePanel tabId={tabId} active={active} />}
         </div>
       )}
     </div>
@@ -104,7 +104,7 @@ const LayersPathsGroup: React.FC<{ tabId: string }> = ({ tabId }) => {
   );
 };
 
-export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
+export const EditorRightPanels: React.FC<{ tabId: string; active?: boolean }> = ({ tabId, active = true }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const groupRefs = useRef<(HTMLDivElement | null)[]>([]);
   // 工具切换(渐变工具激活时第一组换渐变编辑器)与选项变化都要重渲染
@@ -220,7 +220,7 @@ export const EditorRightPanels: React.FC<{ tabId: string }> = ({ tabId }) => {
   const gradientTool = getSession(tabId)?.tool === 'gradient';
   const groups: React.ReactNode[] = [
     gradientTool ? <GradientPanel key="gradient" tabId={tabId} /> : <ColorPanel key="color" tabId={tabId} />,
-    <MidPanel key="mid" tabId={tabId} collapsed={collapsed[1]} onToggle={() => toggleCollapse(1)} />,
+    <MidPanel key="mid" tabId={tabId} collapsed={collapsed[1]} onToggle={() => toggleCollapse(1)} active={active} />,
     <NavigatorInfoPanel
       key="nav"
       tabId={tabId}

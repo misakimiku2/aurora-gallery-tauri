@@ -134,7 +134,7 @@ const ToggleCell: React.FC<{ on: boolean; title: string; children: React.ReactNo
 
 const SECTION = 'px-3 py-1.5 text-[10px] text-neutral-500 dark:text-neutral-400 border-b border-black/5 dark:border-white/5';
 
-export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
+export const TypePanel: React.FC<{ tabId: string; active?: boolean }> = ({ tabId, active = true }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
@@ -361,8 +361,9 @@ export const TypePanel: React.FC<{ tabId: string }> = ({ tabId }) => {
         ));
       })()}
 
-      {/* 取色卡(PickerCard 可拖壳:SV 满高,标题栏拖动) */}
-      {colorPick && (
+      {/* 取色卡(PickerCard 可拖壳:SV 满高,标题栏拖动);active=本标签非前台或设置/模态
+          打开时藏起(portal 到 body 逃出了 hidden 的标签容器,选区/导出弹窗同口径) */}
+      {colorPick && active && (
         <PickerCard title="文字颜色" onClose={() => setColorPick(null)}>
           <ColorPicker
             value={colorPick.rgb}

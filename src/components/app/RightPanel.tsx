@@ -54,10 +54,11 @@ export const RightPanel = ({
         <div
           className="h-full flex flex-col"
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
-          {/* 编辑器 v3:编辑 Tab 激活时,右侧槽位换成编辑器四组面板(可拖调高度);退出即还原详情面板 */}
+          {/* 编辑器 v3:编辑 Tab 激活时,右侧槽位换成编辑器四组面板(可拖调高度);退出即还原详情面板。
+              active 传给面板内的 portal 弹卡(文字颜色):设置/模态打开时不能浮在最前 */}
           {activeTab.isEditorMode && !isAndroidPlatformCached() ? (
             <Suspense fallback={null}>
-              <EditorRightPanels tabId={activeTab.id} />
+              <EditorRightPanels tabId={activeTab.id} active={state.activeModal.type === null && !state.isSettingsOpen} />
             </Suspense>
           ) : (
           <MetadataPanel

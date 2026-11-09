@@ -170,8 +170,9 @@ export const EditorShell: React.FC<{
           </PanelToggle>
         </div>
       </div>
-      {/* 工具选项条(绿):随工具显示对应设置 */}
-      <EditorOptionsBar tabId={tabId} />
+      {/* 工具选项条(绿):随工具显示对应设置;active=选区/导出弹窗同口径,本标签非前台或
+          设置/模态打开时,选项条里的 portal 弹卡(文字颜色)要藏起来 */}
+      <EditorOptionsBar tabId={tabId} active={isActive && !overlayOpen} />
       {/* 主行:工具栏(黄) | 画布(白);四组面板在应用右栏槽位 */}
       <div className="flex-1 min-h-0 flex">
         <EditorToolbar tabId={tabId} />

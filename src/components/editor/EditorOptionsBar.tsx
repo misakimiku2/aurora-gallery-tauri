@@ -104,7 +104,7 @@ const applyCropMenu = (tabId: string, v: string): void => {
   if (v) s.runtime.cropFitRatio?.();
 };
 
-export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
+export const EditorOptionsBar: React.FC<{ tabId: string; active?: boolean }> = ({ tabId, active = true }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   // 裁剪比例下拉(右键菜单同款毛玻璃弹层)与角度输入框的本地编辑态
@@ -682,7 +682,7 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
       ) : TYPE_TOOLS.has(s.tool) ? (
         // 文字工具选项条(二-7,上游 options_bar):横竖切换/字体/样式/字号/抗锯齿/对齐/段落方向/
         // 文字颜色;会话中加 ✓ 提交(取消=Esc 提交后 Ctrl+Z 一步全撤)。完整字符字段在「字符」页签。
-        <TypeOptionsInline tabId={tabId} />
+        <TypeOptionsInline tabId={tabId} active={active} />
       ) : SHAPE_GROUP.has(s.tool) ? (
         <>
           {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;
@@ -791,8 +791,9 @@ const layerParams = (tabId: string): Record<string, unknown> | null => {
 /** 引擎 Orientation 读回(选项条按钮态;无目标=工具侧)。 */
 const orientV = (tool?: string): boolean => tool === 'typeVertical';
 
-/** 会话中文字符样式回显(选区起点 run;无会话=工具默认)。上游 options_bar 的 shown。 */
-const TypeOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
+/** 会话中文字符样式回显(选区起点 run;无会话=工具默认)。上游 options_bar 的 shown。
+ *  active=本标签非前台/设置模态打开时,portal 的文字颜色卡要藏起(EditorShell 传入)。 */
+const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabId, active = true }) => {
   const [, forceUpdate] = useState(0);
   useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
   const s = getSession(tabId);
@@ -931,7 +932,7 @@ const TypeOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
         style={{ background: hex || rgbCss(s.state?.foreground) }}
         onClick={() => { const h = hex || '#000000'; setColorPick([parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255]); }}
       />
-      {colorPick && (
+      {colorPick && active && (
         <PickerCard
           title="文字颜色"
           onClose={() => setColorPick(null)}
