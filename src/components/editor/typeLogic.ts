@@ -261,6 +261,27 @@ export function boxHandleAt(shape: TextShapeBox, transform: number[], x: number,
 }
 
 /**
+ * 文档点落在任何排版行盒内(上游 text_point_inside 的布局级命中;inspect 的 bounds 是
+ * 像素 ink,baseline 上方/行距里的点击不在 ink 内但属于文字)。tol=文档 px slop。
+ */
+export function lineBoxHit(lines: TypeInfoLine[], transform: number[], x: number, y: number, tol: number, vertical: boolean): boolean {
+  for (const ln of lines) {
+    const y0 = vertical ? ln.baseline : ln.baseline - ln.ascent;
+    const y1 = vertical ? ln.baseline : ln.baseline + ln.descent;
+    const [ax, ay] = lineToText(Math.min(ln.x0, 0), y0, vertical);
+    const [bx, by] = lineToText(Math.max(ln.x1, ln.x0 + 1), y1, vertical);
+    const corners: [number, number][] = [[ax, ay], [bx, ay], [bx, by], [ax, by]]
+      .map(([px, py]) => affApply(transform, px, py));
+    const xs = corners.map((c) => c[0]);
+    const ys = corners.map((c) => c[1]);
+    if (x >= Math.min(...xs) - tol && x <= Math.max(...xs) + tol && y >= Math.min(...ys) - tol && y <= Math.max(...ys) + tol) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 拖缩段落框(上游 resize_box 纯数学):按下时快照的 shape 上,把手跟随指针,其余边不动;
  * ⌥=对边镜像围绕按下时的中心(拖中切换按从头按住算)。返回 [x0, y0, w, h] 文字空间。
  */

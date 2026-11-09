@@ -24,6 +24,7 @@ const OPTS: ToolOptions = {
   magneticWidth: 10, magneticContrast: 10, magneticFrequency: 57, magneticPressure: false,
   cropWidth: '', cropHeight: '', cropResolution: '', cropResolutionUnit: 'px/in' as const,
   shapeFill: true, strokeWidth: 0, cornerRadius: 0, polygonSides: 5, lineWeight: 3, penAutoAddDelete: true, penVectorMode: 'path',
+  typeFont: 'Inter', typeStyle: 'Regular', typeSize: 12, typeAlign: 'left', typeDirection: 'auto', typeAA: 'sharp', typeRecentFonts: [], typeStyleDefaults: {},
 };
 
 describe('constrainSquare / reflectFromCenter', () => {

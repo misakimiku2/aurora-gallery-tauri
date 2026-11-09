@@ -18,6 +18,7 @@ import { LayersPanel } from './panels/LayersPanel';
 import { PathsPanel } from './panels/PathsPanel';
 import { AdjustmentGrid } from './panels/AdjustmentGrid';
 import { AdjustmentProps } from './panels/AdjustmentProps';
+import { TypePanel } from './panels/TypePanel';
 import { getSession, subscribeSession } from './editorStore';
 
 /** 属性/调整/历史 组:调整页=16 种调整层一键,属性页=选中调整层时的参数编辑器。
@@ -26,7 +27,7 @@ import { getSession, subscribeSession } from './editorStore';
 const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => void }> = ({
   tabId, collapsed, onToggle,
 }) => {
-  const [tab, setTab] = useState<'props' | 'adjust' | 'history'>('history');
+  const [tab, setTab] = useState<'props' | 'adjust' | 'history' | 'type'>('history');
   const collapsedRef = useRef(!!collapsed);
   collapsedRef.current = !!collapsed;
   const toggleRef = useRef(onToggle);
@@ -45,7 +46,7 @@ const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => 
   return (
     <div className="h-full min-h-0 flex flex-col">
       <div className="flex shrink-0 border-b border-black/10 dark:border-white/10">
-        {([['props', '属性'], ['adjust', '调整'], ['history', '历史记录']] as const).map(([k, label]) => (
+        {([['props', '属性'], ['adjust', '调整'], ['history', '历史记录'], ['type', '字符']] as const).map(([k, label]) => (
           <button
             key={k}
             onClick={() => {
@@ -64,6 +65,7 @@ const MidPanel: React.FC<{ tabId: string; collapsed?: boolean; onToggle?: () => 
           {tab === 'history' && <HistoryPanel tabId={tabId} />}
           {tab === 'props' && <AdjustmentProps tabId={tabId} />}
           {tab === 'adjust' && <AdjustmentGrid tabId={tabId} onAdded={() => setTab('props')} />}
+          {tab === 'type' && <TypePanel tabId={tabId} />}
         </div>
       )}
     </div>

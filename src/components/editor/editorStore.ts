@@ -8,6 +8,7 @@ import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEst
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
 import { TYPE_TOOLS, type TextEditSession } from './typeLogic';
+import { noteRecentFont as noteRecentFontList, type FaceInfoJson } from './typeStyle';
 import type { PathListSummary } from './pathsPanelLogic';
 import { defaultGradient, type GradientPreset } from './gradientPresets';
 import { humanBytes, validSetting, type ExportSettingsJson } from './exportDialogMath';
@@ -76,6 +77,17 @@ export interface ToolOptions {
   /** 钢笔模式(上游 vector_mode,"path"|"shape",默认 path):shape=提交建形状层
    * (shape.create kind:path),path=进工作路径。 */
   penVectorMode: 'path' | 'shape';
+  /** 文字默认样式(上游 type_font/type_style/type_size/type_align/type_direction/type_aa;
+   * 无编辑目标时字符控件改这里=Photoshop 的下一层默认)。 */
+  typeFont: string;
+  typeStyle: string;
+  typeSize: number;
+  typeAlign: string;
+  typeDirection: string;
+  typeAA: string;
+  typeRecentFonts: string[];
+  /** 字符页签在无目标时改的其他样式键(行高/字距/缩放…;type.create 带给下一层,上游 type_style_defaults)。 */
+  typeStyleDefaults: Record<string, unknown>;
 }
 
 /** 直接选择的选择态(上游 direct_select::DirectSelection 的持久部分;拖拽态在画布 ref)。
@@ -270,6 +282,15 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       lineWeight: 3,
       penAutoAddDelete: true,
       penVectorMode: 'path',
+      /** 文字工具默认样式(上游 tool_options.type_*;无编辑目标时改这里=给下一层)。 */
+      typeFont: 'Inter',
+      typeStyle: 'Regular',
+      typeSize: 12,
+      typeAlign: 'left',
+      typeDirection: 'auto',
+      typeAA: 'sharp',
+      typeRecentFonts: [] as string[],
+      typeStyleDefaults: {},
     },
     runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null },
     cropAngle: 0,
@@ -857,6 +878,10 @@ export function setTool(tabId: string, tool: EditorTool): void {
   const wasType = TYPE_TOOLS.has(s.tool);
   s.tool = tool;
   if (wasType && !TYPE_TOOLS.has(tool)) s.runtime.commitTextEdit?.();
+  if (TYPE_TOOLS.has(tool)) {
+    // 切到文字工具=右侧属性组自动切「字符」页签(Photoshop 的 Character 面板随打字可达)
+    window.dispatchEvent(new CustomEvent('aurora-editor-panel', { detail: { tabId, tab: 'type' } }));
+  }
   notify(tabId);
 }
 
@@ -916,6 +941,18 @@ export async function runCommand(tabId: string, cmd: string, params: Record<stri
   // layer.pickAt/selectInRect 只改图层选择(不入史不推进 revision),选择一变面板就要跟上
   const pull = !opts.noPull && (out.revision > 0 || /^(tools|view|channel)\./.test(cmd) || /^layer\.(pickAt|selectInRect)$/.test(cmd));
   await applyRunOutcome(tabId, out, pull);
+  // 前景变色重着色选中字符(上游 foreground_changed):文字编辑中选区非空时,
+  // 颜色/色板面板换前景色即改选中文字颜色,并入编辑会话的历史步。
+  if (cmd === 'tools.setColors' && typeof params.foreground === 'string') {
+    const ed = s.textEdit;
+    if (ed) {
+      const a = Math.min(ed.caret, ed.anchor);
+      const b = Math.max(ed.caret, ed.anchor);
+      if (a < b) {
+        void runCommand(tabId, 'type.setStyle', { layer: ed.layer, range: [a, b], color: params.foreground, coalesce: ed.session }, { noPull: true }).catch(() => undefined);
+      }
+    }
+  }
   return out.result;
 }
 
@@ -975,9 +1012,112 @@ export function debugSessions(): { tabId: string; tool: string; docId: number | 
   return [...sessions.values()].map((s) => ({ tabId: s.tabId, tool: s.tool, docId: s.docId, path: s.path }));
 }
 
+// ===== 文字样式应用(二期 二-7,上游 type_tool.rs apply/target/formatting_params) =====
+
+/** 树内查层 kind(选中集可能含组内层)。 */
+function layerKindIn(layers: { id: number; kind: string; children?: { id: number; kind: string; children?: unknown[] }[] }[], id: number): string | null {
+  for (const l of layers) {
+    if (l.id === id) return l.kind;
+    if (l.children) {
+      const f = layerKindIn(l.children as never, id);
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
+/**
+ * 应用文字样式(上游 apply):编辑会话中=该层选中字符(有选区)或整层,并入会话历史步;
+ * 无会话=活动层/选中集里的 Type 层(多选走 layers);无任何目标=改工具默认(下一层)。
+ */
+export async function applyTypeStyle(tabId: string, props: Record<string, unknown>): Promise<void> {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  const ed = s.textEdit;
+  if (ed) {
+    const a = Math.min(ed.caret, ed.anchor);
+    const b = Math.max(ed.caret, ed.anchor);
+    await runCommand(tabId, 'type.setStyle', { layer: ed.layer, ...(a < b ? { range: [a, b] } : {}), coalesce: ed.session, ...props }).catch((err) => console.error('[editor] type.setStyle 失败', err));
+    return;
+  }
+  const st = s.state;
+  if (st) {
+    const ids = st.selectedLayers.length ? st.selectedLayers : st.activeLayer != null ? [st.activeLayer] : [];
+    const typeIds = ids.filter((id) => layerKindIn(st.layers, id) === 'Type');
+    if (typeIds.length > 0) {
+      const scope: Record<string, unknown> = typeIds.length === 1 ? { layer: typeIds[0] } : { layers: typeIds };
+      await runCommand(tabId, 'type.setStyle', { ...scope, ...props }).catch((err) => console.error('[editor] type.setStyle 失败', err));
+      return;
+    }
+  }
+  applyTypeDefaults(tabId, props);
+}
+
+/** 改工具默认样式(上游 apply_defaults):五个直接键映射选项条字段,其余进 typeStyleDefaults
+ * 供 type.create 带给下一层。 */
+function applyTypeDefaults(tabId: string, props: Record<string, unknown>): void {
+  const patch: Partial<ToolOptions> = {};
+  const extras: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(props)) {
+    switch (k) {
+      case 'font': if (typeof v === 'string') patch.typeFont = v; break;
+      case 'fontStyle': if (typeof v === 'string') patch.typeStyle = v; break;
+      case 'size': if (typeof v === 'number') patch.typeSize = v; break;
+      case 'align': if (typeof v === 'string') patch.typeAlign = v; break;
+      case 'direction': if (typeof v === 'string') patch.typeDirection = v; break;
+      case 'metricsAsShown': break; // 默认无层变换
+      default: extras[k] = v;
+    }
+  }
+  if (Object.keys(extras).length) {
+    patch.typeStyleDefaults = { ...(getSession(tabId)?.options.typeStyleDefaults ?? {}), ...extras };
+  }
+  setOptions(tabId, patch);
+}
+
+/** 记最近字体进工具选项(上游 note_recent_font)。 */
+export function noteRecentFont(tabId: string, family: string): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  setOptions(tabId, { typeRecentFonts: noteRecentFontList(s.options.typeRecentFonts, family) });
+}
+
+// 字体目录缓存(type.fonts journal:false;引擎后台扫描晚到时失败,5s 后可重试)。
+let fontFamiliesCache: string[] | null = null;
+let fontFamiliesFailedAt = 0;
+const fontFacesCache = new Map<string, { family: string; style: string; postscriptName: string; weight: number; italic: boolean; axes: [string, number, number, number][] }[]>();
+
+/** 全部字体族(升序;缓存,失败 5s 内不重试——扫描在后台进行)。 */
+export async function fetchFontFamilies(tabId: string): Promise<string[]> {
+  if (fontFamiliesCache) return fontFamiliesCache;
+  if (Date.now() - fontFamiliesFailedAt < 5000) return [];
+  try {
+    const r = await runCommand(tabId, 'type.fonts', {}, { noPull: true }) as { families?: string[] };
+    fontFamiliesCache = [...(r.families ?? [])].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    return fontFamiliesCache;
+  } catch {
+    fontFamiliesFailedAt = Date.now();
+    return [];
+  }
+}
+
+/** 某族的 face 列表(缓存 per family;上游 styles() 的数据源)。 */
+export async function fetchFontFaces(tabId: string, family: string): Promise<FaceInfoJson[]> {
+  const hit = fontFacesCache.get(family);
+  if (hit) return hit;
+  try {
+    const r = await runCommand(tabId, 'type.fonts', { family }, { noPull: true }) as { faces?: FaceInfoJson[] };
+    const faces = r.faces ?? [];
+    fontFacesCache.set(family, faces);
+    return faces;
+  } catch {
+    return [];
+  }
+}
+
 // 冒烟/调试:活模块挂 window(HMR 后动态 import 拿到的是副本,sessions map 不共享)。
 (window as unknown as { __editorStoreLive?: unknown }).__editorStoreLive = {
-  getSession, debugSessions, runCommand, updateSession,
+  getSession, debugSessions, runCommand, updateSession, applyTypeStyle, fetchFontFamilies, fetchFontFaces,
 };
 
 /** 指定 Tab 的编辑器会话是否有未保存修改(无会话=false)。 */

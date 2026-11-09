@@ -17,7 +17,12 @@ import { SHAPE_GROUP } from './toolLogic';
 import { TYPE_TOOLS } from './typeLogic';
 import { activePathName, pathRows } from './pathsPanelLogic';
 import { EditorSelect } from './editorSelect';
-import { runCommand } from './editorStore';
+import { ColorPicker } from './panels/ColorPicker';
+import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
+import {
+  AA_OPTIONS, aaKey, selectedStyleName, styleAt, styleColorHex, styleLabel, styleNames, shownScale,
+  type CharStyleJson, type FaceInfoJson,
+} from './typeStyle';
 
 /** [r,g,b] 0..1 → css(色芯片显示)。 */
 const rgbCss = (c: number[] | undefined): string => {
@@ -663,10 +668,9 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
       ) : s.tool === 'convertPoint' ? (
         <span className="text-neutral-500 dark:text-neutral-400">点击锚=转角点 · 从锚拖拽=拉出平滑手柄 · 拖手柄=单独动 · Ctrl=直接选择</span>
       ) : TYPE_TOOLS.has(s.tool) ? (
-        // 文字工具(二-6;字体/字号/颜色条=二-7 字符面板)。横竖排由工具本身决定(T 组循环)。
-        <span className="text-neutral-500 dark:text-neutral-400">
-          {s.tool === 'typeVertical' ? '竖排 · ' : ''}点击=点文本(占位文字,键入替换) · 拖动=段落框 · 点击文字=编辑 · Esc/Ctrl+Enter/点别处=提交 · 双击=选词
-        </span>
+        // 文字工具选项条(二-7,上游 options_bar):横竖切换/字体/样式/字号/抗锯齿/对齐/段落方向/
+        // 文字颜色;会话中加 ✓ 提交(取消=Esc 提交后 Ctrl+Z 一步全撤)。完整字符字段在「字符」页签。
+        <TypeOptionsInline tabId={tabId} />
       ) : SHAPE_GROUP.has(s.tool) ? (
         <>
           {/* 形状族(上游 shape_options):fill=前景色开/关,stroke=背景色+宽度;
@@ -749,5 +753,203 @@ export const EditorOptionsBar: React.FC<{ tabId: string }> = ({ tabId }) => {
       ) : null}
       <div className="flex-1" />
     </div>
+  );
+};
+
+/** 目标层参数(无编辑会话=活动/选中 Type 层;无目标 null)。 */
+const layerParams = (tabId: string): Record<string, unknown> | null => {
+  const s = getSession(tabId);
+  if (!s?.state) return null;
+  const ids = s.state.selectedLayers.length ? s.state.selectedLayers : s.state.activeLayer != null ? [s.state.activeLayer] : [];
+  const kindOf = (id: number): string | null => {
+    type KindNode = { id: number; kind: string; children?: KindNode[] };
+    const walk = (ls: KindNode[], id: number): string | null => {
+      for (const l of ls) {
+        if (l.id === id) return l.kind;
+        if (l.children) { const f = walk(l.children, id); if (f) return f; }
+      }
+      return null;
+    };
+    return walk(s.state!.layers as unknown as KindNode[], id);
+  };
+  const id = ids.find((i) => kindOf(i) === 'Type');
+  return id != null ? { layer: id } : null;
+};
+
+/** 引擎 Orientation 读回(选项条按钮态;无目标=工具侧)。 */
+const orientV = (tool?: string): boolean => tool === 'typeVertical';
+
+/** 会话中文字符样式回显(选区起点 run;无会话=工具默认)。上游 options_bar 的 shown。 */
+const TypeOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  const s = getSession(tabId);
+  const [families, setFamilies] = useState<string[]>([]);
+  const [faces, setFaces] = useState<FaceInfoJson[]>([]);
+  const [info, setInfo] = useState<{ runs: { start: number; end: number; style: CharStyleJson }[]; transform: number[]; antialias: string } | null>(null);
+  const [colorPick, setColorPick] = useState<[number, number, number] | null>(null);
+  const [sizeBuf, setSizeBuf] = useState('12');
+  const ed = s?.textEdit ?? null;
+
+  useEffect(() => { void fetchFontFamilies(tabId).then(setFamilies); }, [tabId]);
+  const at = ed ? Math.min(ed.caret, ed.anchor) : 0;
+  const rev = s?.revision ?? 0;
+  useEffect(() => {
+    let alive = true;
+    const layer = getSession(tabId)?.textEdit?.layer;
+    if (layer == null) { setInfo(null); return undefined; }
+    void runCommand(tabId, 'type.info', { layer }, { noPull: true })
+      .then((r) => { if (alive) setInfo(r as never); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [tabId, ed?.layer, rev]);
+  const c = info ? styleAt(info.runs, at) : null;
+  const scale = shownScale(info?.transform);
+  const fam = c?.font_family ?? s?.options.typeFont ?? 'Inter';
+  useEffect(() => {
+    let alive = true;
+    void fetchFontFaces(tabId, fam).then((f) => { if (alive) setFaces(f); });
+    return () => { alive = false; };
+  }, [tabId, fam]);
+  const sizeShown = (c?.size_pt ?? s?.options.typeSize ?? 12) * scale;
+  useEffect(() => { setSizeBuf(String(Math.round(sizeShown * 100) / 100)); }, [sizeShown]);
+  if (!s) return null;
+  const styleShown = c ? selectedStyleName(c, faces) : s.options.typeStyle || 'Regular';
+  const apply = (props: Record<string, unknown>) => { void applyTypeStyle(tabId, props); };
+  const styleOpts = styleNames(faces).map((n) => ({ value: n, label: styleLabel(n) }));
+  const hex = c ? styleColorHex(c.color) : '';
+  const aa = info ? aaKey(info.antialias) : s.options.typeAA;
+  const btn = 'w-6 h-6 rounded text-[11px] flex items-center justify-center transition-colors ';
+  const idle = 'text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10';
+  const onCls = 'bg-sky-500/15 text-sky-700 dark:text-sky-300';
+  const vTarget = ed ? orientV() : s.tool === 'typeVertical';
+  const scopeParams = ed ? { layer: ed.layer, coalesce: ed.session } : layerParams(tabId);
+
+  return (
+    <>
+      {/* 横竖切换(type.orientation.*;上游 options_bar 的 orientation 钮) */}
+      <button
+        type="button" title={vTarget ? '切换为横排' : '切换为竖排'}
+        onClick={() => {
+          const to = vTarget ? 'horizontal' : 'vertical';
+          if (scopeParams) void runCommand(tabId, `type.orientation.${to}`, scopeParams).catch(() => undefined);
+        }}
+        className={btn + idle}
+      >
+        T
+      </button>
+      <EditorSelect
+        value={fam}
+        searchable
+        options={[
+          ...s.options.typeRecentFonts.map((f) => ({ value: f, label: f, group: '最近使用' })),
+          ...families.map((f) => ({ value: f, label: f })),
+        ]}
+        onChange={(v) => {
+          noteRecentFont(tabId, v);
+          const keep = styleOpts.some((o) => o.value === s.options.typeStyle);
+          setOptions(tabId, { typeFont: v, typeStyle: keep ? s.options.typeStyle : 'Regular' });
+          apply({ font: v });
+        }}
+        className="w-36 shrink-0"
+        title="字体族"
+        disabled={families.length === 0}
+      />
+      <EditorSelect
+        value={styleShown}
+        options={styleOpts}
+        onChange={(v) => { setOptions(tabId, { typeStyle: v }); apply({ fontStyle: v }); }}
+        className="w-24 shrink-0"
+        title="字体样式"
+        disabled={faces.length === 0}
+      />
+      {/* 字号(×层变换显示;metricsAsShown) */}
+      <span className="text-[11px] text-neutral-500 dark:text-neutral-400" title="字号">T</span>
+      <input
+        value={sizeBuf}
+        onChange={(e) => setSizeBuf(e.target.value)}
+        onBlur={() => {
+          const n = Number(sizeBuf);
+          if (Number.isFinite(n) && n >= 0.1 && n <= 1296 && Math.abs(n - sizeShown) > 0.01) {
+            apply(scale !== 1 ? { size: n / scale, metricsAsShown: true } : { size: n });
+          } else setSizeBuf(String(Math.round(sizeShown * 100) / 100));
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); }
+          e.stopPropagation();
+        }}
+        className="w-14 px-1.5 py-0.5 text-[11px] rounded border border-subtle bg-panel text-gray-800 dark:text-neutral-200 outline-none focus:border-sky-500 tabular-nums"
+        title="字号 pt"
+      />
+      <EditorSelect
+        value={aa}
+        options={AA_OPTIONS}
+        onChange={(v) => {
+          setOptions(tabId, { typeAA: v });
+          if (scopeParams) void runCommand(tabId, `type.antiAlias.${v}`, scopeParams).catch(() => undefined);
+        }}
+        className="w-20 shrink-0"
+        title="抗锯齿"
+      />
+      <div className="w-px h-5 bg-black/10 dark:bg-white/15 mx-1" />
+      {(['left', 'center', 'right'] as const).map((a) => (
+        <button
+          key={a} type="button" title={a === 'left' ? '左对齐' : a === 'center' ? '居中对齐' : '右对齐'}
+          onClick={() => { setOptions(tabId, { typeAlign: a }); apply({ align: a }); }}
+          className={btn + (s.options.typeAlign === a ? onCls : idle)}
+        >
+          {a === 'left' ? '≡L' : a === 'center' ? '≡C' : '≡R'}
+        </button>
+      ))}
+      <div className="w-px h-5 bg-black/10 dark:bg-white/15 mx-1" />
+      {['auto', 'ltr', 'rtl'].map((d) => (
+        <button
+          key={d} type="button" title={d === 'auto' ? '自动段落方向' : d === 'ltr' ? '从左到右' : '从右到左'}
+          onClick={() => { setOptions(tabId, { typeDirection: d }); apply({ direction: d }); }}
+          className={btn + (s.options.typeDirection === d ? onCls : idle)}
+        >
+          {d === 'auto' ? '¶↔' : d === 'ltr' ? '¶→' : '←¶'}
+        </button>
+      ))}
+      <div className="w-px h-5 bg-black/10 dark:bg-white/15 mx-1" />
+      {/* 文字颜色芯片(取色卡;编辑中=选区/整层,无目标=工具默认) */}
+      <button
+        type="button" title="文字颜色"
+        className="w-7 h-5 rounded-sm border border-black/30 dark:border-neutral-500"
+        style={{ background: hex || rgbCss(s.state?.foreground) }}
+        onClick={() => { const h = hex || '#000000'; setColorPick([parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255]); }}
+      />
+      {colorPick && createPortal(
+        <div
+          className="fixed z-[1000] w-56 rounded-md bg-[#FAFAFA]/95 dark:bg-[#3a3a3a]/95 backdrop-blur-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-gray-800 dark:text-gray-200 p-2"
+          style={{ left: Math.max(4, window.innerWidth / 2 - 112), top: Math.max(4, window.innerHeight / 2 - 140) }}
+        >
+          <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mb-1">文字颜色</div>
+          <div className="h-44">
+            <ColorPicker
+              value={colorPick}
+              onCommit={(rgb) => {
+                const h = `#${rgb.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255).toString(16).padStart(2, '0')).join('')}`;
+                apply({ color: h });
+              }}
+              label="文字颜色"
+            />
+          </div>
+          <div className="flex justify-end mt-1.5">
+            <button type="button" onClick={() => setColorPick(null)} className="px-2 py-0.5 rounded text-[11px] bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300">关闭</button>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {ed && (
+        <button
+          type="button" title="提交文字编辑 (Ctrl+Enter);取消=Esc 提交后 Ctrl+Z 一步全撤"
+          onClick={() => s.runtime.commitTextEdit?.()}
+          className={btn + idle + ' ml-1 text-emerald-600 dark:text-emerald-400'}
+        >
+          ✓
+        </button>
+      )}
+    </>
   );
 };

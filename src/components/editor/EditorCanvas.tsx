@@ -29,9 +29,10 @@ import {
 import {
   affApply, affInvert, applyReplace, boxHandleAt, boxOfShape, CARET_BLINK_MS, charCount, clickSelection,
   columnWidthVec, flowKey, imeRange, insideBox, layerNameFromText, lineSelectionSpan, lineToText, makesBox,
-  MAX_CLICKS, normText, resizeBoxCalc, smartQuotes, TYPE_PLACEHOLDER, TYPE_TOOLS, wordBoundary,
+  MAX_CLICKS, normText, resizeBoxCalc, smartQuotes, TYPE_PLACEHOLDER, TYPE_TOOLS, wordBoundary, lineBoxHit,
   type CaretSegment, type TextEditSession, type TypeInfoLine, type TextShapeBox,
 } from './typeLogic';
+import { CHAR_TOGGLE_KEYS, styleAt, type CharStyleJson } from './typeStyle';
 import { fetchGradientFill, type GradientFillInfo } from './gradientFill';
 import { ColorPicker, type RGB } from './panels/ColorPicker';
 import { ShapeDialog } from './ShapeDialog';
@@ -2521,14 +2522,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   };
 
-  /** 新建文字(type.create;上游 pointer_up):拖 ≥4 屏幕 px=段落框,否则点文本;
-   * 占位文本默认开(偏好 fill_new_type_layers_with_placeholder),选中态,键入即替换。 */
+  /** 新建文字(type.create;上游 pointer_up + default_style_params):拖 ≥4 屏幕 px=段落框,
+   * 否则点文本;占位文本默认开(偏好 fill_new_type_layers_with_placeholder),选中态,
+   * 键入即替换;样式=选项条默认(字体/样式/字号/对齐/方向/字符页签改的其他键+前景色)。 */
   const createTypeText = async (start: [number, number], end: [number, number], vertical: boolean) => {
     const s = getSession(tabId);
     if (!s || s.textEdit) return;
     const minPx = 4 / Math.max(0.01, s.runtime.view.scale);
     const coalesce = `type-${Date.now()}-${++typeSeqRef.current}`;
-    const base: Record<string, unknown> = { text: TYPE_PLACEHOLDER, orientation: vertical ? 'vertical' : 'horizontal', coalesce };
+    const o = s.options;
+    const style: Record<string, unknown> = {
+      font: o.typeFont, fontStyle: o.typeStyle, size: o.typeSize, align: o.typeAlign, direction: o.typeDirection,
+      ...o.typeStyleDefaults,
+      ...(s.state ? { color: rgbToHex(s.state.foreground) } : {}),
+    };
+    const base: Record<string, unknown> = { text: TYPE_PLACEHOLDER, orientation: vertical ? 'vertical' : 'horizontal', coalesce, ...style };
     const params = makesBox(start, end, minPx)
       ? { ...base, box: [Math.round(Math.min(start[0], end[0])), Math.round(Math.min(start[1], end[1])), Math.round(Math.abs(end[0] - start[0])), Math.round(Math.abs(end[1] - start[1]))] }
       : { ...base, x: Math.round(start[0]), y: Math.round(start[1]) };
@@ -2602,7 +2610,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         const [tx, ty] = affApply(affInvert(info.transform), dx, dy);
         const inBox = shape ? insideBox(shape, tx, ty) : false;
-        const onGlyphs = topmostTypeLayerAt(s1, dx, dy, tol, ed.layer) != null;
+        // 命中=像素 bounds(inspect)或排版行盒(上游 text_point_inside;baseline 上方的
+        // 点击在 ink 外但属于文字)
+        const onGlyphs = topmostTypeLayerAt(s1, dx, dy, tol, ed.layer) != null
+          || lineBoxHit(info.lines ?? [], info.transform, dx, dy, tol, info.orientation === 'Vertical');
         if (inBox || onGlyphs) {
           updateSession(tabId, { textEdit: { ...s1.textEdit, dragging: true } });
           const count = typeClickCount(s1, ed.layer, [dx, dy]);
@@ -2725,6 +2736,30 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const drag = typeDragRef.current;
     typeDragRef.current = null;
     if (drag) void createTypeText(drag.start, [dx, dy], s.tool === 'typeVertical');
+  };
+
+  /** overlay 数据保障(上游 layout 缓存等价):info 文本镜像+caret 钳制+选区/组字边界段。 */
+  /** ⇧⌘K/U/B/I/ 字符样式切换(上游 toggle_char_style):选区(空文本=全部)统一翻转,
+   * 读回选区起点样式判 on;一条不 coalesce 的独立历史步(与打字会话步分开,逐键撤销)。 */
+  const toggleCharStyle = async (key: string) => {
+    const s = getSession(tabId);
+    const ed = s?.textEdit;
+    if (!s || !ed) return;
+    const n = charCount(typeTextRef.current);
+    const a = Math.min(ed.caret, ed.anchor);
+    const b = Math.max(ed.caret, ed.anchor);
+    if (!(a < b || n === 0)) return;
+    try {
+      const info = await runCommand(tabId, 'type.info', { layer: ed.layer }, { noPull: true }) as { runs?: { start: number; end: number; style: CharStyleJson }[] };
+      const which = CHAR_TOGGLE_KEYS[key];
+      const c = info.runs?.length ? styleAt(info.runs, a < b ? a : 0) : null;
+      if (!c) return;
+      const on = !which.read(c);
+      await runCommand(tabId, 'type.setStyle', { layer: ed.layer, range: a < b ? [a, b] : [0, n], coalesce: ed.session, ...which.write(on) });
+      typeBlinkRef.current = performance.now();
+    } catch (err) {
+      logError('[editor] 字符样式切换失败', err);
+    }
   };
 
   /** overlay 数据保障(上游 layout 缓存等价):info 文本镜像+caret 钳制+选区/组字边界段。 */
@@ -3306,7 +3341,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         commitPen(false);
         return;
       }
-      // 文字编辑会话键盘(上游 handle_keys):会话活跃时单键工具快捷键必须让位。
+      // 文字编辑会话键盘(上游 handle_keys):会话活跃时单键工具快捷键必须让位;
+      // 但焦点在面板输入控件(字号/下拉等,isTyping 且非隐藏 textarea)时同样让位——
+      // 上游 egui_wants_keyboard_input 口径,否则 Ctrl+A/Enter 被吃成文字操作。
+      if (isTyping(e.target) && e.target !== typeInputRef.current) return;
       // IME 组字中(keyCode 229/isComposing)不拦——组合文本走 textarea composition 事件。
       if (s.textEdit && TYPE_TOOLS.has(s.tool)) {
         const ed = s.textEdit;
@@ -3325,6 +3363,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           runCommand(tabId, 'type.navigate', { layer: ed.layer, index, move, ...(x != null ? { x } : {}) }, { noPull: true }) as Promise<{ index?: number }>;
         if (e.ctrlKey || e.metaKey) {
           const code = e.code;
+          // ⇧⌘K/U/B/I/:字符样式切换作用于选中字符(折叠 caret 非空文本不动=上游 format_range;
+          // 开关态=选区起点样式,一条不 coalesce 的独立历史步,上游 toggle_char_style 口径)
+          if (e.shiftKey && !e.altKey) {
+            const kk = code === 'KeyK' ? 'k' : code === 'KeyU' ? 'u' : code === 'KeyB' ? 'b' : code === 'KeyI' ? 'i' : e.key === '/' ? '/' : null;
+            if (kk && CHAR_TOGGLE_KEYS[kk]) {
+              e.preventDefault();
+              void toggleCharStyle(kk);
+              return;
+            }
+          }
           if (code === 'KeyA') {
             // ⌘A 全选(上游 Key::A if m.command)
             e.preventDefault();

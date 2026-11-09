@@ -27,11 +27,15 @@ export const EditorSelect: React.FC<{
   /** 选中后回显归零恒显 blankLabel(上游 ComboBox 恒显 Custom 口径)。 */
   alwaysBlank?: boolean;
   blankLabel?: string;
-}> = ({ value, options, onChange, className = '', title, disabled, alwaysBlank, blankLabel = '预设…' }) => {
+  /** 弹层顶部加过滤输入框(长列表:字体目录上千项)。 */
+  searchable?: boolean;
+}> = ({ value, options, onChange, className = '', title, disabled, alwaysBlank, blankLabel = '预设…', searchable }) => {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ left: 0, top: 0 });
+  const [query, setQuery] = useState('');
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -65,13 +69,37 @@ export const EditorSelect: React.FC<{
   const openMenu = () => {
     const r = btnRef.current?.getBoundingClientRect();
     if (r) setPos({ left: r.left, top: r.bottom + 2 });
+    setQuery('');
     setOpen(true);
+    if (searchable) requestAnimationFrame(() => searchRef.current?.focus());
   };
   const current = options.find((o) => o.value === value);
   const label = alwaysBlank ? blankLabel : current?.label ?? value;
+  const ql = query.trim().toLowerCase();
+  const shownOptions = ql ? options.filter((o) => o.label.toLowerCase().includes(ql) || o.value.toLowerCase().includes(ql)) : options;
   const rows: React.ReactNode[] = [];
+  if (searchable) {
+    rows.push(
+      <div key="search" className="px-2 pb-1">
+        <input
+          ref={searchRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter' && shownOptions.length) {
+              onChange(shownOptions[0].value);
+              setOpen(false);
+            }
+          }}
+          placeholder="过滤…"
+          className="w-full px-2 py-1 text-[12px] rounded border border-black/15 dark:border-white/15 bg-transparent outline-none focus:border-sky-500"
+        />
+      </div>,
+    );
+  }
   let lastGroup: string | undefined;
-  for (const o of options) {
+  for (const o of shownOptions) {
     if (o.group !== lastGroup) {
       rows.push(
         <div key={`g:${o.group ?? ''}:${o.value}`} className="px-3 pt-1.5 pb-0.5 text-[10px] text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
