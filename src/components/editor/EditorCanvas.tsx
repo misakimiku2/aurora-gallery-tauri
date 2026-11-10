@@ -8,9 +8,9 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTool, showEditorNotice, subscribeSession, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -50,6 +50,12 @@ import {
 import type { EditorLayer } from './editorTypes';
 import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
+import {
+  acceptsOutsideClick, applyDrag, applyModeDrag, corners, handleTolerance, hitTest, insideQuad, modeAllows, quadIsAffine, quadUnchanged, quadScale,
+  nudgeTransform, pointOnQuad, readout as transformReadout, restoreStep, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, skewAboutPivot, movePivotTo,
+  stepEq, stepOf, Homography,
+  type Gesture, type Hit, type Quad, type RectF, type TransformMode, type TransformSession, type TransformStep, type TransformMods,
+} from './transformLogic';
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 直接选择族工具(上游 direct_select/anchor_tools 的指针接管者)。 */
@@ -81,6 +87,15 @@ const RASTER_INTERACTIVE_FALLBACK = 2_000_000;
  */
 const CROSSHAIR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="21" height="21"><g fill="none" stroke-linecap="round"><path d="M10.5 1.5V19.5M1.5 10.5H19.5" stroke="rgba(0,0,0,0.8)" stroke-width="3"/><path d="M10.5 1.5V19.5M1.5 10.5H19.5" stroke="#ffffff" stroke-width="1.3"/></g></svg>`;
 const CROSSHAIR_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(CROSSHAIR_SVG)}") 10 10, crosshair`;
+
+/** 图层树里找 id(inspect 的展示序含 children;变换 end_if_left 的"层被删"判定用)。 */
+function findLayerById(layers: EditorLayer[], id: number): boolean {
+  for (const l of layers) {
+    if (l.id === id) return true;
+    if (l.children && findLayerById(l.children, id)) return true;
+  }
+  return false;
+}
 
 /** 裁剪手势的回退快照(press 时的框;尺寸不满足/取消时恢复)。 */
 type CropRestore = { rect: CropRect; angle: number; edited: boolean };
@@ -282,6 +297,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const gradInflightRef = useRef<{ busy: boolean; pending: null | (() => void) }>({ busy: false, pending: null });
   /** hold 兜底计时器句柄(新手势/卸载时清)。 */
   const gradHoldTimerRef = useRef<number | null>(null);
+  /** 自由变换(二-8,上游 transform_tool):会话真源 + 预览资源 + 手势/hover + 会话内步骤栈。
+   * bg/tex = begin 时的两张离屏 canvas(隐藏层背景/层纹理,均覆盖 frame∩画布);
+   * store.transform 是投影(松手/选项条提交时回写,选项条显示+键位判定用)。 */
+  const transformRef = useRef<{
+    session: TransformSession | null;
+    docId: number | null;
+    kind: string;
+    bg: HTMLCanvasElement | null;
+    tex: HTMLCanvasElement | null;
+    rect: RectF | null;
+    gesture: Gesture | null;
+    hover: Hit | null;
+    readout: string | null;
+    steps: { settled: TransformStep | null; undo: TransformStep[]; redo: TransformStep[]; lastNudge: { at: number; step: TransformStep } | null };
+  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
@@ -414,10 +444,38 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     dctx.restore();
 
-    // 文档位图
+    // 文档位图;自由变换激活=抽层预览(上游 begin 抽层口径):rect(frame∩画布)区域覆盖为
+    // 隐藏该层的合成,再把选区外区域贴回原样(选区像素被抬走、非选区像素留在原地,split_selected)
+    const tr = transformRef.current;
     dctx.imageSmoothingEnabled = v.scale < 1;
     dctx.imageSmoothingQuality = 'high';
     dctx.drawImage(s.runtime.offscreen, v.ox, v.oy, dw, dh);
+    if (tr.session && tr.bg && tr.rect) {
+      const [rx0, ry0, rx1, ry1] = tr.rect;
+      const rw = rx1 - rx0, rh = ry1 - ry0;
+      const rs = s.runtime.rasterScale || 1;
+      dctx.drawImage(tr.bg, v.ox + rx0 * v.scale, v.oy + ry0 * v.scale, rw * v.scale, rh * v.scale);
+      const polys = s.runtime.selectionOutline;
+      if (polys && polys.length && s.state?.selectionBounds) {
+        dctx.save();
+        dctx.translate(v.ox, v.oy);
+        dctx.scale(v.scale, v.scale);
+        dctx.beginPath();
+        dctx.rect(rx0, ry0, rw, rh);
+        for (const poly of polys) {
+          dctx.moveTo(poly[0], poly[1]);
+          for (let i = 2; i < poly.length; i += 2) dctx.lineTo(poly[i], poly[i + 1]);
+        }
+        dctx.clip('evenodd');
+        dctx.imageSmoothingEnabled = v.scale * rs < 1;
+        dctx.drawImage(
+          s.runtime.offscreen,
+          rx0 * rs, ry0 * rs, rw * rs, rh * rs,
+          rx0, ry0, rw, rh,
+        );
+        dctx.restore();
+      }
+    }
 
     // overlay:文档外框
     octx.strokeStyle = isDark ? '#ffffff66' : '#00000055';
@@ -451,12 +509,15 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const sel = s.state.selectionBounds;
     // 替换模式画新多边形/磁性边框时隐藏旧选区蚂蚁线(上游 a_new_polygon_hides_the_selection;Esc 还原)
     // Select and Mask 对话框:非蚂蚁线视图隐藏蚂蚁线;蚂蚁线视图描预览的精修选区轮廓
+    // 自由变换激活:蚂蚁线随 quad 变换(上游 draw_selection 经 h 画),原位轮廓隐藏
     const smOpen = s.selectMask?.open === true && !s.selectMask.hideView;
     const smAnts = smOpen && s.selectMask?.viewMode === 'marchingAnts';
+    const transformActive = tr.session != null && tr.bg != null && tr.rect != null;
     const hideAnts =
       (s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace') ||
       (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace') ||
-      (smOpen && !smAnts);
+      (smOpen && !smAnts) ||
+      transformActive;
     if (sel && !hideAnts) {
       if (!smAnts) refreshSelectionOutline(tabId); // 内部按 revision:bounds:step 防抖,选区没变不发请求
       const polys = smAnts ? s.selectMask?.outline ?? null : s.runtime.selectionOutline;
@@ -473,6 +534,143 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       }
       // 轮廓未就绪时不画兜底框:runCommand 已在 state 到达的同帧顺带拉取轮廓,
       // 用外接矩形兜底会让椭圆先闪成矩形(这正是要避免的)。
+    }
+
+    // overlay:自由变换(上游 draw_overlay):抽层背景已上屏(display canvas);这里画
+    // 经 H 随动的蚂蚁线、quad 预览贴图(仿射单次 drawImage/透视 mesh 三角)、框+把手+参考点+读数。
+    if (transformActive && tr.session && tr.tex && tr.rect) {
+      const hDoc = Homography.rectToQuad(tr.session.rect, tr.session.quad);
+      const toScreen = (x: number, y: number): [number, number] => {
+        const [dx, dy] = hDoc ? hDoc.apply(x, y) : [x, y];
+        return [dx * v.scale + v.ox, dy * v.scale + v.oy];
+      };
+      // 蚂蚁线随动:原选区轮廓经 quad 映射(像素层带选区;蒙版目标第一刀不进变换)
+      const transformedAnts = s.runtime.selectionOutline;
+      if (transformedAnts && transformedAnts.length && sel) {
+        drawAnts((c) => {
+          c.beginPath();
+          for (const poly of transformedAnts) {
+            const [sx, sy] = toScreen(poly[0], poly[1]);
+            c.moveTo(sx, sy);
+            for (let i = 2; i < poly.length; i += 2) {
+              const [px, py] = toScreen(poly[i], poly[i + 1]);
+              c.lineTo(px, py);
+            }
+          }
+        });
+      }
+      // 预览贴图:仿射=单次 drawImage;透视=mesh 三角形仿射分片(源=tex,越界裁掉)
+      const tex = tr.tex;
+      const [rx0, ry0, rx1, ry1] = tr.rect;
+      const rw = rx1 - rx0, rh = ry1 - ry0;
+      if (hDoc && quadIsAffine(tr.session.rect, tr.session.quad)) {
+        octx.save();
+        octx.translate(v.ox, v.oy);
+        octx.scale(v.scale, v.scale);
+        octx.transform(hDoc.m[0], hDoc.m[3], hDoc.m[1], hDoc.m[4], hDoc.m[2], hDoc.m[5]);
+        octx.drawImage(tex, rx0, ry0, rw, rh);
+        octx.restore();
+      } else if (hDoc) {
+        const n = 12;
+        const fw = tr.session.rect[2] - tr.session.rect[0];
+        const fh = tr.session.rect[3] - tr.session.rect[1];
+        const srcPt = (u: number, vv: number): [number, number] => {
+          // 源 tex 像素 = 文档点 - rect 原点(frame 超出 rect 的部分为负,drawImage 裁掉)
+          const dx = tr.session!.rect[0] + u * fw - rx0;
+          const dy = tr.session!.rect[1] + vv * fh - ry0;
+          return [dx, dy];
+        };
+        const affineFromTri = (s0: [number, number], s1: [number, number], s2: [number, number], p0: [number, number], p1: [number, number], p2: [number, number]): [number, number, number, number, number, number] | null => {
+          const det = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s1[1] - s0[1]) * (s2[0] - s0[0]);
+          if (Math.abs(det) < 1e-9) return null;
+          const a = ((p1[0] - p0[0]) * (s2[1] - s0[1]) - (p2[0] - p0[0]) * (s1[1] - s0[1])) / det;
+          const c = ((p2[0] - p0[0]) * (s1[0] - s0[0]) - (p1[0] - p0[0]) * (s2[0] - s0[0])) / det;
+          const b = ((p1[1] - p0[1]) * (s2[1] - s0[1]) - (p2[1] - p0[1]) * (s1[1] - s0[1])) / det;
+          const d = ((p2[1] - p0[1]) * (s1[0] - s0[0]) - (p1[1] - p0[1]) * (s2[0] - s0[0])) / det;
+          return [a, b, c, d, p0[0] - a * s0[0] - c * s0[1], p0[1] - b * s0[0] - d * s0[1]];
+        };
+        for (let gy = 0; gy < n; gy++) {
+          for (let gx = 0; gx < n; gx++) {
+            const u0 = gx / n, u1 = (gx + 1) / n;
+            const v0 = gy / n, v1 = (gy + 1) / n;
+            const docPts: Array<[number, number]> = [
+              [tr.session.rect[0] + u0 * fw, tr.session.rect[1] + v0 * fh],
+              [tr.session.rect[0] + u1 * fw, tr.session.rect[1] + v0 * fh],
+              [tr.session.rect[0] + u1 * fw, tr.session.rect[1] + v1 * fh],
+              [tr.session.rect[0] + u0 * fw, tr.session.rect[1] + v1 * fh],
+            ];
+            const scr = docPts.map((p) => toScreen(p[0], p[1]));
+            const srcs = [srcPt(u0, v0), srcPt(u1, v0), srcPt(u1, v1), srcPt(u0, v1)];
+            for (const tri of [[0, 1, 2], [0, 2, 3]] as const) {
+              const s0 = srcs[tri[0]], s1 = srcs[tri[1]], s2 = srcs[tri[2]];
+              const p0 = scr[tri[0]], p1 = scr[tri[1]], p2 = scr[tri[2]];
+              const m = affineFromTri(s0, s1, s2, p0, p1, p2);
+              if (!m) continue;
+              octx.save();
+              octx.beginPath();
+              octx.moveTo(p0[0], p0[1]);
+              octx.lineTo(p1[0], p1[1]);
+              octx.lineTo(p2[0], p2[1]);
+              octx.closePath();
+              octx.clip();
+              octx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+              octx.drawImage(tex, 0, 0);
+              octx.restore();
+            }
+          }
+        }
+      }
+      // 框线 + 把手(上游 draw_overlay:accent 1px 闭合折线 + 7×7 白芯方块;参考点=白圆+十字)
+      const accent = isDark ? '#38bdf8' : '#0284c7';
+      const scrQuad = tr.session.quad.map((q) => [q[0] * v.scale + v.ox, q[1] * v.scale + v.oy] as [number, number]);
+      octx.save();
+      octx.lineWidth = 1;
+      octx.strokeStyle = accent;
+      octx.beginPath();
+      scrQuad.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+      octx.closePath();
+      octx.stroke();
+      const hs = 7;
+      for (const [x, y] of scrQuad) {
+        octx.fillStyle = '#ffffff';
+        octx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+        octx.strokeRect(x - hs / 2 + 0.5, y - hs / 2 + 0.5, hs - 1, hs - 1);
+      }
+      for (let i = 0; i < 4; i++) {
+        const [a, b] = [scrQuad[i], scrQuad[(i + 1) % 4]];
+        const [x, y] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        octx.fillStyle = '#ffffff';
+        octx.fillRect(x - hs / 2, y - hs / 2, hs, hs);
+        octx.strokeRect(x - hs / 2 + 0.5, y - hs / 2 + 0.5, hs - 1, hs - 1);
+      }
+      const pxs = tr.session.pivot[0] * v.scale + v.ox;
+      const pys = tr.session.pivot[1] * v.scale + v.oy;
+      octx.beginPath();
+      octx.arc(pxs, pys, 5, 0, Math.PI * 2);
+      octx.fillStyle = '#ffffff';
+      octx.fill();
+      octx.strokeStyle = isDark ? '#000000cc' : '#00000080';
+      octx.stroke();
+      octx.beginPath();
+      octx.moveTo(pxs - 8, pys); octx.lineTo(pxs + 8, pys);
+      octx.moveTo(pxs, pys - 8); octx.lineTo(pxs, pys + 8);
+      octx.strokeStyle = isDark ? '#000000aa' : '#00000066';
+      octx.stroke();
+      octx.restore();
+      // 拖拽中实时读数(指针旁小黑条:旋转=角度、缩放=W/H%、平移=ΔX,ΔY;照裁剪 readout 先例)
+      const pd = s.runtime.pointerDoc;
+      if (tr.readout && pd) {
+        const sx = pd.x * v.scale + v.ox;
+        const sy = pd.y * v.scale + v.oy;
+        octx.save();
+        octx.font = '11px ui-monospace, monospace';
+        const tw = octx.measureText(tr.readout).width;
+        octx.fillStyle = 'rgba(20,20,20,0.85)';
+        octx.fillRect(sx + 14, sy - 10, tw + 10, 18);
+        octx.fillStyle = '#ffffff';
+        octx.fillText(tr.readout, sx + 19, sy + 3);
+        octx.restore();
+      }
     }
     // overlay:多边形套索实线预览(上游 solid_path:白晕 3px + 黑线 1px;末段橡皮筋画到
     // hover 点,Shift 按住时按 45° 约束后的点画)
@@ -2095,6 +2293,146 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   }, [scheduleDraw]);
 
+  // ===== 自由变换(二-8,上游 transform_tool)=====
+
+  /** 会话落定:与上次落定不同则把旧落定推 undo(上游 Steps.settle;拖拽松手/字段提交调用;
+   * 其他落定使微移链失效)。 */
+  const settleTransformStep = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    t.steps.lastNudge = null;
+    const st = stepOf(t.session);
+    if (t.steps.settled && stepEq(t.steps.settled, st)) return;
+    if (t.steps.settled) {
+      t.steps.undo.push(t.steps.settled);
+      t.steps.redo = [];
+    }
+    t.steps.settled = st;
+  }, []);
+
+  /** 方向键微移(上游 nudge + Steps.nudged:500ms 内的连续微移并入同一步)。 */
+  const nudgeTransformBox = useCallback((dx: number, dy: number) => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    const before = stepOf(t.session);
+    t.session = nudgeTransform(t.session, dx, dy);
+    const after = stepOf(t.session);
+    const now = performance.now();
+    const fold = t.steps.lastNudge != null && stepEq(t.steps.lastNudge.step, before) && now - t.steps.lastNudge.at <= 500;
+    t.steps.lastNudge = { at: now, step: after };
+    if (t.steps.settled && !stepEq(t.steps.settled, after) && !fold) {
+      t.steps.undo.push(t.steps.settled);
+      t.steps.redo = [];
+    }
+    t.steps.settled = after;
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
+
+  /** 清理会话资源(提交/取消/层消失后;store.transform=null 由订阅或直接调用进入)。 */
+  const clearTransform = useCallback(() => {
+    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
+    scheduleDraw();
+  }, [scheduleDraw]);
+
+  /** Ctrl+T 进入自由变换(上游 begin:文字会话先提交;锁层/空内容/蒙版目标拒绝;零文档改动)。 */
+  const beginTransform = useCallback(async () => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null || !s.state) return;
+    if (isMaskTarget(s.state)) {
+      showEditorNotice('蒙版目标下暂不支持自由变换,先 Ctrl+2 回合成目标');
+      return;
+    }
+    void s.runtime.commitTextEdit?.(); // 打字中先进变换=先提交文字(上游 begin 口径)
+    try {
+      const r = await editorTransformBegin(s.docId);
+      const frame: RectF = r.frame;
+      if (!(frame[2] - frame[0] > 0 && frame[3] - frame[1] > 0)) {
+        showEditorNotice('没有可变换的内容');
+        return;
+      }
+      // 预览资源:bg/tex 各自进离屏 canvas(同覆盖 rect)
+      const mk = (w: number, h: number, px: Uint8ClampedArray<ArrayBuffer>): HTMLCanvasElement => {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d')?.putImageData(new ImageData(px, w, h), 0, 0);
+        return c;
+      };
+      const session: TransformSession = {
+        layer: r.layer,
+        rect: frame,
+        quad: corners(frame),
+        pivot: [(frame[0] + frame[2]) / 2, (frame[1] + frame[3]) / 2],
+        interpolation: 'bicubic',
+        mode: 'free',
+        targetMask: false,
+        skewV: 0,
+        kind: r.kind,
+      };
+      transformRef.current = {
+        session, docId: s.docId, kind: r.kind,
+        bg: mk(r.bg.width, r.bg.height, r.bg.rgba),
+        tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
+        rect: r.rect,
+        gesture: null, hover: null, readout: null,
+        steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
+      };
+      setTransformSession(tabId, session);
+      scheduleDraw();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showEditorNotice(msg.includes('locked') ? '无法自由变换:图层已锁定' : `无法自由变换:${msg}`);
+    }
+  }, [tabId, scheduleDraw]);
+
+  /** 步退/步进(框打开期间 Ctrl+Z/Y 被劫持到框快照,上游 transform_undo_tests 口径)。 */
+  const transformUndo = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session || !t.steps.undo.length) return;
+    t.steps.lastNudge = null;
+    t.steps.redo.push(stepOf(t.session));
+    t.session = restoreStep(t.session, t.steps.undo.pop()!);
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
+
+  const transformRedo = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session || !t.steps.redo.length) return;
+    t.steps.lastNudge = null;
+    t.steps.undo.push(stepOf(t.session));
+    t.session = restoreStep(t.session, t.steps.redo.pop()!);
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
+
+  /** 选项条字段编辑(经 runtime.transformField):mutate 真源 → 落定推栈 → 回写投影。 */
+  const transformField = useCallback((fn: (s: TransformSession) => TransformSession) => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    settleTransformStep();
+    t.session = fn(t.session);
+    settleTransformStep();
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, settleTransformStep, scheduleDraw]);
+
+  /** 提交(✓/Enter/框外单击):store.commitTransform 发命令;清理随 transform=null 订阅分支。 */
+  const commitTransformBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    void commitTransform(tabId);
+  }, [tabId]);
+
+  const cancelTransformBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    transformRef.current.gesture = null;
+    cancelTransform(tabId);
+    clearTransform();
+  }, [tabId, clearTransform]);
+
   /** 设置裁剪框角度(选项条角度输入框;无框时先建默认框)。归一到 (-180,180]。 */
   const cropSetAngle = useCallback((deg: number) => {
     const st = getSession(tabId);
@@ -2799,6 +3137,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropSetAngle !== cropSetAngle) s.runtime.cropSetAngle = cropSetAngle;
       if (s.runtime.makeSelection !== makeSelectionFromActivePath) s.runtime.makeSelection = makeSelectionFromActivePath;
       if (s.runtime.commitTextEdit !== commitType) s.runtime.commitTextEdit = commitType;
+      if (s.runtime.transformCommit !== commitTransformBox) s.runtime.transformCommit = commitTransformBox;
+      if (s.runtime.transformCancel !== cancelTransformBox) s.runtime.transformCancel = cancelTransformBox;
+      if (s.runtime.transformField !== transformField) s.runtime.transformField = transformField;
     };
     const s0 = getSession(tabId);
     if (s0) register(s0);
@@ -2806,6 +3147,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const s = getSession(tabId);
       if (!s) return;
       if (s.runtime.requestDraw !== scheduleDraw) s.runtime.requestDraw = scheduleDraw;
+      // 自由变换 end_if_left(上游 end_if_left 口径):store 会话被清(提交成功/取消/关闭标签)
+      // =清理画布资源;活动层换了=自动提交;层被删/文档变了=取消。
+      if (!s.transform && transformRef.current.session) {
+        clearTransform();
+      } else if (s.transform && transformRef.current.session && s.state) {
+        const t = transformRef.current;
+        const tSession = t.session!;
+        const layerGone = s.docId !== t.docId || !findLayerById(s.state.layers, tSession.layer);
+        if (layerGone) {
+          cancelTransform(tabId);
+          clearTransform();
+        } else if (s.state.activeLayer !== tSession.layer && !t.gesture) {
+          void commitTransform(tabId); // 切层=提交(切层命令作用于新层,框必须先落定)
+        }
+      }
       register(s);
       forceUpdate((n) => n + 1);
       scheduleDraw();
@@ -2820,8 +3176,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropSetAngle === cropSetAngle) s.runtime.cropSetAngle = null;
       if (s.runtime.makeSelection === makeSelectionFromActivePath) s.runtime.makeSelection = null;
       if (s.runtime.commitTextEdit === commitType) s.runtime.commitTextEdit = null;
+      if (s.runtime.transformCommit === commitTransformBox) s.runtime.transformCommit = null;
+      if (s.runtime.transformCancel === cancelTransformBox) s.runtime.transformCancel = null;
+      if (s.runtime.transformField === transformField) s.runtime.transformField = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform]);
 
   // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
   // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
@@ -3298,6 +3657,44 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         // 钢笔拖拽中按 Alt=断开手柄对,此后只有 out 跟指针(上游 pen_break_handle,#3306)
         if (penRef.current?.dragging && !penRef.current.adjustingLast) penBreakHandle(penRef.current);
         scheduleDraw();
+        return;
+      }
+      // 自由变换框(上游 shortcuts.rs:Enter=commit、Esc=cancel;Ctrl+Z/Y 劫持到框快照而非
+      // 文档;方向键微移 1px/Shift 10px)。覆盖一切工具/对话框分支(变换是覆盖模式)。
+      if (s.transform && transformRef.current.session) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelTransformBox();
+          return;
+        }
+        if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !isTyping(e.target)) {
+          e.preventDefault();
+          commitTransformBox();
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) {
+          // 框打开期间 Ctrl 组合全部吞掉:Ctrl+Z/Y 步进框快照,其余防文档命令乱入(上游 is_enabled 口径)
+          e.preventDefault();
+          if (e.code === 'KeyZ' || e.code === 'KeyY') {
+            if (e.code === 'KeyY' || e.shiftKey) transformRedo();
+            else transformUndo();
+          }
+          return;
+        }
+        if (!isTyping(e.target)) {
+          const step = e.shiftKey ? 10 : 1;
+          if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeTransformBox(-step, 0); return; }
+          if (e.key === 'ArrowRight') { e.preventDefault(); nudgeTransformBox(step, 0); return; }
+          if (e.key === 'ArrowUp') { e.preventDefault(); nudgeTransformBox(0, -step); return; }
+          if (e.key === 'ArrowDown') { e.preventDefault(); nudgeTransformBox(0, step); return; }
+        }
+        return; // 其余键(含工具单键)吞掉——切工具走 setTool 自动提交,不经键盘
+      }
+      // Ctrl/Cmd+T = 进入自由变换(上游 edit.freeTransform;打字中=先提交再进框,
+      // 上游 begin 先 type_tool::commit)。非输入框聚焦时才接管。
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyT' && !isTyping(e.target)) {
+        e.preventDefault(); // 浏览器新标签页快捷键,必须拦
+        void beginTransform();
         return;
       }
       // 导出为对话框打开期间接管键盘:Esc 取消(输入框中也生效)/Enter 确定(非输入)/其余吞掉
@@ -4068,6 +4465,25 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     const rect = wrapRef.current!.getBoundingClientRect();
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    // 自由变换(二-8,上游 transform_tool::pointer Down):手势接管全部工具分支。
+    // Alt+点击框内/外=参考点移到点击处再拖动(上游 1455 口径);框外按下总是记录
+    // (单击=提交的判定在抬起,拖拽=旋转;Distort 模式框外拖拽惯性,上游同口径)。
+    if (transformRef.current.session && e.button === 0) {
+      const t = transformRef.current;
+      const tSession = t.session!;
+      const tol = handleTolerance(s.runtime.view.scale);
+      let hit = hitTest(tSession, [dx, dy], tol);
+      if (e.altKey && (hit.kind === 'inside' || hit.kind === 'outside')) {
+        t.session = { ...tSession, pivot: [dx, dy] };
+        syncTransformProjection(tabId, t.session);
+        hit = { kind: 'pivot' };
+      }
+      if (modeAllows(tSession.mode, hit) || hit.kind === 'outside') {
+        t.gesture = { hit, start: [dx, dy], quad0: tSession.quad, pivot0: tSession.pivot };
+      }
+      scheduleDraw();
+      return;
+    }
     // 文字工具(二-6,上游 pointer_down 分发):会话中=把手/落 caret/框外提交;
     // 空白/既有字层=拖框/编辑。整个手势消费掉,不再落画笔/形状分支。
     if (TYPE_TOOLS.has(s.tool) && e.button === 0 && s.state) {
@@ -4410,6 +4826,45 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     const [dx, dy] = screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top);
     s.runtime.pointerDoc = { x: dx, y: dy };
+    // 自由变换(上游 transform_tool::pointer Move/Up 共段):手势快照重算 quad/pivot
+    // (修饰键中途按下/松开即时生效);无手势=hover 光标。框读数同步刷新。
+    if (transformRef.current.session) {
+      const t = transformRef.current;
+      const tSession = t.session!;
+      if (t.gesture) {
+        const g = t.gesture;
+        const mods: TransformMods = { shift: e.shiftKey, alt: e.altKey, command: e.ctrlKey || e.metaKey };
+        // 类型层只接受仿射(上游 distort_refused:Distort/Perspective 降级普通缩放)
+        const distortRefused = t.kind === 'Type';
+        const effMods = distortRefused && g.hit.kind === 'corner' ? { ...mods, command: false } : mods;
+        const mode = distortRefused && (tSession.mode === 'distort' || tSession.mode === 'perspective') ? 'free' : tSession.mode;
+        const next = applyModeDrag({ quad: tSession.quad, pivot: tSession.pivot, mode }, g, [dx, dy], t.kind === 'Type', effMods);
+        t.session = { ...tSession, quad: next.quad, pivot: next.pivot };
+        // 读数:旋转=角度;缩放=W/H%;平移=ΔX,ΔY(上游 draw_live_readout 口径)
+        if (g.hit.kind === 'outside') {
+          const a0 = Math.atan2(g.start[1] - g.pivot0[1], g.start[0] - g.pivot0[0]);
+          const a1 = Math.atan2(dy - g.pivot0[1], dx - g.pivot0[0]);
+          let deg = ((a1 - a0) * 180) / Math.PI;
+          deg = ((deg % 360) + 360) % 360;
+          t.readout = `${deg.toFixed(1)}°`;
+        } else if (g.hit.kind === 'corner' || g.hit.kind === 'edge') {
+          const r = transformReadout(t.session!);
+          t.readout = `W ${r.wPct.toFixed(1)}% H ${r.hPct.toFixed(1)}%`;
+        } else {
+          t.readout = `Δ ${Math.round(next.quad[0][0] - g.quad0[0][0])}, ${Math.round(next.quad[0][1] - g.quad0[0][1])} px`;
+        }
+        scheduleDraw();
+        return;
+      }
+      const tol = handleTolerance(s.runtime.view.scale);
+      const h = hitTest(tSession, [dx, dy], tol);
+      if (JSON.stringify(h) !== JSON.stringify(t.hover)) {
+        t.hover = h;
+        scheduleDraw();
+        forceUpdate((n) => n + 1); // 光标形态经 React 渲染(与 cropCursorRef 同款)
+      }
+      return;
+    }
     // 文字工具(二-6,上游 pointer_move):段落框把手拖缩(节流)/拖拽选字 caret(节流)。
     if (TYPE_TOOLS.has(s.tool) && (typeResizeRef.current || s.textEdit?.dragging)) {
       typePointerMove(s, dx, dy, e.altKey);
@@ -4685,6 +5140,24 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 交互期降载在此收口(渐变拖动等画布交互;滑杆类在各自 flushNow):mark(0) 的
     // notify 唤醒泵,随后的终提交 revision 推进即以全分辨率出图
     markInteractiveRender(tabId, 0);
+    // 自由变换抬起(上游 pointer Up):落定推栈+回写投影;框外单击=提交(#2851);
+    // Pointercancel 兜底同款(手势快照重算,无"半途状态"要回收)。
+    if (s && transformRef.current.session && transformRef.current.gesture) {
+      const t = transformRef.current;
+      const g = t.gesture!;
+      t.gesture = null;
+      t.readout = null;
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const [dx, dy] = rect ? screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top) : g.start;
+      if (acceptsOutsideClick(g, [dx, dy], handleTolerance(s.runtime.view.scale))) {
+        void commitTransform(tabId); // store 置 null → 订阅清理 ref
+        return;
+      }
+      settleTransformStep();
+      if (t.session) syncTransformProjection(tabId, t.session);
+      scheduleDraw();
+      return;
+    }
     // 文字工具抬起(二-6,上游 pointer_up):拖缩尾沿补发/选字结束/拖框判定→type.create
     if (s && TYPE_TOOLS.has(s.tool) && s.state) {
       const rect = wrapRef.current!.getBoundingClientRect();
@@ -5102,6 +5575,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     typeResizeRef.current = null;
     typeDragRef.current = null;
     typePendingRef.current = null;
+    // 自由变换手势中断:手势丢弃、当前 quad/pivot 保持(快照重算无半途状态),框仍打开
+    if (transformRef.current.gesture) {
+      transformRef.current.gesture = null;
+      transformRef.current.readout = null;
+      if (transformRef.current.session) syncTransformProjection(tabId, transformRef.current.session);
+    }
     const st = getSession(tabId);
     if (st?.textEdit?.dragging) updateSession(tabId, { textEdit: { ...st.textEdit, dragging: false } });
     (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -5120,17 +5599,33 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   if (!session) return null;
   const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP, 'pen']);
+  // 自由变换光标:hover 把手=对角/单边 resize,框内/pivot=move,框外=crosshair
+  // (旋转手势框外全程可用,近角反馈靠把手自绘;上游 CursorIcon 等价)
+  const tHover = transformRef.current.session && !transformRef.current.gesture ? transformRef.current.hover : null;
+  const transformCursor = (() => {
+    if (!tHover) return 'move';
+    if (tHover.kind === 'corner') {
+      // 角 i(顺时针 TL,TR,BR,BL)→ 两向 resize 光标(按 quad 走向近似,不随旋转精细跟随)
+      return tHover.i === 0 || tHover.i === 2 ? 'nwse-resize' : 'nesw-resize';
+    }
+    if (tHover.kind === 'edge') {
+      return tHover.i === 0 || tHover.i === 2 ? 'ns-resize' : 'ew-resize';
+    }
+    if (tHover.kind === 'pivot' || tHover.kind === 'inside') return 'move';
+    return 'crosshair';
+  })();
   const cursor =
-    session.selectMask?.open
-      ? // 对话框模态:边刷开=自绘圆环(原生光标隐藏),关=普通箭头(上游模态画布口径)
-        session.selectMask.brush ? 'none' : 'default'
-        : session.tool === 'hand' || spaceRef.current ? 'grab'
-      : session.tool === 'zoom' ? 'zoom-in'
-        : BRUSH_TOOLS.has(session.tool) ? 'none'
-          : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')
-            : TYPE_TOOLS.has(session.tool) ? 'text'
-              : CROSSHAIR_TOOLS.has(session.tool) ? CROSSHAIR_CURSOR
-                : 'default';
+    transformRef.current.session ? transformCursor
+      : session.selectMask?.open
+        ? // 对话框模态:边刷开=自绘圆环(原生光标隐藏),关=普通箭头(上游模态画布口径)
+          session.selectMask.brush ? 'none' : 'default'
+          : session.tool === 'hand' || spaceRef.current ? 'grab'
+        : session.tool === 'zoom' ? 'zoom-in'
+          : BRUSH_TOOLS.has(session.tool) ? 'none'
+            : session.tool === 'crop' ? (cropCursorRef.current ?? 'crosshair')
+              : TYPE_TOOLS.has(session.tool) ? 'text'
+                : CROSSHAIR_TOOLS.has(session.tool) ? CROSSHAIR_CURSOR
+                  : 'default';
 
   return (
     <div

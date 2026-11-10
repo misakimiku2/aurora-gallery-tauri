@@ -2143,6 +2143,7 @@ pub fn run() {
         editor_cmds::editor_stroke_push,
         editor_cmds::editor_stroke_commit,
         editor_cmds::editor_stroke_cancel,
+        editor_cmds::editor_transform_begin,
         editor_cmds::editor_move_frame,
         editor_cmds::editor_duplicate_move,
         editor_cmds::editor_fold_duplicate_move,

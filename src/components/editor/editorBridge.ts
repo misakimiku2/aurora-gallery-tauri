@@ -300,3 +300,44 @@ export async function editorSelectMaskView(
   }
   return { width: w, height: h, outline, rgba: new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + off) };
 }
+
+/** 自由变换进入数据(Ctrl+T,零文档改动零历史):
+ *  [jsonLen:u32][JSON(frame/rect/layer/kind)][bgW][bgH][bg RGBA][texW][texH][tex RGBA]。
+ *  bg=隐藏该层后 frame∩画布 的合成,tex=活动层在同一区域的渲染(带选区按选区灰度加权)。 */
+export interface TransformBeginResult {
+  /** 变换框 [x0,y0,x1,y1](引擎 transform_frame 口径,可超出画布)。 */
+  frame: [number, number, number, number];
+  /** bg/tex 覆盖的区域(frame∩画布)。 */
+  rect: [number, number, number, number];
+  layer: number;
+  kind: string;
+  bg: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> };
+  tex: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> };
+}
+
+export async function editorTransformBegin(doc: number): Promise<TransformBeginResult> {
+  const buf = await invoke<ArrayBuffer>('editor_transform_begin', { doc });
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(u8.buffer as ArrayBuffer, u8.byteOffset);
+  const jsonLen = dv.getUint32(0, true);
+  const info = JSON.parse(new TextDecoder().decode(u8.subarray(4, 4 + jsonLen)));
+  let off = 4 + jsonLen;
+  const bw = dv.getUint32(off, true);
+  const bh = dv.getUint32(off + 4, true);
+  off += 8;
+  const bgLen = bw * bh * 4;
+  const bg = new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + off, bgLen);
+  off += bgLen;
+  const tw = dv.getUint32(off, true);
+  const th = dv.getUint32(off + 4, true);
+  off += 8;
+  const tex = new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + off, tw * th * 4);
+  return {
+    frame: info.frame,
+    rect: info.rect,
+    layer: info.layer,
+    kind: info.kind,
+    bg: { width: bw, height: bh, rgba: bg },
+    tex: { width: tw, height: th, rgba: tex },
+  };
+}

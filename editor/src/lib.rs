@@ -65,6 +65,14 @@ pub struct Rendered {
     pub pixels: Vec<u8>,
 }
 
+/// 自由变换进入数据(transform_begin):info JSON + 预览背景/层纹理两张 RGBA8。
+#[derive(Debug, Clone)]
+pub struct TransformBegin {
+    pub info: Value,
+    pub bg: Rendered,
+    pub tex: Rendered,
+}
+
 /// live 描边的一帧增量:文档坐标矩形 + 该区域的合成像素(来自 stroke 的文档克隆)。
 /// 空矩形(width=0)表示本帧无变化。
 #[derive(Debug, Clone)]
@@ -386,6 +394,61 @@ impl EditorManager {
         let rect = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
         let img = photocraft_compose::render(&st.doc, rect).to_rgba8();
         Ok(Rendered { width: img.width, height: img.height, pixels: img.pixels })
+    }
+
+    /// 自由变换进入数据(上游 transform_tool.rs begin 口径;零文档改动零历史):
+    /// frame = 引擎 `transform_frame`(带选区=选区自身 bounds,否则层内容,#2630 口径);
+    /// bg = 隐藏该层后 frame∩画布 的合成(拖拽中顶替位图原位像素 = 内容被"抽走");
+    /// tex = 活动层在该区域的渲染(`render_layer_in`,含蒙版/不透明度),像素层带选区时
+    /// 按选区灰度加权 alpha(上游 split_selected 抬起像素的语义,框外像素不随变换)。
+    /// bg/tex 都覆盖同一 rect,前端按 frame 建立映射。超 MAX_RENDER_PIXELS 的区域返回
+    /// 透明(纹理空 = 无预览的纯框模式,提交仍正确)。
+    pub fn transform_begin(&mut self, doc: u64) -> Result<TransformBegin> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let id = st.active_layer.ok_or_else(|| EditorError("no active layer".into()))?;
+        let l = st.doc.layer(id).ok_or_else(|| EditorError(format!("no layer {}", id.0)))?;
+        if matches!(l.content, photocraft_engine::doc::LayerContent::Adjustment(_)) && l.mask.is_none() {
+            return Err(EditorError("adjustment layers need a mask to transform".into()));
+        }
+        if photocraft_engine::transform_cmds::locked_for_transform(&st.doc, id) {
+            return Err(EditorError("the layer is locked for transforming".into()));
+        }
+        let frame = photocraft_engine::transform_cmds::transform_frame(&st.doc, l);
+        if frame.is_empty() {
+            return Err(EditorError("nothing to transform".into()));
+        }
+        let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
+        let rect = frame.intersect(&canvas);
+        // 背景预览:克隆文档隐藏该层(Surface tile 是 Arc,克隆只复制结构,上游 begin 同款)。
+        let mut doc2: photocraft_engine::doc::Document = (*st.doc).clone();
+        hide_layer(&mut doc2.layers, id.0);
+        let bg = photocraft_compose::render(&doc2, rect).to_rgba8();
+        // 层纹理;像素层带选区时按选区灰度加权 alpha(straight alpha 只乘 a 通道)。
+        let sel = st.doc.selection.clone();
+        let mut tex = photocraft_compose::render_layer_in(&st.doc, l, rect).to_rgba8();
+        if sel.is_some() && !photocraft_engine::transform_cmds::moves_whole(l) {
+            let sel = sel.unwrap();
+            for j in 0..rect.height() {
+                let mut row = vec![0f32; rect.width() as usize];
+                sel.sample_row_strided((rect.y0 + j as i32) as i32, rect.x0 as i32, 1, 0, &mut row);
+                for (i, s) in row.iter().enumerate() {
+                    let o = (j as usize * rect.width() as usize + i) * 4 + 3;
+                    tex.pixels[o] = ((tex.pixels[o] as f32 / 255.0) * s.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+                }
+            }
+        }
+        let info = serde_json::json!({
+            "frame": [frame.x0, frame.y0, frame.x1, frame.y1],
+            "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
+            "layer": id.0,
+            "kind": l.content.kind_name(),
+        });
+        Ok(TransformBegin {
+            info,
+            bg: Rendered { width: rect.width(), height: rect.height(), pixels: bg.pixels },
+            tex: Rendered { width: rect.width(), height: rect.height(), pixels: tex.pixels },
+        })
     }
 
     // ---- live 描边(画笔族)----
@@ -1030,6 +1093,22 @@ fn find_layer(layers: &[photocraft_engine::doc::Layer], id: u64) -> Option<&phot
         }
     }
     None
+}
+
+/// 按 id 在图层树(含编组子层)里找到图层并设为不可见(变换预览的"抽走"背景)。
+fn hide_layer(layers: &mut [photocraft_engine::doc::Layer], id: u64) -> bool {
+    for l in layers.iter_mut() {
+        if l.id.0 == id {
+            l.visible = false;
+            return true;
+        }
+        if let photocraft_engine::doc::LayerContent::Group(g) = &mut l.content {
+            if hide_layer(&mut g.children, id) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 收集带像素蒙版的图层的蒙版态(图层面板徽标/属性面板蒙版区段),含编组子层。

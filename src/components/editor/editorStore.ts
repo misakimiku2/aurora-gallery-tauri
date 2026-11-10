@@ -6,6 +6,7 @@
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
+import { quadUnchanged, transformCommitParams, type TransformSession } from './transformLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
 import { TYPE_TOOLS, type TextEditSession } from './typeLogic';
 import { noteRecentFont as noteRecentFontList, type FaceInfoJson } from './typeStyle';
@@ -142,6 +143,12 @@ export interface EditorRuntime {
   makeSelection: (() => void) | null;
   /** 文字编辑会话提交(换工具时 store 调;画布注册——会话态/隐藏 input 在画布)。 */
   commitTextEdit: (() => void) | null;
+  /** 自由变换提交(✓/Enter;选项条与画布共用——框态/预览资源在画布 ref)。 */
+  transformCommit: (() => void) | null;
+  /** 自由变换取消(✗/Esc;纯前端丢弃,零历史)。 */
+  transformCancel: (() => void) | null;
+  /** 自由变换数值/模式编辑(选项条字段;画布注册——mutate ref 后回写投影+推步骤)。 */
+  transformField: ((fn: (s: TransformSession) => TransformSession) => void) | null;
 }
 
 export interface EditorSession {
@@ -186,6 +193,10 @@ export interface EditorSession {
   /** 文字连击计数(上游 type_clicks):同层同点连击 2=词 3=行 4=段落 5=全选。
    * t/at=上次按下时间与文档位(pointerdown.detail 不携带连击数,自行判定时距)。 */
   typeClicks: { layer: number; count: number; t: number; at: [number, number] } | null;
+  /** 自由变换会话(上游 ui.transform;Ctrl+T 打开,Enter/框外单击=提交、Esc=取消)。
+   * 这是画布 ref 会话的**投影**(松手/选项条提交时回写,供选项条显示与键位判定;
+   * 拖拽中 quad 只在 ref+overlay 实时,不逐帧 notify)。 */
+  transform: TransformSession | null;
 }
 
 /** 路径面板对话框字段(上游 stroke_path_dialog + path.toSelection 的 pen_dialog spec)。 */
@@ -292,7 +303,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       typeRecentFonts: [] as string[],
       typeStyleDefaults: {},
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -307,6 +318,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     directSel: { target: null, anchors: [], segment: null },
     textEdit: null,
     typeClicks: null,
+    transform: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -878,6 +890,8 @@ export function setTool(tabId: string, tool: EditorTool): void {
   const wasType = TYPE_TOOLS.has(s.tool);
   s.tool = tool;
   if (wasType && !TYPE_TOOLS.has(tool)) s.runtime.commitTextEdit?.();
+  // 自由变换框打开期间切工具 = 自动提交(上游 end_if_left 口径;先提交文字会话再提交变换框)。
+  if (s.transform) void commitTransform(tabId);
   if (TYPE_TOOLS.has(tool)) {
     // 切到文字工具=右侧属性组自动切「字符」页签(Photoshop 的 Character 面板随打字可达)
     window.dispatchEvent(new CustomEvent('aurora-editor-panel', { detail: { tabId, tab: 'type' } }));
@@ -890,6 +904,49 @@ export function setOptions(tabId: string, patch: Partial<ToolOptions>): void {
   if (!s) return;
   Object.assign(s.options, patch);
   notify(tabId);
+}
+
+// ===== 自由变换(Ctrl+T;框态真源在画布 ref,store 是投影)=====
+
+/** 写入/清除变换会话(画布 begin 成功后调;null = 提交/取消后由画布订阅清理 ref 资源)。 */
+export function setTransformSession(tabId: string, t: TransformSession | null): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.transform = t;
+  notify(tabId);
+}
+
+/** 回写投影(拖拽松手/选项条字段提交后;真源在画布 ref,拖拽中不逐帧调)。 */
+export function syncTransformProjection(tabId: string, t: TransformSession): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.transform = t;
+  notify(tabId);
+}
+
+/** 提交自由变换(上游 commit 口径):未改动零历史短路;一条 edit.transform 一步历史;
+ * 被拒(pixel budget 等)框保持打开、错误进提示条。 */
+export async function commitTransform(tabId: string): Promise<void> {
+  const s = sessions.get(tabId);
+  if (!s?.transform || s.docId == null) return;
+  const t = s.transform;
+  if (quadUnchanged(t.rect, t.quad)) {
+    setTransformSession(tabId, null);
+    return;
+  }
+  try {
+    await runCommand(tabId, 'edit.transform', transformCommitParams(t));
+    setTransformSession(tabId, null);
+  } catch (err) {
+    showEditorNotice(`无法应用自由变换:${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** 取消自由变换(纯前端丢弃,零历史)。 */
+export function cancelTransform(tabId: string): void {
+  const s = sessions.get(tabId);
+  if (!s?.transform) return;
+  setTransformSession(tabId, null);
 }
 
 // ===== 编辑器内状态提示(轻量 toast;与画布订阅解耦,跨组件直达)=====

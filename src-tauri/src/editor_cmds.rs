@@ -210,6 +210,26 @@ pub fn editor_stroke_cancel(s: State<EditorState>, doc: u64) -> Result<(), Strin
     m.stroke_cancel(doc).map_err(|e| e.to_string())
 }
 
+/// 自由变换进入数据(Ctrl+T):变换框/层信息 JSON + 预览背景与层纹理两张 RGBA8,
+/// 零文档改动零历史。
+/// 响应 = [jsonLen:u32 LE][JSON(frame/rect/layer/kind)][bgW][bgH][bg RGBA][texW][texH][tex RGBA]。
+#[tauri::command]
+pub fn editor_transform_begin(s: State<EditorState>, doc: u64) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let r = m.transform_begin(doc).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(&r.info).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(4 + json.len() + 12 + r.bg.pixels.len() + 12 + r.tex.pixels.len());
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&json);
+    bytes.extend_from_slice(&(r.bg.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.bg.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.bg.pixels);
+    bytes.extend_from_slice(&(r.tex.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.tex.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.tex.pixels);
+    Ok(Response::new(bytes))
+}
+
 /// 移动工具拖拽预览帧:target="float"(选区像素浮动,dx/dy 为未提交增量)或
 /// "layer"(整层平移,dx/dy 为总位移);x/y/w/h 为脏矩形(文档坐标)。
 #[tauri::command]

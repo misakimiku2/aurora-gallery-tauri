@@ -9,7 +9,7 @@ import { getSession, markInteractiveRender, openSelectMask, setOptions, subscrib
 import type { ToolOptions } from './editorStore';
 import type { EditorTool } from './editorTypes';
 import { BLEND_ZH } from './editorTypes';
-import { Square, PlusSquare, MinusSquare, XSquare, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
+import { Square, PlusSquare, MinusSquare, XSquare, X, Check, CircleOff, Ruler, Magnet, ChevronDown } from 'lucide-react';
 import { clonePreset, GRADIENT_GROUPS, presetCss } from './gradientPresets';
 import { peekGradientFill } from './gradientFill';
 import { isWhrKey, normalizeLength, normalizeResolution, WHR_PRESETS, whrPresetFields } from './cropSize';
@@ -19,6 +19,8 @@ import { activePathName, pathRows } from './pathsPanelLogic';
 import { EditorSelect, attachWheelCycle } from './editorSelect';
 import { ColorPicker } from './panels/ColorPicker';
 import { PickerCard } from './panels/PickerCard';
+import { NumField } from './panels/TypePanel';
+import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, skewAboutPivot, readout as transformReadout, type TransformMode, type TransformSession } from './transformLogic';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
   AA_OPTIONS, aaKey, selectedStyleName, styleAt, styleColorHex, styleLabel, styleNames, shownScale,
@@ -183,7 +185,10 @@ export const EditorOptionsBar: React.FC<{ tabId: string; active?: boolean }> = (
 
   return (
     <div className="h-8 shrink-0 flex items-center gap-3 px-3 bg-panel border-b border-black/10 dark:border-white/10 text-[11px]">
-      {isBrush ? (
+      {s.transform ? (
+        // 自由变换框打开:变换字段替换当前工具选项(上游 options_bar 同位)
+        <TransformOptionsInline tabId={tabId} />
+      ) : isBrush ? (
         <>
           <label className="flex items-center gap-1.5 text-neutral-500 dark:text-neutral-400">
             笔径
@@ -996,5 +1001,120 @@ const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabI
         </button>
       )}
     </>
+  );
+};
+
+// ===== 自由变换选项段(二-8,上游 transform_tool::options_bar)=====
+// 字段:9 宫格参考点 / X / Y / W / H(恒等比,上游链接口径) / 角度 / 斜切 H·V / 模式 / 插值
+// / ✓✗。改值走 runtime.transformField(mutate 画布 ref 真源+落定推栈+回写投影);
+// 显示源 = store.transform 投影(拖拽中不逐帧更新,松手后跟随,读数在画布上实时)。
+
+const TRANSFORM_MODES: Array<{ v: TransformMode; label: string }> = [
+  { v: 'free', label: '自由' },
+  { v: 'rotate', label: '旋转' },
+  { v: 'skew', label: '斜切' },
+  { v: 'distort', label: '扭曲' },
+  { v: 'perspective', label: '透视' },
+];
+const INTERP_OPTIONS = [
+  { value: 'bicubic', label: '三次' },
+  { value: 'bilinear', label: '两次线性' },
+  { value: 'nearest', label: '邻近(硬边)' },
+];
+
+const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
+  const [, forceUpdate] = useState(0);
+  useEffect(() => subscribeSession(tabId, () => forceUpdate((n) => n + 1)), [tabId]);
+  const s = getSession(tabId);
+  const t = s?.transform;
+  if (!s || !t) return null;
+  const r = transformReadout(t);
+  const anchor = matchingAnchor(t.quad, t.pivot);
+  const field = (fn: (v: TransformSession) => TransformSession) => () => s.runtime.transformField?.(fn);
+  const small = 'h-6 w-16 rounded border border-black/15 dark:border-white/15 bg-transparent px-1.5 text-[11px] tabular-nums focus:outline-none focus:border-sky-500';
+  const lbl = 'text-neutral-500 dark:text-neutral-400';
+  return (
+    <div className="flex items-center gap-2.5 min-w-0" data-testid="transform-options">
+      {/* 9 宫格参考点(上游 anchor_grid_widget;0..8 = TL..BR) */}
+      <div className="grid grid-cols-3 gap-[2px] p-[3px] border border-black/15 dark:border-white/15 rounded" title="参考点位置">
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => s.runtime.transformField?.((v) => setPivotAnchor(v, i))}
+            className={`h-[7px] w-[7px] ${anchor === i ? 'bg-sky-500' : 'bg-neutral-400 dark:bg-neutral-600 hover:bg-sky-400'}`}
+          />
+        ))}
+      </div>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        X
+        <NumField label="" tip="参考点 X(方向键微移整框)" value={t.pivot[0]} min={-300000} max={300000} unit="" onCommit={(x) => s.runtime.transformField?.((v) => movePivotTo(v, x, v.pivot[1]))} />
+      </label>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        Y
+        <NumField label="" tip="参考点 Y" value={t.pivot[1]} min={-300000} max={300000} unit="" onCommit={(y) => s.runtime.transformField?.((v) => movePivotTo(v, v.pivot[0], y))} />
+      </label>
+      <span className="w-px h-4 bg-black/10 dark:bg-white/10" />
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        W%
+        <NumField label="" tip="宽度百分比(恒等比;负值=水平镜像)" value={r.wPct} min={-1000000} max={1000000} unit="" onCommit={(w) => s.runtime.transformField?.((v) => {
+          const cur = transformReadout(v).wPct;
+          const k = w / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+          return scaleAboutPivot(v, k, k);
+        })} />
+      </label>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        H%
+        <NumField label="" tip="高度百分比(恒等比;负值=垂直镜像)" value={r.hPct} min={-1000000} max={1000000} unit="" onCommit={(h) => s.runtime.transformField?.((v) => {
+          const cur = transformReadout(v).hPct;
+          const k = h / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+          return scaleAboutPivot(v, k, k);
+        })} />
+      </label>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        角度
+        <NumField label="" tip="旋转(绕参考点;±180°)" value={r.angleDeg} min={-180} max={180} unit="°" onCommit={(a) => s.runtime.transformField?.((v) => {
+          const cur = transformReadout(v).angleDeg;
+          return rotateAboutPivot(v, ((a - cur) * Math.PI) / 180);
+        })} />
+      </label>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        斜切
+        <NumField label="" tip="水平斜切(框侧边倾斜;±89°)" value={r.skewHDeg} min={-89} max={89} unit="°" onCommit={(h) => s.runtime.transformField?.((v) => skewAboutPivot(v, h, v.skewV))} />
+      </label>
+      <label className={`flex items-center gap-1 ${lbl}`}>
+        V
+        <NumField label="" tip="垂直斜切(框顶底倾斜;±89°)" value={t.skewV} min={-89} max={89} unit="°" onCommit={(v2) => s.runtime.transformField?.((v) => skewAboutPivot(v, transformReadout(v).skewHDeg, v2))} />
+      </label>
+      <span className="w-px h-4 bg-black/10 dark:bg-white/10" />
+      <EditorSelect
+        value={t.mode}
+        options={TRANSFORM_MODES.map((m) => ({ value: m.v, label: m.label }))}
+        onChange={(v) => field((cur) => ({ ...cur, mode: v as TransformMode }))()}
+        className="w-16"
+        title="变换模式(Edit › Transform;扭曲/透视=Ctrl/⌘ 拖角,透视=Ctrl+⌥+⇧ 拖角)"
+      />
+      <EditorSelect
+        value={t.interpolation}
+        options={INTERP_OPTIONS}
+        onChange={(v) => field((cur) => ({ ...cur, interpolation: v }))()}
+        className="w-24"
+        title="插值(提交重采样方式)"
+      />
+      <button
+        type="button" title="应用变换 (Enter)"
+        onClick={() => s.runtime.transformCommit?.()}
+        className="h-6 w-6 flex items-center justify-center rounded text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <Check size={14} />
+      </button>
+      <button
+        type="button" title="取消变换 (Esc);无改动=零历史"
+        onClick={() => s.runtime.transformCancel?.()}
+        className="h-6 w-6 flex items-center justify-center rounded text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <X size={14} />
+      </button>
+    </div>
   );
 };
