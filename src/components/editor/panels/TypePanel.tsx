@@ -21,8 +21,10 @@ import {
 
 /** 标签+数值输入行(上游 num_field 的 icon+value 对;blur/Enter 提交,Esc 还原)。
  *  字段 flex 填满所在格(上游 field_width 口径,列线跨行对齐);单位画进输入框内右侧
- *  (上游 value_field 的 suffix 同位,不占外宽)。 */
-const NumField: React.FC<{
+ *  (上游 value_field 的 suffix 同位,不占外宽)。悬停滚轮调值:一格=±1、Shift=±10,
+ *  改显示+停手 300ms 提交一次(会话内 coalesce 本就合并,无会话=一次手势一条历史步)。 */
+/** 导出仅供单测(pickerCard/numFieldWheel);UI 内部经 TypePanel 使用。 */
+export const NumField: React.FC<{
   label: string;
   tip: string;
   value: number;
@@ -32,24 +34,61 @@ const NumField: React.FC<{
   onCommit: (v: number) => void;
 }> = ({ label, tip, value, min, max, unit = '', onCommit }) => {
   const [buf, setBuf] = useState<string>(String(Math.round(value * 100) / 100));
+  const bufRef = useRef(buf);
+  bufRef.current = buf;
+  const inputRef = useRef<HTMLInputElement>(null);
   // 外部值变化时无条件同步显示(引擎回写/样式切换;deps=value,用户敲字不触发)。
   // 条件同步(focusRef 跳过)会让过期 buf 在 blur 时把默认值写回文档——冒烟实证。
   useEffect(() => {
     setBuf(String(Math.round(value * 100) / 100));
   }, [value]);
-  const commit = () => {
-    const n = Number(buf);
-    if (buf.trim() !== '' && Number.isFinite(n) && n >= min && n <= max && n !== Math.round(value * 100) / 100) {
-      onCommit(n);
-    } else {
-      setBuf(String(Math.round(value * 100) / 100));
-    }
+  const shown = Math.round(value * 100) / 100;
+  const commitValue = (n: number) => {
+    if (Number.isFinite(n) && n >= min && n <= max && n !== shown) onCommit(n);
+    else setBuf(String(shown));
   };
+  // 滚轮恒读最新提交闭包(连续滚时 render 可能滞后)
+  const commitRef = useRef(commitValue);
+  commitRef.current = commitValue;
+  const commit = () => {
+    const n = Number(bufRef.current);
+    if (bufRef.current.trim() !== '') commitValue(n);
+    else setBuf(String(shown));
+  };
+  // 悬停滚轮(非 passive 挂原生监听;防面板滚动)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return undefined;
+    let acc = 0;
+    let timer: number | null = null;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      acc += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+      let steps = 0;
+      while (Math.abs(acc) >= 100) {
+        steps += acc > 0 ? -1 : 1; // 滚轮向下=减
+        acc -= acc > 0 ? 100 : -100;
+      }
+      if (!steps) return;
+      const cur = Number(bufRef.current);
+      if (!Number.isFinite(cur)) return;
+      const next = Math.min(max, Math.max(min, cur + steps * (e.shiftKey ? 10 : 1)));
+      setBuf(String(Math.round(next * 100) / 100));
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { commitRef.current(next); }, 300);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, [min, max]);
   return (
     <label className="flex items-center gap-1 min-w-0" title={tip}>
       <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">{label}</span>
       <span className="relative min-w-0 flex-1">
         <input
+          ref={inputRef}
           value={buf}
           onChange={(e) => setBuf(e.target.value)}
           onBlur={commit}
@@ -364,7 +403,7 @@ export const TypePanel: React.FC<{ tabId: string; active?: boolean }> = ({ tabId
       {/* 取色卡(PickerCard 可拖壳:SV 满高,标题栏拖动);active=本标签非前台或设置/模态
           打开时藏起(portal 到 body 逃出了 hidden 的标签容器,选区/导出弹窗同口径) */}
       {colorPick && active && (
-        <PickerCard title="文字颜色" onClose={() => setColorPick(null)}>
+        <PickerCard title="文字颜色" storageKey="aurora-editor-text-color-card" onClose={() => setColorPick(null)}>
           <ColorPicker
             value={colorPick.rgb}
             onCommit={(rgb) => {

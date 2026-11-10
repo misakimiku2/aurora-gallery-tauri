@@ -802,6 +802,9 @@ const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabI
   const [info, setInfo] = useState<{ runs: { start: number; end: number; style: CharStyleJson }[]; transform: number[]; antialias: string } | null>(null);
   const [colorPick, setColorPick] = useState<[number, number, number] | null>(null);
   const [sizeBuf, setSizeBuf] = useState('12');
+  const sizeBufRef = useRef(sizeBuf);
+  sizeBufRef.current = sizeBuf;
+  const sizeInputRef = useRef<HTMLInputElement>(null);
   const ed = s?.textEdit ?? null;
 
   useEffect(() => { void fetchFontFamilies(tabId).then(setFamilies); }, [tabId]);
@@ -826,6 +829,41 @@ const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabI
   }, [tabId, fam]);
   const sizeShown = (c?.size_pt ?? s?.options.typeSize ?? 12) * scale;
   useEffect(() => { setSizeBuf(String(Math.round(sizeShown * 100) / 100)); }, [sizeShown]);
+  // 字号提交闭包(滚轮恒读最新:闭包里 scale/apply 随渲染变;每渲染刷新)
+  const applySizeRef = useRef<(n: number) => void>(() => undefined);
+  applySizeRef.current = (n: number) => {
+    if (Number.isFinite(n) && n >= 0.1 && n <= 1296 && Math.abs(n - sizeShown) > 0.01) {
+      apply(scale !== 1 ? { size: n / scale, metricsAsShown: true } : { size: n });
+    } else setSizeBuf(String(Math.round(sizeShown * 100) / 100));
+  };
+  // 悬停滚轮调字号(同字符页签 NumField:一格=±1、Shift=±10,停手 300ms 提交一次)
+  useEffect(() => {
+    const el = sizeInputRef.current;
+    if (!el) return undefined;
+    let acc = 0;
+    let timer: number | null = null;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      acc += e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+      let steps = 0;
+      while (Math.abs(acc) >= 100) {
+        steps += acc > 0 ? -1 : 1;
+        acc -= acc > 0 ? 100 : -100;
+      }
+      if (!steps) return;
+      const cur = Number(sizeBufRef.current);
+      if (!Number.isFinite(cur)) return;
+      const next = Math.min(1296, Math.max(0.1, cur + steps * (e.shiftKey ? 10 : 1)));
+      setSizeBuf(String(Math.round(next * 100) / 100));
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { applySizeRef.current(next); }, 300);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, []);
   if (!s) return null;
   const styleShown = c ? selectedStyleName(c, faces) : s.options.typeStyle || 'Regular';
   const apply = (props: Record<string, unknown>) => { void applyTypeStyle(tabId, props); };
@@ -879,6 +917,7 @@ const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabI
       {/* 字号(×层变换显示;metricsAsShown) */}
       <span className="text-[11px] text-neutral-500 dark:text-neutral-400" title="字号">T</span>
       <input
+        ref={sizeInputRef}
         value={sizeBuf}
         onChange={(e) => setSizeBuf(e.target.value)}
         onBlur={() => {
@@ -935,6 +974,7 @@ const TypeOptionsInline: React.FC<{ tabId: string; active?: boolean }> = ({ tabI
       {colorPick && active && (
         <PickerCard
           title="文字颜色"
+          storageKey="aurora-editor-text-color-card"
           onClose={() => setColorPick(null)}
         >
           <ColorPicker

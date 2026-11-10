@@ -12,26 +12,47 @@ export const PickerCard: React.FC<{
   onClose: () => void;
   /** 初始位置(省略=视口居中;按实际卡尺寸钳进视口)。 */
   at?: { left: number; top: number };
+  /** 拖动位置持久化键(localStorage):门控隐藏=组件卸载,重挂靠它回原位
+   *  (SelectMaskDialog 位置持久化同口径)。省略=每次回初始位。 */
+  storageKey?: string;
   /** 外点/Esc 关闭(渐变色标卡口径;文字颜色卡不传=只显式关)。 */
   closeOnOutside?: boolean;
   /** 底部按钮区(省略=单个「关闭」)。 */
   footer?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ title, onClose, at, closeOnOutside, footer, children }) => {
+}> = ({ title, onClose, at, storageKey, closeOnOutside, footer, children }) => {
   const cardRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  // 初始位定格一次(at 引用不随渲染变化;关卡即弃)
+  const loadPos = (): { left: number; top: number } | null => {
+    if (!storageKey) return null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return null;
+      const v = JSON.parse(raw) as { left?: number; top?: number };
+      if (typeof v.left === 'number' && typeof v.top === 'number') return { left: v.left, top: v.top };
+    } catch { /* 坏数据忽略,回初始位 */ }
+    return null;
+  };
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(loadPos);
+  // 初始位定格一次(at 引用不随渲染变化)
   const atRef = useRef(at);
+  const savePos = (p: { left: number; top: number }) => {
+    setPos(p);
+    if (storageKey) {
+      try { localStorage.setItem(storageKey, JSON.stringify(p)); } catch { /* 配额/隐私模式忽略 */ }
+    }
+  };
 
-  // 挂载即定初始位(at 或居中,按实际卡尺寸钳进视口;layout 阶段 setState 不闪帧)
+  // 挂载即定位:已持久化 > at > 居中,按实际卡尺寸钳进视口(layout 阶段 setState 不闪帧)
   useLayoutEffect(() => {
     const el = cardRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    const base = atRef.current ?? { left: (window.innerWidth - r.width) / 2, top: (window.innerHeight - r.height) / 2 };
-    setPos({
-      left: Math.max(4, Math.min(base.left, window.innerWidth - r.width - 4)),
-      top: Math.max(4, Math.min(base.top, window.innerHeight - r.height - 4)),
+    setPos((prev) => {
+      const base = prev ?? atRef.current ?? { left: (window.innerWidth - r.width) / 2, top: (window.innerHeight - r.height) / 2 };
+      return {
+        left: Math.max(4, Math.min(base.left, window.innerWidth - r.width - 4)),
+        top: Math.max(4, Math.min(base.top, window.innerHeight - r.height - 4)),
+      };
     });
   }, []);
 
@@ -61,7 +82,7 @@ export const PickerCard: React.FC<{
     const r = card.getBoundingClientRect();
     const base = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
     const move = (ev: PointerEvent) => {
-      setPos({
+      savePos({
         left: Math.max(4, Math.min(base.left + ev.clientX - base.x, window.innerWidth - r.width - 4)),
         top: Math.max(4, Math.min(base.top + ev.clientY - base.y, window.innerHeight - r.height - 4)),
       });
