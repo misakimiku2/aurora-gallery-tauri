@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -2434,10 +2434,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     scheduleDraw();
   }, [tabId, settleTransformStep, scheduleDraw]);
 
-  /** 提交(✓/Enter/框外单击):store.commitTransform 发命令;清理随 transform=null 订阅分支。 */
+  /** 提交(✓/Enter/框外单击):store.commitTransform 统一置 transformCommitting(所有
+   *  提交路径含切工具/切层自动提交),抽层预览保持到位图泵渲染出新文档上屏再无缝切。 */
   const commitTransformBox = useCallback(() => {
-    const t = transformRef.current;
-    if (!t.session) return;
+    if (!transformRef.current.session) return;
     void commitTransform(tabId);
   }, [tabId]);
 
@@ -3164,7 +3164,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (!s) return;
       if (s.runtime.requestDraw !== scheduleDraw) s.runtime.requestDraw = scheduleDraw;
       // 自由变换 end_if_left(上游 end_if_left 口径):store 会话被清(提交成功/取消/关闭标签)
-      // =清理画布资源;活动层换了=自动提交;层被删/文档变了=取消。
+      // =清理画布资源(提交落地时 transform 保持到泵上屏由 finishTransformCommit 清);
+      // 活动层换了=自动提交;层被删/文档变了=取消。
       if (!s.transform && transformRef.current.session) {
         clearTransform();
       } else if (s.transform && transformRef.current.session && s.state) {
@@ -3174,8 +3175,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (layerGone) {
           cancelTransform(tabId);
           clearTransform();
-        } else if (s.state.activeLayer !== tSession.layer && !t.gesture) {
-          void commitTransform(tabId); // 切层=提交(切层命令作用于新层,框必须先落定)
+        } else if (s.state.activeLayer !== tSession.layer && !t.gesture && !s.transformCommitting) {
+          void commitTransform(tabId); // 切层=提交(切层命令作用于新层,框必须先落定;落地中跳过)
         }
       }
       register(s);
@@ -3362,10 +3363,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           s.runtime.view = fitToView(s.state.width, s.state.height, wrapRef.current.clientWidth, wrapRef.current.clientHeight);
           fittedRef.current = true;
         }
+        // 自由变换提交落地:新文档已渲染进 offscreen 并上屏,此刻解除抽层保持态——
+        // 预览(变换后画面)与正常管线画面一致,无缝切换无闪回(提前解除会闪回原位)。
+        if (s.transform && s.transformCommitting) finishTransformCommit(tabId);
         scheduleDraw();
       }
     } catch (e) {
       console.error('[editor] render failed', e);
+      // 提交落地中渲染失败:解除保持态让框关闭(否则卡在抽层预览永不回归正常管线)
+      const sc = getSession(tabId);
+      if (sc?.transformCommitting) finishTransformCommit(tabId);
     } finally {
       bitmapBusyRef.current = false;
     }
@@ -3678,6 +3685,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // 自由变换框(上游 shortcuts.rs:Enter=commit、Esc=cancel;Ctrl+Z/Y 劫持到框快照而非
       // 文档;方向键微移 1px/Shift 10px)。覆盖一切工具/对话框分支(变换是覆盖模式)。
       if (s.transform && transformRef.current.session) {
+        if (s.transformCommitting) {
+          // 提交落地中(等位图泵):吞掉一切键,框不可再操作
+          e.preventDefault();
+          return;
+        }
         if (e.key === 'Escape') {
           e.preventDefault();
           cancelTransformBox();
@@ -4486,6 +4498,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // (单击=提交的判定在抬起,拖拽=旋转;Distort 模式框外拖拽惯性,上游同口径)。
     if (transformRef.current.session && e.button === 0) {
       const t = transformRef.current;
+      if (s.transformCommitting) return; // 提交落地中(等位图泵):吞掉按下,框不可再操作
       const tSession = t.session!;
       const tol = handleTolerance(s.runtime.view.scale);
       let hit = hitTest(tSession, [dx, dy], tol);
@@ -5616,9 +5629,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   if (!session) return null;
   const CROSSHAIR_TOOLS = new Set(['marquee', 'lasso', 'polygonLasso', 'magneticLasso', 'eyedropper', 'gradient', 'bucket', ...SHAPE_GROUP, 'pen']);
   // 自由变换光标:hover 把手=对角/单边 resize,框内/pivot=move,框外=crosshair
-  // (旋转手势框外全程可用,近角反馈靠把手自绘;上游 CursorIcon 等价)
+  // (旋转手势框外全程可用,近角反馈靠把手自绘;上游 CursorIcon 等价);
+  // committed(提交落地中)=普通箭头(框暂不可操作)。
   const tHover = transformRef.current.session && !transformRef.current.gesture ? transformRef.current.hover : null;
   const transformCursor = (() => {
+    if (session.transformCommitting) return 'default';
     if (!tHover) return 'move';
     if (tHover.kind === 'corner') {
       // 角 i(顺时针 TL,TR,BR,BL)→ 两向 resize 光标(按 quad 走向近似,不随旋转精细跟随)

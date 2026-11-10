@@ -197,6 +197,9 @@ export interface EditorSession {
    * 这是画布 ref 会话的**投影**(松手/选项条提交时回写,供选项条显示与键位判定;
    * 拖拽中 quad 只在 ref+overlay 实时,不逐帧 notify)。 */
   transform: TransformSession | null;
+  /** 提交已发命令、位图泵尚未渲染出新文档:保持变换态(抽层预览=变换后画面)防中间帧
+   * 闪回原位(旧 offscreen),泵上屏后 finishTransformCommit 无缝切正常管线。 */
+  transformCommitting: boolean;
 }
 
 /** 路径面板对话框字段(上游 stroke_path_dialog + path.toSelection 的 pen_dialog spec)。 */
@@ -319,6 +322,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     textEdit: null,
     typeClicks: null,
     transform: null,
+    transformCommitting: false,
   };
   sessions.set(tabId, s);
   return s;
@@ -925,27 +929,44 @@ export function syncTransformProjection(tabId: string, t: TransformSession): voi
 }
 
 /** 提交自由变换(上游 commit 口径):未改动零历史短路;一条 edit.transform 一步历史;
- * 被拒(pixel budget 等)框保持打开、错误进提示条。 */
-export async function commitTransform(tabId: string): Promise<void> {
+ * 被拒(pixel budget 等)框保持打开、错误进提示条。返回是否提交成功。
+ * **成功后不清变换态**:置 transformCommitting 保持抽层预览(=变换后画面)到位图泵
+ * 渲染出新文档上屏(泵调 finishTransformCommit),防中间帧闪回原位(旧 offscreen)。 */
+export async function commitTransform(tabId: string): Promise<boolean> {
   const s = sessions.get(tabId);
-  if (!s?.transform || s.docId == null) return;
+  if (!s?.transform || s.docId == null) return false;
   const t = s.transform;
   if (quadUnchanged(t.rect, t.quad)) {
     setTransformSession(tabId, null);
-    return;
+    return true;
   }
+  s.transformCommitting = true;
+  notify(tabId);
   try {
     await runCommand(tabId, 'edit.transform', transformCommitParams(t));
-    setTransformSession(tabId, null);
+    return true;
   } catch (err) {
+    s.transformCommitting = false;
+    notify(tabId);
     showEditorNotice(`无法应用自由变换:${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
+}
+
+/** 提交落地收尾(位图泵渲染出新文档上屏后由画布调):解除抽层保持态,正常管线接管。 */
+export function finishTransformCommit(tabId: string): void {
+  const s = sessions.get(tabId);
+  if (!s || !s.transformCommitting) return;
+  s.transform = null;
+  s.transformCommitting = false;
+  notify(tabId);
 }
 
 /** 取消自由变换(纯前端丢弃,零历史)。 */
 export function cancelTransform(tabId: string): void {
   const s = sessions.get(tabId);
   if (!s?.transform) return;
+  s.transformCommitting = false;
   setTransformSession(tabId, null);
 }
 
