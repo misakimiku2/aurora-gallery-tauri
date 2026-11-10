@@ -444,8 +444,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
     dctx.restore();
 
-    // 文档位图;自由变换激活=抽层预览(上游 begin 抽层口径):rect(frame∩画布)区域覆盖为
-    // 隐藏该层的合成,再把选区外区域贴回原样(选区像素被抬走、非选区像素留在原地,split_selected)
+    // 文档位图;自由变换激活=抽层预览(上游 begin 抽层口径):rect(frame∩画布)区域
+    // **先 clearRect 挖掉原像素**(bg 多为部分透明,叠加盖不住——单层图 bg 全透明,直接
+    // 叠加=原像素透出="两张图"),重铺棋盘格再贴隐藏该层的合成;选区像素场景再把选区外
+    // 区域贴回原样(非选中像素留在原地,split_selected 语义)。
     const tr = transformRef.current;
     dctx.imageSmoothingEnabled = v.scale < 1;
     dctx.imageSmoothingQuality = 'high';
@@ -454,7 +456,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const [rx0, ry0, rx1, ry1] = tr.rect;
       const rw = rx1 - rx0, rh = ry1 - ry0;
       const rs = s.runtime.rasterScale || 1;
-      dctx.drawImage(tr.bg, v.ox + rx0 * v.scale, v.oy + ry0 * v.scale, rw * v.scale, rh * v.scale);
+      const sx = v.ox + rx0 * v.scale;
+      const sy = v.oy + ry0 * v.scale;
+      dctx.save();
+      dctx.beginPath();
+      dctx.rect(sx, sy, rw * v.scale, rh * v.scale);
+      dctx.clip();
+      dctx.clearRect(sx, sy, rw * v.scale, rh * v.scale);
+      const pattern = makeCheckerPattern(dctx, isDark);
+      dctx.translate(v.ox, v.oy);
+      if (pattern) {
+        dctx.fillStyle = pattern;
+        dctx.fillRect(0, 0, dw, dh);
+      }
+      dctx.restore();
+      dctx.drawImage(tr.bg, sx, sy, rw * v.scale, rh * v.scale);
       const polys = s.runtime.selectionOutline;
       if (polys && polys.length && s.state?.selectionBounds) {
         dctx.save();

@@ -22,7 +22,8 @@ import {
 /** 标签+数值输入行(上游 num_field 的 icon+value 对;blur/Enter 提交,Esc 还原)。
  *  字段 flex 填满所在格(上游 field_width 口径,列线跨行对齐);单位画进输入框内右侧
  *  (上游 value_field 的 suffix 同位,不占外宽)。悬停滚轮调值:一格=±1、Shift=±10,
- *  改显示+停手 300ms 提交一次(会话内 coalesce 本就合并,无会话=一次手势一条历史步)。 */
+ *  改显示+停手 300ms 提交一次(会话内 coalesce 本就合并,无会话=一次手势一条历史步)。
+ *  compact=隐藏左侧 label(选项条窄字段用);width=外层定宽类(不传=flex 填满所在格)。 */
 /** 导出仅供单测(pickerCard/numFieldWheel);UI 内部经 TypePanel 使用。 */
 export const NumField: React.FC<{
   label: string;
@@ -32,7 +33,9 @@ export const NumField: React.FC<{
   max: number;
   unit?: string;
   onCommit: (v: number) => void;
-}> = ({ label, tip, value, min, max, unit = '', onCommit }) => {
+  compact?: boolean;
+  width?: string;
+}> = ({ label, tip, value, min, max, unit = '', onCommit, compact = false, width }) => {
   const [buf, setBuf] = useState<string>(String(Math.round(value * 100) / 100));
   const bufRef = useRef(buf);
   bufRef.current = buf;
@@ -84,8 +87,10 @@ export const NumField: React.FC<{
     };
   }, [min, max]);
   return (
-    <label className="flex items-center gap-1 min-w-0" title={tip}>
-      <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">{label}</span>
+    <label className={`flex items-center gap-1 min-w-0 ${width ?? 'flex-1'}`} title={tip}>
+      {!compact && (
+        <span className="w-6 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center">{label}</span>
+      )}
       <span className="relative min-w-0 flex-1">
         <input
           ref={inputRef}

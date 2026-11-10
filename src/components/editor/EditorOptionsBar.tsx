@@ -20,7 +20,7 @@ import { EditorSelect, attachWheelCycle } from './editorSelect';
 import { ColorPicker } from './panels/ColorPicker';
 import { PickerCard } from './panels/PickerCard';
 import { NumField } from './panels/TypePanel';
-import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, skewAboutPivot, readout as transformReadout, type TransformMode, type TransformSession } from './transformLogic';
+import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, readout as transformReadout, type TransformMode, type TransformSession } from './transformLogic';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
   AA_OPTIONS, aaKey, selectedStyleName, styleAt, styleColorHex, styleLabel, styleNames, shownScale,
@@ -1031,12 +1031,15 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
   const r = transformReadout(t);
   const anchor = matchingAnchor(t.quad, t.pivot);
   const field = (fn: (v: TransformSession) => TransformSession) => () => s.runtime.transformField?.(fn);
-  const small = 'h-6 w-16 rounded border border-black/15 dark:border-white/15 bg-transparent px-1.5 text-[11px] tabular-nums focus:outline-none focus:border-sky-500';
-  const lbl = 'text-neutral-500 dark:text-neutral-400';
+  // 窄窗口适配(编辑器列可低至 ~640px):字段定宽+保底(shrink 允许微缩但 min-w 兜住),
+  // 砍斜切 H/V 字段(与 Ctrl+边拖手势冗余;数值化后置),总宽 ≈600px 不再挤压变形。
+  const lbl = 'w-4 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center';
+  const fw = 'w-[3.25rem] min-w-[3rem]';
+  const fa = 'w-11 min-w-[2.75rem]';
   return (
-    <div className="flex items-center gap-2.5 min-w-0" data-testid="transform-options">
+    <div className="flex items-center gap-1.5 min-w-0 flex-nowrap" data-testid="transform-options">
       {/* 9 宫格参考点(上游 anchor_grid_widget;0..8 = TL..BR) */}
-      <div className="grid grid-cols-3 gap-[2px] p-[3px] border border-black/15 dark:border-white/15 rounded" title="参考点位置">
+      <div className="shrink-0 grid grid-cols-3 gap-[2px] p-[3px] border border-black/15 dark:border-white/15 rounded" title="参考点位置">
         {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
           <button
             key={i}
@@ -1046,72 +1049,54 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
           />
         ))}
       </div>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        X
-        <NumField label="" tip="参考点 X(方向键微移整框)" value={t.pivot[0]} min={-300000} max={300000} unit="" onCommit={(x) => s.runtime.transformField?.((v) => movePivotTo(v, x, v.pivot[1]))} />
-      </label>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        Y
-        <NumField label="" tip="参考点 Y" value={t.pivot[1]} min={-300000} max={300000} unit="" onCommit={(y) => s.runtime.transformField?.((v) => movePivotTo(v, v.pivot[0], y))} />
-      </label>
-      <span className="w-px h-4 bg-black/10 dark:bg-white/10" />
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        W%
-        <NumField label="" tip="宽度百分比(恒等比;负值=水平镜像)" value={r.wPct} min={-1000000} max={1000000} unit="" onCommit={(w) => s.runtime.transformField?.((v) => {
-          const cur = transformReadout(v).wPct;
-          const k = w / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
-          return scaleAboutPivot(v, k, k);
-        })} />
-      </label>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        H%
-        <NumField label="" tip="高度百分比(恒等比;负值=垂直镜像)" value={r.hPct} min={-1000000} max={1000000} unit="" onCommit={(h) => s.runtime.transformField?.((v) => {
-          const cur = transformReadout(v).hPct;
-          const k = h / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
-          return scaleAboutPivot(v, k, k);
-        })} />
-      </label>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        角度
-        <NumField label="" tip="旋转(绕参考点;±180°)" value={r.angleDeg} min={-180} max={180} unit="°" onCommit={(a) => s.runtime.transformField?.((v) => {
-          const cur = transformReadout(v).angleDeg;
-          return rotateAboutPivot(v, ((a - cur) * Math.PI) / 180);
-        })} />
-      </label>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        斜切
-        <NumField label="" tip="水平斜切(框侧边倾斜;±89°)" value={r.skewHDeg} min={-89} max={89} unit="°" onCommit={(h) => s.runtime.transformField?.((v) => skewAboutPivot(v, h, v.skewV))} />
-      </label>
-      <label className={`flex items-center gap-1 ${lbl}`}>
-        V
-        <NumField label="" tip="垂直斜切(框顶底倾斜;±89°)" value={t.skewV} min={-89} max={89} unit="°" onCommit={(v2) => s.runtime.transformField?.((v) => skewAboutPivot(v, transformReadout(v).skewHDeg, v2))} />
-      </label>
-      <span className="w-px h-4 bg-black/10 dark:bg-white/10" />
+      <span className={lbl}>X</span>
+      <NumField compact label="" tip="参考点 X(方向键微移整框)" value={t.pivot[0]} min={-300000} max={300000} unit="" onCommit={(x) => s.runtime.transformField?.((v) => movePivotTo(v, x, v.pivot[1]))} width={fw} />
+      <span className={lbl}>Y</span>
+      <NumField compact label="" tip="参考点 Y" value={t.pivot[1]} min={-300000} max={300000} unit="" onCommit={(y) => s.runtime.transformField?.((v) => movePivotTo(v, v.pivot[0], y))} width={fw} />
+      <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+      <span className={lbl}>W</span>
+      <NumField compact label="" tip="宽度百分比(恒等比;负值=水平镜像)" value={r.wPct} min={-1000000} max={1000000} unit="%" onCommit={(w) => s.runtime.transformField?.((v) => {
+        const cur = transformReadout(v).wPct;
+        const k = w / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+        return scaleAboutPivot(v, k, k);
+      })} width={fw} />
+      <span className={lbl}>H</span>
+      <NumField compact label="" tip="高度百分比(恒等比;负值=垂直镜像)" value={r.hPct} min={-1000000} max={1000000} unit="%" onCommit={(h) => s.runtime.transformField?.((v) => {
+        const cur = transformReadout(v).hPct;
+        const k = h / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+        return scaleAboutPivot(v, k, k);
+      })} width={fw} />
+      <span className={lbl}>角</span>
+      <NumField compact label="" tip="旋转(绕参考点;±180°)" value={r.angleDeg} min={-180} max={180} unit="°" onCommit={(a) => s.runtime.transformField?.((v) => {
+        const cur = transformReadout(v).angleDeg;
+        return rotateAboutPivot(v, ((a - cur) * Math.PI) / 180);
+      })} width={fa} />
+      <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
       <EditorSelect
         value={t.mode}
         options={TRANSFORM_MODES.map((m) => ({ value: m.v, label: m.label }))}
         onChange={(v) => field((cur) => ({ ...cur, mode: v as TransformMode }))()}
-        className="w-16"
-        title="变换模式(Edit › Transform;扭曲/透视=Ctrl/⌘ 拖角,透视=Ctrl+⌥+⇧ 拖角)"
+        className="w-14 shrink-0"
+        title="变换模式(Edit › Transform;扭曲/透视=Ctrl/⌘ 拖角,透视=Ctrl+⌥+⇧ 拖角;斜切=Ctrl+拖边)"
       />
       <EditorSelect
         value={t.interpolation}
         options={INTERP_OPTIONS}
         onChange={(v) => field((cur) => ({ ...cur, interpolation: v }))()}
-        className="w-24"
+        className="w-12 shrink-0"
         title="插值(提交重采样方式)"
       />
       <button
         type="button" title="应用变换 (Enter)"
         onClick={() => s.runtime.transformCommit?.()}
-        className="h-6 w-6 flex items-center justify-center rounded text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/10"
+        className="h-6 w-6 shrink-0 flex items-center justify-center rounded text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/10"
       >
         <Check size={14} />
       </button>
       <button
         type="button" title="取消变换 (Esc);无改动=零历史"
         onClick={() => s.runtime.transformCancel?.()}
-        className="h-6 w-6 flex items-center justify-center rounded text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+        className="h-6 w-6 shrink-0 flex items-center justify-center rounded text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
       >
         <X size={14} />
       </button>
