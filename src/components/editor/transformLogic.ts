@@ -7,6 +7,8 @@
  * Homography 数学 = vendor crates/algo/src/transform.rs 1:1。
  */
 
+import type { WarpObject } from './warpLogic';
+
 // ---- Homography(vendor algo/transform.rs 1:1,行主序 3×3)----
 
 export class Homography {
@@ -125,6 +127,8 @@ export interface TransformSession {
   skewV: number;
   /** 目标层 kind("Pixel"/"Type"/…;Type 层 Distort/Perspective 降级)。 */
   kind?: string;
+  /** Warp 模式(上游 t.warp.is_some()):正在编辑的 warp 对象;null/缺省=框模式。 */
+  warp?: WarpObject | null;
 }
 
 export type Hit =
@@ -696,16 +700,20 @@ export function transformCommitParams(t: TransformSession): Record<string, unkno
   return p;
 }
 
-// ---- 会话内步骤(Undo/Redo,上游 Steps)----
+// ---- 会话内步骤(Undo/Redo,上游 Steps;步快照含 warp 整体克隆)----
 
 export interface TransformStep {
   rect: RectF;
   quad: Quad;
   pivot: Pt;
   skewV: number;
+  warp: WarpObject | null;
 }
 
-export const stepOf = (t: TransformSession): TransformStep => ({ rect: [...t.rect] as RectF, quad: t.quad.map((q) => [...q] as Pt) as Quad, pivot: [...t.pivot] as Pt, skewV: t.skewV });
+const cloneWarp = (w: WarpObject | null | undefined): WarpObject | null =>
+  w ? { ...w, bounds: [...w.bounds] as RectF, mesh: w.mesh ? { us: [...w.mesh.us], vs: [...w.mesh.vs], points: w.mesh.points.map((p) => [...p] as Pt) } : null } : null;
+
+export const stepOf = (t: TransformSession): TransformStep => ({ rect: [...t.rect] as RectF, quad: t.quad.map((q) => [...q] as Pt) as Quad, pivot: [...t.pivot] as Pt, skewV: t.skewV, warp: cloneWarp(t.warp) });
 
 export const restoreStep = (t: TransformSession, st: TransformStep): TransformSession => ({
   ...t,
@@ -713,9 +721,20 @@ export const restoreStep = (t: TransformSession, st: TransformStep): TransformSe
   quad: st.quad.map((q) => [...q] as Pt) as Quad,
   pivot: [...st.pivot] as Pt,
   skewV: st.skewV,
+  warp: cloneWarp(st.warp),
 });
+
+const warpEq = (a: WarpObject | null, b: WarpObject | null): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const sameMesh = !a.mesh && !b.mesh ? true : !!a.mesh && !!b.mesh && a.mesh.us.length === b.mesh.us.length && a.mesh.vs.length === b.mesh.vs.length && a.mesh.points.length === b.mesh.points.length &&
+    a.mesh.points.every((p, i) => p[0] === b.mesh!.points[i][0] && p[1] === b.mesh!.points[i][1]);
+  return a.style === b.style && a.bend === b.bend && a.hDistort === b.hDistort && a.vDistort === b.vDistort && a.vertical === b.vertical &&
+    a.bounds.every((v, i) => v === b.bounds[i]) && sameMesh;
+};
 
 export const stepEq = (a: TransformStep, b: TransformStep): boolean =>
   a.skewV === b.skewV && a.pivot[0] === b.pivot[0] && a.pivot[1] === b.pivot[1] &&
+  warpEq(a.warp, b.warp) &&
   a.rect.every((v, i) => v === b.rect[i]) &&
   a.quad.every((q, i) => q[0] === b.quad[i][0] && q[1] === b.quad[i][1]);

@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
-import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
+import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTransformSplit, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
 import { isWhrKey, whrCommitParams, whrRatio } from './cropSize';
 import type { EditorTool } from './editorTypes';
@@ -56,6 +56,16 @@ import {
   stepEq, stepOf, Homography,
   type Gesture, type Hit, type Quad, type RectF, type TransformMode, type TransformSession, type TransformStep, type TransformMods,
 } from './transformLogic';
+import {
+  handleAnchor, meshControlBounds, meshDragPoint, meshEval, meshIdentity, meshNx, meshNy, meshParamAt, meshPoint, meshPull, previewSamples,
+  quickSplitKind, resetWarp, resizeWarp, splitWarp, surfaceAt, triangleOrder, warpCustom, warpGridId, warpHit,
+  warpMap, warpToMesh, WARP_PRESETS, WARP_STYLE_ZH, type Pt as WPt, type SplitKind, type WarpMesh,
+} from './warpLogic';
+
+/** Warp 拖拽(上游 WarpDrag):锚/柄跟指针,其余面片跟指针表面。 */
+type WarpDrag =
+  | { kind: 'point'; index: number; start: WPt; pts0: WPt[] }
+  | { kind: 'surface'; s: number; t: number; start: WPt; pts0: WPt[] };
 
 const BRUSH_TOOLS: ReadonlySet<string> = BRUSH_FAMILY;
 /** 直接选择族工具(上游 direct_select/anchor_tools 的指针接管者)。 */
@@ -310,8 +320,14 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     gesture: Gesture | null;
     hover: Hit | null;
     readout: string | null;
+    /** Warp 模式拖拽(上游 WarpDrag):控制点/面片,每次从按下快照 pts0 重算。 */
+    warpDrag: WarpDrag | null;
+    /** 武装分割/快捷分割(Ctrl/Alt):抬起落线;pointer=跟随指针的文档点。 */
+    warpSplit: { tool: SplitKind | null; placing: boolean; quick: boolean; pointer: Pt | null } | null;
+    /** Warp 模式 hover 的控制点下标(光标/柄显隐用)。 */
+    warpHover: number | null;
     steps: { settled: TransformStep | null; undo: TransformStep[]; redo: TransformStep[]; lastNudge: { at: number; step: TransformStep } | null };
-  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
+  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
@@ -554,7 +570,173 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
     // overlay:自由变换(上游 draw_overlay):抽层背景已上屏(display canvas);这里画
     // 经 H 随动的蚂蚁线、quad 预览贴图(仿射单次 drawImage/透视 mesh 三角)、框+把手+参考点+读数。
-    if (transformActive && tr.session && tr.tex && tr.rect) {
+    // overlay:Warp 模式(上游 draw_warp_content + draw_warp_overlay):弯贴图(自适应采样三角形,
+    // 位移降序防折叠梳状)+ 弯曲网格线 + 控制点 + 随弯蚂蚁线 + 分割导引。框模式的 quad/把手/pivot
+    // 不画(上游 draw_overlay 在 warp 分支直接 return);贴图 clip 到文档画布(像素不出画布)。
+    if (transformActive && tr.session && tr.tex && tr.rect && tr.session.warp) {
+      const warp = tr.session.warp;
+      const m = warpToMesh(warp, 1, 1);
+      const accent = isDark ? '#38bdf8' : '#0284c7';
+      const scr = (p: WPt): [number, number] => [p[0] * v.scale + v.ox, p[1] * v.scale + v.oy];
+      // 蚂蚁线随弯(上游 draw_selection warp 分支:直线段按 ~8/zoom px 分段逐点 warp)
+      const transformedAnts = s.runtime.selectionOutline;
+      if (transformedAnts && transformedAnts.length && sel) {
+        const segLen = 8 / Math.max(1e-3, v.scale);
+        drawAnts((c) => {
+          for (const poly of transformedAnts) {
+            let started = false;
+            for (let i = 0; i + 3 < poly.length; i += 2) {
+              const [ax, ay] = [poly[i], poly[i + 1]];
+              const [bx, by] = [poly[i + 2], poly[i + 3]];
+              const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / segLen));
+              for (let k = started ? 1 : 0; k <= n; k++) {
+                const [wx, wy] = warpMap(warp, ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n);
+                const [sx, sy] = scr([wx, wy]);
+                if (!started) { c.moveTo(sx, sy); started = true; } else c.lineTo(sx, sy);
+              }
+            }
+          }
+        });
+      }
+      // 预览贴图:自适应采样 + 三角仿射分片;拖拽/导引中低密度(帧预算),静止 250ms 后高密度
+      const [rx0, ry0, rx1, ry1] = tr.rect;
+      const tSessionW = tr.session;
+      const fw = tSessionW.rect[2] - tSessionW.rect[0];
+      const fh = tSessionW.rect[3] - tSessionW.rect[1];
+      const maxAxis = tr.warpDrag || tr.warpSplit?.placing ? 28 : 96;
+      const [us, vs] = previewSamples(m, v.scale, maxAxis);
+      const row = us.length;
+      const posDoc: WPt[] = [];
+      const restDoc: WPt[] = [];
+      for (const vv of vs) {
+        for (const uu of us) {
+          const sxp = tSessionW.rect[0] + uu * fw;
+          const syp = tSessionW.rect[1] + vv * fh;
+          posDoc.push(warpMap(warp, sxp, syp));
+          restDoc.push([sxp, syp]);
+        }
+      }
+      const affineFromTri = (s0: WPt, s1: WPt, s2: WPt, p0: [number, number], p1: [number, number], p2: [number, number]): [number, number, number, number, number, number] | null => {
+        const det = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s1[1] - s0[1]) * (s2[0] - s0[0]);
+        if (Math.abs(det) < 1e-9) return null;
+        const a = ((p1[0] - p0[0]) * (s2[1] - s0[1]) - (p2[0] - p0[0]) * (s1[1] - s0[1])) / det;
+        const c = ((p2[0] - p0[0]) * (s1[0] - s0[0]) - (p1[0] - p0[0]) * (s2[0] - s0[0])) / det;
+        const b = ((p1[1] - p0[1]) * (s2[1] - s0[1]) - (p2[1] - p0[1]) * (s1[1] - s0[1])) / det;
+        const d = ((p2[1] - p0[1]) * (s1[0] - s0[0]) - (p1[1] - p0[1]) * (s2[0] - s0[0])) / det;
+        return [a, b, c, d, p0[0] - a * s0[0] - c * s0[1], p0[1] - b * s0[0] - d * s0[1]];
+      };
+      const srcAt = (i: number): WPt => {
+        const uu = us[i % row], vv = vs[(i / row) | 0];
+        // 源 tex 像素 = warp 前文档点 - tex 覆盖 rect 原点(frame 超出 rect 的部分为负,drawImage 裁掉)
+        return [tSessionW.rect[0] + uu * fw - rx0, tSessionW.rect[1] + vv * fh - ry0];
+      };
+      octx.save();
+      octx.beginPath();
+      octx.rect(v.ox, v.oy, docW * v.scale, docH * v.scale);
+      octx.clip();
+      const idxs = triangleOrder(posDoc, restDoc, row);
+      for (let k = 0; k + 2 < idxs.length; k += 3) {
+        const [i0, i1, i2] = [idxs[k], idxs[k + 1], idxs[k + 2]];
+        const p0 = scr(posDoc[i0]), p1 = scr(posDoc[i1]), p2 = scr(posDoc[i2]);
+        const s0 = srcAt(i0), s1 = srcAt(i1), s2 = srcAt(i2);
+        const mm = affineFromTri(s0, s1, s2, p0, p1, p2);
+        if (!mm) continue;
+        octx.save();
+        octx.beginPath();
+        octx.moveTo(p0[0], p0[1]);
+        octx.lineTo(p1[0], p1[1]);
+        octx.lineTo(p2[0], p2[1]);
+        octx.closePath();
+        octx.clip();
+        octx.transform(mm[0], mm[1], mm[2], mm[3], mm[4], mm[5]);
+        octx.drawImage(tr.tex!, 0, 0);
+        octx.restore();
+      }
+      octx.restore();
+      // 网格线:patch 边界 accent 1px(40 段曲线);单面片加三分导引(0.75px 淡线)
+      const curve = (fu: number | null, fv: number | null): Array<[number, number]> => {
+        const out: Array<[number, number]> = [];
+        for (let k = 0; k <= 40; k++) {
+          const s2 = k / 40;
+          out.push(scr(meshEval(m, fu ?? s2, fv ?? s2)));
+        }
+        return out;
+      };
+      const strokeCurve = (pts: Array<[number, number]>, w: number, style: string) => {
+        if (pts.length < 2) return;
+        octx.beginPath();
+        pts.forEach(([x, y], i) => (i === 0 ? octx.moveTo(x, y) : octx.lineTo(x, y)));
+        octx.lineWidth = w;
+        octx.strokeStyle = style;
+        octx.stroke();
+      };
+      const thin = isDark ? 'rgba(56,189,248,0.55)' : 'rgba(2,132,199,0.55)';
+      for (const k of m.us) strokeCurve(curve(k, null), 1, accent);
+      for (const k of m.vs) strokeCurve(curve(null, k), 1, accent);
+      if (m.us.length === 2 && m.vs.length === 2) {
+        for (const third of [1 / 3, 2 / 3]) {
+          strokeCurve(curve(third, null), 0.75, thin);
+          strokeCurve(curve(null, third), 0.75, thin);
+        }
+      }
+      // 控制点(custom):锚=5px 白方块恒显;柄=2.75px 白圆,指针距柄/其锚 ≤56 屏幕px 或正在拖才显
+      if (warp.style === 'custom') {
+        const nx = meshNx(m), ny = meshNy(m);
+        const pd = s.runtime.pointerDoc;
+        const hoverScr = pd ? [pd.x * v.scale + v.ox, pd.y * v.scale + v.oy] : null;
+        const dragged = tr.warpDrag?.kind === 'point'
+          ? (() => { const nx2 = meshNx(m); return handleAnchor(tr.warpDrag!.index % nx2, (tr.warpDrag!.index / nx2) | 0); })()
+          : null;
+        const near = (p: [number, number]) => hoverScr != null && Math.hypot(hoverScr[0] - p[0], hoverScr[1] - p[1]) <= 56;
+        const faint = isDark ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.35)';
+        for (let j = 0; j < ny; j++) {
+          for (let i = 0; i < nx; i++) {
+            if (i % 3 !== 0 && j % 3 !== 0) continue;
+            const p = scr(meshPoint(m, i, j));
+            if (i % 3 === 0 && j % 3 === 0) {
+              octx.fillStyle = '#ffffff';
+              octx.fillRect(p[0] - 2.5, p[1] - 2.5, 5, 5);
+              octx.lineWidth = 0.75;
+              octx.strokeStyle = faint;
+              octx.strokeRect(p[0] - 2.5, p[1] - 2.5, 5, 5);
+              continue;
+            }
+            const [ai, aj] = handleAnchor(i, j);
+            const a = scr(meshPoint(m, ai, aj));
+            if (!(near(p) || near(a) || (dragged != null && dragged[0] === ai && dragged[1] === aj))) continue;
+            octx.beginPath();
+            octx.moveTo(a[0], a[1]);
+            octx.lineTo(p[0], p[1]);
+            octx.lineWidth = 0.75;
+            octx.strokeStyle = faint;
+            octx.stroke();
+            octx.beginPath();
+            octx.arc(p[0], p[1], 2.75, 0, Math.PI * 2);
+            octx.fillStyle = '#ffffff';
+            octx.fill();
+            octx.lineWidth = 0.75;
+            octx.strokeStyle = faint;
+            octx.stroke();
+          }
+        }
+      }
+      // 分割导引线(武装跟随指针;quick 抬起才定 kind,拖动中按当前指针实时判定)
+      const guide = tr.warpSplit?.placing && tr.warpSplit.pointer ? tr.warpSplit : null;
+      if (guide?.pointer) {
+        const [gs, gt] = meshParamAt(m, guide.pointer);
+        const kind = guide.quick ? quickSplitKind(m, warp.bounds, gs, gt) : guide.tool;
+        if (kind === 'vertical' || kind === 'cross') {
+          strokeCurve(curve(gs, null), 3, '#000000');
+          strokeCurve(curve(gs, null), 1.25, '#ffffff');
+        }
+        if (kind === 'horizontal' || kind === 'cross') {
+          strokeCurve(curve(null, gt), 3, '#000000');
+          strokeCurve(curve(null, gt), 1.25, '#ffffff');
+        }
+      }
+    }
+
+    if (transformActive && tr.session && tr.tex && tr.rect && !tr.session.warp) {
       const hDoc = Homography.rectToQuad(tr.session.rect, tr.session.quad);
       const toScreen = (x: number, y: number): [number, number] => {
         const [dx, dy] = hDoc ? hDoc.apply(x, y) : [x, y];
@@ -2347,7 +2529,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   /** 清理会话资源(提交/取消/层消失后;store.transform=null 由订阅或直接调用进入)。 */
   const clearTransform = useCallback(() => {
-    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
+    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
     scheduleDraw();
   }, [scheduleDraw]);
 
@@ -2391,7 +2573,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         bg: mk(r.bg.width, r.bg.height, r.bg.rgba),
         tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
         rect: r.rect,
-        gesture: null, hover: null, readout: null,
+        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null,
         steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
       };
       setTransformSession(tabId, session);
@@ -2440,6 +2622,99 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (!transformRef.current.session) return;
     void commitTransform(tabId);
   }, [tabId]);
+
+  /** 进入 Warp 模式(上游 enter_warp):框未动=单面片恒等网格;框已变形=把仿射烙进 mesh 点
+   * (框模式下的缩放/旋转保留,warp 在其上叠加);文字层走 Warp Text(第一刀不做)。切换是一步。 */
+  const enterWarpBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session) return;
+    if (t.kind === 'Type') {
+      showEditorNotice('文字层的 Warp 对话框待做');
+      return;
+    }
+    settleTransformStep();
+    const tSession = t.session;
+    const rect = tSession.rect;
+    const base = meshIdentity(rect, 1, 1);
+    let points = base.points;
+    if (!quadUnchanged(rect, tSession.quad)) {
+      const h = Homography.rectToQuad(rect, tSession.quad);
+      if (h) points = base.points.map((p) => h.apply(p[0], p[1]));
+    }
+    t.session = { ...tSession, warp: warpCustom({ us: base.us, vs: base.vs, points }, rect) };
+    t.warpDrag = null;
+    t.warpHover = null;
+    t.warpSplit = null;
+    settleTransformStep();
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, settleTransformStep, scheduleDraw]);
+
+  /** 退出 Warp 回框模式(上游 leave_warp):未提交的 warp 编辑直接丢弃(PS 口径)。 */
+  const leaveWarpBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session?.warp) return;
+    settleTransformStep();
+    t.session = { ...t.session, warp: null };
+    t.warpDrag = null;
+    t.warpSplit = null;
+    t.warpHover = null;
+    setTransformSplit(tabId, null);
+    settleTransformStep();
+    syncTransformProjection(tabId, t.session);
+    scheduleDraw();
+  }, [tabId, settleTransformStep, scheduleDraw]);
+
+  /** 框/Warp 模式切换(选项条 grid-3x3 按钮;没开框=先进框,上游 begin_warp 的 fresh 路径)。 */
+  const toggleWarpBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session) {
+      void beginTransform();
+      return;
+    }
+    if (t.session.warp) leaveWarpBox();
+    else enterWarpBox();
+  }, [beginTransform, enterWarpBox, leaveWarpBox]);
+
+  /** Warp 重置(上游 reset_warp):回盒上默认单面片恒等网格,清拖拽/分割状态。 */
+  const resetWarpBox = useCallback(() => {
+    const t = transformRef.current;
+    if (!t.session?.warp) return;
+    transformField((v) => ({ ...v, warp: resetWarp(v.rect) }));
+    t.warpDrag = null;
+    t.warpHover = null;
+    t.warpSplit = null;
+    setTransformSplit(tabId, null);
+  }, [tabId, transformField]);
+
+  /** 网格密度(上游 warpGrid 语义前端化):偶数 n×n 面片保形重拟,曲面不变。 */
+  const setWarpGridBox = useCallback((n: number) => {
+    const t = transformRef.current;
+    if (!t.session?.warp) return;
+    transformField((v) => (v.warp ? { ...v, warp: resizeWarp(v.warp, n) } : v));
+    t.warpDrag = null;
+    t.warpHover = null;
+  }, [transformField]);
+
+  /** 武装分割工具(选项条三按钮;落下=画布抬起时落线)。 */
+  const armWarpSplitBox = useCallback((tool: 'cross' | 'vertical' | 'horizontal' | null) => {
+    const t = transformRef.current;
+    if (!t.session?.warp) return;
+    t.warpSplit = tool ? { tool, placing: false, quick: false, pointer: null } : null;
+    setTransformSplit(tabId, tool);
+    scheduleDraw();
+  }, [tabId, scheduleDraw]);
+
+  /** 静止后高密度重渲:拖拽中贴图走低密度帧预算,松手 250ms 无新拖拽才渲染一次
+   * (上游大层 warp 提交本就是后台 job 的等价权衡;连续拖-松-拖时 timer 重置防卡顿)。 */
+  const warpStillTimerRef = useRef<number | null>(null);
+  const scheduleWarpStillRender = useCallback(() => {
+    if (warpStillTimerRef.current != null) window.clearTimeout(warpStillTimerRef.current);
+    warpStillTimerRef.current = window.setTimeout(() => {
+      warpStillTimerRef.current = null;
+      scheduleDraw();
+    }, 250);
+  }, [scheduleDraw]);
 
   const cancelTransformBox = useCallback(() => {
     const t = transformRef.current;
@@ -3156,6 +3431,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.transformCommit !== commitTransformBox) s.runtime.transformCommit = commitTransformBox;
       if (s.runtime.transformCancel !== cancelTransformBox) s.runtime.transformCancel = cancelTransformBox;
       if (s.runtime.transformField !== transformField) s.runtime.transformField = transformField;
+      if (s.runtime.transformToggleWarp !== toggleWarpBox) s.runtime.transformToggleWarp = toggleWarpBox;
+      if (s.runtime.transformResetWarp !== resetWarpBox) s.runtime.transformResetWarp = resetWarpBox;
+      if (s.runtime.transformSetWarpGrid !== setWarpGridBox) s.runtime.transformSetWarpGrid = setWarpGridBox;
+      if (s.runtime.transformArmWarpSplit !== armWarpSplitBox) s.runtime.transformArmWarpSplit = armWarpSplitBox;
     };
     const s0 = getSession(tabId);
     if (s0) register(s0);
@@ -3196,8 +3475,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.transformCommit === commitTransformBox) s.runtime.transformCommit = null;
       if (s.runtime.transformCancel === cancelTransformBox) s.runtime.transformCancel = null;
       if (s.runtime.transformField === transformField) s.runtime.transformField = null;
+      if (s.runtime.transformToggleWarp === toggleWarpBox) s.runtime.transformToggleWarp = null;
+      if (s.runtime.transformResetWarp === resetWarpBox) s.runtime.transformResetWarp = null;
+      if (s.runtime.transformSetWarpGrid === setWarpGridBox) s.runtime.transformSetWarpGrid = null;
+      if (s.runtime.transformArmWarpSplit === armWarpSplitBox) s.runtime.transformArmWarpSplit = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox]);
 
   // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
   // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
@@ -3709,7 +3992,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
           }
           return;
         }
-        if (!isTyping(e.target)) {
+        if (!isTyping(e.target) && !transformRef.current.session?.warp) {
+          // Warp 模式下方向键不微移(上游 filter warp.is_none 口径)
           const step = e.shiftKey ? 10 : 1;
           if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeTransformBox(-step, 0); return; }
           if (e.key === 'ArrowRight') { e.preventDefault(); nudgeTransformBox(step, 0); return; }
@@ -4500,6 +4784,29 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const t = transformRef.current;
       if (s.transformCommitting) return; // 提交落地中(等位图泵):吞掉按下,框不可再操作
       const tSession = t.session!;
+      if (tSession.warp) {
+        // Warp 模式按下(上游 warp_pointer Down):武装分割/Ctrl+Alt=快捷分割抬起落线;
+        // 否则抓控制点(命中才把预设物化成 custom,#5750),再否则拖面片表面;网格外=不抓。
+        const warp = tSession.warp;
+        const mesh = warpToMesh(warp, 1, 1);
+        const armed = t.warpSplit?.tool ?? null;
+        if (armed || e.ctrlKey || e.metaKey || e.altKey) {
+          t.warpSplit = { tool: armed, placing: true, quick: !armed, pointer: [dx, dy] };
+        } else {
+          const tol = handleTolerance(s.runtime.view.scale);
+          const idx = warpHit(mesh, [dx, dy], tol);
+          const surf = idx == null ? surfaceAt(mesh, [dx, dy]) : null;
+          if (idx != null || surf != null) {
+            if (warp.style !== 'custom') t.session = { ...tSession, warp: warpCustom(mesh, warp.bounds) };
+            const pts0 = (t.session!.warp!.mesh as WarpMesh).points.map((p) => [...p] as WPt);
+            t.warpDrag = idx != null
+              ? { kind: 'point', index: idx, start: [dx, dy], pts0 }
+              : { kind: 'surface', s: surf![0], t: surf![1], start: [dx, dy], pts0 };
+          }
+        }
+        scheduleDraw();
+        return;
+      }
       const tol = handleTolerance(s.runtime.view.scale);
       let hit = hitTest(tSession, [dx, dy], tol);
       if (e.altKey && (hit.kind === 'inside' || hit.kind === 'outside')) {
@@ -4860,6 +5167,34 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (transformRef.current.session) {
       const t = transformRef.current;
       const tSession = t.session!;
+      if (tSession.warp) {
+        // Warp 模式 move(上游 warp_pointer Move):拖拽每次从按下快照 pts0 重算(非累积);
+        // 分割导引跟随指针;无拖拽=控制点 hover(光标/柄显隐)。
+        const warp = tSession.warp;
+        if (t.warpSplit?.placing) {
+          t.warpSplit.pointer = [dx, dy];
+          scheduleDraw();
+          return;
+        }
+        if (t.warpDrag) {
+          const mesh = warp.mesh; // 抓到才物化,拖拽中恒存在
+          const g = t.warpDrag;
+          if (mesh) {
+            if (g.kind === 'point') meshDragPoint(mesh, g.pts0, g.index, [dx - g.start[0], dy - g.start[1]]);
+            else meshPull(mesh, g.pts0, g.s, g.t, [dx - g.start[0], dy - g.start[1]]);
+          }
+          scheduleDraw();
+          return;
+        }
+        const mesh = warpToMesh(warp, 1, 1);
+        const h = warpHit(mesh, [dx, dy], handleTolerance(s.runtime.view.scale));
+        if (h !== t.warpHover) {
+          t.warpHover = h;
+          scheduleDraw();
+          forceUpdate((n) => n + 1); // 光标形态经 React 渲染
+        }
+        return;
+      }
       if (t.gesture) {
         const g = t.gesture;
         const mods: TransformMods = { shift: e.shiftKey, alt: e.altKey, command: e.ctrlKey || e.metaKey };
@@ -5169,6 +5504,33 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 交互期降载在此收口(渐变拖动等画布交互;滑杆类在各自 flushNow):mark(0) 的
     // notify 唤醒泵,随后的终提交 revision 推进即以全分辨率出图
     markInteractiveRender(tabId, 0);
+    // Warp 模式抬起(上游 warp_pointer Up):分割落线(quick 抬起时判 kind);拖拽落定推栈。
+    if (s && transformRef.current.session?.warp && (transformRef.current.warpSplit?.placing || transformRef.current.warpDrag)) {
+      const t = transformRef.current;
+      const tSession = t.session!;
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const [ux, uy] = rect ? screenToDoc(s.runtime.view, e.clientX - rect.left, e.clientY - rect.top) : [0, 0];
+      if (t.warpSplit?.placing) {
+        const sp = t.warpSplit;
+        t.warpSplit = null;
+        setTransformSplit(tabId, null);
+        const mesh = warpToMesh(tSession.warp!, 1, 1);
+        const kind = sp.quick ? quickSplitKind(mesh, tSession.warp!.bounds, ...meshParamAt(mesh, [ux, uy])) : sp.tool;
+        const nw = kind ? splitWarp(tSession.warp!, [ux, uy], kind) : null;
+        if (nw) {
+          transformField((v) => ({ ...v, warp: nw }));
+          t.warpDrag = null;
+          t.warpHover = null;
+        }
+      } else if (t.warpDrag) {
+        t.warpDrag = null;
+        settleTransformStep();
+        if (t.session) syncTransformProjection(tabId, t.session);
+        scheduleWarpStillRender(); // 静止后高密度重渲一次(拖拽中低密度帧预算)
+      }
+      scheduleDraw();
+      return;
+    }
     // 自由变换抬起(上游 pointer Up):落定推栈+回写投影;框外单击=提交(#2851);
     // Pointercancel 兜底同款(手势快照重算,无"半途状态"要回收)。
     if (s && transformRef.current.session && transformRef.current.gesture) {
@@ -5634,6 +5996,21 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const tHover = transformRef.current.session && !transformRef.current.gesture ? transformRef.current.hover : null;
   const transformCursor = (() => {
     if (session.transformCommitting) return 'default';
+    // Warp 模式(上游 cursor()):预设网格处处十字;custom 时点在锚/柄上=十字,
+    // 网格内(控制点包围盒近似)=grab,外=default;分割武装/快捷=十字导引。
+    const wTr = transformRef.current;
+    if (wTr.session?.warp) {
+      if (wTr.warpSplit?.placing || wTr.warpSplit?.tool || wTr.warpDrag) return 'crosshair';
+      if (wTr.warpHover != null) return 'crosshair';
+      const w = wTr.session.warp;
+      if (w.style !== 'custom') return 'crosshair';
+      if (w.mesh) {
+        const [bx0, by0, bx1, by1] = meshControlBounds(w.mesh);
+        const pd = session.runtime.pointerDoc;
+        if (pd && pd.x >= bx0 && pd.x <= bx1 && pd.y >= by0 && pd.y <= by1) return 'grab';
+      }
+      return 'default';
+    }
     if (!tHover) return 'move';
     if (tHover.kind === 'corner') {
       // 角 i(顺时针 TL,TR,BR,BL)→ 两向 resize 光标(按 quad 走向近似,不随旋转精细跟随)

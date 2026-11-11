@@ -21,6 +21,7 @@ import { ColorPicker } from './panels/ColorPicker';
 import { PickerCard } from './panels/PickerCard';
 import { NumField } from './panels/TypePanel';
 import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, readout as transformReadout, type TransformMode, type TransformSession } from './transformLogic';
+import { meshIdentity, warpGridId, warpNone, warpToMesh, WARP_PRESETS, WARP_STYLE_ZH, type SplitKind, type WarpStyleId } from './warpLogic';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
   AA_OPTIONS, aaKey, selectedStyleName, styleAt, styleColorHex, styleLabel, styleNames, shownScale,
@@ -1036,6 +1037,133 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
   const lbl = 'w-4 shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400 text-center';
   const fw = 'w-[3.25rem] min-w-[3rem]';
   const fa = 'w-11 min-w-[2.75rem]';
+  // Warp 模式(上游 warp_fields):整条替换为 Split/Grid/风格/纵横/Bend/H/V + ✓✕Reset。
+  if (t.warp) {
+    const w = t.warp;
+    const preset = (WARP_PRESETS as string[]).includes(w.style);
+    const armed = s.transformSplit ?? null;
+    const btn = 'h-6 w-6 shrink-0 flex items-center justify-center rounded';
+    const splitIcon = (kind: SplitKind) => (
+      // 自绘分割图标(上游 split_icon:圆角方框 + 线 + 中点;cross 实心,其余空心)
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+        <rect x="1" y="1" width="12" height="12" rx="3" fill="none" stroke="currentColor" strokeWidth="1.15" />
+        {kind !== 'horizontal' && <line x1="7" y1="2.6" x2="7" y2="11.4" stroke="currentColor" strokeWidth="1.15" />}
+        {kind !== 'vertical' && <line x1="2.6" y1="7" x2="11.4" y2="7" stroke="currentColor" strokeWidth="1.15" />}
+        {kind === 'cross'
+          ? <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+          : <circle cx="7" cy="7" r="1.9" fill="none" stroke="currentColor" strokeWidth="1.15" />}
+      </svg>
+    );
+    return (
+      <div className="flex items-center gap-1.5 min-w-0 flex-nowrap" data-testid="transform-options">
+        <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">分割:</span>
+        {(['cross', 'vertical', 'horizontal'] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            title={`分割 Warp ${k === 'cross' ? '十字' : k === 'vertical' ? '竖线' : '横线'}(点击武装,画布点击落线;Ctrl/Alt+拖=快捷分割)`}
+            onClick={() => s.runtime.transformArmWarpSplit?.(armed === k ? null : k)}
+            className={`${btn} ${armed === k ? 'bg-sky-600 text-white dark:bg-sky-500' : 'text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10'}`}
+          >
+            {splitIcon(k)}
+          </button>
+        ))}
+        <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+        <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">网格:</span>
+        <EditorSelect
+          value={warpGridId(w.mesh ?? meshIdentity(t.rect, 1, 1))}
+          options={[
+            { value: 'custom', label: '自定' },
+            { value: 'default', label: '默认' },
+            { value: '3', label: '3 × 3' },
+            { value: '4', label: '4 × 4' },
+            { value: '5', label: '5 × 5' },
+          ]}
+          onChange={(v) => {
+            const n = v === 'default' ? 1 : v === '3' ? 3 : v === '4' ? 4 : v === '5' ? 5 : 0;
+            if (n > 0) s.runtime.transformSetWarpGrid?.(n);
+          }}
+          className="w-[4.5rem] shrink-0"
+          title="Warp 网格密度(手切过的分割读作自定)"
+        />
+        <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+        <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">变形:</span>
+        <EditorSelect
+          value={w.style}
+          options={[
+            { value: 'none', label: WARP_STYLE_ZH.none },
+            { value: 'custom', label: WARP_STYLE_ZH.custom },
+            ...WARP_PRESETS.map((v) => ({ value: v, label: WARP_STYLE_ZH[v] })),
+          ]}
+          onChange={(v) => field((cur) => {
+            const cur2 = cur.warp!;
+            const b = cur.rect;
+            const nw = v === 'custom'
+              ? { ...warpNone(b), style: 'custom' as WarpStyleId, mesh: warpToMesh(cur2, 1, 1) }
+              : v === 'none'
+                ? { ...warpNone(b), mesh: meshIdentity(b, 1, 1) }
+                : { ...warpNone(b), style: v as WarpStyleId, bend: (WARP_PRESETS as string[]).includes(cur2.style) ? cur2.bend : 50 };
+            return { ...cur, warp: nw };
+          })()}
+          className="w-16 shrink-0"
+          title="Warp 风格(选自定=保留当前曲面;拖动网格自动转自定)"
+        />
+        <button
+          type="button"
+          title="沿垂直轴变形"
+          disabled={!preset}
+          onClick={() => field((cur) => (cur.warp ? { ...cur, warp: { ...cur.warp, vertical: !cur.warp.vertical } } : cur))()}
+          className={`${btn} ${w.vertical ? 'bg-sky-600 text-white dark:bg-sky-500' : 'text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10'} disabled:opacity-40`}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+            <path d="M2 7h10M10 4l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <span className={lbl}>弯</span>
+        <NumField compact label="" tip="弯曲强度 -100..100%" value={w.bend} min={-100} max={100} unit="%" onCommit={(v) => field((cur) => (cur.warp ? { ...cur, warp: { ...cur.warp, bend: v } } : cur))()} width={fw} />
+        <span className={lbl}>H</span>
+        <NumField compact label="" tip="水平透视式变形 -100..100%" value={w.hDistort} min={-100} max={100} unit="%" onCommit={(v) => field((cur) => (cur.warp ? { ...cur, warp: { ...cur.warp, hDistort: v } } : cur))()} width={fw} />
+        <span className={lbl}>V</span>
+        <NumField compact label="" tip="垂直透视式变形 -100..100%" value={w.vDistort} min={-100} max={100} unit="%" onCommit={(v) => field((cur) => (cur.warp ? { ...cur, warp: { ...cur.warp, vDistort: v } } : cur))()} width={fw} />
+        <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+        <button
+          type="button"
+          title="框/Warp 模式切换;未提交的 Warp 编辑切回即丢弃"
+          onClick={() => s.runtime.transformToggleWarp?.()}
+          className={`${btn} text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+            <rect x="1" y="1" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            <path d="M4.7 1v12M9.3 1v12M1 4.7h12M1 9.3h12" stroke="currentColor" strokeWidth="0.8" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          title="重置 Warp:回到盒上未弯曲的默认网格"
+          onClick={() => s.runtime.transformResetWarp?.()}
+          className={`${btn} text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+            <path d="M3.5 4.5a4.6 4.6 0 1 1-1 3.6M3.5 1.5v3h3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button
+          type="button" title="应用 Warp (Enter)"
+          onClick={() => s.runtime.transformCommit?.()}
+          className={`${btn} text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <Check size={14} />
+        </button>
+        <button
+          type="button" title="取消变换 (Esc);无改动=零历史"
+          onClick={() => s.runtime.transformCancel?.()}
+          className={`${btn} text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5 min-w-0 flex-nowrap" data-testid="transform-options">
       {/* 9 宫格参考点(上游 anchor_grid_widget;0..8 = TL..BR) */}
@@ -1086,6 +1214,17 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
         className="w-12 shrink-0"
         title="插值(提交重采样方式)"
       />
+      <button
+        type="button"
+        title="在自由变换和 Warp 模式间切换;未提交的 Warp 编辑切回即丢弃"
+        onClick={() => s.runtime.transformToggleWarp?.()}
+        className="h-6 w-6 shrink-0 flex items-center justify-center rounded text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+          <rect x="1" y="1" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M4.7 1v12M9.3 1v12M1 4.7h12M1 9.3h12" stroke="currentColor" strokeWidth="0.8" />
+        </svg>
+      </button>
       <button
         type="button" title="应用变换 (Enter)"
         onClick={() => s.runtime.transformCommit?.()}

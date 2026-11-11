@@ -7,6 +7,7 @@ import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
 import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import { quadUnchanged, transformCommitParams, type TransformSession } from './transformLogic';
+import { warpIsIdentity } from './warpLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
 import { TYPE_TOOLS, type TextEditSession } from './typeLogic';
 import { noteRecentFont as noteRecentFontList, type FaceInfoJson } from './typeStyle';
@@ -149,6 +150,10 @@ export interface EditorRuntime {
   transformCancel: (() => void) | null;
   /** 自由变换数值/模式编辑(选项条字段;画布注册——mutate ref 后回写投影+推步骤)。 */
   transformField: ((fn: (s: TransformSession) => TransformSession) => void) | null;
+  transformToggleWarp: (() => void) | null;
+  transformResetWarp: (() => void) | null;
+  transformSetWarpGrid: ((n: number) => void) | null;
+  transformArmWarpSplit: ((tool: 'cross' | 'vertical' | 'horizontal' | null) => void) | null;
 }
 
 export interface EditorSession {
@@ -200,6 +205,8 @@ export interface EditorSession {
   /** 提交已发命令、位图泵尚未渲染出新文档:保持变换态(抽层预览=变换后画面)防中间帧
    * 闪回原位(旧 offscreen),泵上屏后 finishTransformCommit 无缝切正常管线。 */
   transformCommitting: boolean;
+  /** Warp 分割武装工具(上游 pv.split_tool 投影;选项条按钮高亮,Ctrl/Alt 快捷分割不占它)。 */
+  transformSplit: 'cross' | 'vertical' | 'horizontal' | null;
 }
 
 /** 路径面板对话框字段(上游 stroke_path_dialog + path.toSelection 的 pen_dialog spec)。 */
@@ -306,7 +313,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       typeRecentFonts: [] as string[],
       typeStyleDefaults: {},
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -323,6 +330,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
     typeClicks: null,
     transform: null,
     transformCommitting: false,
+    transformSplit: null,
   };
   sessions.set(tabId, s);
   return s;
@@ -917,6 +925,15 @@ export function setTransformSession(tabId: string, t: TransformSession | null): 
   const s = sessions.get(tabId);
   if (!s) return;
   s.transform = t;
+  s.transformSplit = null;
+  notify(tabId);
+}
+
+/** 武装 Warp 分割工具(画布抬起落线;投影给选项条按钮高亮)。 */
+export function setTransformSplit(tabId: string, tool: 'cross' | 'vertical' | 'horizontal' | null): void {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.transformSplit = tool;
   notify(tabId);
 }
 
@@ -936,6 +953,29 @@ export async function commitTransform(tabId: string): Promise<boolean> {
   const s = sessions.get(tabId);
   if (!s?.transform || s.docId == null) return false;
   const t = s.transform;
+  if (t.warp) {
+    // Warp 提交(上游 1085-1090):identity 且非文字层=无命令零历史;一条 edit.transform.warp。
+    if (warpIsIdentity(t.warp) && t.kind !== 'Type') {
+      setTransformSession(tabId, null);
+      return true;
+    }
+    s.transformCommitting = true;
+    notify(tabId);
+    try {
+      await runCommand(tabId, 'edit.transform.warp', {
+        layer: t.layer,
+        rect: t.rect,
+        warp: t.warp,
+        interpolation: t.interpolation,
+      });
+      return true;
+    } catch (err) {
+      s.transformCommitting = false;
+      notify(tabId);
+      showEditorNotice(`无法应用自由变换:${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
   if (quadUnchanged(t.rect, t.quad)) {
     setTransformSession(tabId, null);
     return true;
@@ -959,6 +999,7 @@ export function finishTransformCommit(tabId: string): void {
   if (!s || !s.transformCommitting) return;
   s.transform = null;
   s.transformCommitting = false;
+  s.transformSplit = null;
   notify(tabId);
 }
 
