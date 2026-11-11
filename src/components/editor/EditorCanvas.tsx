@@ -58,8 +58,8 @@ import {
 } from './transformLogic';
 import {
   handleAnchor, meshControlBounds, meshDragPoint, meshEval, meshIdentity, meshNx, meshNy, meshParamAt, meshPoint, meshPull, previewSamples,
-  quickSplitKind, resetWarp, resizeWarp, splitWarp, surfaceAt, triangleOrder, warpCustom, warpGridId, warpHit,
-  warpMap, warpToMesh, WARP_PRESETS, WARP_STYLE_ZH, type Pt as WPt, type SplitKind, type WarpMesh,
+  psdWarpToShort, quickSplitKind, resetWarp, resizeWarp, splitWarp, surfaceAt, triangleOrder, warpCustom, warpGridId, warpHit,
+  warpMap, warpToMesh, WARP_PRESETS, WARP_STYLE_ZH, type Pt as WPt, type SplitKind, type WarpMesh, type WarpObject,
 } from './warpLogic';
 
 /** Warp 拖拽(上游 WarpDrag):锚/柄跟指针,其余面片跟指针表面。 */
@@ -120,6 +120,8 @@ interface TypeInfoJson {
   transform: number[];
   antialias: string;
   orientation: string;
+  /** 层已有 Warp Text(doc/src/text.rs TextWarp,snake_case;style="warpNone"=无)。 */
+  warp?: { style: string; value: number; horizontal_distortion: number; vertical_distortion: number; horizontal: boolean } | null;
   lines: TypeInfoLine[];
   runs: { start: number; end: number; style: Record<string, unknown> }[];
   bounds: [number, number, number, number] | null;
@@ -326,8 +328,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     warpSplit: { tool: SplitKind | null; placing: boolean; quick: boolean; pointer: Pt | null } | null;
     /** Warp 模式 hover 的控制点下标(光标/柄显隐用)。 */
     warpHover: number | null;
+    /** 文字层 Warp Text:进入时读回的初始 warp(Esc 脏判定)+会话 coalesce key。 */
+    warpType0: WarpObject | null;
+    warpCoalesceKey: string | null;
     steps: { settled: TransformStep | null; undo: TransformStep[]; redo: TransformStep[]; lastNudge: { at: number; step: TransformStep } | null };
-  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
+  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
@@ -2529,7 +2534,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   /** 清理会话资源(提交/取消/层消失后;store.transform=null 由订阅或直接调用进入)。 */
   const clearTransform = useCallback(() => {
-    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
+    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
     scheduleDraw();
   }, [scheduleDraw]);
 
@@ -2573,7 +2578,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         bg: mk(r.bg.width, r.bg.height, r.bg.rgba),
         tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
         rect: r.rect,
-        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null,
+        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null,
         steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
       };
       setTransformSession(tabId, session);
@@ -2624,12 +2629,41 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   }, [tabId]);
 
   /** 进入 Warp 模式(上游 enter_warp):框未动=单面片恒等网格;框已变形=把仿射烙进 mesh 点
-   * (框模式下的缩放/旋转保留,warp 在其上叠加);文字层走 Warp Text(第一刀不做)。切换是一步。 */
+   * (框模式下的缩放/旋转保留,warp 在其上叠加)。切换是一步。 */
   const enterWarpBox = useCallback(() => {
     const t = transformRef.current;
     if (!t.session) return;
     if (t.kind === 'Type') {
-      showEditorNotice('文字层的 Warp 对话框待做');
+      // 文字层 Warp Text(上游 enter_type_warp,#3004):桥已剥已有 warp 出框/纹理
+      // (tex=无 warp 文字位图),会话=纯风格态(warp.mesh=null),预览=前端按风格网格
+      // 变形贴纹理(零引擎调用);提交 edit.transform.warp 引擎转 TextWarp 重排
+      // (unchanged 短路),Esc=纯丢弃(层从未被改,上游同口径)。
+      settleTransformStep();
+      const tSession = t.session;
+      const initial: WarpObject = { style: 'none', bend: 0, hDistort: 0, vDistort: 0, vertical: false, bounds: tSession.rect, mesh: null };
+      t.session = { ...tSession, warp: initial };
+      settleTransformStep();
+      syncTransformProjection(tabId, t.session);
+      scheduleDraw();
+      void (async () => {
+        // 回读层已有 Warp Text(上游直读内存;我们走 type.info,仅 15 预设回显)
+        try {
+          const info = await runCommand(tabId, 'type.info', { layer: tSession.layer }, { noPull: true }) as TypeInfoJson;
+          const cur = transformRef.current;
+          if (!cur.session?.warp || cur.kind !== 'Type') return;
+          const w = info.warp;
+          if (w && w.style && w.style !== 'warpNone') {
+            const back: WarpObject = {
+              style: psdWarpToShort(w.style), bend: w.value,
+              hDistort: w.horizontal_distortion, vDistort: w.vertical_distortion,
+              vertical: !w.horizontal, bounds: cur.session.warp.bounds, mesh: null,
+            };
+            cur.session = { ...cur.session, warp: back };
+            syncTransformProjection(tabId, cur.session);
+            scheduleDraw();
+          }
+        } catch { /* 层已删/文档已换 */ }
+      })();
       return;
     }
     settleTransformStep();
@@ -2676,11 +2710,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     else enterWarpBox();
   }, [beginTransform, enterWarpBox, leaveWarpBox]);
 
-  /** Warp 重置(上游 reset_warp):回盒上默认单面片恒等网格,清拖拽/分割状态。 */
+  /** Warp 重置(上游 reset_warp):像素层=盒上默认单面片恒等网格;文字层=取消 Warp Text(none)。
+   * 清拖拽/分割状态。 */
   const resetWarpBox = useCallback(() => {
     const t = transformRef.current;
     if (!t.session?.warp) return;
-    transformField((v) => ({ ...v, warp: resetWarp(v.rect) }));
+    transformField((v) => ({ ...v, warp: t.kind === 'Type' ? { style: 'none', bend: 0, hDistort: 0, vDistort: 0, vertical: false, bounds: v.rect, mesh: null } : resetWarp(v.rect) }));
     t.warpDrag = null;
     t.warpHover = null;
     t.warpSplit = null;
@@ -4785,6 +4820,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.transformCommitting) return; // 提交落地中(等位图泵):吞掉按下,框不可再操作
       const tSession = t.session!;
       if (tSession.warp) {
+        // 文字层 Warp Text:画布无可拖/无分割(上游 warp_pointer 对 warps_type 直接 return)
+        if (t.kind === 'Type') {
+          scheduleDraw();
+          return;
+        }
         // Warp 模式按下(上游 warp_pointer Down):武装分割/Ctrl+Alt=快捷分割抬起落线;
         // 否则抓控制点(命中才把预设物化成 custom,#5750),再否则拖面片表面;网格外=不抓。
         const warp = tSession.warp;
@@ -5168,6 +5208,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const t = transformRef.current;
       const tSession = t.session!;
       if (tSession.warp) {
+        // 文字层 Warp Text:无 hover(光标恒 default,上游同)
+        if (t.kind === 'Type') return;
         // Warp 模式 move(上游 warp_pointer Move):拖拽每次从按下快照 pts0 重算(非累积);
         // 分割导引跟随指针;无拖拽=控制点 hover(光标/柄显隐)。
         const warp = tSession.warp;
@@ -6000,6 +6042,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 网格内(控制点包围盒近似)=grab,外=default;分割武装/快捷=十字导引。
     const wTr = transformRef.current;
     if (wTr.session?.warp) {
+      if (wTr.kind === 'Type') return 'default'; // 文字层 Warp Text:恒普通箭头(上游 warps_type)
       if (wTr.warpSplit?.placing || wTr.warpSplit?.tool || wTr.warpDrag) return 'crosshair';
       if (wTr.warpHover != null) return 'crosshair';
       const w = wTr.session.warp;

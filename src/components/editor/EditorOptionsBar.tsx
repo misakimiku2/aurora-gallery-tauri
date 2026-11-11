@@ -1038,11 +1038,14 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
   const fw = 'w-[3.25rem] min-w-[3rem]';
   const fa = 'w-11 min-w-[2.75rem]';
   // Warp 模式(上游 warp_fields):整条替换为 Split/Grid/风格/纵横/Bend/H/V + ✓✕Reset。
+  // 文字层(#3004):Split/Grid 灰掉、无自定风格(只有 15 预设+无),其余同。
   if (t.warp) {
     const w = t.warp;
     const preset = (WARP_PRESETS as string[]).includes(w.style);
+    const onType = t.kind === 'Type';
     const armed = s.transformSplit ?? null;
     const btn = 'h-6 w-6 shrink-0 flex items-center justify-center rounded';
+    const dis = onType ? 'disabled:opacity-40 disabled:pointer-events-none' : '';
     const splitIcon = (kind: SplitKind) => (
       // 自绘分割图标(上游 split_icon:圆角方框 + 线 + 中点;cross 实心,其余空心)
       <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
@@ -1061,9 +1064,10 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
           <button
             key={k}
             type="button"
+            disabled={onType}
             title={`分割 Warp ${k === 'cross' ? '十字' : k === 'vertical' ? '竖线' : '横线'}(点击武装,画布点击落线;Ctrl/Alt+拖=快捷分割)`}
             onClick={() => s.runtime.transformArmWarpSplit?.(armed === k ? null : k)}
-            className={`${btn} ${armed === k ? 'bg-sky-600 text-white dark:bg-sky-500' : 'text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10'}`}
+            className={`${btn} ${dis} ${armed === k ? 'bg-sky-600 text-white dark:bg-sky-500' : 'text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10'}`}
           >
             {splitIcon(k)}
           </button>
@@ -1072,7 +1076,12 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
         <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">网格:</span>
         <EditorSelect
           value={warpGridId(w.mesh ?? meshIdentity(t.rect, 1, 1))}
-          options={[
+          options={onType ? [
+            { value: 'default', label: '默认' },
+            { value: '3', label: '3 × 3' },
+            { value: '4', label: '4 × 4' },
+            { value: '5', label: '5 × 5' },
+          ] : [
             { value: 'custom', label: '自定' },
             { value: 'default', label: '默认' },
             { value: '3', label: '3 × 3' },
@@ -1083,14 +1092,18 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
             const n = v === 'default' ? 1 : v === '3' ? 3 : v === '4' ? 4 : v === '5' ? 5 : 0;
             if (n > 0) s.runtime.transformSetWarpGrid?.(n);
           }}
+          disabled={onType}
           className="w-[4.5rem] shrink-0"
-          title="Warp 网格密度(手切过的分割读作自定)"
+          title="Warp 网格密度(手切过的分割读作自定;文字层走 Warp Text 无网格)"
         />
         <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
         <span className="shrink-0 text-[10px] text-neutral-500 dark:text-neutral-400">变形:</span>
         <EditorSelect
           value={w.style}
-          options={[
+          options={onType ? [
+            { value: 'none', label: WARP_STYLE_ZH.none },
+            ...WARP_PRESETS.map((v) => ({ value: v, label: WARP_STYLE_ZH[v] })),
+          ] : [
             { value: 'none', label: WARP_STYLE_ZH.none },
             { value: 'custom', label: WARP_STYLE_ZH.custom },
             ...WARP_PRESETS.map((v) => ({ value: v, label: WARP_STYLE_ZH[v] })),
@@ -1098,15 +1111,16 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
           onChange={(v) => field((cur) => {
             const cur2 = cur.warp!;
             const b = cur.rect;
+            const onT = cur.kind === 'Type';
             const nw = v === 'custom'
               ? { ...warpNone(b), style: 'custom' as WarpStyleId, mesh: warpToMesh(cur2, 1, 1) }
               : v === 'none'
-                ? { ...warpNone(b), mesh: meshIdentity(b, 1, 1) }
+                ? (onT ? { ...warpNone(b) } : { ...warpNone(b), mesh: meshIdentity(b, 1, 1) })
                 : { ...warpNone(b), style: v as WarpStyleId, bend: (WARP_PRESETS as string[]).includes(cur2.style) ? cur2.bend : 50 };
             return { ...cur, warp: nw };
           })()}
           className="w-16 shrink-0"
-          title="Warp 风格(选自定=保留当前曲面;拖动网格自动转自定)"
+          title="Warp 风格(选自定=保留当前曲面;拖动网格自动转自定;文字层=Warp Text 样式)"
         />
         <button
           type="button"

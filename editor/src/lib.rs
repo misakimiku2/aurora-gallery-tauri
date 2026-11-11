@@ -414,10 +414,39 @@ impl EditorManager {
         if photocraft_engine::transform_cmds::locked_for_transform(&st.doc, id) {
             return Err(EditorError("the layer is locked for transforming".into()));
         }
-        let frame = photocraft_engine::transform_cmds::transform_frame(&st.doc, l);
-        if frame.is_empty() {
-            return Err(EditorError("nothing to transform".into()));
+        // 文字层带 Warp Text:进入 Warp 模式要剥掉已有 warp 出「无 warp」框与纹理
+        // (上游 enter_type_warp:克隆文档 tt.warp=None + refresh 重排,transform_bounds 出框;
+        //  预览=前端按风格网格变形贴该纹理,提交才真正重排)。框模式(Ctrl+T)照旧整层。
+        let mut work: photocraft_engine::doc::Document = (*st.doc).clone();
+        let mut bare_warp = false;
+        if let Some(l2) = work.layer_mut(id) {
+            if let photocraft_engine::doc::LayerContent::Text(tt) = &mut l2.content {
+                if tt.warp.is_some() {
+                    tt.warp = None;
+                    bare_warp = true;
+                }
+            }
         }
+        if bare_warp {
+            if let Some(l2) = work.layer_mut(id) {
+                if let photocraft_engine::doc::LayerContent::Text(tt) = &mut l2.content {
+                    // refresh 只读原文档拿 dpi/format(上游 refresh(&doc, tt) 同款:tt 借克隆、doc 是原)
+                    photocraft_engine::type_cmds::refresh(&st.doc, tt);
+                }
+            }
+        }
+        let frame = if bare_warp {
+            work.layer(id)
+                .map(|l2| photocraft_engine::transform_cmds::transform_bounds(&work, l2))
+                .filter(|b| !b.is_empty())
+                .ok_or_else(|| EditorError("nothing to transform".into()))?
+        } else {
+            let f = photocraft_engine::transform_cmds::transform_frame(&st.doc, l);
+            if f.is_empty() {
+                return Err(EditorError("nothing to transform".into()));
+            }
+            f
+        };
         let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
         let rect = frame.intersect(&canvas);
         // 背景预览:克隆文档隐藏该层(Surface tile 是 Arc,克隆只复制结构,上游 begin 同款)。
@@ -425,8 +454,14 @@ impl EditorManager {
         hide_layer(&mut doc2.layers, id.0);
         let bg = photocraft_compose::render(&doc2, rect).to_rgba8();
         // 层纹理;像素层带选区时按选区灰度加权 alpha(straight alpha 只乘 a 通道)。
+        // 文字层 Warp 会话的纹理取剥 warp 的 work 文档(无 warp 文字位图)。
         let sel = st.doc.selection.clone();
-        let mut tex = photocraft_compose::render_layer_in(&st.doc, l, rect).to_rgba8();
+        let (tex_doc, tex_l) = if bare_warp {
+            (&work as &photocraft_engine::doc::Document, work.layer(id).unwrap())
+        } else {
+            (&st.doc as &photocraft_engine::doc::Document, l)
+        };
+        let mut tex = photocraft_compose::render_layer_in(tex_doc, tex_l, rect).to_rgba8();
         if sel.is_some() && !photocraft_engine::transform_cmds::moves_whole(l) {
             let sel = sel.unwrap();
             for j in 0..rect.height() {

@@ -986,3 +986,10 @@ export function quickSplitKind(mesh: WarpMesh, bounds: RectF, s: number, t: numb
 export function resetWarp(rect: RectF): WarpObject {
   return warpCustom(meshIdentity(rect, 1, 1), rect);
 }
+
+/** TextWarp 的 PSD 名("warpArcLower")→ 短 id("arcLower");"warpNone"→"none"。 */
+export function psdWarpToShort(psd: string): WarpStyleId {
+  if (psd === 'warpNone' || !psd.startsWith('warp')) return 'none';
+  const rest = psd.slice(4);
+  return (rest.charAt(0).toLowerCase() + rest.slice(1)) as WarpStyleId;
+}
