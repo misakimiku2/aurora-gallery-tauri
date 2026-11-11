@@ -4,7 +4,7 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState } from './editorBridge';
+import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorFoldTransformCopy, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState, editorTakeBackMade } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
 import { quadUnchanged, transformCommitParams, type TransformSession } from './transformLogic';
 import { warpIsIdentity } from './warpLogic';
@@ -151,6 +151,8 @@ export interface EditorRuntime {
   /** 自由变换数值/模式编辑(选项条字段;画布注册——mutate ref 后回写投影+推步骤)。 */
   transformField: ((fn: (s: TransformSession) => TransformSession) => void) | null;
   transformToggleWarp: (() => void) | null;
+  transformBeginSelection: (() => void) | null;
+  transformBeginCopy: (() => void) | null;
   transformResetWarp: (() => void) | null;
   transformSetWarpGrid: ((n: number) => void) | null;
   transformArmWarpSplit: ((tool: 'cross' | 'vertical' | 'horizontal' | null) => void) | null;
@@ -313,7 +315,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       typeRecentFonts: [] as string[],
       typeStyleDefaults: {},
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformBeginSelection: null, transformBeginCopy: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -945,14 +947,47 @@ export function syncTransformProjection(tabId: string, t: TransformSession): voi
   notify(tabId);
 }
 
-/** 提交自由变换(上游 commit 口径):未改动零历史短路;一条 edit.transform 一步历史;
+/** 提交自由变换(上游 commit 口径):未改动零历史短路;一条命令一步历史;
  * 被拒(pixel budget 等)框保持打开、错误进提示条。返回是否提交成功。
  * **成功后不清变换态**:置 transformCommitting 保持抽层预览(=变换后画面)到位图泵
- * 渲染出新文档上屏(泵调 finishTransformCommit),防中间帧闪回原位(旧 offscreen)。 */
+ * 渲染出新文档上屏(泵调 finishTransformCommit),防中间帧闪回原位(旧 offscreen)。
+ * 变换选区(selection)走 select.transformSelection;⌥⌘T 复制层(madeLayer)提交后
+ * 折叠复制步(上游 fold_made),取消时收回。 */
 export async function commitTransform(tabId: string): Promise<boolean> {
   const s = sessions.get(tabId);
   if (!s?.transform || s.docId == null) return false;
   const t = s.transform;
+  const made = t.madeLayer ?? null;
+  if (t.selection) {
+    // 变换选区(上游 1051-1062):quad 未动=零历史;warp 未动 identity 同;像素不动,
+    // 提交后位图泵重渲蒙版轮廓(蚂蚁线按新蒙版重画)。
+    if (t.warp) {
+      if (warpIsIdentity(t.warp)) {
+        setTransformSession(tabId, null);
+        return true;
+      }
+      s.transformCommitting = true;
+      notify(tabId);
+      try {
+        await runCommand(tabId, 'select.transformSelection', { rect: t.rect, warp: t.warp, interpolation: t.interpolation });
+        return true;
+      } catch (err) {
+        return selectionFail(tabId, err);
+      }
+    }
+    if (quadUnchanged(t.rect, t.quad)) {
+      setTransformSession(tabId, null);
+      return true;
+    }
+    s.transformCommitting = true;
+    notify(tabId);
+    try {
+      await runCommand(tabId, 'select.transformSelection', { rect: t.rect, quad: t.quad, interpolation: t.interpolation });
+      return true;
+    } catch (err) {
+      return selectionFail(tabId, err);
+    }
+  }
   if (t.warp) {
     // Warp 提交(上游 1085-1090):identity 且非文字层=无命令零历史;一条 edit.transform.warp。
     if (warpIsIdentity(t.warp) && t.kind !== 'Type') {
@@ -984,6 +1019,18 @@ export async function commitTransform(tabId: string): Promise<boolean> {
   notify(tabId);
   try {
     await runCommand(tabId, 'edit.transform', transformCommitParams(t));
+    // ⌥⌘T 复制层:变换落地后把「复制步+变换步」折叠成一步(上游 fold_made;中途有别的
+    // 操作时桥内守卫不折叠,各留各步)。折叠只动历史栈,像素/revision 不变——拉一次
+    // 状态刷新历史面板。
+    if (made != null && s.docId != null) {
+      try {
+        const r = await editorFoldTransformCopy(s.docId, t.madeBefore ?? 0, made);
+        if (r.folded) {
+          const st = await editorState(s.docId);
+          if (typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st });
+        }
+      } catch { /* 折叠失败不致命,两步保留 */ }
+    }
     return true;
   } catch (err) {
     s.transformCommitting = false;
@@ -991,6 +1038,17 @@ export async function commitTransform(tabId: string): Promise<boolean> {
     showEditorNotice(`无法应用自由变换:${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
+}
+
+/** 变换选区提交失败收尾(蒙版染色预览照旧,框保持打开)。 */
+function selectionFail(tabId: string, err: unknown): boolean {
+  const s = sessions.get(tabId);
+  if (s) {
+    s.transformCommitting = false;
+    notify(tabId);
+  }
+  showEditorNotice(`无法应用变换选区:${err instanceof Error ? err.message : String(err)}`);
+  return false;
 }
 
 /** 提交落地收尾(位图泵渲染出新文档上屏后由画布调):解除抽层保持态,正常管线接管。 */
@@ -1003,12 +1061,29 @@ export function finishTransformCommit(tabId: string): void {
   notify(tabId);
 }
 
-/** 取消自由变换(纯前端丢弃,零历史)。 */
+/** 取消自由变换(纯前端丢弃,零历史)。⌥⌘T 复制层经 take_back_made 收回
+ * (undo+清 redo,上游 take_back_made;守卫不过=复制已被别的操作盖住,保留)。 */
 export function cancelTransform(tabId: string): void {
   const s = sessions.get(tabId);
   if (!s?.transform) return;
   s.transformCommitting = false;
+  const made = s.transform.madeLayer;
+  const docId = s.docId;
   setTransformSession(tabId, null);
+  if (made != null && docId != null) {
+    void editorTakeBackMade(docId, made)
+      .then((r) => { if (r.took) void runCommandSilentState(docId, tabId); })
+      .catch(() => undefined);
+  }
+}
+
+/** 收回复制层后拉一次状态刷新历史面板(层已消失,不发命令)。 */
+async function runCommandSilentState(docId: number, tabId: string): Promise<void> {
+  try {
+    const st = await editorState(docId);
+    const s = sessions.get(tabId);
+    if (s && typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st });
+  } catch { /* 文档已关 */ }
 }
 
 // ===== 编辑器内状态提示(轻量 toast;与画布订阅解耦,跨组件直达)=====

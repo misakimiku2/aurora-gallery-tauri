@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTransformBegin } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorSelectionTransformBegin, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTakeBackMade, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTransformSplit, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
@@ -331,8 +331,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     /** 文字层 Warp Text:进入时读回的初始 warp(Esc 脏判定)+会话 coalesce key。 */
     warpType0: WarpObject | null;
     warpCoalesceKey: string | null;
+    /** tex 相对 rect 的缩小倍数(变换选区的蒙版染色纹理;贴图源坐标除它)。 */
+    texScale: number;
     steps: { settled: TransformStep | null; undo: TransformStep[]; redo: TransformStep[]; lastNudge: { at: number; step: TransformStep } | null };
-  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
+  }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: 1, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
@@ -549,7 +551,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 自由变换激活:蚂蚁线随 quad 变换(上游 draw_selection 经 h 画),原位轮廓隐藏
     const smOpen = s.selectMask?.open === true && !s.selectMask.hideView;
     const smAnts = smOpen && s.selectMask?.viewMode === 'marchingAnts';
-    const transformActive = tr.session != null && tr.bg != null && tr.rect != null;
+    // 变换选区会话 bg=null(像素不动),靠 selection 标志也保持 active
+    const transformActive = tr.session != null && tr.rect != null && (tr.bg != null || tr.session.selection === true);
     const hideAnts =
       (s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace') ||
       (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace') ||
@@ -632,8 +635,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       };
       const srcAt = (i: number): WPt => {
         const uu = us[i % row], vv = vs[(i / row) | 0];
-        // 源 tex 像素 = warp 前文档点 - tex 覆盖 rect 原点(frame 超出 rect 的部分为负,drawImage 裁掉)
-        return [tSessionW.rect[0] + uu * fw - rx0, tSessionW.rect[1] + vv * fh - ry0];
+        // 源 tex 像素 = warp 前文档点 - tex 覆盖 rect 原点(frame 超出 rect 的部分为负,
+        // drawImage 裁掉);tex 降采样时除 texScale
+        const ts = tr.texScale || 1;
+        return [(tSessionW.rect[0] + uu * fw - rx0) / ts, (tSessionW.rect[1] + vv * fh - ry0) / ts];
       };
       octx.save();
       octx.beginPath();
@@ -778,9 +783,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         const fw = tr.session.rect[2] - tr.session.rect[0];
         const fh = tr.session.rect[3] - tr.session.rect[1];
         const srcPt = (u: number, vv: number): [number, number] => {
-          // 源 tex 像素 = 文档点 - rect 原点(frame 超出 rect 的部分为负,drawImage 裁掉)
-          const dx = tr.session!.rect[0] + u * fw - rx0;
-          const dy = tr.session!.rect[1] + vv * fh - ry0;
+          // 源 tex 像素 = 文档点 - rect 原点(frame 超出 rect 的部分为负,drawImage 裁掉);
+          // tex 降采样时除 texScale(变换选区的蒙版染色纹理)
+          const ts = tr.texScale || 1;
+          const dx = (tr.session!.rect[0] + u * fw - rx0) / ts;
+          const dy = (tr.session!.rect[1] + vv * fh - ry0) / ts;
           return [dx, dy];
         };
         const affineFromTri = (s0: [number, number], s1: [number, number], s2: [number, number], p0: [number, number], p1: [number, number], p2: [number, number]): [number, number, number, number, number, number] | null => {
@@ -2534,7 +2541,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
 
   /** 清理会话资源(提交/取消/层消失后;store.transform=null 由订阅或直接调用进入)。 */
   const clearTransform = useCallback(() => {
-    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
+    transformRef.current = { session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: 1, steps: { settled: null, undo: [], redo: [], lastNudge: null } };
     scheduleDraw();
   }, [scheduleDraw]);
 
@@ -2575,10 +2582,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       };
       transformRef.current = {
         session, docId: s.docId, kind: r.kind,
-        bg: mk(r.bg.width, r.bg.height, r.bg.rgba),
+        bg: r.bg.width > 0 ? mk(r.bg.width, r.bg.height, r.bg.rgba) : null,
         tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
         rect: r.rect,
-        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null,
+        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: r.texScale,
         steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
       };
       setTransformSession(tabId, session);
@@ -2588,6 +2595,87 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       showEditorNotice(msg.includes('locked') ? '无法自由变换:图层已锁定' : `无法自由变换:${msg}`);
     }
   }, [tabId, scheduleDraw]);
+
+  /** 变换选区(上游 begin_selection,Select › Transform Selection):只变换选区蒙版,
+   * 像素不动(tex=蒙版染色降采样纹理;bg 空=无抽层);手势/把手/读数全复用框会话。 */
+  const beginSelectionTransform = useCallback(async () => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null || !s.state) return;
+    if (transformRef.current.session) return; // 一次一个变换
+    if (!s.state.selectionBounds) {
+      showEditorNotice('需要先有选区');
+      return;
+    }
+    try {
+      const r = await editorSelectionTransformBegin(s.docId);
+      const frame: RectF = r.frame;
+      if (!(frame[2] - frame[0] > 0 && frame[3] - frame[1] > 0)) {
+        showEditorNotice('没有可变换的选区');
+        return;
+      }
+      const mk = (w: number, h: number, px: Uint8ClampedArray<ArrayBuffer>): HTMLCanvasElement => {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d')?.putImageData(new ImageData(px, w, h), 0, 0);
+        return c;
+      };
+      const session: TransformSession = {
+        layer: r.layer,
+        rect: frame,
+        quad: corners(frame),
+        pivot: [(frame[0] + frame[2]) / 2, (frame[1] + frame[3]) / 2],
+        interpolation: 'bilinear', // 上游 begin_selection 口径(蒙版重采样默认双线性)
+        mode: 'free',
+        targetMask: false,
+        skewV: 0,
+        kind: 'Selection',
+        selection: true,
+      };
+      transformRef.current = {
+        session, docId: s.docId, kind: 'Selection',
+        bg: null, // 像素不动
+        tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
+        rect: r.rect,
+        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: r.texScale,
+        steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
+      };
+      setTransformSession(tabId, session);
+      scheduleDraw();
+    } catch (err) {
+      showEditorNotice(`无法变换选区:${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [tabId, scheduleDraw]);
+
+  /** ⌥⌘T 自由变换副本(上游 begin_copy):复制活动层(带选区=仅选中像素,Layer via Copy
+   * 且引擎同步去选区)后进普通变换框;提交折叠成一步,Esc 收回复制层。 */
+  const beginTransformCopy = useCallback(async () => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null || !s.state) return;
+    if (transformRef.current.session) return;
+    try {
+      const before = s.state.historyCurrent; // 复制前 past_len(折叠守卫 before+2)
+      const selection = !!s.state.selectionBounds;
+      // 不带 noPull:复制层成为活动层,必须拉新 state——否则 beginTransform 后
+      // end_if_left 订阅看到"活动层换了"会立刻把新框提交掉(陈旧 activeLayer≠新层)。
+      await runCommand(tabId, selection ? 'layer.new.layerViaCopy' : 'layer.duplicate', selection ? {} : { inPlace: true });
+      const s2 = getSession(tabId);
+      const made = s2?.state?.activeLayer ?? null;
+      if (made == null) throw new Error('no duplicated layer');
+      await beginTransform();
+      const t = transformRef.current;
+      if (!t.session) return; // beginTransform 失败=收回复制层(上游 take_back_made)
+      t.session = { ...t.session, madeLayer: made, madeBefore: before };
+      syncTransformProjection(tabId, t.session);
+    } catch (err) {
+      showEditorNotice(`无法变换副本:${err instanceof Error ? err.message : String(err)}`);
+      // beginTransform 失败时收回复制层(上游 take_back_made 三重守卫在桥内)
+      const s2 = getSession(tabId);
+      if (s2?.docId != null && s2.state?.activeLayer != null) {
+        void editorTakeBackMade(s2.docId, s2.state.activeLayer).catch(() => undefined);
+      }
+    }
+  }, [tabId, beginTransform]);
 
   /** 步退/步进(框打开期间 Ctrl+Z/Y 被劫持到框快照,上游 transform_undo_tests 口径)。 */
   const transformUndo = useCallback(() => {
@@ -3463,6 +3551,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropSetAngle !== cropSetAngle) s.runtime.cropSetAngle = cropSetAngle;
       if (s.runtime.makeSelection !== makeSelectionFromActivePath) s.runtime.makeSelection = makeSelectionFromActivePath;
       if (s.runtime.commitTextEdit !== commitType) s.runtime.commitTextEdit = commitType;
+      if (s.runtime.transformBeginSelection !== beginSelectionTransform) s.runtime.transformBeginSelection = beginSelectionTransform;
+      if (s.runtime.transformBeginCopy !== beginTransformCopy) s.runtime.transformBeginCopy = beginTransformCopy;
       if (s.runtime.transformCommit !== commitTransformBox) s.runtime.transformCommit = commitTransformBox;
       if (s.runtime.transformCancel !== cancelTransformBox) s.runtime.transformCancel = cancelTransformBox;
       if (s.runtime.transformField !== transformField) s.runtime.transformField = transformField;
@@ -3489,8 +3579,10 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (layerGone) {
           cancelTransform(tabId);
           clearTransform();
-        } else if (s.state.activeLayer !== tSession.layer && !t.gesture && !s.transformCommitting) {
-          void commitTransform(tabId); // 切层=提交(切层命令作用于新层,框必须先落定;落地中跳过)
+        } else if (s.state.activeLayer !== tSession.layer && !t.gesture && !s.transformCommitting && !tSession.selection) {
+          // 切层=提交(切层命令作用于新层,框必须先落定;落地中跳过);变换选区不随层提交
+          // (上游 switched_away:!t.selection,换层保持打开,换工具才提交)
+          void commitTransform(tabId);
         }
       }
       register(s);
@@ -3507,6 +3599,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.cropSetAngle === cropSetAngle) s.runtime.cropSetAngle = null;
       if (s.runtime.makeSelection === makeSelectionFromActivePath) s.runtime.makeSelection = null;
       if (s.runtime.commitTextEdit === commitType) s.runtime.commitTextEdit = null;
+      if (s.runtime.transformBeginSelection === beginSelectionTransform) s.runtime.transformBeginSelection = null;
+      if (s.runtime.transformBeginCopy === beginTransformCopy) s.runtime.transformBeginCopy = null;
       if (s.runtime.transformCommit === commitTransformBox) s.runtime.transformCommit = null;
       if (s.runtime.transformCancel === cancelTransformBox) s.runtime.transformCancel = null;
       if (s.runtime.transformField === transformField) s.runtime.transformField = null;
@@ -3515,7 +3609,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.transformSetWarpGrid === setWarpGridBox) s.runtime.transformSetWarpGrid = null;
       if (s.runtime.transformArmWarpSplit === armWarpSplitBox) s.runtime.transformArmWarpSplit = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox, beginSelectionTransform, beginTransformCopy]);
 
   // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
   // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
@@ -4042,6 +4136,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === 'KeyT' && !isTyping(e.target)) {
         e.preventDefault(); // 浏览器新标签页快捷键,必须拦
         void beginTransform();
+        return;
+      }
+      // Ctrl/Cmd+Alt+T = 自由变换副本(上游 edit.freeTransformCopy ⌥⌘T:复制层/选中像素
+      // 后进框,提交折叠一步;Alt+Ctrl 组合有被系统软件抢占的风险,见 Ctrl+Alt+R 教训)
+      if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.code === 'KeyT' && !isTyping(e.target)) {
+        e.preventDefault();
+        void beginTransformCopy();
         return;
       }
       // 导出为对话框打开期间接管键盘:Esc 取消(输入框中也生效)/Enter 确定(非输入)/其余吞掉

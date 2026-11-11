@@ -313,10 +313,13 @@ export interface TransformBeginResult {
   kind: string;
   bg: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> };
   tex: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> };
+  /** tex 相对文档区域的缩小倍数(变换选区的蒙版染色纹理按 k 降采样;普通=1)。 */
+  texScale: number;
 }
 
-export async function editorTransformBegin(doc: number): Promise<TransformBeginResult> {
-  const buf = await invoke<ArrayBuffer>('editor_transform_begin', { doc });
+/** 解析 [jsonLen][JSON][bgW][bgH][bg][texW][texH][tex] 的变换进入响应。 */
+async function parseTransformBegin(cmd: string, doc: number): Promise<TransformBeginResult> {
+  const buf = await invoke<ArrayBuffer>(cmd, { doc });
   const u8 = new Uint8Array(buf);
   const dv = new DataView(u8.buffer as ArrayBuffer, u8.byteOffset);
   const jsonLen = dv.getUint32(0, true);
@@ -339,5 +342,25 @@ export async function editorTransformBegin(doc: number): Promise<TransformBeginR
     kind: info.kind,
     bg: { width: bw, height: bh, rgba: bg },
     tex: { width: tw, height: th, rgba: tex },
+    texScale: info.texScale ?? 1,
   };
+}
+
+export async function editorTransformBegin(doc: number): Promise<TransformBeginResult> {
+  return parseTransformBegin('editor_transform_begin', doc);
+}
+
+/** 变换选区进入数据(上游 begin_selection):bg 为空(像素不动),tex=选区蒙版染色(降采样)。 */
+export async function editorSelectionTransformBegin(doc: number): Promise<TransformBeginResult> {
+  return parseTransformBegin('editor_selection_transform_begin', doc);
+}
+
+/** ⌥⌘T 提交折叠(上游 fold_made 的 Copy 变体)。 */
+export function editorFoldTransformCopy(doc: number, before: number, layer: number): Promise<{ folded: boolean }> {
+  return invoke('editor_fold_transform_copy', { doc, before, layer });
+}
+
+/** ⌥⌘T 取消收回(上游 take_back_made:undo+清 redo,守卫在桥内)。 */
+export function editorTakeBackMade(doc: number, layer: number): Promise<{ took: boolean }> {
+  return invoke('editor_take_back_made', { doc, layer });
 }

@@ -486,6 +486,94 @@ impl EditorManager {
         })
     }
 
+    /// 变换选区进入数据(上游 begin_selection,TT:583-649):零文档改动零历史。
+    /// rect=选区内容包围盒;bg 为空(像素不动,overlay 只画染色纹理);tex=选区蒙版的
+    /// UI 诊断染色(120,170,255,α=m·110,上游同色;绕过色彩管理,#5880 测试口径),
+    /// 按 k=⌈max/2048⌉ 降采样。变换对象=蒙版本身,提交走 select.transformSelection。
+    pub fn selection_transform_begin(&mut self, doc: u64) -> Result<TransformBegin> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let sel = st.doc.selection.as_ref().ok_or_else(|| EditorError("no selection".into()))?;
+        let b = sel.content_bounds();
+        let frame = Rect::new(b.x0 as i32, b.y0 as i32, b.x1 as i32, b.y1 as i32);
+        if frame.is_empty() {
+            return Err(EditorError("nothing to transform".into()));
+        }
+        let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
+        let rect = frame.intersect(&canvas);
+        let k = (((rect.width().max(rect.height())) as f64 / 2048.0).ceil() as i32).max(1);
+        // tex 为真降采样图(尺寸 ÷k;前端贴图源坐标除 texScale,info 带出)。
+        let tex_w = (rect.width() as f64 / k as f64).ceil() as u32;
+        let tex_h = (rect.height() as f64 / k as f64).ceil() as u32;
+        let mut tex = photocraft_raster::Rgba8Image::new(tex_w, tex_h);
+        {
+            let px = &mut tex.pixels;
+            let cols = (rect.width() as f64 / k as f64).ceil() as usize;
+            for j in (0..rect.height()).step_by(k as usize) {
+                let mut row = vec![0f32; cols];
+                sel.sample_row_strided(rect.y0 + j as i32, rect.x0, k, 0, &mut row);
+                let ty = (j as usize / k as usize) * tex_w as usize;
+                for (i, m) in row.iter().enumerate() {
+                    let o = (ty + i) * 4;
+                    px[o] = 120;
+                    px[o + 1] = 170;
+                    px[o + 2] = 255;
+                    px[o + 3] = ((m.clamp(0.0, 1.0) * 110.0) + 0.5) as u8;
+                }
+            }
+        }
+        let id = st.active_layer.unwrap_or(photocraft_engine::doc::LayerId(0));
+        let info = serde_json::json!({
+            "frame": [frame.x0, frame.y0, frame.x1, frame.y1],
+            "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
+            "layer": id.0,
+            "kind": "Selection",
+            "texScale": k,
+        });
+        Ok(TransformBegin {
+            info,
+            bg: Rendered { width: 0, height: 0, pixels: Vec::new() },
+            tex: Rendered { width: tex_w, height: tex_h, pixels: tex.pixels },
+        })
+    }
+
+    /// ⌥⌘T 提交折叠(上游 fold_made,TT:415-433 的 Copy 变体,守卫原式):
+    /// 「变换步执行前快照的前一个状态(=复制步之前)还没有该层」时 purge_last 删掉
+    /// 变换步快照——undo 一步同时撤掉副本与移动;中途开盒后又做过别的操作则各留各步。
+    pub fn fold_transform_copy(&mut self, doc: u64, _before: u64, layer: u64) -> Result<Value> {
+        self.activate(doc)?;
+        let layer = photocraft_engine::doc::LayerId(layer);
+        let st = self.session.active_mut().ok_or_else(|| EditorError("no active document".into()))?;
+        let folded = st.history.past_len().checked_sub(2)
+            .and_then(|i| st.history.state(i))
+            .is_some_and(|d| d.layer(layer).is_none())
+            && st.history.purge_last();
+        Ok(json!({ "folded": folded, "historyCurrent": st.history.past_len() }))
+    }
+
+    /// ⌥⌘T 取消收回(上游 take_back_made,TT:390-411):当前文档有该层、且 undo 栈顶
+    /// (最后一步的执行前快照)还没有它=最后一步正是造层步 → undo+清 redo
+    /// (复制从未发生,leaving nothing to redo)。
+    pub fn take_back_made(&mut self, doc: u64, layer: u64) -> Result<Value> {
+        self.activate(doc)?;
+        let layer = photocraft_engine::doc::LayerId(layer);
+        let took = {
+            let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+            let len = st.history.past_len();
+            st.doc.layer(layer).is_some()
+                && (len == 0 || st.history.state(len - 1).is_some_and(|d| d.layer(layer).is_none()))
+        };
+        if took {
+            self.session.undo(); // 引擎 undo(后台 job 守卫内);活动文档即刚判定过的
+            if let Some(st) = self.session.active_mut() {
+                st.history.clear_redo();
+                return Ok(json!({ "took": true, "revision": st.revision }));
+            }
+        }
+        let rev = self.session.active().map(|st| st.revision).unwrap_or(0);
+        Ok(json!({ "took": took, "revision": rev }))
+    }
+
     // ---- live 描边(画笔族)----
     //
     // 口径与 photocraft UI(canvas.rs EngineStroke)一致:落笔时 begin(params 带首点,

@@ -317,6 +317,15 @@ export const EditorOptionsBar: React.FC<{ tabId: string; active?: boolean }> = (
           >
             选择并遮住…
           </button>
+          {/* 变换选区(Select › Transform Selection;无菜单栏的按钮入口,上游无快捷键) */}
+          <button
+            onClick={() => s.runtime.transformBeginSelection?.()}
+            disabled={!s.state?.hasSelection}
+            title="变换选区(只变形选区轮廓,像素不动)"
+            className="px-2 py-0.5 rounded text-[11px] shrink-0 bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            变换选区
+          </button>
         </>
       ) : s.tool === 'crop' ? (
         <>

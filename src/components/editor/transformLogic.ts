@@ -129,6 +129,12 @@ export interface TransformSession {
   kind?: string;
   /** Warp 模式(上游 t.warp.is_some()):正在编辑的 warp 对象;null/缺省=框模式。 */
   warp?: WarpObject | null;
+  /** 变换选区(上游 t.selection):只变换选区蒙版,像素不动;提交 select.transformSelection。 */
+  selection?: boolean;
+  /** ⌥⌘T 复制出的层(上游 t.made=Copy):提交成功后折叠复制步,取消时收回。 */
+  madeLayer?: number | null;
+  /** ⌥⌘T 复制**前**的历史步数(折叠条件 before+2 守卫用)。 */
+  madeBefore?: number;
 }
 
 export type Hit =

@@ -230,6 +230,40 @@ pub fn editor_transform_begin(s: State<EditorState>, doc: u64) -> Result<Respons
     Ok(Response::new(bytes))
 }
 
+/// 变换选区进入数据(Select › Transform Selection):选区染色纹理,零文档改动零历史。
+/// 响应同 editor_transform_begin(bg 为空 0×0;info 带_texScale=纹理降采样倍数)。
+#[tauri::command]
+pub fn editor_selection_transform_begin(s: State<EditorState>, doc: u64) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let r = m.selection_transform_begin(doc).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(&r.info).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(4 + json.len() + 12 + r.bg.pixels.len() + 12 + r.tex.pixels.len());
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&json);
+    bytes.extend_from_slice(&(r.bg.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.bg.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.bg.pixels);
+    bytes.extend_from_slice(&(r.tex.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.tex.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.tex.pixels);
+    Ok(Response::new(bytes))
+}
+
+/// ⌥⌘T 提交折叠:复制步+变换步恰为 before 后连续两步且 before 无该层时 purge_last
+/// 并成一步 "Free Transform"(上游 fold_made 的 Copy 变体)。
+#[tauri::command]
+pub fn editor_fold_transform_copy(s: State<EditorState>, doc: u64, before: u64, layer: u64) -> Result<serde_json::Value, String> {
+    let mut m = lock(&s)?;
+    m.fold_transform_copy(doc, before, layer).map_err(|e| e.to_string())
+}
+
+/// ⌥⌘T 取消收回:层在当前状态存在且前一步状态还没有它时 undo+清 redo(上游 take_back_made)。
+#[tauri::command]
+pub fn editor_take_back_made(s: State<EditorState>, doc: u64, layer: u64) -> Result<serde_json::Value, String> {
+    let mut m = lock(&s)?;
+    m.take_back_made(doc, layer).map_err(|e| e.to_string())
+}
+
 /// 移动工具拖拽预览帧:target="float"(选区像素浮动,dx/dy 为未提交增量)或
 /// "layer"(整层平移,dx/dy 为总位移);x/y/w/h 为脏矩形(文档坐标)。
 #[tauri::command]
