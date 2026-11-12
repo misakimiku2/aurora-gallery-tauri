@@ -9,6 +9,9 @@ import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { isVideoFile, formatVideoDuration, isWebDecodableVideo } from '../utils/mediaExtensions';
+// 轻量快调:角标(已调整)+ 保存参数后失效缓存触发重请求(键带 adjust_tag,网格即时所见)
+import { SlidersHorizontal } from 'lucide-react';
+import { bootstrapAdjustStore, hasAdjust, useAdjustVersion } from '../utils/adjustStore';
 
 // 视频扩展名判定已收敛到 `src/utils/mediaExtensions.ts`（与 core/src/file_types.rs 同步）。
 // 视频 P1（设计方案 §2.7 口径 C / UI 设计 §5.2）。
@@ -49,6 +52,10 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   });
   
   const [animSrc, setAnimSrc] = useState<string | null>(null);
+  // 轻量快调:本路径的调整状态(角标 + 缓存失效重请求的触发器)
+  const adjustVersion = useAdjustVersion(filePath);
+  const adjusted = hasAdjust(filePath);
+  useEffect(() => { bootstrapAdjustStore(); }, []);
   // 视频悬停预览（P1.5 配套）：存 asset URL 交给 <video> 播放，不存 base64
   const [videoPreviewSrc, setVideoPreviewSrc] = useState<string | null>(null);
   // 视频是否已解出第一帧：未就绪时保持透明，让底层封面继续显示（消除闪空）
@@ -161,7 +168,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       mountedRef.current = false;
       controller.abort();
     };
-  }, [filePath, modified, resourceRoot, isInView, wasInView, isVideo]);
+  }, [filePath, modified, resourceRoot, isInView, wasInView, isVideo, adjustVersion]);
 
   // 视频封面（P1.5-A）
   // 视频**不**参与图片缩略图管线（后端 `process_single_thumbnail` 对视频不解图），
@@ -506,6 +513,15 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         // 视频 P1（UI 设计 §5.2）：右下角时长角标，mm:ss / h:mm:ss。无 durationMs 不显示
         <div className="absolute bottom-1 right-1 z-10 px-1 py-px rounded bg-black/60 text-white text-[10px] font-medium leading-none pointer-events-none tabular-nums">
           {durationLabel}
+        </div>
+      )}
+      {adjusted && !isVideo && (
+        // 轻量快调(设计 §5):已调整角标(与 Rust 缩略图烘焙联动,网格所见 = 导出所得)
+        <div
+          className="absolute top-1 right-1 z-10 p-0.5 rounded bg-black/60 text-white pointer-events-none"
+          title="adjusted"
+        >
+          <SlidersHorizontal size={10} />
         </div>
       )}
     </div>

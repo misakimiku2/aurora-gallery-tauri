@@ -2,7 +2,16 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Channel } from '@tauri-apps/api/core';
 import { DominantColor } from '../../types';
 import { performanceMonitor } from '../../utils/performanceMonitor';
-import { getGlobalCache } from '../../utils/thumbnailCache';
+import { getGlobalCache, getThumbnailPathCache } from '../../utils/thumbnailCache';
+// 轻量快调(§5):AVIF 兜底生成时套用调整参数,内容与缓存键里的 adjust_tag 一致
+import { getAdjustParams } from '../../utils/adjustStore';
+import {
+  AdjustedFrame,
+  buildAdjustedFrame,
+  drawAdjustedToCtx,
+  frameCropRect,
+  hasActiveAdjust,
+} from '../../utils/adjustCanvasDraw';
 import { _isAndroid, _globalCacheRoot, _upgradingThumbnails } from './state';
 import { readFileAsBase64 } from './files';
 // 主色提取已抽到 utils 共享：AVIF 回落 与 视频抽帧（P1.5）必须用同一套口径，否则色差不可控
@@ -272,6 +281,15 @@ class ThumbnailBatcher {
 const thumbnailBatcher = new ThumbnailBatcher();
 
 /**
+ * 调整保存/清除后失效该路径的缩略图内存缓存(轻量快调 §5):
+ * 下次 ImageThumbnail 请求时,后端按新 adjust_tag 键重新生成(网格即时所见 = 导出所得)。
+ */
+export function invalidateAdjustedThumbnail(filePath: string): void {
+  getGlobalCache().delete(filePath);
+  getThumbnailPathCache().delete(filePath);
+}
+
+/**
  * 解析缩略图缓存目录（`getThumbnail` / `getVideoCover` 共用）。
  *
  * ⚠️ `rootPath` 必须是**绝对路径**。历史事故（2026-10-14 实测）：有调用方把根节点的
@@ -392,16 +410,30 @@ const generateAvifThumbnailAndColors = async (
       const img = new Image();
       img.onload = async () => {
         const canvas = document.createElement('canvas');
-        const TARGET_SIZE = 256;
-        let w = img.width;
-        let h = img.height;
+        // 轻量快调(§5):带参数时套用几何+影调(与 bake_edits/缩略图联动同口径),
+        // 内容与缓存键里的 adjust_tag 保持一致;无参数维持原直通路径。
+        const adjust = getAdjustParams(filePath);
+        const useAdjust = hasActiveAdjust(adjust);
+        let contentW = img.width;
+        let contentH = img.height;
+        let frame: AdjustedFrame | null = null;
+        let crop = { sx: 0, sy: 0, sw: contentW, sh: contentH };
+        if (useAdjust && adjust) {
+          frame = buildAdjustedFrame(img, adjust);
+          crop = frameCropRect(frame, adjust);
+          contentW = crop.sw;
+          contentH = crop.sh;
+        }
 
-        if (w < h) {
-          h = Math.round((h * TARGET_SIZE) / w);
-          w = TARGET_SIZE;
+        let w: number;
+        let h: number;
+        // 短边贴 256(与原口径一致)
+        if (contentW < contentH) {
+          w = 256;
+          h = Math.max(1, Math.round((contentH * 256) / contentW));
         } else {
-          w = Math.round((w * TARGET_SIZE) / h);
-          h = TARGET_SIZE;
+          h = 256;
+          w = Math.max(1, Math.round((contentW * 256) / contentH));
         }
 
         canvas.width = w;
@@ -411,7 +443,11 @@ const generateAvifThumbnailAndColors = async (
 
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, w, h);
+        if (frame && adjust) {
+          drawAdjustedToCtx(ctx, frame, adjust, 0, 0, w, h);
+        } else {
+          ctx.drawImage(img, 0, 0, w, h);
+        }
 
         // 3. 提取颜色 (简单实现核心逻辑，或者使用第三方库，这里为了轻量化手动取样)
         const imageData = ctx.getImageData(0, 0, w, h).data;

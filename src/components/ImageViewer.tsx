@@ -7,6 +7,15 @@ import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUr
 import { isTextEditingTarget } from '../utils/keyboardTarget';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { VideoControls } from './viewer/VideoControls';
+// 轻量快调(2026-11-13 设计:docs/superpowers/specs/2026-11-13-lightweight-image-adjust-design.md)
+import { SlidersHorizontal } from 'lucide-react';
+import { AdjustCanvas } from './viewer/adjust/AdjustCanvas';
+import { AdjustDrawer } from './viewer/adjust/AdjustDrawer';
+import { AdjustFilterDefs } from './viewer/adjust/AdjustFilterDefs';
+import { useImageAdjust } from '../hooks/useImageAdjust';
+import { isDefaultAdjustParams } from '../utils/adjust';
+import { computeAutoEnhanceStats } from '../utils/adjustCanvasDraw';
+import { bakeEdits } from '../api/tauri-bridge/edits';
 import { useToasts } from '../hooks/useToasts';
 import { isWebDecodableVideo } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
@@ -501,6 +510,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [menuPos, setMenuPos] = useState<{ top: string; left: string }>({ top: '0px', left: '0px' });
   const [slideshowActive, setSlideshowActive] = useState(false);
   const [showSlideshowSettings, setShowSlideshowSettings] = useState(false);
+
+  // ── 轻量快调(一期:几何+影调+自动增强+导出,原图永不写回)──
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [cropMode, setCropMode] = useState(false);
+  const [cropAspect, setCropAspect] = useState<number | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const adjust = useImageAdjust(file.id, file.path, !isVideo);
+  const hasAdjust = adjust.loaded && !isDefaultAdjustParams(adjust.params);
+  // 有参数(非调整中)或调整中 → 用 AdjustCanvas 全量渲染(与缩略图/烘焙同口径);
+  // 幻灯片态维持 <img> 原管线(幻灯片不吃参数,见设计 §7 边界)。
+  const adjustShowCanvas = !isVideo && !slideshowActive && (adjustOpen || hasAdjust);
+
+  useEffect(() => { setAdjustOpen(false); setCropMode(false); }, [file.id]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [immersiveFlip, setImmersiveFlip] = useState<{
@@ -1614,6 +1636,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           return;
         }
         if (showSearch) setShowSearch(false);
+        else if (adjustOpen) setAdjustOpen(false);
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
         else if (slideshowActive) stopSlideshow();
         else if (canGoBack) onNavigateBack();
@@ -1626,7 +1649,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery, isVideo, file.meta?.frameRate]);
+  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery, isVideo, adjustOpen, file.meta?.frameRate]);
 
   const handleNext = () => {
     onNext();
@@ -1772,6 +1795,46 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   // Safety: ensure settings modal is closed whenever slideshow becomes active
   useEffect(() => { if (slideshowActive) setShowSlideshowSettings(false); }, [slideshowActive]);
+
+  // ── 轻量快调:自动增强 + 导出 ──
+  const handleAutoEnhance = (): void => {
+    const img = adjustSampleImgRef.current;
+    if (!img || isVideo) return;
+    // <img> 已按 EXIF 转正,取样直接用展示位图(下采样 ≤256,零大图缓冲)
+    const stats = computeAutoEnhanceStats(img);
+    if (stats) adjust.applyAutoEnhance(stats);
+  };
+
+  // 自动增强取样位图:与展示层同一 URL(浏览器复用解码缓存),避免拿调整画布当取样源
+  const adjustSampleImgRef = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (isVideo || !displayUrl) {
+      adjustSampleImgRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { if (!cancelled) adjustSampleImgRef.current = img; };
+    img.src = displayUrl;
+    return () => { cancelled = true; };
+  }, [displayUrl, isVideo]);
+
+  const handleExportAdjusted = async (): Promise<void> => {
+    if (isVideo || exporting) return;
+    const ext = (file.path.split('.').pop() || '').toLowerCase();
+    // 一期导出口径(设计 §9):png/jpeg;照片类源 → jpeg q90,其余 → png 无损
+    const format = ['jpg', 'jpeg', 'webp', 'gif'].includes(ext) ? 'jpeg' : 'png';
+    setExporting(true);
+    try {
+      const out = await bakeEdits(file.path, adjust.params, { format, quality: 90 });
+      showFrameToast(`${t('adjust.exportDone')}: ${out.outPath.replace(/^.*[\\/]/, '')}`);
+    } catch (e) {
+      showFrameToast(`${t('adjust.exportFailed')}: ${String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const rotate = (deg: number) => setRotation(r => r + deg);
 
@@ -2094,6 +2157,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             <button onClick={() => rotate(90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateRight')}>
               <RotateCw size={18} />
             </button>
+            {!isVideo && (
+              <button
+                onClick={() => setAdjustOpen((v) => !v)}
+                className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${adjustOpen || hasAdjust ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+                title={t('adjust.title')}
+              >
+                <SlidersHorizontal size={18} />
+              </button>
+            )}
             <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
             <button
               onClick={() => setShowSearch(!showSearch)}
@@ -2196,7 +2268,31 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           )}
 
           {/* 图片渲染层：既有 <img> 管线保持不变 */}
-          {!isVideo && (
+          {/* 轻量快调:有参数/调整中 → AdjustCanvas(与缩略图/烘焙同口径);
+              SVG 色温/色调滤镜全局单例挂载(ctx.filter url() 引用) */}
+          {!isVideo && <AdjustFilterDefs tone={adjust.params.tone} />}
+          {!isVideo && adjustShowCanvas && (
+            <AdjustCanvas
+              src={displayUrl || ''}
+              params={adjust.params}
+              interactive={adjustOpen}
+              showCropUI={adjustOpen && cropMode}
+              cropAspect={cropAspect}
+              onCropChange={adjust.setCropNorm}
+              className="max-w-none absolute inset-0 m-auto"
+              style={{
+                width: '100%',
+                height: '100%',
+                transformOrigin: 'center center',
+                pointerEvents: 'auto',
+                zIndex: 2,
+                opacity: lanFadeIn ? 0 : 1,
+                transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                transition: (isDragging || isWheeling) ? 'none' : 'transform 0.1s linear',
+              }}
+            />
+          )}
+          {!isVideo && !adjustShowCanvas && (
           <>
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
@@ -2325,6 +2421,22 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               </button>
             </div>
           </div>
+        )}
+
+        {/* 调整抽屉(轻量快调):右侧浮层,滑杆实时生效 */}
+        {adjustOpen && !isVideo && !slideshowActive && (
+          <AdjustDrawer
+            t={t}
+            adjust={adjust}
+            cropMode={cropMode}
+            onCropModeChange={setCropMode}
+            cropAspect={cropAspect}
+            onCropAspectChange={setCropAspect}
+            exporting={exporting}
+            onExport={handleExportAdjusted}
+            onAutoEnhance={handleAutoEnhance}
+            onClose={() => setAdjustOpen(false)}
+          />
         )}
 
         {!slideshowActive && (
