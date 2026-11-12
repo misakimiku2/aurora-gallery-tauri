@@ -274,6 +274,83 @@ pub fn editor_place(s: State<EditorState>, doc: u64, name: String, bytes: Vec<u8
     m.place(doc, &name, bytes).map_err(|e| e.to_string())
 }
 
+/// 内容识别缩放进入数据(上游 begin_content_aware):响应同 editor_transform_begin
+/// (info 含 channels=文档 alpha 通道名,Protect 下拉)。
+#[tauri::command]
+pub fn editor_cas_begin(s: State<EditorState>, doc: u64) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let r = m.cas_begin(doc).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec(&r.info).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(4 + json.len() + 12 + r.bg.pixels.len() + 12 + r.tex.pixels.len());
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&json);
+    bytes.extend_from_slice(&(r.bg.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.bg.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.bg.pixels);
+    bytes.extend_from_slice(&(r.tex.width as u32).to_le_bytes());
+    bytes.extend_from_slice(&(r.tex.height as u32).to_le_bytes());
+    bytes.extend_from_slice(&r.tex.pixels);
+    Ok(Response::new(bytes))
+}
+
+/// CAS live 预览起跑(后台线程雕刻 ≤maxSide 代理;新起自动取消旧线程):[w u32][h u32]。
+#[tauri::command]
+pub fn editor_cas_preview_start(s: State<EditorState>, doc: u64, tag: u64, params: Value, max_side: u32) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let [w, h] = m.cas_preview_start(doc, tag as u32, params, max_side).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::with_capacity(8);
+    bytes.extend_from_slice(&w.to_le_bytes());
+    bytes.extend_from_slice(&h.to_le_bytes());
+    Ok(Response::new(bytes))
+}
+
+/// CAS 预览轮询(非阻塞):[tag u32][state u8][errLen u32][err][w u32][h u32][rgba];
+/// state 0=idle 1=running 2=done 3=failed。
+#[tauri::command]
+pub fn editor_cas_preview_poll(s: State<EditorState>) -> Result<Response, String> {
+    let mut m = lock(&s)?;
+    let r = m.cas_preview_poll();
+    let state = match r.state {
+        "done" => 2u8,
+        "failed" => 3,
+        "running" => 1,
+        _ => 0,
+    };
+    let err = r.error.unwrap_or_default();
+    let mut bytes = Vec::with_capacity(13 + err.len() + r.pixels.len());
+    bytes.extend_from_slice(&r.tag.to_le_bytes());
+    bytes.push(state);
+    bytes.extend_from_slice(&(err.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(err.as_bytes());
+    bytes.extend_from_slice(&r.width.to_le_bytes());
+    bytes.extend_from_slice(&r.height.to_le_bytes());
+    bytes.extend_from_slice(&r.pixels);
+    Ok(Response::new(bytes))
+}
+
+/// CAS 预览停(框关闭):cancel+丢弃后台线程。
+#[tauri::command]
+pub fn editor_cas_preview_stop(s: State<EditorState>) -> Result<(), String> {
+    let mut m = lock(&s)?;
+    m.cas_preview_stop();
+    Ok(())
+}
+
+/// CAS 提交:引擎命令走 Session 后台 job(worker 雕刻,apply 落文档一步历史)。
+/// 返回 {"job": id} 或 {"done": result}(inline 仅 wasm)。
+#[tauri::command]
+pub fn editor_cas_commit(s: State<EditorState>, doc: u64, params: Value) -> Result<serde_json::Value, String> {
+    let mut m = lock(&s)?;
+    m.cas_commit(doc, params).map_err(|e| e.to_string())
+}
+
+/// CAS job 轮询:排干引擎 job 事件(apply 在此落文档)。[{id,command,label,document,outcome}]。
+#[tauri::command]
+pub fn editor_cas_job_poll(s: State<EditorState>) -> Result<serde_json::Value, String> {
+    let mut m = lock(&s)?;
+    Ok(m.cas_job_poll())
+}
+
 /// 移动工具拖拽预览帧:target="float"(选区像素浮动,dx/dy 为未提交增量)或
 /// "layer"(整层平移,dx/dy 为总位移);x/y/w/h 为脏矩形(文档坐标)。
 #[tauri::command]

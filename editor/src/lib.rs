@@ -144,6 +144,47 @@ pub struct EditorManager {
     os_clip_sig: Option<u64>,
     /// 磁性套索的像素快照(上游 Runtime.source):文档/版本/活动像素层变了即重建。
     magnetic: Option<photocraft_engine::magnetic_cmds::EdgeSource>,
+    /// CAS live 预览(上游 cas_transform Live/Running):一次一条的后台雕刻线程。
+    cas_preview: Option<CasPreviewHandle>,
+}
+
+/// CAS live 预览句柄:后台雕刻线程的取消闸+结果通道(`tag` 由前端递增,回包认路)。
+struct CasPreviewHandle {
+    tag: u32,
+    cancel: photocraft_engine::jobs::JobCtx,
+    rx: std::sync::mpsc::Receiver<std::result::Result<(u32, u32, Vec<u8>), String>>,
+}
+
+/// CAS 预览轮询结果(前端二进制帧的源数据)。
+pub struct CasPoll {
+    pub tag: u32,
+    /// `idle` | `running` | `done` | `failed`。
+    pub state: &'static str,
+    pub error: Option<String>,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+/// Surface → (w,h,straight RGBA8):CAS 预览结果的传输格式(层原格式任意,统一转 RGBA)。
+fn surface_rgba_bytes(s: &photocraft_raster::Surface, size: [u32; 2]) -> std::result::Result<(u32, u32, Vec<u8>), String> {
+    let (w, h) = (size[0], size[1]);
+    let n = s.channels();
+    let fmt = s.format();
+    let buf = s.read_region(Rect::from_xywh(0, 0, w, h));
+    let count = w as usize * h as usize;
+    if buf.len() < count * n {
+        return Err(format!("cas preview read {}/{} samples", buf.len() / n.max(1), count));
+    }
+    let mut out = vec![0u8; count * 4];
+    for i in 0..count {
+        let [r, g, b, a] = photocraft_raster::to_rgba(&fmt, &buf[i * n..(i + 1) * n]);
+        out[i * 4] = (r * 255.0).round() as u8;
+        out[i * 4 + 1] = (g * 255.0).round() as u8;
+        out[i * 4 + 2] = (b * 255.0).round() as u8;
+        out[i * 4 + 3] = (a * 255.0).round() as u8;
+    }
+    Ok((w, h, out))
 }
 
 impl Default for EditorManager {
@@ -166,7 +207,7 @@ impl EditorManager {
         // 文字引擎后台预热(上游 warm_fonts 口径):系统字体扫描进后台线程,
         // 首个 type.* 命令不再同步阻塞等扫描完成。
         photocraft_text::warm_shared();
-        Self { session, live: None, os_clip_sig: None, magnetic: None }
+        Self { session, live: None, os_clip_sig: None, magnetic: None, cas_preview: None }
     }
 
     /// 磁性套索像素源的当前快照(上游 is_current 口径:活动文档/revision/像素层变了重建)。
@@ -335,6 +376,7 @@ impl EditorManager {
     pub fn close(&mut self, doc: u64) -> Result<()> {
         self.live = None;
         self.magnetic = None;
+        self.cas_preview_stop(); // CAS 预览线程持文档 Arc 快照,随 close 一并取消
         self.session.clipboard = None;
         self.run(doc, "file.close", json!({})).map(|_| ())
     }
@@ -581,6 +623,52 @@ impl EditorManager {
         })
     }
 
+    /// CAS 进入数据(上游 begin_content_aware):region=引擎 cas_plan 缩放区(选区
+    /// content_bounds∩画布,否则层内容 bounds;引擎 enabled=活动未锁像素层,上游 begin 同款
+    /// 先查)。bg=克隆文档**清掉层内 region**(上游 try_clear_surface 同语义;层无 alpha 不清
+    /// ——带选区时区外层像素保留在 bg,前端不再做 evenodd 贴回)后渲染 region∩画布;
+    /// tex=区域全分辨率像素(上游 read_surface 同款,**不做选区 alpha 加权**——区域整体是
+    /// 缩放对象)。info 额外带 channels(文档 alpha 通道名,选项条 Protect 下拉)。
+    pub fn cas_begin(&mut self, doc: u64) -> Result<TransformBegin> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let id = st.active_layer.ok_or_else(|| EditorError("no active layer".into()))?;
+        if let Some(c) = photocraft_engine::commands::find("edit.contentAwareScale") {
+            if let Err(why) = (c.enabled)(&self.session) {
+                return Err(EditorError(why));
+            }
+        }
+        let preview = photocraft_engine::edit_menu_cmds::ContentAwareScalePreview::new(&self.session, &json!({}), 384)
+            .map_err(|e| EditorError(e.to_string()))?;
+        let region = preview.region();
+        let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
+        let rect = region.intersect(&canvas);
+        let mut doc2: photocraft_engine::doc::Document = (*st.doc).clone();
+        if let Some(surf) = doc2.layer_mut(id).and_then(|l| l.surface_mut()) {
+            if surf.format().alpha {
+                let n = surf.channels();
+                let zeros = vec![0f32; rect.width() as usize * rect.height() as usize * n];
+                surf.write_region(rect, &zeros);
+            }
+        }
+        hide_layer(&mut doc2.layers, id.0);
+        let bg = photocraft_compose::render(&doc2, rect).to_rgba8();
+        let l = st.doc.layer(id).ok_or_else(|| EditorError(format!("no layer {}", id.0)))?;
+        let tex = photocraft_compose::render_layer_in(&st.doc, l, rect).to_rgba8();
+        let info = json!({
+            "frame": [region.x0, region.y0, region.x1, region.y1],
+            "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
+            "layer": id.0,
+            "kind": "Pixel",
+            "channels": st.doc.channels.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
+        });
+        Ok(TransformBegin {
+            info,
+            bg: Rendered { width: rect.width(), height: rect.height(), pixels: bg.pixels },
+            tex: Rendered { width: rect.width(), height: rect.height(), pixels: tex.pixels },
+        })
+    }
+
     /// ⌥⌘T 提交折叠(上游 fold_made,TT:415-433 的 Copy 变体,守卫原式):
     /// 「变换步执行前快照的前一个状态(=复制步之前)还没有该层」时 purge_last 删掉
     /// 变换步快照——undo 一步同时撤掉副本与移动;中途开盒后又做过别的操作则各留各步。
@@ -633,6 +721,103 @@ impl EditorManager {
         }
         let rev = self.session.active().map(|st| st.revision).unwrap_or(0);
         Ok(json!({ "took": took, "revision": rev }))
+    }
+
+    // ---- 内容识别缩放(CAS;上游 cas_transform.rs Live/Running)----
+    //
+    // live 预览=后台线程雕刻 ≤384px 代理(引擎 ContentAwareScalePreview::run,JobCtx
+    // 每接缝 check 取消),一次一条;新 start 显式 cancel 旧线程(上游 Live::drop+150ms
+    // STALE 过期取消的等价——前端参数变化 ≥150ms 后才换 start)。提交=引擎命令走
+    // Session 后台 job(worker 雕刻全分辨率,apply 在 poll_jobs 落文档=一步
+    // "Content-Aware Scale" 历史;apply 前文档被锁,其余编辑命令被拒)。
+
+    /// CAS live 预览:起一条后台线程雕刻 `params`(不含 x/y)的代理。返回代理尺寸。
+    pub fn cas_preview_start(&mut self, doc: u64, tag: u32, params: Value, max_side: u32) -> Result<[u32; 2]> {
+        self.activate(doc)?;
+        if let Some(h) = &self.cas_preview {
+            h.cancel.cancel();
+        }
+        self.cas_preview = None;
+        let preview = photocraft_engine::edit_menu_cmds::ContentAwareScalePreview::new(&self.session, &params, max_side.max(1))
+            .map_err(|e| EditorError(e.to_string()))?;
+        let size = preview.size();
+        let ctx = photocraft_engine::jobs::JobCtx::new();
+        let run_ctx = ctx.clone();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<std::result::Result<(u32, u32, Vec<u8>), String>>(1);
+        std::thread::Builder::new()
+            .name("cas-preview".into())
+            .spawn(move || {
+                let out = match preview.run(&run_ctx) {
+                    Ok(s) => surface_rgba_bytes(&s, size),
+                    Err(e) => Err(e.to_string()),
+                };
+                let _ = tx.send(out);
+            })
+            .map_err(|e| EditorError(format!("cas preview thread: {e}")))?;
+        self.cas_preview = Some(CasPreviewHandle { tag, cancel: ctx, rx });
+        Ok(size)
+    }
+
+    /// CAS 预览轮询(上游 tick 的 try_recv):running/done/failed/idle;done 带代理
+    /// 尺寸+straight RGBA。失败/取消不清 shown(前端保留上一张,上游同款)。
+    pub fn cas_preview_poll(&mut self) -> CasPoll {
+        let Some(h) = &self.cas_preview else {
+            return CasPoll { tag: 0, state: "idle", error: None, width: 0, height: 0, pixels: Vec::new() };
+        };
+        let tag = h.tag;
+        match h.rx.try_recv() {
+            Ok(Ok((w, hh, px))) => {
+                self.cas_preview = None;
+                CasPoll { tag, state: "done", error: None, width: w, height: hh, pixels: px }
+            }
+            Ok(Err(e)) => {
+                self.cas_preview = None;
+                CasPoll { tag, state: "failed", error: Some(e), width: 0, height: 0, pixels: Vec::new() }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.cas_preview = None;
+                CasPoll { tag, state: "failed", error: Some("preview stopped".into()), width: 0, height: 0, pixels: Vec::new() }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                CasPoll { tag, state: "running", error: None, width: 0, height: 0, pixels: Vec::new() }
+            }
+        }
+    }
+
+    /// CAS 预览停(框关闭/标签关闭):cancel+丢弃(线程在下个接缝前停下)。
+    pub fn cas_preview_stop(&mut self) {
+        if let Some(h) = &self.cas_preview {
+            h.cancel.cancel();
+        }
+        self.cas_preview = None;
+    }
+
+    /// CAS 提交:引擎命令走 Session 后台 job。桌面恒 {"job": id}(inline Done 仅 wasm,
+    /// 万一直接带 result 供前端收尾)。
+    pub fn cas_commit(&mut self, doc: u64, params: Value) -> Result<Value> {
+        self.activate(doc)?;
+        match self.session.start("edit.contentAwareScale", params).map_err(|e| EditorError(e.to_string()))? {
+            photocraft_engine::jobs::Started::Job(id) => Ok(json!({ "job": id.0 })),
+            photocraft_engine::jobs::Started::Done(v) => Ok(json!({ "done": v })),
+        }
+    }
+
+    /// CAS job 轮询:引擎 poll_jobs 排干全部事件(job 的 apply 在此调用中落到文档,
+    /// revision 随之前进——前端 Done 后拉状态同步,9e1aae3 桥路径口径)。
+    pub fn cas_job_poll(&mut self) -> Value {
+        let events = self.session.poll_jobs();
+        let arr: Vec<Value> = events
+            .into_iter()
+            .map(|e| {
+                let outcome = match e.outcome {
+                    photocraft_engine::jobs::JobOutcome::Done(v) => json!({ "done": v }),
+                    photocraft_engine::jobs::JobOutcome::Failed(m) => json!({ "failed": m }),
+                    photocraft_engine::jobs::JobOutcome::Cancelled => json!("cancelled"),
+                };
+                json!({ "id": e.id.0, "command": e.command, "label": e.label, "document": e.document.map(|d| d.0), "outcome": outcome })
+            })
+            .collect();
+        json!(arr)
     }
 
     // ---- live 描边(画笔族)----

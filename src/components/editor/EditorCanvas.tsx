@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorPlace, editorRender, editorRun, editorSelectMaskView, editorSelectionTransformBegin, editorState, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTakeBackMade, editorTransformBegin } from './editorBridge';
+import { editorCasBegin, editorCasPreviewPoll, editorCasPreviewStart, editorCasPreviewStop, editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorPlace, editorRender, editorRun, editorSelectMaskView, editorSelectionTransformBegin, editorState, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTakeBackMade, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTransformSplit, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
@@ -51,7 +51,7 @@ import type { EditorLayer } from './editorTypes';
 import type { PenPath as PenDraft } from './penLogic';
 import { error as logError } from '../../utils/logger';
 import {
-  acceptsOutsideClick, applyDrag, applyModeDrag, corners, handleTolerance, hitTest, insideQuad, modeAllows, quadIsAffine, quadUnchanged, quadScale,
+  acceptsOutsideClick, applyDrag, applyModeDrag, casBoxSize, CAS_DEFAULT_OPTIONS, casParams, corners, handleTolerance, hitTest, insideQuad, modeAllows, quadIsAffine, quadUnchanged, quadScale,
   nudgeTransform, pointOnQuad, readout as transformReadout, restoreStep, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, skewAboutPivot, movePivotTo,
   stepEq, stepOf, Homography,
   type Gesture, type Hit, type Quad, type RectF, type TransformMode, type TransformSession, type TransformStep, type TransformMods,
@@ -335,6 +335,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     texScale: number;
     steps: { settled: TransformStep | null; undo: TransformStep[]; redo: TransformStep[]; lastNudge: { at: number; step: TransformStep } | null };
   }>({ session: null, docId: null, kind: '', bg: null, tex: null, rect: null, gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: 1, steps: { settled: null, undo: [], redo: [], lastNudge: null } });
+  /** CAS live 预览(上游 cas_transform Live/Running):一次一条后台雕刻线程。
+   * shown=最近完成的代理(参数 key→画布),框缩放时画到当前 quad;参数变化 ≥150ms
+   * 过期重起(桥新起自动 cancel 旧线程)。 */
+  const casRef = useRef<{ running: { tag: number; key: string; started: number } | null; shown: { key: string; canvas: HTMLCanvasElement } | null }>({ running: null, shown: null });
+  const casTagRef = useRef(0);
   /** 上一次 Live 渐变无拖动点击(双击取色判定:同 grab 键 450ms 内,上游 DOUBLE_CLICK)。 */
   const gradLastClickRef = useRef<{ key: string; time: number } | null>(null);
   // ===== 文字编辑会话(二期 二-6,上游 type_tool.rs;会话态在 store.textEdit,这些是画布侧) =====
@@ -500,7 +505,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       // bg 与 clear 同一取整矩形内绘制(硬边),不与矩形外像素混色
       dctx.drawImage(tr.bg, sx, sy, sw, sh);
       const polys = s.runtime.selectionOutline;
-      if (polys && polys.length && s.state?.selectionBounds) {
+      // CAS 不做选区外贴回:region=选区 content_bounds 整框都是缩放对象,bg 已是「层内
+      // 清区」合成(自由变换才需要 split_selected 语义把非选中像素留在原地)。
+      if (polys && polys.length && s.state?.selectionBounds && !tr.session.contentAware) {
         dctx.save();
         dctx.translate(v.ox, v.oy);
         dctx.scale(v.scale, v.scale);
@@ -774,7 +781,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         });
       }
       // 预览贴图:仿射=单次 drawImage;透视=mesh 三角形仿射分片(源=tex,越界裁掉)
-      const tex = tr.tex;
+      // CAS:框已缩放且有完成的代理=画代理(上游「latest result drawn through the box」,
+      // 拉伸到当前 quad);未缩放=全分辨率 tex。CAS quad 恒为轴对齐矩形(禁旋转)只走仿射分支。
+      let drawTex: HTMLCanvasElement | null = tr.tex;
+      if (tr.session.contentAware) {
+        const [w, h] = casBoxSize(tr.session);
+        const sw = Math.round(tr.session.rect[2] - tr.session.rect[0]);
+        const sh = Math.round(tr.session.rect[3] - tr.session.rect[1]);
+        if ((w !== sw || h !== sh) && casRef.current.shown) drawTex = casRef.current.shown.canvas;
+      }
+      const tex = drawTex;
       const [rx0, ry0, rx1, ry1] = tr.rect;
       const rw = rx1 - rx0, rh = ry1 - ry0;
       if (hDoc && quadIsAffine(tr.session.rect, tr.session.quad)) {
@@ -2657,6 +2673,63 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId, scheduleDraw]);
 
+  /** 内容识别缩放(上游 begin_content_aware,Ctrl+Alt+Shift+C):复用自由变换框,框只
+   * 缩放/移动(session.contentAware);region=引擎 cas_plan(选区 content_bounds∩画布,
+   * 否则层内容 bounds);bg=层内清区合成(带选区时区外层像素保留),tex=区域全分辨率
+   * 像素。背景层拒绝(上游 enable_rules background_blocks)。 */
+  const beginCasTransform = useCallback(async () => {
+    const s = getSession(tabId);
+    if (!s || s.docId == null || !s.state) return;
+    if (transformRef.current.session) return; // 一次一个变换
+    const activeId = s.state.activeLayer;
+    if (activeId != null && s.state.lockInfo?.[String(activeId)]?.background) {
+      showEditorNotice('背景图层不能内容识别缩放');
+      return;
+    }
+    void s.runtime.commitTextEdit?.(); // 打字中先进变换=先提交文字(上游 begin 口径)
+    try {
+      const r = await editorCasBegin(s.docId);
+      const frame: RectF = r.frame;
+      if (!(frame[2] - frame[0] > 0 && frame[3] - frame[1] > 0)) {
+        showEditorNotice('没有可缩放的内容');
+        return;
+      }
+      const mk = (w: number, h: number, px: Uint8ClampedArray<ArrayBuffer>): HTMLCanvasElement => {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        c.getContext('2d')?.putImageData(new ImageData(px, w, h), 0, 0);
+        return c;
+      };
+      const session: TransformSession = {
+        layer: r.layer,
+        rect: frame,
+        quad: corners(frame),
+        pivot: [(frame[0] + frame[2]) / 2, (frame[1] + frame[3]) / 2],
+        interpolation: 'bicubic',
+        mode: 'free',
+        targetMask: false,
+        skewV: 0,
+        kind: 'Pixel',
+        contentAware: { ...CAS_DEFAULT_OPTIONS },
+        contentAwareChannels: r.channels ?? [],
+      };
+      transformRef.current = {
+        session, docId: s.docId, kind: 'Pixel',
+        bg: r.bg.width > 0 ? mk(r.bg.width, r.bg.height, r.bg.rgba) : null,
+        tex: mk(r.tex.width, r.tex.height, r.tex.rgba),
+        rect: r.rect,
+        gesture: null, hover: null, readout: null, warpDrag: null, warpSplit: null, warpHover: null, warpType0: null, warpCoalesceKey: null, texScale: 1,
+        steps: { settled: stepOf(session), undo: [], redo: [], lastNudge: null },
+      };
+      casRef.current = { running: null, shown: null };
+      setTransformSession(tabId, session);
+      scheduleDraw();
+    } catch (err) {
+      showEditorNotice(`无法内容识别缩放:${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, [tabId, scheduleDraw]);
+
   /** ⌥⌘T 自由变换副本(上游 begin_copy):复制活动层(带选区=仅选中像素,Layer via Copy
    * 且引擎同步去选区)后进普通变换框;提交折叠成一步,Esc 收回复制层。 */
   const beginTransformCopy = useCallback(async () => {
@@ -3615,6 +3688,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.commitTextEdit !== commitType) s.runtime.commitTextEdit = commitType;
       if (s.runtime.transformBeginSelection !== beginSelectionTransform) s.runtime.transformBeginSelection = beginSelectionTransform;
       if (s.runtime.transformBeginCopy !== beginTransformCopy) s.runtime.transformBeginCopy = beginTransformCopy;
+      if (s.runtime.beginCasTransform !== beginCasTransform) s.runtime.beginCasTransform = beginCasTransform;
       if (s.runtime.placeNext !== placeNextEntry) s.runtime.placeNext = placeNextEntry;
       if (s.runtime.transformCommit !== commitTransformBox) s.runtime.transformCommit = commitTransformBox;
       if (s.runtime.transformCancel !== cancelTransformBox) s.runtime.transformCancel = cancelTransformBox;
@@ -3665,6 +3739,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.commitTextEdit === commitType) s.runtime.commitTextEdit = null;
       if (s.runtime.transformBeginSelection === beginSelectionTransform) s.runtime.transformBeginSelection = null;
       if (s.runtime.transformBeginCopy === beginTransformCopy) s.runtime.transformBeginCopy = null;
+      if (s.runtime.beginCasTransform === beginCasTransform) s.runtime.beginCasTransform = null;
       if (s.runtime.placeNext === placeNextEntry) s.runtime.placeNext = null;
       if (s.runtime.transformCommit === commitTransformBox) s.runtime.transformCommit = null;
       if (s.runtime.transformCancel === cancelTransformBox) s.runtime.transformCancel = null;
@@ -3674,7 +3749,76 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.transformSetWarpGrid === setWarpGridBox) s.runtime.transformSetWarpGrid = null;
       if (s.runtime.transformArmWarpSplit === armWarpSplitBox) s.runtime.transformArmWarpSplit = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox, beginSelectionTransform, beginTransformCopy, placeNextEntry]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox, beginSelectionTransform, beginTransformCopy, beginCasTransform, placeNextEntry]);
+
+  // CAS live 预览泵(上游 tick 每帧,等价 100ms 轮询):框打开期一次一条后台雕刻;
+  // done→shown 重画;参数变化 ≥150ms 过期重起(桥新起自动 cancel 旧线程);框未缩放
+  // (全分辨率 tex)不雕刻;失败保留上一张(上游同款)。清理=框关闭时停线程。
+  const casActive = !!session?.transform?.contentAware;
+  useEffect(() => {
+    if (!casActive) return;
+    let stopped = false;
+    const want = (): { docId: number; params: Record<string, unknown>; key: string } | null => {
+      const s2 = getSession(tabId);
+      const t2 = transformRef.current;
+      if (!s2?.transform?.contentAware || s2.docId == null || !t2.session?.contentAware) return null;
+      const [w, h] = casBoxSize(t2.session);
+      const sw = Math.round(t2.session.rect[2] - t2.session.rect[0]);
+      const sh = Math.round(t2.session.rect[3] - t2.session.rect[1]);
+      if (w === sw && h === sh) return null; // 未缩放:全分辨率 tex 即真值
+      const o = t2.session.contentAware!;
+      const params = casParams(t2.session, false);
+      return { docId: s2.docId, params, key: JSON.stringify(params) };
+    };
+    const tick = async () => {
+      if (stopped) return;
+      const w0 = want();
+      if (!w0) return;
+      try {
+        const p = await editorCasPreviewPoll();
+        if (stopped) return;
+        if (p.state === 'done' && p.rgba) {
+          const c = document.createElement('canvas');
+          c.width = p.width;
+          c.height = p.height;
+          c.getContext('2d')?.putImageData(new ImageData(p.rgba, p.width, p.height), 0, 0);
+          casRef.current.shown = { key: casRef.current.running?.key ?? w0.key, canvas: c };
+          casRef.current.running = null;
+          scheduleDraw();
+        } else if (p.state === 'failed') {
+          casRef.current.running = null; // 保留上一张(上游:失败/取消保留 shown)
+        } else if (p.state === 'idle') {
+          // 桥无线程:running 条目必陈旧(effect 重挂时 cleanup 已 stop 过/从未起)——
+          // 不清则 idle 分支被陈旧条目卡死,预览永不重起(冒烟实锤)
+          casRef.current.running = null;
+        }
+        if (p.state === 'running') {
+          // 过期:在途参数已不是当前 want 且 ≥150ms → 换新(旧线程在下个接缝前停下)
+          if (casRef.current.running && casRef.current.running.key !== w0.key && Date.now() - casRef.current.running.started >= 150) {
+            casTagRef.current += 1;
+            casRef.current.running = { tag: casTagRef.current, key: w0.key, started: Date.now() };
+            await editorCasPreviewStart(w0.docId, casTagRef.current, w0.params, 384);
+          }
+          return;
+        }
+        // idle/done/failed 后:want 没有现成结果则起一条(同步置 running 防下个 tick 双起)
+        const w1 = want();
+        if (w1 && !casRef.current.running && casRef.current.shown?.key !== w1.key) {
+          casTagRef.current += 1;
+          casRef.current.running = { tag: casTagRef.current, key: w1.key, started: Date.now() };
+          await editorCasPreviewStart(w1.docId, casTagRef.current, w1.params, 384);
+        }
+      } catch {
+        /* 桥错误忽略(下个 tick 重试) */
+      }
+    };
+    const iv = window.setInterval(() => { void tick(); }, 100);
+    return () => {
+      stopped = true;
+      window.clearInterval(iv);
+      void editorCasPreviewStop().catch(() => undefined);
+    };
+  }, [tabId, scheduleDraw, casActive]);
 
   // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
   // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
@@ -4230,6 +4374,13 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         e.preventDefault();
         void runCommand(tabId, 'edit.transform.againCopy', {}).catch((err) =>
           showEditorNotice(`无法重复变换:${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
+      // Ctrl/Cmd+Alt+Shift+C = 内容识别缩放(上游 edit.contentAwareScale ⌘⌥⇧C:框只缩放/
+      // 移动,提交引擎后台 job;背景层拒绝。组合键有被系统抢占风险,选项条也有按钮入口)
+      if ((e.ctrlKey || e.metaKey) && e.altKey && e.shiftKey && e.code === 'KeyC' && !isTyping(e.target)) {
+        e.preventDefault();
+        void beginCasTransform();
         return;
       }
       // 导出为对话框打开期间接管键盘:Esc 取消(输入框中也生效)/Enter 确定(非输入)/其余吞掉
@@ -5430,10 +5581,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (t.gesture) {
         const g = t.gesture;
         const mods: TransformMods = { shift: e.shiftKey, alt: e.altKey, command: e.ctrlKey || e.metaKey };
+        // CAS 只缩放/移动(上游 transform_tool 1484-1490:框外拖拽整个跳过=不旋转,
+        // ⌘ 不斜切不扭曲);框外单击提交由 pointer-up 的 acceptsOutsideClick 处理。
+        if (tSession.contentAware && g.hit.kind === 'outside') {
+          scheduleDraw();
+          return;
+        }
         // 类型层只接受仿射(上游 distort_refused:Distort/Perspective 降级普通缩放)
         const distortRefused = t.kind === 'Type';
-        const effMods = distortRefused && g.hit.kind === 'corner' ? { ...mods, command: false } : mods;
-        const mode = distortRefused && (tSession.mode === 'distort' || tSession.mode === 'perspective') ? 'free' : tSession.mode;
+        const effMods = tSession.contentAware
+          ? { ...mods, command: false }
+          : distortRefused && g.hit.kind === 'corner' ? { ...mods, command: false } : mods;
+        const mode = tSession.contentAware
+          ? 'free'
+          : distortRefused && (tSession.mode === 'distort' || tSession.mode === 'perspective') ? 'free' : tSession.mode;
         const next = applyModeDrag({ quad: tSession.quad, pivot: tSession.pivot, mode }, g, [dx, dy], t.kind === 'Type', effMods);
         t.session = { ...tSession, quad: next.quad, pivot: next.pivot };
         // 读数:旋转=角度;缩放=W/H%;平移=ΔX,ΔY(上游 draw_live_readout 口径)

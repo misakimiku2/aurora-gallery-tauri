@@ -20,7 +20,7 @@ import { EditorSelect, attachWheelCycle } from './editorSelect';
 import { ColorPicker } from './panels/ColorPicker';
 import { PickerCard } from './panels/PickerCard';
 import { NumField } from './panels/TypePanel';
-import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, readout as transformReadout, type TransformMode, type TransformSession } from './transformLogic';
+import { matchingAnchor, movePivotTo, rotateAboutPivot, scaleAboutPivot, setPivotAnchor, readout as transformReadout, type ContentAwareOptions, type TransformMode, type TransformSession } from './transformLogic';
 import { meshIdentity, warpGridId, warpNone, warpToMesh, WARP_PRESETS, WARP_STYLE_ZH, type SplitKind, type WarpStyleId } from './warpLogic';
 import { applyTypeStyle, fetchFontFaces, fetchFontFamilies, noteRecentFont, runCommand } from './editorStore';
 import {
@@ -325,6 +325,15 @@ export const EditorOptionsBar: React.FC<{ tabId: string; active?: boolean }> = (
             className="px-2 py-0.5 rounded text-[11px] shrink-0 bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             变换选区
+          </button>
+          {/* 内容识别缩放(Edit › Content-Aware Scale ⌘⌥⇧C;无菜单栏的按钮入口;背景层禁用) */}
+          <button
+            onClick={() => s.runtime.beginCasTransform?.()}
+            disabled={!!s.state?.lockInfo?.[String(s.state.activeLayer)]?.background}
+            title="内容识别缩放(Ctrl+Alt+Shift+C;接缝雕刻缩放,主体不变形;背景图层不可用)"
+            className="px-2 py-0.5 rounded text-[11px] shrink-0 bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 hover:bg-black/10 dark:hover:bg-white/15 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            内容识别缩放
           </button>
         </>
       ) : s.tool === 'crop' ? (
@@ -1181,6 +1190,76 @@ const TransformOptionsInline: React.FC<{ tabId: string }> = ({ tabId }) => {
           type="button" title="取消变换 (Esc);无改动=零历史"
           onClick={() => s.runtime.transformCancel?.()}
           className={`${btn} text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+  // CAS(上游 cas_fields):参考点/X/Y/W/H + 数量/保护(文档 alpha 通道)/保护肤色 + ✓✕。
+  // 无模式/插值/Warp 项(框只缩放移动;上游 mode_switch=false 同款)。
+  if (t.contentAware) {
+    const o = t.contentAware;
+    const setO = (patch: Partial<ContentAwareOptions>) => () =>
+      s.runtime.transformField?.((v) => (v.contentAware ? { ...v, contentAware: { ...v.contentAware, ...patch } } : v));
+    return (
+      <div className="flex items-center gap-1.5 min-w-0 flex-nowrap" data-testid="transform-options">
+        <div className="shrink-0 grid grid-cols-3 gap-[2px] p-[3px] border border-black/15 dark:border-white/15 rounded" title="参考点位置">
+          {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => s.runtime.transformField?.((v) => setPivotAnchor(v, i))}
+              className={`h-[7px] w-[7px] ${anchor === i ? 'bg-sky-500' : 'bg-neutral-400 dark:bg-neutral-600 hover:bg-sky-400'}`}
+            />
+          ))}
+        </div>
+        <span className={lbl}>X</span>
+        <NumField compact label="" tip="参考点 X(方向键微移整框)" value={t.pivot[0]} min={-300000} max={300000} unit="" onCommit={(x) => s.runtime.transformField?.((v) => movePivotTo(v, x, v.pivot[1]))} width={fw} />
+        <span className={lbl}>Y</span>
+        <NumField compact label="" tip="参考点 Y" value={t.pivot[1]} min={-300000} max={300000} unit="" onCommit={(y) => s.runtime.transformField?.((v) => movePivotTo(v, v.pivot[0], y))} width={fw} />
+        <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+        <span className={lbl}>W</span>
+        <NumField compact label="" tip="宽度百分比(角/边拖拽可非等比;⇧ 释放单轴)" value={r.wPct} min={-1000000} max={1000000} unit="%" onCommit={(w) => s.runtime.transformField?.((v) => {
+          const cur = transformReadout(v).wPct;
+          const k = w / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+          return scaleAboutPivot(v, k, k);
+        })} width={fw} />
+        <span className={lbl}>H</span>
+        <NumField compact label="" tip="高度百分比" value={r.hPct} min={-1000000} max={1000000} unit="%" onCommit={(h) => s.runtime.transformField?.((v) => {
+          const cur = transformReadout(v).hPct;
+          const k = h / (Math.abs(cur) < 1e-9 ? 1e-9 : cur);
+          return scaleAboutPivot(v, k, k);
+        })} width={fw} />
+        <span className="w-px h-4 shrink-0 bg-black/10 dark:bg-white/10" />
+        <span className={lbl}>数量</span>
+        <NumField compact label="" tip="内容识别占比(100=纯接缝雕刻,0=普通缩放)" value={o.amount} min={0} max={100} unit="%" onCommit={(v) => setO({ amount: v })()} width={fw} />
+        <span className={lbl}>保护</span>
+        <EditorSelect
+          value={o.protect ?? 'none'}
+          options={[{ value: 'none', label: '无' }, ...(t.contentAwareChannels ?? []).map((c) => ({ value: c, label: c }))]}
+          onChange={(v) => setO({ protect: v === 'none' ? null : v })()}
+          className="w-20 shrink-0"
+          title="保护通道:白色区域在缩放中保持形状(通道面板的 alpha 通道)"
+        />
+        <label
+          className="shrink-0 flex items-center gap-1 text-[10px] text-neutral-500 dark:text-neutral-400 cursor-pointer select-none"
+          title="自动检测肤色并保护(缩放人像时身体不变形)"
+        >
+          <input type="checkbox" className="accent-sky-600" checked={o.protectSkinTones} onChange={(e2) => setO({ protectSkinTones: e2.target.checked })()} />
+          肤色
+        </label>
+        <button
+          type="button" title="应用内容识别缩放 (Enter)"
+          onClick={() => s.runtime.transformCommit?.()}
+          className="h-6 w-6 shrink-0 flex items-center justify-center rounded text-emerald-600 dark:text-emerald-400 hover:bg-black/5 dark:hover:bg-white/10"
+        >
+          <Check size={14} />
+        </button>
+        <button
+          type="button" title="取消 (Esc);无改动=零历史"
+          onClick={() => s.runtime.transformCancel?.()}
+          className="h-6 w-6 shrink-0 flex items-center justify-center rounded text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
         >
           <X size={14} />
         </button>

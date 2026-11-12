@@ -4,9 +4,9 @@
  * 高频态(视图变换/指针位置/离屏位图)放 runtime,由画布直接读写,不触发渲染。
  */
 import type { EditorDocState, EditorTool, RunOutcome } from './editorTypes';
-import { editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorFoldTransformCopy, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState, editorTakeBackMade } from './editorBridge';
+import { editorCasCommit, editorCasJobPoll, editorClose, editorDuplicateMove, editorExportDocument, editorExportEstimate, editorExportLayerPng, editorExportPreview, editorFoldTransformCopy, editorRun, editorSave, editorSaveAs, editorSelectionOutline, editorState, editorTakeBackMade } from './editorBridge';
 import { chainSegments, selectMaskPaintStroke, shapeDialogDefaults, type SelectMaskStroke, type ShapeDialogValues } from './toolLogic';
-import { quadUnchanged, transformCommitParams, type TransformSession } from './transformLogic';
+import { casParams, quadUnchanged, transformCommitParams, type TransformSession } from './transformLogic';
 import { warpIsIdentity } from './warpLogic';
 import type { EnginePathJson as WorkPathJson } from './penLogic';
 import { TYPE_TOOLS, type TextEditSession } from './typeLogic';
@@ -153,6 +153,8 @@ export interface EditorRuntime {
   transformToggleWarp: (() => void) | null;
   transformBeginSelection: (() => void) | null;
   transformBeginCopy: (() => void) | null;
+  /** 内容识别缩放入口(快捷键被抢占时的按钮入口;画布注册)。 */
+  beginCasTransform: (() => void) | null;
   /** Place 拖放队列出队(队列在画布 ref;变换框以任何方式关闭后 store 调,上游
    * place_next_dropped 每帧轮询的等价物——挂到每个关框路径)。 */
   placeNext: (() => void) | null;
@@ -318,7 +320,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       typeRecentFonts: [] as string[],
       typeStyleDefaults: {},
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformBeginSelection: null, transformBeginCopy: null, placeNext: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformBeginSelection: null, transformBeginCopy: null, beginCasTransform: null, placeNext: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -989,6 +991,64 @@ export async function commitTransform(tabId: string): Promise<boolean> {
       return true;
     } catch (err) {
       return selectionFail(tabId, err);
+    }
+  }
+  if (t.contentAware) {
+    // CAS(上游 cas_transform::commit):quad 未动=零历史关框;一条 edit.contentAwareScale
+    // 走引擎后台 job(worker 雕刻,apply 在 poll 落文档=一步 "Content-Aware Scale" 历史)。
+    // committing 保持抽层/代理预览到 job 落地(泵 finishTransformCommit 解除);
+    // 失败/取消=恢复旧像素+提示条(引擎 job 对文档零改动)。
+    if (quadUnchanged(t.rect, t.quad)) {
+      setTransformSession(tabId, null);
+      return true;
+    }
+    s.transformCommitting = true;
+    notify(tabId);
+    const docId = s.docId;
+    const syncAfterApply = async () => {
+      // apply 已落文档:拉状态同步 revision(9e1aae3 桥路径口径)→ 位图泵重渲 → finishTransformCommit
+      const st = await editorState(docId);
+      const s2 = getSession(tabId);
+      if (s2 && typeof st.revision === 'number' && st.revision >= s2.revision) updateSession(tabId, { state: st, revision: st.revision });
+    };
+    try {
+      const started = await editorCasCommit(docId, casParams(t, true));
+      if (!started.job) {
+        await syncAfterApply(); // inline 完成(仅 wasm;桌面恒 job)
+        return true;
+      }
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 150));
+        const s2 = getSession(tabId);
+        if (!s2 || s2.docId !== docId || !s2.transformCommitting) return true; // 标签关了/已被收尾
+        const events = await editorCasJobPoll();
+        for (const e of events) {
+          if (e.command !== 'edit.contentAwareScale') continue;
+          if (e.outcome.done !== undefined) {
+            await syncAfterApply();
+            return true;
+          }
+          if (e.outcome.failed || e.outcome.cancelled) {
+            const s3 = getSession(tabId);
+            if (s3) {
+              s3.transformCommitting = false;
+              setTransformSession(tabId, null);
+              notify(tabId);
+            }
+            if (e.outcome.failed) showEditorNotice(`内容识别缩放失败:${e.outcome.failed}`);
+            return false;
+          }
+        }
+      }
+    } catch (err) {
+      const s3 = getSession(tabId);
+      if (s3) {
+        s3.transformCommitting = false;
+        setTransformSession(tabId, null);
+        notify(tabId);
+      }
+      showEditorNotice(`无法内容识别缩放:${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
   if (t.warp) {

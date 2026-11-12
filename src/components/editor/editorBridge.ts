@@ -315,6 +315,8 @@ export interface TransformBeginResult {
   tex: { width: number; height: number; rgba: Uint8ClampedArray<ArrayBuffer> };
   /** tex 相对文档区域的缩小倍数(变换选区的蒙版染色纹理按 k 降采样;普通=1)。 */
   texScale: number;
+  /** 文档 alpha 通道名(仅 CAS;选项条 Protect 下拉)。 */
+  channels?: string[];
 }
 
 /** 解析 [jsonLen][JSON][bgW][bgH][bg][texW][texH][tex] 的变换进入响应。 */
@@ -343,6 +345,7 @@ async function parseTransformBegin(cmd: string, doc: number, target?: string): P
     bg: { width: bw, height: bh, rgba: bg },
     tex: { width: tw, height: th, rgba: tex },
     texScale: info.texScale ?? 1,
+    channels: info.channels,
   };
 }
 
@@ -370,4 +373,75 @@ export function editorTakeBackMade(doc: number, layer: number): Promise<{ took: 
  * 居中插入(大于画布等比缩小、SVG 矢量按放置比例渲染),一步历史 "Place Embedded"。 */
 export function editorPlace(doc: number, name: string, bytes: Uint8Array): Promise<{ layer: number; scale: number; bounds: number[]; smartObject: boolean }> {
   return invoke('editor_place', { doc, name, bytes });
+}
+
+/** CAS 进入数据(上游 begin_content_aware):region=选区 content_bounds∩画布否则层内容;
+ * bg=层内清区的合成,tex=区域全分辨率像素(无选区加权);info.channels=alpha 通道名。 */
+export function editorCasBegin(doc: number): Promise<TransformBeginResult> {
+  return parseTransformBegin('editor_cas_begin', doc);
+}
+
+/** CAS live 预览起跑:后台线程雕刻 ≤maxSide 代理(新起自动取消旧线程)。返回代理 [w,h]。 */
+export async function editorCasPreviewStart(doc: number, tag: number, params: Record<string, unknown>, maxSide: number): Promise<[number, number]> {
+  const buf = await invoke<ArrayBuffer>('editor_cas_preview_start', { doc, tag, params, maxSide });
+  const dv = new DataView(buf);
+  return [dv.getUint32(0, true), dv.getUint32(4, true)];
+}
+
+/** CAS 预览轮询(非阻塞,上游 tick 的 try_recv):
+ *  [tag:u32][state:u8][errLen:u32][err][w][h][rgba];state 0=idle 1=running 2=done 3=failed。 */
+export interface CasPreviewPollResult {
+  tag: number;
+  state: 'idle' | 'running' | 'done' | 'failed';
+  error?: string;
+  width: number;
+  height: number;
+  rgba?: Uint8ClampedArray<ArrayBuffer>;
+}
+export async function editorCasPreviewPoll(): Promise<CasPreviewPollResult> {
+  const buf = await invoke<ArrayBuffer>('editor_cas_preview_poll');
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(u8.buffer as ArrayBuffer, u8.byteOffset);
+  const tag = dv.getUint32(0, true);
+  const state = dv.getUint8(4);
+  const errLen = dv.getUint32(5, true);
+  let off = 9;
+  const error = errLen > 0 ? new TextDecoder().decode(u8.subarray(off, off + errLen)) : undefined;
+  off += errLen;
+  const w = dv.getUint32(off, true);
+  const h = dv.getUint32(off + 4, true);
+  off += 8;
+  const len = w * h * 4;
+  return {
+    tag,
+    state: state === 2 ? 'done' : state === 3 ? 'failed' : state === 1 ? 'running' : 'idle',
+    error,
+    width: w,
+    height: h,
+    rgba: len > 0 ? new Uint8ClampedArray(u8.buffer as ArrayBuffer, u8.byteOffset + off, len) : undefined,
+  };
+}
+
+/** CAS 预览停(框关闭/切标签):cancel+丢弃后台线程。 */
+export function editorCasPreviewStop(): Promise<void> {
+  return invoke('editor_cas_preview_stop');
+}
+
+/** CAS 提交:引擎命令走 Session 后台 job(worker 雕刻全分辨率,apply 在 poll 落文档=
+ * 一步 "Content-Aware Scale" 历史;apply 前文档被锁)。 */
+export function editorCasCommit(doc: number, params: Record<string, unknown>): Promise<{ job?: number; done?: unknown }> {
+  return invoke('editor_cas_commit', { doc, params });
+}
+
+/** CAS job 轮询:排干引擎 job 事件(apply 在此调用中落到文档)。 */
+export interface CasJobEvent {
+  id: number;
+  command: string;
+  label: string;
+  document: number | null;
+  outcome: { done?: unknown; failed?: string; cancelled?: true };
+}
+export async function editorCasJobPoll(): Promise<CasJobEvent[]> {
+  const v = await invoke<unknown>('editor_cas_job_poll');
+  return Array.isArray(v) ? (v as CasJobEvent[]) : [];
 }

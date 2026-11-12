@@ -138,6 +138,49 @@ export interface TransformSession {
   /** 造层方式(上游 MadeLayer):Copy=折叠后保持 "Free Transform";
    * Place=拖放置入,折叠后改写为 "Place Embedded"。缺省=Copy。 */
   madeKind?: 'copy' | 'place';
+  /** 内容识别缩放(上游 t.content_aware.is_some()):框只缩放/移动(禁旋转/扭曲),
+   * 提交走 edit.contentAwareScale 而非 edit.transform。 */
+  contentAware?: ContentAwareOptions;
+  /** 文档 alpha 通道名(仅 CAS;选项条 Protect 下拉数据,begin 时随 info 带出)。 */
+  contentAwareChannels?: string[];
+}
+
+/** CAS 选项(上游 ContentAwareOptions):amount 0..100(其余为普通重采样);
+ * protect=文档 alpha 通道名(null=不保护);保护肤色检测。 */
+export interface ContentAwareOptions {
+  amount: number;
+  protect: string | null;
+  protectSkinTones: boolean;
+}
+
+export const CAS_DEFAULT_OPTIONS: ContentAwareOptions = { amount: 100, protect: null, protectSkinTones: false };
+
+/** CAS 框尺寸(上游 box_size):quad 外接框取整,最小 1。 */
+export function casBoxSize(t: Pick<TransformSession, 'quad'>): [number, number] {
+  const xs = t.quad.map((q) => q[0]);
+  const ys = t.quad.map((q) => q[1]);
+  return [Math.max(1, Math.round(Math.max(...xs) - Math.min(...xs))), Math.max(1, Math.round(Math.max(...ys) - Math.min(...ys)))];
+}
+
+/** CAS 参数(上游 params):预览 place=false(无 x/y,结果画在框内);提交 place=true
+ * (x/y=框左上;引擎默认=region 原位)。 */
+export function casParams(t: TransformSession, place: boolean): Record<string, unknown> {
+  const o = t.contentAware ?? CAS_DEFAULT_OPTIONS;
+  const [w, h] = casBoxSize(t);
+  const p: Record<string, unknown> = {
+    width: w,
+    height: h,
+    amount: Math.min(100, Math.max(0, o.amount)),
+    protect: o.protect ?? 'none',
+    protectSkinTones: o.protectSkinTones,
+  };
+  if (place) {
+    const xs = t.quad.map((q) => q[0]);
+    const ys = t.quad.map((q) => q[1]);
+    p.x = Math.round(Math.min(...xs));
+    p.y = Math.round(Math.min(...ys));
+  }
+  return p;
 }
 
 export type Hit =

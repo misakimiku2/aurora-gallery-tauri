@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  acceptsOutsideClick, applyDrag, applyModeDrag, carryPivot, corners, handleTolerance, hitTest, Homography,
+  acceptsOutsideClick, applyDrag, applyModeDrag, casBoxSize, casParams, carryPivot, corners, handleTolerance, hitTest, Homography,
   keepConvex, matchingAnchor, modeAllows, nudgeTransform, pointOnQuad, quadIsAffine, quadScale, quadUnchanged,
   readout, rotateAboutPivot, scaleAboutPivot, skewAboutPivot, movePivotTo, setPivotAnchor, turns, insideQuad,
   type Gesture, type Quad, type RectF, type TransformMods, type TransformSession,
@@ -341,5 +341,31 @@ describe('微移与容差', () => {
     expect(close(s.quad, corners([5, -3, 105, 47]))).toBe(true);
     expect(s.pivot).toEqual([55, 22]);
     expect(handleTolerance(2)).toEqual(6);
+  });
+});
+
+describe('CAS 内容识别缩放(cas_transform.rs 口径)', () => {
+  it('casBoxSize:quad 外接框取整最小 1', () => {
+    expect(casBoxSize(session())).toEqual([100, 50]);
+    const s2 = session();
+    s2.quad = corners([10.2, 3.7, 40.4, 3.7]); // 高度 0 → 钳 1
+    expect(casBoxSize(s2)).toEqual([30, 1]);
+  });
+  it('casParams:预览无 x/y,提交带左上角;amount 钳 0..100;protect null→"none"', () => {
+    const s2 = session();
+    s2.contentAware = { amount: 100, protect: null, protectSkinTones: false };
+    expect(casParams(s2, false)).toEqual({ width: 100, height: 50, amount: 100, protect: 'none', protectSkinTones: false });
+    s2.quad = corners([5, -2, 105, 48]);
+    expect(casParams(s2, true)).toMatchObject({ width: 100, height: 50, x: 5, y: -2 });
+    s2.contentAware = { amount: 140, protect: 'skin', protectSkinTones: true };
+    expect(casParams(s2, false)).toMatchObject({ amount: 100, protect: 'skin', protectSkinTones: true });
+    s2.contentAware = { amount: -3, protect: null, protectSkinTones: false };
+    expect(casParams(s2, false)).toMatchObject({ amount: 0 });
+  });
+  it('quadUnchanged 复用为 CAS 提交短路:未动框=零历史', () => {
+    const s2 = session();
+    expect(quadUnchanged(s2.rect, s2.quad)).toBe(true);
+    s2.quad = corners([0, 0, 80, 50]);
+    expect(quadUnchanged(s2.rect, s2.quad)).toBe(false);
   });
 });
