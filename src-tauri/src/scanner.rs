@@ -342,6 +342,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         rotation: entry.rotation,
                         video_codec: entry.video_codec.clone(),
                         bit_rate: entry.bit_rate,
+                        orientation: entry.orientation,
                     });
                 }
 
@@ -607,6 +608,18 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         height = dims.1;
                     }
 
+                    // EXIF 方向（轻量快调设计 §6）：图片读 1..8；width/height 统一改存
+                    // **显示尺寸**（方向 5..8 竖横互换），网格横竖比与矫正后的缩略图一致。
+                    // 存量行靠 SCANNER_CAPABILITY 5→6 触发的全扫回填。
+                    let exif_orientation = if is_video {
+                        0
+                    } else {
+                        crate::image_utils::get_exif_orientation(&entry_path.to_string_lossy())
+                    };
+                    if !is_video && (5..=8).contains(&exif_orientation) {
+                        std::mem::swap(&mut width, &mut height);
+                    }
+
                     let node_type = if is_video { FileType::Video } else { FileType::Image };
                     let file_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: node_type, path: full_path.clone(),
@@ -628,6 +641,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                             rotation,
                             video_codec,
                             bit_rate,
+                            orientation: if is_video { None } else { Some(exif_orientation as i64) },
                         }),
                     };
                     Some((file_id, file_node, p_path))
@@ -682,6 +696,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         // 视频 P1（设计方案 §6）：视频元数据经 ImageMeta 带到这里落库。
         let (dur, fps, rot) = node.meta.as_ref().map_or((None, None, None), |m| (m.duration_ms, m.frame_rate, m.rotation));
         let (codec, br) = node.meta.as_ref().map_or((None, None), |m| (m.video_codec.clone(), m.bit_rate));
+        let orient = node.meta.as_ref().and_then(|m| m.orientation);
         let c_at = node.created_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
         let m_at = node.updated_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
 
@@ -694,6 +709,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
             created_at: c_at, modified_at: m_at,
             duration_ms: dur, frame_rate: fps, rotation: rot, video_codec: codec, bit_rate: br,
+            orientation: orient,
         });
 
         all_files.insert(id, node);
@@ -771,6 +787,9 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                             if md.is_file() {
                                 let (w, h) = get_image_dimensions(path);
                                 if w > 0 && h > 0 {
+                                    // EXIF 方向（轻量快调设计 §6）：宽高按显示口径交换后落库
+                                    let orient = crate::image_utils::get_exif_orientation(path);
+                                    let (w, h) = if (5..=8).contains(&orient) { (h, w) } else { (w, h) };
                                     let id = generate_id(path);
                                     let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                                     let fmt = std::path::Path::new(path).extension().and_then(|e| e.to_str()).map(|s| s.to_string());
@@ -782,6 +801,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                         file_id: id, parent_id: None, path: path.clone(), name, file_type: "Image".to_string(),
                                         size: md.len(), width: Some(w), height: Some(h), format: fmt, created_at: c_at, modified_at: m_at,
                                         duration_ms: None, frame_rate: None, rotation: None, video_codec: None, bit_rate: None,
+                                        orientation: Some(orient as i64),
                                     });
                                 }
                             }

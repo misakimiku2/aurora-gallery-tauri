@@ -44,10 +44,11 @@ fn is_avif(buffer: &[u8]) -> bool {
 const VIDEO_COVER_CACHE_VERSION: u32 = 3;
 
 /// 计算缓存文件名：size + mtime + 首 4096 字节 → md5 前 24 位。
-/// 视频额外混入 `VIDEO_COVER_CACHE_VERSION`（**图片不受影响**）。
+/// 视频额外混入 `VIDEO_COVER_CACHE_VERSION`；图片混入 `-tv2`（EXIF 方向矫正，
+/// 2026-11-13 轻量快调 §6）+ `adjust_tag`（调整参数内容哈希，§5）。
 /// 所有读写路径（`thumbnail_cache_paths` / `process_single_thumbnail` / `save_remote_thumbnail`
 /// / `ffmpeg_cover::extract_with_ffmpeg`）必须共用本函数，否则前端写进去的封面后端找不到。
-pub(crate) fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> String {
+pub(crate) fn cache_filename_for(file_path: &str, metadata: &fs::Metadata, adjust_tag: &str) -> String {
     let size = metadata.len();
     let modified = metadata
         .modified()
@@ -67,7 +68,9 @@ pub(crate) fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> St
     let version_tag = if is_video {
         format!("-vc{}", VIDEO_COVER_CACHE_VERSION)
     } else {
-        String::new()
+        // 图片 v2（2026-11-13）：EXIF 方向矫正使旧缩略图内容失效；adjust_tag 让
+        // 调整前后的缩略图各自独立缓存。键格式变化 = 旧图片缩略图一次性重抽。
+        format!("-tv2{}", adjust_tag)
     };
 
     let cache_key = format!("{}-{}-{:?}{}", size, modified, &buffer[..bytes_read], version_tag);
@@ -82,9 +85,9 @@ pub(crate) fn cache_filename_for(file_path: &str, metadata: &fs::Metadata) -> St
 /// 计算某文件的缩略图缓存路径（size + mtime + 首 4096 字节 → md5），返回 (jpg, webp) 两个候选。
 ///
 /// 命名规则由 `cache_filename_for` 统一给出（视频封面带版本位）。
-fn thumbnail_cache_paths(file_path: &str, cache_root: &Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+fn thumbnail_cache_paths(file_path: &str, cache_root: &Path, adjust_tag: &str) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let metadata = fs::metadata(file_path).ok()?;
-    let cache_filename = cache_filename_for(file_path, &metadata);
+    let cache_filename = cache_filename_for(file_path, &metadata, adjust_tag);
 
     Some((
         cache_root.join(format!("{}.jpg", cache_filename)),
@@ -98,7 +101,7 @@ fn thumbnail_cache_paths(file_path: &str, cache_root: &Path) -> Option<(std::pat
 /// 已经把封面 JPEG 写进**同一套缓存命名**里。这里必须命中并返回它，
 /// 否则每次挂载 / 每次重开软件都要重新抽一帧（机械盘上尤其难忍）。
 fn find_existing_video_cover(file_path: &str, cache_root: &Path) -> Option<String> {
-    let (jpg, webp) = thumbnail_cache_paths(file_path, cache_root)?;
+    let (jpg, webp) = thumbnail_cache_paths(file_path, cache_root, "")?;
     if jpg.exists() {
         return Some(jpg.to_str().unwrap_or_default().to_string());
     }
@@ -165,7 +168,12 @@ fn persist_video_cover_colors(
 }
 
 // Core thumbnail generation (kept synchronous; invoked from spawn_blocking)
-pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
+pub(crate) fn process_single_thumbnail(
+    file_path: &str,
+    cache_root: &Path,
+    adjust_tag: &str,
+    adjust_params: Option<crate::image_adjust::AdjustParams>,
+) -> Option<String> {
     let image_path = Path::new(file_path);
     if !image_path.exists() || file_path.contains(".Aurora_Cache") {
         return None;
@@ -186,9 +194,9 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         }
     }
 
-    // Quick hash（与读路径共用同一命名函数，视频封面带版本位；图片文件名不变）
+    // Quick hash（与读路径共用同一命名函数，视频封面带版本位；图片带 -tv2 + adjust_tag）
     let metadata = fs::metadata(image_path).ok()?;
-    let cache_filename = cache_filename_for(file_path, &metadata);
+    let cache_filename = cache_filename_for(file_path, &metadata, adjust_tag);
 
     let jpg_cache_file_path = cache_root.join(format!("{}.jpg", cache_filename));
     let webp_cache_file_path = cache_root.join(format!("{}.webp", cache_filename));
@@ -203,7 +211,7 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
     // 缓存未命中，需要现场解码。获取全局并发额度（信号量，作用域结束自动释放），
     // 限制同时解码数量，避免滚动时批量缩略图请求把全部 CPU 核心打满导致 UI 卡顿。
     let _permit = crate::image_utils::acquire_thumb_decode();
-    process_thumbnail_decode(file_path, cache_root, &jpg_cache_file_path, &webp_cache_file_path)
+    process_thumbnail_decode(file_path, cache_root, &jpg_cache_file_path, &webp_cache_file_path, adjust_params.as_ref())
 }
 
 fn process_thumbnail_decode(
@@ -211,6 +219,7 @@ fn process_thumbnail_decode(
     cache_root: &Path,
     jpg_cache_file_path: &std::path::PathBuf,
     webp_cache_file_path: &std::path::PathBuf,
+    adjust_params: Option<&crate::image_adjust::AdjustParams>,
 ) -> Option<String> {
     use std::io::BufWriter;
 
@@ -279,6 +288,21 @@ fn process_thumbnail_decode(
             }
             image_reader.no_limits();
             image_reader.decode().ok()?
+        };
+
+        // EXIF 方向矫正（轻量快调 §6）：修「竖拍图网格横倒、查看器正立」的全局不一致。
+        // 之后的几何/裁剪/影调全部工作在矫正后的显示空间。
+        let img = crate::image_adjust::apply_exif_orientation(
+            img,
+            crate::image_utils::get_exif_orientation(file_path),
+        );
+        // 有调整参数 → 与 bake_edits 同管线烘焙几何+影调（网格所见 = 导出所得）
+        let img = match adjust_params {
+            Some(p) if !p.is_default() => {
+                let img = crate::image_adjust::apply_geo(img, &p.geo);
+                crate::image_adjust::apply_tone(img, &p.tone)
+            }
+            _ => img,
         };
 
         let width = img.width();
@@ -471,12 +495,36 @@ fn process_video_cover_job(job: VideoCoverJob) {
     }
 }
 
+/// 查某图路径的调整参数（缩略图联动，轻量快调 §5）：返回 (缓存键尾巴, 参数)。
+/// 无参数 / 参数损坏 / 全默认 → ("", None)。
+fn adjust_lookup_for_thumbnail(
+    app_db: &aurora_core::db::AppDbPool,
+    path: &str,
+) -> (String, Option<crate::image_adjust::AdjustParams>) {
+    let conn = app_db.get_connection();
+    let json = match aurora_core::db::file_edits::get_params_by_path(&conn, path) {
+        Ok(Some(json)) => json,
+        _ => return (String::new(), None),
+    };
+    match crate::image_adjust::AdjustParams::parse(&json) {
+        Ok(p) if !p.is_default() => (crate::image_adjust::adjust_tag_for(&json), Some(p)),
+        _ => (String::new(), None),
+    }
+}
+
 #[tauri::command]
-pub async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
+pub async fn get_thumbnail(
+    app: tauri::AppHandle,
+    file_path: String,
+    cache_root: String,
+) -> Result<Option<String>, String> {
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
         if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
-        process_single_thumbnail(&file_path, root)
+        // 调整参数联动（轻量快调 §5）：按路径查参数，键带内容哈希、生成时烘焙
+        let app_db = app.state::<aurora_core::db::AppDbPool>().inner().clone();
+        let (adjust_tag, adjust_params) = adjust_lookup_for_thumbnail(&app_db, &file_path);
+        process_single_thumbnail(&file_path, root, &adjust_tag, adjust_params)
     }).await;
 
     match result { Ok(val) => Ok(val), Err(e) => Err(e.to_string()) }
@@ -515,9 +563,25 @@ pub async fn get_thumbnails_batch(
             });
         }
 
+        // 批量预取调整参数（轻量快调 §5）：一把连接锁内查齐，rayon 闭包零 DB 访问
+        let params_map: std::collections::HashMap<String, (String, Option<crate::image_adjust::AdjustParams>)> = {
+            let app_db = app.state::<aurora_core::db::AppDbPool>().inner().clone();
+            let conn = app_db.get_connection();
+            let raw = aurora_core::db::file_edits::load_params_for_paths(&conn, &image_paths)
+                .unwrap_or_default();
+            let mut m = std::collections::HashMap::new();
+            for (p, json) in raw {
+                if let Ok(params) = crate::image_adjust::AdjustParams::parse(&json) {
+                    if !params.is_default() {
+                        m.insert(p, (crate::image_adjust::adjust_tag_for(&json), Some(params)));
+                    }
+                }
+            }
+            m
+        };
+
         image_paths.par_iter().for_each(|path| {
             use std::fs;
-            use std::io::Read;
 
             let image_path = Path::new(path);
             if !image_path.exists() || path.contains(".Aurora_Cache") {
@@ -526,16 +590,13 @@ pub async fn get_thumbnails_batch(
             }
 
             let metadata = match fs::metadata(image_path) { Ok(m) => m, Err(_) => { let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false }); return; } };
-            let size = metadata.len();
-            let modified = metadata.modified().map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0);
 
-            let mut file = match fs::File::open(image_path) { Ok(f) => f, Err(_) => { let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url: None, colors: None, from_cache: false }); return; } };
-            let mut buffer = [0u8; 4096];
-            let bytes_read = file.read(&mut buffer).unwrap_or(0);
-
-            let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-            let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
-            let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
+            // 调整参数联动（轻量快调 §5）：键带内容哈希、生成时烘焙（与 get_thumbnail 同口径）
+            let (adjust_tag, adjust_params) = match params_map.get(path.as_str()) {
+                Some((t, p)) => (t.clone(), p.clone()),
+                None => (String::new(), None),
+            };
+            let cache_filename = cache_filename_for(path, &metadata, &adjust_tag);
 
             let jpg_cache_file_path = root.join(format!("{}.jpg", cache_filename));
             let webp_cache_file_path = root.join(format!("{}.webp", cache_filename));
@@ -551,7 +612,7 @@ pub async fn get_thumbnails_batch(
                 return;
             }
 
-            let url = process_single_thumbnail(path, root);
+            let url = process_single_thumbnail(path, root, &adjust_tag, adjust_params);
             let _ = on_event.send(ThumbnailBatchResult { path: path.clone(), url, colors: None, from_cache: false });
         });
         Ok(())
@@ -579,9 +640,22 @@ pub async fn save_remote_thumbnail(
             return Err("Original file does not exist".to_string());
         }
 
-        // 1. 生成缓存文件名（与读路径共用 cache_filename_for：视频封面带版本位）
+        // 1. 生成缓存文件名（与读路径共用 cache_filename_for：视频封面带版本位）。
+        //    图片带调整参数时，键尾巴须与读路径一致——参数像素由前端在生成 canvas
+        //    内容时套用（generateAvifThumbnailAndColors）。
         let metadata = fs::metadata(image_path).map_err(|e| e.to_string())?;
-        let cache_filename = cache_filename_for(&file_path, &metadata);
+        let is_video_path = image_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(crate::file_types::is_supported_video)
+            .unwrap_or(false);
+        let (adjust_tag, _adjust_params) = if is_video_path {
+            (String::new(), None)
+        } else {
+            let app_db = app.state::<aurora_core::db::AppDbPool>().inner().clone();
+            adjust_lookup_for_thumbnail(&app_db, &file_path)
+        };
+        let cache_filename = cache_filename_for(&file_path, &metadata, &adjust_tag);
 
         let root = Path::new(&cache_root);
         if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }

@@ -1908,6 +1908,7 @@ pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u
             rotation: None,
             video_codec: None,
             bit_rate: None,
+            orientation: None,
         });
     }
 
@@ -1965,6 +1966,7 @@ pub fn index_takeover(conn: &mut Connection, outcome: &TakeoverOutcome) -> Res<u
             rotation: None,
             video_codec: None,
             bit_rate: None,
+            orientation: None,
         });
     }
 

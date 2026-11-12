@@ -6,6 +6,7 @@ pub mod thumbnail;
 pub mod video_metadata;
 pub use aurora_core::file_types;
 pub mod image_utils;
+pub mod image_adjust;
 pub mod scanner;
 pub mod file_operations;
 pub mod db_commands;
@@ -2049,6 +2050,12 @@ pub fn run() {
         db_commands::db_remove_person_from_topic,
         db_commands::db_upsert_file_metadata,
         db_commands::db_get_all_file_metadata,
+        // 轻量非破坏图片调整（2026-11-13 设计 §5/§9）：参数读写 + 烘焙导出
+        db_commands::edit_get_params,
+        db_commands::edit_set_params,
+        db_commands::edit_clear_params,
+        db_commands::edit_get_all_params,
+        image_adjust::bake_edits,
         file_operations::db_copy_file_metadata,
         db_commands::switch_root_database,
         file_operations::copy_image_to_clipboard,

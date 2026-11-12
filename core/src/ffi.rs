@@ -130,6 +130,9 @@ fn media_entry_of(img: &MediaImage) -> FileIndexEntry {
         rotation: None,
         video_codec: None,
         bit_rate: None,
+        // EXIF 方向：安卓 MediaStore 快照不读 EXIF（桌面 src-tauri 的 kamadak 才有），
+        // 留 None（视作 1）；安卓端查看器/网格方向矫正不在本期范围（设计 §11 非目标）
+        orientation: None,
     }
 }
 
@@ -491,6 +494,7 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
             rotation: None,
             video_codec: None,
             bit_rate: None,
+            orientation: None,
         })
         .collect();
 

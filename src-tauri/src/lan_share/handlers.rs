@@ -1673,14 +1673,26 @@ pub async fn handle_thumbnail(
     let path_str = full_path.to_string_lossy().to_string();
     let cache_root_str = cache_root.to_string_lossy().to_string();
 
-    match crate::thumbnail::get_thumbnail(path_str, cache_root_str).await {
+    // LAN 缩略图不套调整参数（轻量快调 §5：LAN 端展示原图口径），键不带 adjust_tag；
+    // 不走 get_thumbnail 命令（那需要 Tauri AppHandle 查库），直接调同步管线。
+    let thumb_result = tauri::async_runtime::spawn_blocking(move || {
+        crate::thumbnail::process_single_thumbnail(
+            &path_str,
+            std::path::Path::new(&cache_root_str),
+            "",
+            None,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string());
+    match thumb_result {
         Ok(Some(thumb_path)) => {
             let thumb_data = fs::read(&thumb_path).await
                 .map_err(|e| {
                     log::error!("[LAN Share] 缩略图读取失败: {}", e);
                     error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
                 })?;
-            
+
             log::debug!("[LAN Share] 缩略图返回成功 - 大小: {} bytes", thumb_data.len());
             Ok((
                 [

@@ -53,6 +53,10 @@ pub struct ImageMeta {
     /// 总码率（bps）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bit_rate: Option<i64>,
+    // EXIF 方向（2026-11-13，轻量快调设计 §6）：图片行 1..8（无/读不到为 None，视作 1），
+    // 视频行一律 None。`width/height` 为显示尺寸（方向 5..8 已竖横互换）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

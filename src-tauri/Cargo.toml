@@ -66,6 +66,7 @@ axum = { version = "0.7", features = ["multipart", "ws"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs", "compression-gzip"] }
 uuid = { version = "1.0", features = ["v4"] }
+kamadak-exif = "0.6.2"
 
 [target.'cfg(not(windows))'.dependencies]
 fs_extra = "1.3"

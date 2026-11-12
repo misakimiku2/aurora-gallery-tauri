@@ -92,6 +92,36 @@ pub fn db_update_person_avatar(
     db::persons::update_person_avatar(&conn, &person_id, &cover_file_id, face_box.as_ref()).map_err(|e| e.to_string())
 }
 
+// ── 轻量非破坏图片调整（2026-11-13 设计 §5）：file_edits 读写命令 ──────────
+// params 是 AdjustParams JSON 文本（src-tauri/src/image_adjust.rs 权威 schema）。
+// 全默认参数由前端负责转成 clear，不落行。
+
+#[tauri::command]
+pub fn edit_get_params(pool: tauri::State<AppDbPool>, file_id: String) -> Result<Option<String>, String> {
+    let conn = pool.get_connection();
+    db::file_edits::get_params(&conn, &file_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn edit_set_params(pool: tauri::State<AppDbPool>, file_id: String, params: String) -> Result<(), String> {
+    // 先验一下 JSON 能否按契约解析（防脏数据入库）
+    crate::image_adjust::AdjustParams::parse(&params)?;
+    let conn = pool.get_connection();
+    db::file_edits::set_params(&conn, &file_id, &params).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn edit_clear_params(pool: tauri::State<AppDbPool>, file_id: String) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::file_edits::clear_params(&conn, &file_id).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn edit_get_all_params(pool: tauri::State<AppDbPool>) -> Result<Vec<db::file_edits::FileEditEntry>, String> {
+    let conn = pool.get_connection();
+    db::file_edits::get_all(&conn).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn db_get_all_topics(pool: tauri::State<AppDbPool>) -> Result<Vec<db::topics::Topic>, String> {
     let start = std::time::Instant::now();

@@ -135,6 +135,35 @@ pub fn get_image_dimensions(path: &str) -> (u32, u32) {
     }
 }
 
+/// 读 EXIF Orientation（轻量快调设计 §6）：1..8，无/读不到/非法一律 1（无旋转）。
+/// kamadak-exif 支持的容器（JPEG/TIFF/PNG/WebP/HEIF）都能读；JXL 无此口径（返回 1）。
+/// 网格显示尺寸（scanner）与 Rust 解码矫正（thumbnail/bake）共用本函数。
+pub fn get_exif_orientation(path: &str) -> u32 {
+    use std::io::BufReader;
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return 1,
+    };
+    let exif = match exif::Reader::new().read_from_container(&mut BufReader::new(file)) {
+        Ok(e) => e,
+        Err(_) => return 1,
+    };
+    match exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY) {
+        Some(field) => match field.value {
+            exif::Value::Short(ref vec) if !vec.is_empty() => {
+                let v = vec[0] as u32;
+                if (1..=8).contains(&v) { v } else { 1 }
+            }
+            exif::Value::Byte(ref vec) if !vec.is_empty() => {
+                let v = vec[0] as u32;
+                if (1..=8).contains(&v) { v } else { 1 }
+            }
+            _ => 1,
+        },
+        None => 1,
+    }
+}
+
 #[tauri::command]
 pub async fn get_avif_preview(path: String) -> Result<String, String> {
     use std::fs;

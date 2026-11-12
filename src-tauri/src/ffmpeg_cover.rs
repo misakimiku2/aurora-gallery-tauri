@@ -599,7 +599,8 @@ pub fn extract_with_ffmpeg(
     } else {
         std::fs::metadata(key_path).ok()?
     };
-    let cache_filename = crate::thumbnail::cache_filename_for(key_path, &key_meta);
+    // 视频封面无调整参数概念，adjust_tag 恒为空（轻量快调 §5）
+    let cache_filename = crate::thumbnail::cache_filename_for(key_path, &key_meta, "");
     let jpg_path = cache_root.join(format!("{}.jpg", cache_filename));
 
     // 4) 所有候选共享同一体积感知超时预算（与前端一致）。

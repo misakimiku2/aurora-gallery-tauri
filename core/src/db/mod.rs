@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 pub mod persons;
 pub mod file_metadata;
 pub mod file_index;
+pub mod file_edits;
 pub mod topics;
 pub mod tags;
 pub mod import_records;
@@ -119,7 +120,10 @@ pub fn generate_id(path: &str) -> String {
 ///   短路判定看不出来。必须靠版本号触发一次全扫。
 /// - `5`：`mdat` 碎片链原位合并（2026-10-19）。同理：这一种修的是「点开要等多久」，
 ///   容器口径的时长一点没变，短路判定永远看不出来 —— 不 bump 就得让用户手动重扫才生效。
-pub const SCANNER_CAPABILITY: i64 = 5;
+/// - `6`：EXIF 方向（2026-11-13，轻量快调设计 §6）。file_index 新增 `orientation` 列且
+///   `width/height` 改存**显示尺寸**（方向 5..8 竖横互换）。不 bump 的话存量行的宽高仍是
+///   编码尺寸，网格横竖比与缩略图不一致；必须靠版本号触发一次全扫回填。
+pub const SCANNER_CAPABILITY: i64 = 6;
 
 /// 读取库的扫描能力版本（旧库缺省 `0`）。
 pub fn get_scanner_capability(conn: &Connection) -> i64 {
@@ -196,6 +200,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Create tags / file_tags (M4a D10=②：安卓侧标签的存储从 file_metadata.tags 升级成表)
     tags::create_table(conn)?;
+
+    // Create file_edits（轻量非破坏图片调整的参数表，2026-11-13 设计 §5）
+    file_edits::create_table(conn)?;
 
     // Create import_records（§6.5 多来源标注迁移的「上次导入」记录，跟着库走）
     import_records::create_table(conn)?;

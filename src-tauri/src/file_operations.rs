@@ -157,6 +157,8 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 rotation: None,
                 video_codec: None,
                 bit_rate: None,
+                // 单文件登记（scan_file）不读 EXIF，方向/尺寸由后台索引回填（轻量快调 §6）
+                orientation: None,
             }),
             description: None,
             source_url: None,
@@ -252,6 +254,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 width: w, height: h, format: fmt,
                 created_at: c_at, modified_at: m_at,
                 duration_ms: None, frame_rate: None, rotation: None, video_codec: None, bit_rate: None,
+                orientation: None,
             };
             let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
         });
@@ -315,6 +318,7 @@ pub async fn create_folder(path: String, app: tauri::AppHandle) -> Result<(), St
         created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
         modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
         duration_ms: None, frame_rate: None, rotation: None, video_codec: None, bit_rate: None,
+        orientation: None,
     };
     
     let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
@@ -469,6 +473,7 @@ pub async fn copy_file_metadata_with_pools(
                                 rotation: entry.rotation,
                                 video_codec: entry.video_codec.clone(),
                                 bit_rate: entry.bit_rate,
+                                orientation: entry.orientation,
                             })
                         } else {
                             None
@@ -495,6 +500,7 @@ pub async fn copy_file_metadata_with_pools(
                 let mut rotation = None;
                 let mut video_codec: Option<String> = None;
                 let mut bit_rate: Option<i64> = None;
+                let mut orientation: Option<i64> = None;
                 let mut file_type = if is_supported_video(&ext) { "Video".to_string() } else { "Image".to_string() };
 
                 let all_entries = db::file_index::get_entries_under_path(&conn_mut, &src_normalized).unwrap_or_default();
@@ -507,6 +513,7 @@ pub async fn copy_file_metadata_with_pools(
                     rotation = src_entry.rotation;
                     video_codec = src_entry.video_codec.clone();
                     bit_rate = src_entry.bit_rate;
+                    orientation = src_entry.orientation;
                     file_type = src_entry.file_type.clone();
                 }
 
@@ -520,7 +527,7 @@ pub async fn copy_file_metadata_with_pools(
                     width, height, format: format.or(Some(ext)),
                     created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                     modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
-                    duration_ms, frame_rate, rotation, video_codec, bit_rate,
+                    duration_ms, frame_rate, rotation, video_codec, bit_rate, orientation,
                 };
 
                 let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
@@ -891,6 +898,7 @@ pub async fn write_file_bytes_indexed(
                                 size: md.as_ref().map(|m| m.len()).unwrap_or(0),
                                 width: None, height: None, format: Some(ext),
                                 duration_ms: None, frame_rate: None, rotation: None, video_codec: None, bit_rate: None,
+                                orientation: None,
                                 created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                                 modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
                             };
