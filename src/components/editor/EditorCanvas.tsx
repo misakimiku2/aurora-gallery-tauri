@@ -6269,6 +6269,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}
+      onDragEnter={(e) => {
+        // 外部文件拖入画布:拦截冒泡(dragenter 先于 dragover,App 根层靠它弹图库覆盖层)
+        if (!e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/json')) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onDragOver={(e) => {
         // Place 拖放(上游 drop_places):仅外部文件拖入时拦截;内部卡片拖拽
         // (application/json)与无文档时不拦,图库链路照常

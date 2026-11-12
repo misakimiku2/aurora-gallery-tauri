@@ -1705,7 +1705,7 @@ export const App: React.FC = () => {
     isExternalDragging, externalDragItems, externalDragPosition,
     handleExternalDragEnter, handleExternalDragOver,
     handleExternalDragLeave, handleExternalDrop,
-  } = useExternalDragDrop({ isDraggingInternal, hoveredDropAction, handleExternalCopyFiles, handleExternalMoveFiles });
+  } = useExternalDragDrop({ isDraggingInternal, disabled: !!activeTab.isEditorMode, hoveredDropAction, handleExternalCopyFiles, handleExternalMoveFiles });
 
 
   // Helper function to limit concurrency

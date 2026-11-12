@@ -3,6 +3,9 @@ import type { DropAction } from '../components/DragDropOverlay';
 
 interface UseExternalDragDropProps {
   isDraggingInternal: boolean;
+  /** 编辑器标签激活时禁用图库外部拖放链路:不弹覆盖层、不复制/移动(外部文件
+   * 交给编辑器画布的 Place 拖放);根层仍对 drop preventDefault 防 webview 导航。 */
+  disabled?: boolean;
   hoveredDropAction: DropAction | null;
   handleExternalCopyFiles: (files: File[], items: DataTransferItemList) => Promise<void>;
   handleExternalMoveFiles: (files: File[]) => Promise<void>;
@@ -10,6 +13,7 @@ interface UseExternalDragDropProps {
 
 export function useExternalDragDrop({
   isDraggingInternal,
+  disabled,
   hoveredDropAction,
   handleExternalCopyFiles,
   handleExternalMoveFiles,
@@ -20,7 +24,7 @@ export function useExternalDragDrop({
   const externalDragCounter = useRef(0);
 
   const handleExternalDragEnter = useCallback((e: React.DragEvent) => {
-    if (isDraggingInternal || e.altKey) return;
+    if (disabled || isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -39,9 +43,14 @@ export function useExternalDragDrop({
         setExternalDragItems(Array(itemCount).fill(''));
       }
     }
-  }, [isDraggingInternal]);
+  }, [disabled, isDraggingInternal]);
 
   const handleExternalDragOver = useCallback((e: React.DragEvent) => {
+    if (disabled) {
+      // 编辑器态:阻止默认(松手导航到文件)但不弹覆盖层、不跟踪位置
+      e.preventDefault();
+      return;
+    }
     if (isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
@@ -53,9 +62,10 @@ export function useExternalDragDrop({
     if (hasFiles && !hasInternalData) {
       setExternalDragPosition({ x: e.clientX, y: e.clientY });
     }
-  }, [isDraggingInternal]);
+  }, [disabled, isDraggingInternal]);
 
   const handleExternalDragLeave = useCallback((e: React.DragEvent) => {
+    if (disabled) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -66,9 +76,14 @@ export function useExternalDragDrop({
       setExternalDragPosition(null);
       setExternalDragItems([]);
     }
-  }, []);
+  }, [disabled]);
 
   const handleExternalDrop = useCallback(async (e: React.DragEvent) => {
+    if (disabled) {
+      // 编辑器态:画布有自己的 Place drop;落在面板等非画布区域=吞掉防导航,不复制
+      e.preventDefault();
+      return;
+    }
     if (isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
@@ -96,7 +111,7 @@ export function useExternalDragDrop({
     } else {
       await handleExternalMoveFiles(files);
     }
-  }, [isDraggingInternal, hoveredDropAction, handleExternalCopyFiles, handleExternalMoveFiles]);
+  }, [disabled, isDraggingInternal, hoveredDropAction, handleExternalCopyFiles, handleExternalMoveFiles]);
 
   return {
     isExternalDragging,
