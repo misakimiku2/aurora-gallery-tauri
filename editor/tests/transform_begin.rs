@@ -34,7 +34,7 @@ fn transform_begin_frames_the_layer_and_extracts_it_from_the_background() {
     let rev = m.state(doc).unwrap()["revision"].clone();
     let hist = m.state(doc).unwrap()["history"].as_array().unwrap().len();
 
-    let r = m.transform_begin(doc).unwrap();
+    let r = m.transform_begin(doc, None).unwrap();
     let frame = r.info["frame"].as_array().unwrap();
     // 内容外接矩形(笔径 12 的 dab 在 (8,8),尺寸与软边有关,只验证框住内容且小于画布)
     let (fx0, fy0, fx1, fy1) = (frame[0].as_i64().unwrap(), frame[1].as_i64().unwrap(), frame[2].as_i64().unwrap(), frame[3].as_i64().unwrap());
@@ -67,7 +67,7 @@ fn transform_begin_with_selection_frames_the_selection_and_weights_the_texture()
     m.stroke_begin(doc, "paint.stroke", brush_params(json!([[6, 6, 1.0]]), "#ff0000"), false).unwrap();
     m.stroke_commit(doc).unwrap();
 
-    let r = m.transform_begin(doc).unwrap();
+    let r = m.transform_begin(doc, None).unwrap();
     let frame = r.info["frame"].as_array().unwrap();
     let (fx0, fy0, fx1, fy1) = (frame[0].as_i64().unwrap(), frame[1].as_i64().unwrap(), frame[2].as_i64().unwrap(), frame[3].as_i64().unwrap());
     assert!(fx0 <= 4 && fy0 <= 4 && fx1 >= 10 && fy1 >= 10, "frame covers the feathered selection: {frame:?}");
@@ -87,7 +87,7 @@ fn transform_begin_refuses_empty_layers() {
     let mut m = EditorManager::new();
     let doc = m.new_document(16, 16, "white").unwrap();
     m.run(doc, "layer.new.layer", json!({})).unwrap();
-    let err = m.transform_begin(doc).unwrap_err().to_string();
+    let err = m.transform_begin(doc, None).unwrap_err().to_string();
     assert!(err.contains("nothing to transform"), "empty layer refuses: {err}");
 }
 
@@ -100,6 +100,6 @@ fn transform_begin_refuses_a_locked_layer() {
     m.stroke_begin(doc, "paint.stroke", brush_params(json!([[8, 8, 1.0]]), "#ff0000"), false).unwrap();
     m.stroke_commit(doc).unwrap();
     m.run(doc, "layer.lockLayers", json!({ "position": true })).unwrap();
-    let err = m.transform_begin(doc).unwrap_err().to_string();
+    let err = m.transform_begin(doc, None).unwrap_err().to_string();
     assert!(err.contains("locked"), "locked layer refuses: {err}");
 }

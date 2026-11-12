@@ -2147,6 +2147,7 @@ pub fn run() {
         editor_cmds::editor_selection_transform_begin,
         editor_cmds::editor_fold_transform_copy,
         editor_cmds::editor_take_back_made,
+        editor_cmds::editor_place,
         editor_cmds::editor_move_frame,
         editor_cmds::editor_duplicate_move,
         editor_cmds::editor_fold_duplicate_move,

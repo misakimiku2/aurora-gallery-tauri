@@ -153,6 +153,9 @@ export interface EditorRuntime {
   transformToggleWarp: (() => void) | null;
   transformBeginSelection: (() => void) | null;
   transformBeginCopy: (() => void) | null;
+  /** Place 拖放队列出队(队列在画布 ref;变换框以任何方式关闭后 store 调,上游
+   * place_next_dropped 每帧轮询的等价物——挂到每个关框路径)。 */
+  placeNext: (() => void) | null;
   transformResetWarp: (() => void) | null;
   transformSetWarpGrid: ((n: number) => void) | null;
   transformArmWarpSplit: ((tool: 'cross' | 'vertical' | 'horizontal' | null) => void) | null;
@@ -315,7 +318,7 @@ export function ensureSession(tabId: string, fileId: string): EditorSession {
       typeRecentFonts: [] as string[],
       typeStyleDefaults: {},
     },
-    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformBeginSelection: null, transformBeginCopy: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
+    runtime: { view: { scale: 1, ox: 0, oy: 0 }, pointerDoc: null, offscreen: null, rasterScale: 1, interactiveRenderUntil: 0, interactiveRenderTimer: null, viewW: 0, viewH: 0, requestDraw: null, selectionOutline: null, outlineKey: '', outlineFetching: '', antsPhase: 0, cropCommit: null, cropCancel: null, lastStrokeEnd: null, cropStraightenArmed: false, cropStraightenLine: null, cropFitRatio: null, cropSetAngle: null, makeSelection: null, commitTextEdit: null, transformCommit: null, transformCancel: null, transformField: null, transformBeginSelection: null, transformBeginCopy: null, placeNext: null, transformToggleWarp: null, transformResetWarp: null, transformSetWarpGrid: null, transformArmWarpSplit: null },
     cropAngle: 0,
     selectMask: null,
     exportDialog: null,
@@ -992,6 +995,7 @@ export async function commitTransform(tabId: string): Promise<boolean> {
     // Warp 提交(上游 1085-1090):identity 且非文字层=无命令零历史;一条 edit.transform.warp。
     if (warpIsIdentity(t.warp) && t.kind !== 'Type') {
       setTransformSession(tabId, null);
+      if (t.madeKind === 'place') s.runtime.placeNext?.();
       return true;
     }
     s.transformCommitting = true;
@@ -1013,6 +1017,9 @@ export async function commitTransform(tabId: string): Promise<boolean> {
   }
   if (quadUnchanged(t.rect, t.quad)) {
     setTransformSession(tabId, null);
+    // Place 拖放:未触碰的框=零历史关框,不经 transformCommitting/泵——此处直接出队
+    // 下一条(上游 place_next_dropped 每帧轮询的等价;多文件连放不碰框也能逐个置入)。
+    if (t.madeKind === 'place') s.runtime.placeNext?.();
     return true;
   }
   s.transformCommitting = true;
@@ -1024,7 +1031,10 @@ export async function commitTransform(tabId: string): Promise<boolean> {
     // 状态刷新历史面板。
     if (made != null && s.docId != null) {
       try {
-        const r = await editorFoldTransformCopy(s.docId, t.madeBefore ?? 0, made);
+        // 上游 fold_made 只对 Place 改写标签为 "Place Embedded"(Copy 保持变换步的
+        // "Free Transform");中途有别的操作时桥内守卫不折叠,各留各步。折叠只动历史栈,
+        // 像素/revision 不变——拉一次状态刷新历史面板。
+        const r = await editorFoldTransformCopy(s.docId, t.madeBefore ?? 0, made, t.madeKind === 'place' ? 'Place Embedded' : undefined);
         if (r.folded) {
           const st = await editorState(s.docId);
           if (typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st });

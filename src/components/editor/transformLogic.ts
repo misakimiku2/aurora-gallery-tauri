@@ -135,6 +135,9 @@ export interface TransformSession {
   madeLayer?: number | null;
   /** ⌥⌘T 复制**前**的历史步数(折叠条件 before+2 守卫用)。 */
   madeBefore?: number;
+  /** 造层方式(上游 MadeLayer):Copy=折叠后保持 "Free Transform";
+   * Place=拖放置入,折叠后改写为 "Place Embedded"。缺省=Copy。 */
+  madeKind?: 'copy' | 'place';
 }
 
 export type Hit =

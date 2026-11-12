@@ -355,12 +355,19 @@ export async function editorSelectionTransformBegin(doc: number): Promise<Transf
   return parseTransformBegin('editor_selection_transform_begin', doc);
 }
 
-/** ⌥⌘T 提交折叠(上游 fold_made 的 Copy 变体)。 */
-export function editorFoldTransformCopy(doc: number, before: number, layer: number): Promise<{ folded: boolean }> {
-  return invoke('editor_fold_transform_copy', { doc, before, layer });
+/** ⌥⌘T 提交折叠(上游 fold_made 的 Copy 变体);label=折叠后改写当前步标签
+ * (Copy 不传=保持 "Free Transform",Place 传 "Place Embedded")。 */
+export function editorFoldTransformCopy(doc: number, before: number, layer: number, label?: string): Promise<{ folded: boolean }> {
+  return invoke('editor_fold_transform_copy', { doc, before, layer, label: label ?? null });
 }
 
 /** ⌥⌘T 取消收回(上游 take_back_made:undo+清 redo,守卫在桥内)。 */
 export function editorTakeBackMade(doc: number, layer: number): Promise<{ took: boolean }> {
   return invoke('editor_take_back_made', { doc, layer });
+}
+
+/** Place 拖放(上游 file.placeEmbedded 的字节版 place_bytes):文件字节作为智能对象层
+ * 居中插入(大于画布等比缩小、SVG 矢量按放置比例渲染),一步历史 "Place Embedded"。 */
+export function editorPlace(doc: number, name: string, bytes: Uint8Array): Promise<{ layer: number; scale: number; bounds: number[]; smartObject: boolean }> {
+  return invoke('editor_place', { doc, name, bytes });
 }

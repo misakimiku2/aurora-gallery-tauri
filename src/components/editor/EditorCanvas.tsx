@@ -8,7 +8,7 @@
  * 渲染真像素,返回 damage 增量帧直接贴进离屏位图)→ 抬笔 commit(fromLive 命中则跳过整幅重渲)。
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorRender, editorRun, editorSelectMaskView, editorSelectionTransformBegin, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTakeBackMade, editorTransformBegin } from './editorBridge';
+import { editorFoldDuplicateMove, editorMaskSnapshot, editorMagneticSnap, editorMagneticTrace, editorMoveFrame, editorMoveHover, editorPlace, editorRender, editorRun, editorSelectMaskView, editorSelectionTransformBegin, editorState, editorStrokeBegin, editorStrokeCancel, editorStrokeCommit, editorStrokePush, editorTakeBackMade, editorTransformBegin } from './editorBridge';
 import type { StrokeFrame } from './editorBridge';
 import { applyRunOutcome, cancelTransform, closeExportDialog, closePathsDialog, closeSelectMask, closeShapeDialog, commitTransform, confirmExportDialog, confirmPathsDialog, confirmSelectMask, confirmShapeDialog, duplicateMove, exportLayerAsPng, finishTransformCommit, getSession, markInteractiveRender, openExportDialog, openSelectMask, openShapeDialog, paintSelectMaskStroke, PATH_TOOLS, refreshPathsList, refreshSelectionOutline, refreshWorkPath, runCommand, saveAsSession, saveSession, selectMaskDefaultOpacity, SELECT_MASK_MODES, setOptions, setTransformSession, setTransformSplit, setTool, showEditorNotice, subscribeSession, syncTransformProjection, updateSession, updateSelectMask, updateShapeDialog, type SelectMaskMode } from './editorStore';
 import type { EditorSession, ToolOptions } from './editorStore';
@@ -2681,6 +2681,50 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     }
   }, [tabId, beginTransform]);
 
+  /** Place 拖放队列(上游 drop_places):文件放上画布→入队,无变换框时逐个
+   * place_bytes(智能对象/fit 缩放/居中)+ 进变换框(made=Place:提交折叠成一步
+   * "Place Embedded",Esc 收回)。上游 place_next_dropped 口径:一次一条,提交/取消
+   * 落地后出队下一条;单条失败通知后继续队列。 */
+  const placeQueueRef = useRef<File[]>([]);
+  const placeBusyRef = useRef(false);
+  const placeNextRef = useRef<() => void>(() => undefined);
+  const placeNext = useCallback(async () => {
+    if (placeBusyRef.current) return;
+    const s = getSession(tabId);
+    if (!s || s.docId == null || s.transform || s.transformCommitting) return;
+    const file = placeQueueRef.current.shift();
+    if (!file) return;
+    placeBusyRef.current = true;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const before = s.state?.historyCurrent ?? 0;
+      // 蒙版目标先切回合成:placed 层没有蒙版,transform_begin('mask') 会报错
+      // (上游 lone_target=None 落普通层;place 本就是层级操作,PS 亦退出蒙版定向)。
+      if (isMaskTarget(s.state)) await runCommand(tabId, 'channel.target', { channel: 'composite' });
+      const r = await editorPlace(s.docId, file.name, bytes);
+      const made = r.layer;
+      // 拉新 state(⌥⌘T noPull 教训:陈旧 activeLayer 会让 end_if_left 把新框立刻提交掉)
+      const st = await editorState(s.docId);
+      const s2 = getSession(tabId);
+      if (s2 && typeof st.revision === 'number' && st.revision >= s2.revision) updateSession(tabId, { state: st });
+      await beginTransform();
+      const t = transformRef.current;
+      if (!t.session) return; // begin 失败:placed 层保留(可撤销),队列继续
+      t.session = { ...t.session, madeLayer: made, madeBefore: before, madeKind: 'place' };
+      syncTransformProjection(tabId, t.session);
+    } catch (err) {
+      showEditorNotice(`无法置入 ${file.name}:${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      placeBusyRef.current = false;
+    }
+    void placeNextRef.current(); // 成功=框已开守卫拦截;失败=继续下一条(上游 Err 分支同款)
+  }, [tabId, beginTransform]);
+  useEffect(() => {
+    placeNextRef.current = () => void placeNext();
+  }, [placeNext]);
+  /** store 侧出队入口(恒定标识:内部经 ref 恒读最新 placeNext)。 */
+  const placeNextEntry = useCallback(() => placeNextRef.current(), []);
+
   /** 步退/步进(框打开期间 Ctrl+Z/Y 被劫持到框快照,上游 transform_undo_tests 口径)。 */
   const transformUndo = useCallback(() => {
     const t = transformRef.current;
@@ -2854,6 +2898,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     transformRef.current.gesture = null;
     cancelTransform(tabId);
     clearTransform();
+    placeNextRef.current(); // Place 队列:取消后出队下一条(上游 place_next_dropped)
   }, [tabId, clearTransform]);
 
   /** 设置裁剪框角度(选项条角度输入框;无框时先建默认框)。归一到 (-180,180]。 */
@@ -3562,6 +3607,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.commitTextEdit !== commitType) s.runtime.commitTextEdit = commitType;
       if (s.runtime.transformBeginSelection !== beginSelectionTransform) s.runtime.transformBeginSelection = beginSelectionTransform;
       if (s.runtime.transformBeginCopy !== beginTransformCopy) s.runtime.transformBeginCopy = beginTransformCopy;
+      if (s.runtime.placeNext !== placeNextEntry) s.runtime.placeNext = placeNextEntry;
       if (s.runtime.transformCommit !== commitTransformBox) s.runtime.transformCommit = commitTransformBox;
       if (s.runtime.transformCancel !== cancelTransformBox) s.runtime.transformCancel = cancelTransformBox;
       if (s.runtime.transformField !== transformField) s.runtime.transformField = transformField;
@@ -3588,6 +3634,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         if (layerGone) {
           cancelTransform(tabId);
           clearTransform();
+          placeNextRef.current(); // Place 队列:层被删/文档变=取消,继续下一条
         } else if (s.state.activeLayer !== tSession.layer && !t.gesture && !s.transformCommitting && !tSession.selection) {
           // 切层=提交(切层命令作用于新层,框必须先落定;落地中跳过);变换选区不随层提交
           // (上游 switched_away:!t.selection,换层保持打开,换工具才提交)
@@ -3610,6 +3657,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.commitTextEdit === commitType) s.runtime.commitTextEdit = null;
       if (s.runtime.transformBeginSelection === beginSelectionTransform) s.runtime.transformBeginSelection = null;
       if (s.runtime.transformBeginCopy === beginTransformCopy) s.runtime.transformBeginCopy = null;
+      if (s.runtime.placeNext === placeNextEntry) s.runtime.placeNext = null;
       if (s.runtime.transformCommit === commitTransformBox) s.runtime.transformCommit = null;
       if (s.runtime.transformCancel === cancelTransformBox) s.runtime.transformCancel = null;
       if (s.runtime.transformField === transformField) s.runtime.transformField = null;
@@ -3618,7 +3666,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (s.runtime.transformSetWarpGrid === setWarpGridBox) s.runtime.transformSetWarpGrid = null;
       if (s.runtime.transformArmWarpSplit === armWarpSplitBox) s.runtime.transformArmWarpSplit = null;
     };
-  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox, beginSelectionTransform, beginTransformCopy]);
+  }, [tabId, commitCrop, cancelCrop, cropFitRatio, cropSetAngle, makeSelectionFromActivePath, commitType, commitTransformBox, cancelTransformBox, transformField, clearTransform, toggleWarpBox, resetWarpBox, setWarpGridBox, armWarpSplitBox, beginSelectionTransform, beginTransformCopy, placeNextEntry]);
 
   // 文字会话数据保障(上游 layout 缓存 per revision 等价):revision/caret/anchor 变化即拉
   // info+选区/组字边界段,并把隐藏 textarea 钉到 caret 屏幕位(IME 候选窗锚点)
@@ -3786,14 +3834,20 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         }
         // 自由变换提交落地:新文档已渲染进 offscreen 并上屏,此刻解除抽层保持态——
         // 预览(变换后画面)与正常管线画面一致,无缝切换无闪回(提前解除会闪回原位)。
-        if (s.transform && s.transformCommitting) finishTransformCommit(tabId);
+        if (s.transform && s.transformCommitting) {
+          finishTransformCommit(tabId);
+          placeNextRef.current(); // Place 队列:上一条已落地,出队下一条(上游 place_next_dropped)
+        }
         scheduleDraw();
       }
     } catch (e) {
       console.error('[editor] render failed', e);
       // 提交落地中渲染失败:解除保持态让框关闭(否则卡在抽层预览永不回归正常管线)
       const sc = getSession(tabId);
-      if (sc?.transformCommitting) finishTransformCommit(tabId);
+      if (sc?.transformCommitting) {
+        finishTransformCommit(tabId);
+        placeNextRef.current();
+      }
     } finally {
       bitmapBusyRef.current = false;
     }
@@ -6215,6 +6269,28 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
       onPointerLeave={onPointerLeave}
+      onDragOver={(e) => {
+        // Place 拖放(上游 drop_places):仅外部文件拖入时拦截;内部卡片拖拽
+        // (application/json)与无文档时不拦,图库链路照常
+        if (!e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/json')) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('application/json')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const files = Array.from(e.dataTransfer.files);
+        const s = getSession(tabId);
+        if (!files.length || !s || s.docId == null) return;
+        placeQueueRef.current.push(...files);
+        if (s.transform) {
+          // #4833:已有变换框先提交;出队在提交落地(位图泵)/取消处接续
+          if (!s.transformCommitting) void commitTransform(tabId);
+        } else {
+          void placeNextRef.current();
+        }
+      }}
       onDoubleClick={(e) => {
         // 裁剪:框内部双击提交(上游 commits_at:把手/框外不算);doc 坐标取双击位置
         const s = getSession(tabId);

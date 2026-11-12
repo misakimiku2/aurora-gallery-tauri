@@ -584,7 +584,9 @@ impl EditorManager {
     /// ⌥⌘T 提交折叠(上游 fold_made,TT:415-433 的 Copy 变体,守卫原式):
     /// 「变换步执行前快照的前一个状态(=复制步之前)还没有该层」时 purge_last 删掉
     /// 变换步快照——undo 一步同时撤掉副本与移动;中途开盒后又做过别的操作则各留各步。
-    pub fn fold_transform_copy(&mut self, doc: u64, _before: u64, layer: u64) -> Result<Value> {
+    /// `label`:折叠后改写当前步标签(Copy 不传=保持 "Free Transform";Place 传
+    /// "Place Embedded",上游 fold_made 只对 Place set_current_label)。
+    pub fn fold_transform_copy(&mut self, doc: u64, _before: u64, layer: u64, label: Option<&str>) -> Result<Value> {
         self.activate(doc)?;
         let layer = photocraft_engine::doc::LayerId(layer);
         let st = self.session.active_mut().ok_or_else(|| EditorError("no active document".into()))?;
@@ -592,7 +594,22 @@ impl EditorManager {
             .and_then(|i| st.history.state(i))
             .is_some_and(|d| d.layer(layer).is_none())
             && st.history.purge_last();
+        if folded {
+            if let Some(label) = label {
+                st.history.set_current_label(label);
+            }
+        }
         Ok(json!({ "folded": folded, "historyCurrent": st.history.past_len() }))
+    }
+
+    /// Place 拖放(File › Place Embedded 的字节版,上游 open_dropped→place_bytes):
+    /// 文件字节作为层居中插入活动文档——Preferences 默认 Resize Image During Place
+    /// (大于画布时等比缩小到放进画布)+ Always Create Smart Objects When Placing
+    /// (默认智能对象,SVG 矢量源按放置比例锐利渲染),插到活动层上方并成为活动层,
+    /// 一步历史 "Place Embedded"。返回 {layer, scale, bounds, smartObject}。
+    pub fn place(&mut self, doc: u64, name: &str, bytes: Vec<u8>) -> Result<Value> {
+        self.activate(doc)?;
+        file_cmds::place_bytes(&mut self.session, name, bytes, None, &json!({})).map_err(Into::into)
     }
 
     /// ⌥⌘T 取消收回(上游 take_back_made,TT:390-411):当前文档有该层、且 undo 栈顶

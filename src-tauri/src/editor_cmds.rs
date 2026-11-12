@@ -250,11 +250,12 @@ pub fn editor_selection_transform_begin(s: State<EditorState>, doc: u64) -> Resu
 }
 
 /// ⌥⌘T 提交折叠:复制步+变换步恰为 before 后连续两步且 before 无该层时 purge_last
-/// 并成一步 "Free Transform"(上游 fold_made 的 Copy 变体)。
+/// 并成一步(上游 fold_made 的 Copy 变体);label=折叠后改写当前步标签
+/// (Copy 不传=保持 "Free Transform",Place 传 "Place Embedded")。
 #[tauri::command]
-pub fn editor_fold_transform_copy(s: State<EditorState>, doc: u64, before: u64, layer: u64) -> Result<serde_json::Value, String> {
+pub fn editor_fold_transform_copy(s: State<EditorState>, doc: u64, before: u64, layer: u64, label: Option<String>) -> Result<serde_json::Value, String> {
     let mut m = lock(&s)?;
-    m.fold_transform_copy(doc, before, layer).map_err(|e| e.to_string())
+    m.fold_transform_copy(doc, before, layer, label.as_deref()).map_err(|e| e.to_string())
 }
 
 /// ⌥⌘T 取消收回:层在当前状态存在且前一步状态还没有它时 undo+清 redo(上游 take_back_made)。
@@ -262,6 +263,15 @@ pub fn editor_fold_transform_copy(s: State<EditorState>, doc: u64, before: u64, 
 pub fn editor_take_back_made(s: State<EditorState>, doc: u64, layer: u64) -> Result<serde_json::Value, String> {
     let mut m = lock(&s)?;
     m.take_back_made(doc, layer).map_err(|e| e.to_string())
+}
+
+/// Place 拖放:文件字节作为智能对象层居中插入活动文档(上游 place_bytes;大于画布
+/// 等比缩小、SVG 矢量按放置比例渲染),一步历史 "Place Embedded"。
+/// 返回 {layer, scale, bounds, smartObject}。
+#[tauri::command]
+pub fn editor_place(s: State<EditorState>, doc: u64, name: String, bytes: Vec<u8>) -> Result<serde_json::Value, String> {
+    let mut m = lock(&s)?;
+    m.place(doc, &name, bytes).map_err(|e| e.to_string())
 }
 
 /// 移动工具拖拽预览帧:target="float"(选区像素浮动,dx/dy 为未提交增量)或
