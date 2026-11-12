@@ -183,7 +183,7 @@ pub fn apply_geo(img: DynamicImage, geo: &GeoParams) -> DynamicImage {
 }
 
 /// 拉直：内容绕中心旋转 `deg`（正 = 视觉逆时针），输出取**与原图同长宽比**的最大
-/// 内接矩形（经典公式），双线性采样 + 边缘复制（不露黑边）。
+/// 内接矩形（精确解），双线性采样 + 边缘复制（不露黑边）。
 pub fn straighten_image(img: &DynamicImage, deg: f32) -> DynamicImage {
     if deg.abs() < 0.01 {
         return img.clone();
@@ -192,14 +192,24 @@ pub fn straighten_image(img: &DynamicImage, deg: f32) -> DynamicImage {
     let theta = (deg as f64).to_radians();
     let sin = theta.sin().abs();
     let cos = theta.cos().abs();
-    let (long, short) = if w >= h { (w, h) } else { (h, w) };
-    // 同长宽比最大内接矩形：θ→0 退化为原尺寸（单测钉住）
-    let long2 = if sin < 1e-6 {
-        long
-    } else {
-        (long * short) / (short * sin + long * cos)
-    };
-    let short2 = long2 * (short / long);
+    // 同长宽比最大内接矩形（精确解）：中心对称多边形的最大内接中心对称矩形必居中，
+    // 半高 y 受四条约束（半宽 = k·y，k = 长/短 ≥1）：
+    //   ① y ≤ (W/2)/(c·k + s)        ② y ≤ (W/2)/(c·k − s)（分母>0 才有效）
+    //   ③ y ≤ (H/2)/(c + s·k)        ④ y ≤ (H/2)/(c − s·k)（分母>0 才有效）
+    // （W=长边,H=短边;θ→0 退化为原尺寸,90° 方图/非方图均正确——近似公式在非方图会露角,
+    //  2026-11-13 实测推导后改精确解,前端 inscribedRect 同步）
+    let (wl, hl) = if w >= h { (w, h) } else { (h, w) };
+    let k = wl / hl;
+    let inf = f64::INFINITY;
+    let cands = [
+        (wl / 2.0) / (cos * k + sin),
+        if cos * k > sin { (wl / 2.0) / (cos * k - sin) } else { inf },
+        (hl / 2.0) / (cos + sin * k),
+        if cos > sin * k { (hl / 2.0) / (cos - sin * k) } else { inf },
+    ];
+    let y = cands.iter().cloned().fold(inf, f64::min);
+    let short2 = (2.0 * y).max(1.0);
+    let long2 = k * short2;
     let (w2, h2) = if w >= h { (long2, short2) } else { (short2, long2) };
     let w2 = (w2 as u32).max(1);
     let h2 = (h2 as u32).max(1);

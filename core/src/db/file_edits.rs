@@ -11,6 +11,9 @@ pub struct FileEditEntry {
     /// AdjustParams JSON 文本(src-tauri/src/image_adjust.rs 是权威 schema)。
     pub params: String,
     pub updated_at: i64,
+    /// 关联的文件路径(LEFT JOIN file_index;文件被删后行残留时为 None)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 pub fn create_table(conn: &Connection) -> Result<()> {
@@ -77,14 +80,19 @@ pub fn get_params_by_path(conn: &Connection, path: &str) -> Result<Option<String
     .optional()
 }
 
-/// 全量拉取(前端启动/bootstrap 用;只有调过的图才有行,量级可控)。
+/// 全量拉取(前端启动/bootstrap 用,网格角标与 AVIF 兜底缩略图按 path 查);
+/// 只有调过的图才有行,量级可控。
 pub fn get_all(conn: &Connection) -> Result<Vec<FileEditEntry>> {
-    let mut stmt = conn.prepare("SELECT file_id, params, updated_at FROM file_edits")?;
+    let mut stmt = conn.prepare(
+        "SELECT fe.file_id, fe.params, fe.updated_at, fi.path FROM file_edits fe
+         LEFT JOIN file_index fi ON fi.file_id = fe.file_id",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(FileEditEntry {
             file_id: row.get(0)?,
             params: row.get(1)?,
             updated_at: row.get(2)?,
+            path: row.get(3)?,
         })
     })?;
     rows.collect()
