@@ -79,14 +79,27 @@ const LayerThumb: React.FC<{
   // 智能对象与像素层一样有自身位图(surface();Smart=置入时的 cache),出内容缩略图
   // (上游 layer_row 同口径);其余 kind(调整/编组/文字/形状/填充)出类型图标。
   const hasContentThumb = layer.kind === 'Pixel' || layer.kind === 'Smart Object';
+  // stale-while-revalidate:当前 revision 无缓存时回落到该层最近一个旧缩略图——
+  // 否则每次 revision 前进(置入提交/编辑)缩略图先闪回空方块再等异步取回
+  const latestThumb = (): RenderedBitmap | undefined => {
+    let best: RenderedBitmap | undefined;
+    let bestRev = -1;
+    const prefix = `L${docId}:${layer.id}:`;
+    for (const [k, v] of thumbCache) {
+      if (!k.startsWith(prefix)) continue;
+      const rev = Number(k.slice(prefix.length));
+      if (Number.isFinite(rev) && rev > bestRev) { bestRev = rev; best = v; }
+    }
+    return best;
+  };
   useEffect(() => {
     if (!hasContentThumb) return;
     const key = `L${docId}:${layer.id}:${revision}`;
-    const cached = thumbCache.get(key);
+    const cached = thumbCache.get(key) ?? latestThumb();
     if (cached) {
       const cv = canvasRef.current;
       if (cv) drawThumb(cv, cached);
-      return;
+      if (thumbCache.has(key)) return; // 精确命中=无需取新;旧图顶住,后台仍取新
     }
     let cancelled = false;
     void editorLayerThumbnail(docId, layer.id, 64)
@@ -103,7 +116,7 @@ const LayerThumb: React.FC<{
     };
   }, [docId, layer.id, revision, hasContentThumb]);
 
-  const bmp = hasContentThumb ? thumbCache.get(`L${docId}:${layer.id}:${revision}`) : undefined;
+  const bmp = hasContentThumb ? (thumbCache.get(`L${docId}:${layer.id}:${revision}`) ?? latestThumb()) : undefined;
   const h = 18;
   const w = bmp ? Math.max(6, Math.round((bmp.width / Math.max(bmp.width, bmp.height)) * h)) : h;
 
@@ -121,9 +134,10 @@ const LayerThumb: React.FC<{
       className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
       style={{ width: w + 2, height: h + 2 }}
     >
-      {hasContentThumb ? (
+      {bmp ? (
         <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
       ) : (
+        // 无缓存(首次取图落地前/非内容类 kind)统一显示类型图标,避免空方块闪变
         <KindIcon kind={layer.kind} />
       )}
     </button>

@@ -2709,10 +2709,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if (isMaskTarget(s.state)) await runCommand(tabId, 'channel.target', { channel: 'composite' });
       const r = await editorPlace(s.docId, file.name, bytes);
       const made = r.layer;
-      // 拉新 state(⌥⌘T noPull 教训:陈旧 activeLayer 会让 end_if_left 把新框立刻提交掉)
+      // 拉新 state 并同步 session.revision:place 走桥不经 runCommand(applyRunOutcome),
+      // revision 不同步则位图泵 key 不变=永不重渲——提交关框后 offscreen 陈旧,placed 层
+      // "消失"直到下一次 runCommand(⌥⌘T noPull 教训的同族:陈旧状态喂给后续链路)
       const st = await editorState(s.docId);
       const s2 = getSession(tabId);
-      if (s2 && typeof st.revision === 'number' && st.revision >= s2.revision) updateSession(tabId, { state: st });
+      if (s2 && typeof st.revision === 'number' && st.revision >= s2.revision) updateSession(tabId, { state: st, revision: st.revision });
       await beginTransform();
       const t = transformRef.current;
       if (!t.session) return; // begin 失败:placed 层保留(可撤销),队列继续

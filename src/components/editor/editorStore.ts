@@ -1037,7 +1037,7 @@ export async function commitTransform(tabId: string): Promise<boolean> {
         const r = await editorFoldTransformCopy(s.docId, t.madeBefore ?? 0, made, t.madeKind === 'place' ? 'Place Embedded' : undefined);
         if (r.folded) {
           const st = await editorState(s.docId);
-          if (typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st });
+          if (typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st, revision: st.revision });
         }
       } catch { /* 折叠失败不致命,两步保留 */ }
     }
@@ -1087,12 +1087,14 @@ export function cancelTransform(tabId: string): void {
   }
 }
 
-/** 收回复制层后拉一次状态刷新历史面板(层已消失,不发命令)。 */
+/** 收回复制层后拉一次状态刷新历史面板(层已消失,不发命令)。revision 一并同步:
+ * take_back 是引擎 undo(revision 前进)但不经 runCommand——不同步则位图泵不重渲,
+ * 已消失的层在画布上残留幽灵帧。 */
 async function runCommandSilentState(docId: number, tabId: string): Promise<void> {
   try {
     const st = await editorState(docId);
     const s = sessions.get(tabId);
-    if (s && typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st });
+    if (s && typeof st.revision === 'number' && st.revision >= s.revision) updateSession(tabId, { state: st, revision: st.revision });
   } catch { /* 文档已关 */ }
 }
 
