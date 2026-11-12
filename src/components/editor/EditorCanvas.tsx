@@ -479,13 +479,17 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const [rx0, ry0, rx1, ry1] = tr.rect;
       const rw = rx1 - rx0, rh = ry1 - ry0;
       const rs = s.runtime.rasterScale || 1;
-      const sx = v.ox + rx0 * v.scale;
-      const sy = v.oy + ry0 * v.scale;
+      // 显示坐标像素取整:分数坐标会让 clearRect/clip/bg 边缘与 offscreen 里置入层
+      // 的边缘像素混色,原图位置残留一圈细外框(用户报障;提交重渲后才消失)
+      const sx = Math.round(v.ox + rx0 * v.scale);
+      const sy = Math.round(v.oy + ry0 * v.scale);
+      const sw = Math.round(v.ox + rx1 * v.scale) - sx;
+      const sh = Math.round(v.oy + ry1 * v.scale) - sy;
       dctx.save();
       dctx.beginPath();
-      dctx.rect(sx, sy, rw * v.scale, rh * v.scale);
+      dctx.rect(sx, sy, sw, sh);
       dctx.clip();
-      dctx.clearRect(sx, sy, rw * v.scale, rh * v.scale);
+      dctx.clearRect(sx, sy, sw, sh);
       const pattern = makeCheckerPattern(dctx, isDark);
       dctx.translate(v.ox, v.oy);
       if (pattern) {
@@ -493,7 +497,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         dctx.fillRect(0, 0, dw, dh);
       }
       dctx.restore();
-      dctx.drawImage(tr.bg, sx, sy, rw * v.scale, rh * v.scale);
+      // bg 与 clear 同一取整矩形内绘制(硬边),不与矩形外像素混色
+      dctx.drawImage(tr.bg, sx, sy, sw, sh);
       const polys = s.runtime.selectionOutline;
       if (polys && polys.length && s.state?.selectionBounds) {
         dctx.save();
@@ -522,8 +527,9 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     octx.strokeRect(v.ox - 0.5, v.oy - 0.5, dw + 1, dh + 1);
 
     // overlay:移动工具悬停高亮(上游 move_hover::draw):点击会拾取的层/组可见内容边界,
-    // accent 色 1.5px 外描;无边界=无(Background/空白)。
-    if (s.tool === 'move' && moveHoverRef.current?.bounds && !moveDragRef.current) {
+    // accent 色 1.5px 外描;无边界=无(Background/空白)。变换会话期间不画(ref 里可能是
+    // place→beginTransform 异步窗口期取到的旧 bounds,用户报"原图位置残留蓝框")。
+    if (s.tool === 'move' && moveHoverRef.current?.bounds && !moveDragRef.current && !tr.session) {
       const [bx0, by0, bx1, by1] = moveHoverRef.current.bounds;
       octx.strokeStyle = isDark ? '#38bdf8' : '#0284c7';
       octx.lineWidth = 1.5;
@@ -5387,6 +5393,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     if (transformRef.current.session) {
       const t = transformRef.current;
       const tSession = t.session!;
+      // 变换会话接管画布:移动工具悬停高亮失效(可能冻着 place 窗口期的旧 bounds)
+      if (moveHoverRef.current) moveHoverRef.current = null;
       if (tSession.warp) {
         // 文字层 Warp Text:无 hover(光标恒 default,上游同)
         if (t.kind === 'Type') return;

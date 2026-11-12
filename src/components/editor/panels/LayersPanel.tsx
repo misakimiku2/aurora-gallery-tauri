@@ -76,9 +76,11 @@ const LayerThumb: React.FC<{
   const run = (cmd: string, params: Record<string, unknown> = {}) =>
     runCommand(tabId, cmd, params).catch((e) => console.error('[editor]', cmd, e));
 
-  const isPixel = layer.kind === 'Pixel';
+  // 智能对象与像素层一样有自身位图(surface();Smart=置入时的 cache),出内容缩略图
+  // (上游 layer_row 同口径);其余 kind(调整/编组/文字/形状/填充)出类型图标。
+  const hasContentThumb = layer.kind === 'Pixel' || layer.kind === 'Smart Object';
   useEffect(() => {
-    if (!isPixel) return;
+    if (!hasContentThumb) return;
     const key = `L${docId}:${layer.id}:${revision}`;
     const cached = thumbCache.get(key);
     if (cached) {
@@ -99,9 +101,9 @@ const LayerThumb: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [docId, layer.id, revision, isPixel]);
+  }, [docId, layer.id, revision, hasContentThumb]);
 
-  const bmp = isPixel ? thumbCache.get(`L${docId}:${layer.id}:${revision}`) : undefined;
+  const bmp = hasContentThumb ? thumbCache.get(`L${docId}:${layer.id}:${revision}`) : undefined;
   const h = 18;
   const w = bmp ? Math.max(6, Math.round((bmp.width / Math.max(bmp.width, bmp.height)) * h)) : h;
 
@@ -119,7 +121,7 @@ const LayerThumb: React.FC<{
       className={`shrink-0 flex items-center justify-center overflow-hidden rounded-[3px] bg-black/10 dark:bg-white/15 ${targeted ? 'ring-1 ring-sky-500' : ''}`}
       style={{ width: w + 2, height: h + 2 }}
     >
-      {isPixel ? (
+      {hasContentThumb ? (
         <canvas ref={canvasRef} style={{ width: w, height: h, imageRendering: 'pixelated' }} className="block" />
       ) : (
         <KindIcon kind={layer.kind} />
