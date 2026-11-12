@@ -214,9 +214,9 @@ pub fn editor_stroke_cancel(s: State<EditorState>, doc: u64) -> Result<(), Strin
 /// 零文档改动零历史。
 /// 响应 = [jsonLen:u32 LE][JSON(frame/rect/layer/kind)][bgW][bgH][bg RGBA][texW][texH][tex RGBA]。
 #[tauri::command]
-pub fn editor_transform_begin(s: State<EditorState>, doc: u64) -> Result<Response, String> {
+pub fn editor_transform_begin(s: State<EditorState>, doc: u64, target: Option<String>) -> Result<Response, String> {
     let mut m = lock(&s)?;
-    let r = m.transform_begin(doc).map_err(|e| e.to_string())?;
+    let r = m.transform_begin(doc, target).map_err(|e| e.to_string())?;
     let json = serde_json::to_vec(&r.info).map_err(|e| e.to_string())?;
     let mut bytes = Vec::with_capacity(4 + json.len() + 12 + r.bg.pixels.len() + 12 + r.tex.pixels.len());
     bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());

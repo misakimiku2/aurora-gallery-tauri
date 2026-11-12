@@ -551,8 +551,8 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
     // 自由变换激活:蚂蚁线随 quad 变换(上游 draw_selection 经 h 画),原位轮廓隐藏
     const smOpen = s.selectMask?.open === true && !s.selectMask.hideView;
     const smAnts = smOpen && s.selectMask?.viewMode === 'marchingAnts';
-    // 变换选区会话 bg=null(像素不动),靠 selection 标志也保持 active
-    const transformActive = tr.session != null && tr.rect != null && (tr.bg != null || tr.session.selection === true);
+    // 变换选区/蒙版目标会话 bg=null(像素不动),靠 selection/targetMask 标志也保持 active
+    const transformActive = tr.session != null && tr.rect != null && (tr.bg != null || tr.session.selection === true || tr.session.targetMask === true);
     const hideAnts =
       (s.tool === 'polygonLasso' && polygonRef.current?.mode === 'replace') ||
       (s.tool === 'magneticLasso' && magneticRef.current?.mode === 'replace') ||
@@ -773,12 +773,16 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       const rw = rx1 - rx0, rh = ry1 - ry0;
       if (hDoc && quadIsAffine(tr.session.rect, tr.session.quad)) {
         octx.save();
+        // 蒙版染色半透明叠加(上游 lone target 纹理 opacity 0.6)
+        if (tr.session.targetMask) octx.globalAlpha = 0.6;
         octx.translate(v.ox, v.oy);
         octx.scale(v.scale, v.scale);
         octx.transform(hDoc.m[0], hDoc.m[3], hDoc.m[1], hDoc.m[4], hDoc.m[2], hDoc.m[5]);
         octx.drawImage(tex, rx0, ry0, rw, rh);
         octx.restore();
       } else if (hDoc) {
+        // 蒙版染色半透明叠加(上游 lone target 纹理 opacity 0.6;透视 mesh 三角分支)
+        if (tr.session.targetMask) octx.globalAlpha = 0.6;
         const n = 12;
         const fw = tr.session.rect[2] - tr.session.rect[0];
         const fh = tr.session.rect[3] - tr.session.rect[1];
@@ -828,6 +832,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
               octx.restore();
             }
           }
+          octx.globalAlpha = 1;
         }
       }
       // 框线 + 把手(上游 draw_overlay:accent 1px 闭合折线 + 7×7 白芯方块;参考点=白圆+十字)
@@ -2549,13 +2554,12 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const beginTransform = useCallback(async () => {
     const s = getSession(tabId);
     if (!s || s.docId == null || !s.state) return;
-    if (isMaskTarget(s.state)) {
-      showEditorNotice('蒙版目标下暂不支持自由变换,先 Ctrl+2 回合成目标');
-      return;
-    }
+    // 蒙版目标(target:"mask"):变换蒙版本身(上游 begin_lone;链接蒙版引擎自动落层变换)。
+    // tex=蒙版灰度染色(带选区只显示选中部分),bg 空(像素层不动),提交带 target:"mask"。
+    const maskTarget = isMaskTarget(s.state);
     void s.runtime.commitTextEdit?.(); // 打字中先进变换=先提交文字(上游 begin 口径)
     try {
-      const r = await editorTransformBegin(s.docId);
+      const r = await editorTransformBegin(s.docId, maskTarget ? 'mask' : undefined);
       const frame: RectF = r.frame;
       if (!(frame[2] - frame[0] > 0 && frame[3] - frame[1] > 0)) {
         showEditorNotice('没有可变换的内容');
@@ -2576,7 +2580,7 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
         pivot: [(frame[0] + frame[2]) / 2, (frame[1] + frame[3]) / 2],
         interpolation: 'bicubic',
         mode: 'free',
-        targetMask: false,
+        targetMask: maskTarget,
         skewV: 0,
         kind: r.kind,
       };
@@ -2721,6 +2725,11 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
   const enterWarpBox = useCallback(() => {
     const t = transformRef.current;
     if (!t.session) return;
+    if (t.session.targetMask) {
+      // 蒙版目标不进 Warp(上游 enter_warp:t.target.is_some() keeps the box)
+      showEditorNotice('蒙版目标不支持 Warp 变形');
+      return;
+    }
     if (t.kind === 'Type') {
       // 文字层 Warp Text(上游 enter_type_warp,#3004):桥已剥已有 warp 出框/纹理
       // (tex=无 warp 文字位图),会话=纯风格态(warp.mesh=null),预览=前端按风格网格
@@ -4143,6 +4152,22 @@ export const EditorCanvas: React.FC<{ tabId: string; isActive: boolean }> = ({ t
       if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.code === 'KeyT' && !isTyping(e.target)) {
         e.preventDefault();
         void beginTransformCopy();
+        return;
+      }
+      // Ctrl/Cmd+Shift+T = 再次变换(上游 edit.transform.again:引擎从 journal 找最近的
+      // edit.transform 参数重放到当前层新 bounds;无历史报错进提示条)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.code === 'KeyT' && !isTyping(e.target)) {
+        e.preventDefault(); // 浏览器重开标签页快捷键,必须拦
+        void runCommand(tabId, 'edit.transform.again', {}).catch((err) =>
+          showEditorNotice(`无法重复变换:${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
+      // Ctrl/Cmd+Shift+Alt+T = 再次变换副本(上游 edit.transform.againCopy ⌥⇧⌘T:复制+重放,
+      // 引擎内 purge_last+标签 "Transform Again",连按一次一步)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.altKey && e.code === 'KeyT' && !isTyping(e.target)) {
+        e.preventDefault();
+        void runCommand(tabId, 'edit.transform.againCopy', {}).catch((err) =>
+          showEditorNotice(`无法重复变换:${err instanceof Error ? err.message : String(err)}`));
         return;
       }
       // 导出为对话框打开期间接管键盘:Esc 取消(输入框中也生效)/Enter 确定(非输入)/其余吞掉

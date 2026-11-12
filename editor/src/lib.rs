@@ -403,7 +403,51 @@ impl EditorManager {
     /// 按选区灰度加权 alpha(上游 split_selected 抬起像素的语义,框外像素不随变换)。
     /// bg/tex 都覆盖同一 rect,前端按 frame 建立映射。超 MAX_RENDER_PIXELS 的区域返回
     /// 透明(纹理空 = 无预览的纯框模式,提交仍正确)。
-    pub fn transform_begin(&mut self, doc: u64) -> Result<TransformBegin> {
+    pub fn transform_begin(&mut self, doc: u64, target: Option<String>) -> Result<TransformBegin> {
+        self.activate(doc)?;
+        let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
+        let id = st.active_layer.ok_or_else(|| EditorError("no active layer".into()))?;
+        let l = st.doc.layer(id).ok_or_else(|| EditorError(format!("no layer {}", id.0)))?;
+        // 蒙版目标(target:"mask")且蒙版未链接:变换蒙版本身(上游 begin_lone,transform_cmds
+        // lone_target 语义;链接蒙版随层走=落到普通层路径)。tex=蒙版面灰度染色(UI 诊断色,
+        // 带选区=split_gray_selected 的 lifted:只染选中灰度),bg 空(像素层不动)。
+        if target.as_deref() == Some("mask") {
+            let m = l.mask.as_ref().ok_or_else(|| EditorError("layer has no mask".into()))?;
+            if !m.linked {
+                let sel = st.doc.selection.as_ref();
+                let mb = m.surface.content_bounds();
+                // 全默认蒙版(revealAll 稀疏面)content_bounds 为空,但语义覆盖整幅画布。
+                let frame = match sel {
+                    Some(s) => {
+                        let sb = s.content_bounds();
+                        Rect::new(sb.x0 as i32, sb.y0 as i32, sb.x1 as i32, sb.y1 as i32)
+                    }
+                    None if mb.is_empty() => Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height),
+                    None => Rect::new(mb.x0 as i32, mb.y0 as i32, mb.x1 as i32, mb.y1 as i32),
+                };
+                if frame.is_empty() {
+                    return Err(EditorError("nothing to transform".into()));
+                }
+                let canvas = Rect::from_xywh(0, 0, st.doc.size.width, st.doc.size.height);
+                let rect = frame.intersect(&canvas);
+                let tex = mask_gray_tint(&m.surface, sel, rect)?;
+                let info = serde_json::json!({
+                    "frame": [frame.x0, frame.y0, frame.x1, frame.y1],
+                    "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
+                    "layer": id.0,
+                    "kind": "Mask",
+                    "texScale": 1,
+                });
+                return Ok(TransformBegin {
+                    info,
+                    bg: Rendered { width: 0, height: 0, pixels: Vec::new() },
+                    tex: Rendered { width: rect.width(), height: rect.height(), pixels: tex.pixels },
+                });
+            }
+        }
+        if matches!(l.content, photocraft_engine::doc::LayerContent::Adjustment(_)) && l.mask.is_none() {
+            return Err(EditorError("adjustment layers need a mask to transform".into()));
+        }
         self.activate(doc)?;
         let st = self.session.active().ok_or_else(|| EditorError("no active document".into()))?;
         let id = st.active_layer.ok_or_else(|| EditorError("no active layer".into()))?;
@@ -1219,6 +1263,39 @@ fn find_layer(layers: &[photocraft_engine::doc::Layer], id: u64) -> Option<&phot
 }
 
 /// 按 id 在图层树(含编组子层)里找到图层并设为不可见(变换预览的"抽走"背景)。
+/// 蒙版面的灰度染色纹理(蒙版目标变换的预览,上游 lone target 的 UI 诊断色;
+/// 绕过色彩管理):rgb=灰度亮度 v·255;无选区 α=255(显示蒙版本身),带选区 α=选区
+/// 权重(只显示选中部分=split_gray_selected 的 lifted 显示语义)。
+fn mask_gray_tint(surface: &photocraft_raster::Surface, sel: Option<&photocraft_raster::Surface>, rect: Rect) -> Result<photocraft_raster::Rgba8Image> {
+    if surface.format().channels() != 1 {
+        return Err(EditorError("this channel can't be transformed".into()));
+    }
+    let mut tex = photocraft_raster::Rgba8Image::new(rect.width(), rect.height());
+    let rw = rect.width() as usize;
+    let mut row = vec![0f32; rw];
+    let mut srow = vec![0f32; rw];
+    for j in 0..rect.height() {
+        surface.sample_row_strided(rect.y0 + j as i32, rect.x0, 1, 0, &mut row);
+        if let Some(sel) = sel {
+            sel.sample_row_strided(rect.y0 + j as i32, rect.x0, 1, 0, &mut srow);
+        }
+        for (i, v) in row.iter().enumerate() {
+            let g = v.clamp(0.0, 1.0);
+            let a = match sel {
+                Some(_) => g.min(srow[i].clamp(0.0, 1.0)),
+                None => 1.0,
+            };
+            let o = (j as usize * rw + i) * 4;
+            let gv = ((g * 255.0) + 0.5) as u8;
+            tex.pixels[o] = gv;
+            tex.pixels[o + 1] = gv;
+            tex.pixels[o + 2] = gv;
+            tex.pixels[o + 3] = ((a * 255.0) + 0.5) as u8;
+        }
+    }
+    Ok(tex)
+}
+
 fn hide_layer(layers: &mut [photocraft_engine::doc::Layer], id: u64) -> bool {
     for l in layers.iter_mut() {
         if l.id.0 == id {

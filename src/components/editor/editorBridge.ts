@@ -318,8 +318,8 @@ export interface TransformBeginResult {
 }
 
 /** 解析 [jsonLen][JSON][bgW][bgH][bg][texW][texH][tex] 的变换进入响应。 */
-async function parseTransformBegin(cmd: string, doc: number): Promise<TransformBeginResult> {
-  const buf = await invoke<ArrayBuffer>(cmd, { doc });
+async function parseTransformBegin(cmd: string, doc: number, target?: string): Promise<TransformBeginResult> {
+  const buf = await invoke<ArrayBuffer>(cmd, { doc, target });
   const u8 = new Uint8Array(buf);
   const dv = new DataView(u8.buffer as ArrayBuffer, u8.byteOffset);
   const jsonLen = dv.getUint32(0, true);
@@ -346,8 +346,8 @@ async function parseTransformBegin(cmd: string, doc: number): Promise<TransformB
   };
 }
 
-export async function editorTransformBegin(doc: number): Promise<TransformBeginResult> {
-  return parseTransformBegin('editor_transform_begin', doc);
+export async function editorTransformBegin(doc: number, target?: string): Promise<TransformBeginResult> {
+  return parseTransformBegin('editor_transform_begin', doc, target);
 }
 
 /** 变换选区进入数据(上游 begin_selection):bg 为空(像素不动),tex=选区蒙版染色(降采样)。 */
