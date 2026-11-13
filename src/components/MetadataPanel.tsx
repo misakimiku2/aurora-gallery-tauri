@@ -1609,6 +1609,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     />
                 )}
 
+                {/* 编辑态(轻量快调 §7 修订)只保留 预览图+主色调+调整面板,以下全部让位 */}
+                {!adjustUiOpen && (
+                <>
                 {/* Folder Thumbnail */}
                 <FolderInfoSection
                     file={file}
@@ -1645,6 +1648,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         <FolderOpen size={16} className={`mr-2 ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'text-gray-400 dark:text-gray-500' : 'text-blue-500 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`} />
                         {t('context.openFolder')}
                     </button>
+                )}
+                </>
                 )}
 
                 {/* 轻量快调(设计 §7 修订):编辑态时本插槽以下切换为调整面板;

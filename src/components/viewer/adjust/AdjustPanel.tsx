@@ -1,16 +1,15 @@
 import React from 'react';
 import {
+  Crop,
   FlipHorizontal2,
   FlipVertical2,
   RotateCcw,
   RotateCw,
-  Scan,
   Sparkles,
   Undo2,
   Redo2,
   Download,
   Loader2,
-  X,
 } from 'lucide-react';
 import { AdjustParams, fitCropToAspect } from '../../../utils/adjust';
 import { ImageAdjustApi } from '../../../hooks/useImageAdjust';
@@ -27,7 +26,6 @@ export interface AdjustPanelProps {
   exporting: boolean;
   onExport: () => void;
   onAutoEnhance: () => void;
-  onClose: () => void;
 }
 
 const TONE_KEYS: Array<{ key: keyof AdjustParams['tone']; labelKey: string }> = [
@@ -66,7 +64,6 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   exporting,
   onExport,
   onAutoEnhance,
-  onClose,
 }) => {
   const { params } = adjust;
 
@@ -98,11 +95,14 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   return (
     <div
       className="flex flex-col gap-4"
+      // ⚠️ mousedown/pointerdown 都要拦:查看器容器的图片拖拽监听的是 mousedown,
+      // 只拦 pointerdown 拦不住后续派发的 mousedown(冒泡到容器=拖图,滑杆拖不动)
       onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* 标题行 */}
+      {/* 标题行(关闭走顶部工具栏的编辑开关/Esc,面板内不放关闭钮) */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('adjust.title')}</span>
         <div className="flex items-center gap-0.5">
@@ -112,16 +112,13 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
           <button onClick={adjust.redo} disabled={!adjust.canRedo} className={`${iconBtn} disabled:opacity-30`} title={t('adjust.redo')}>
             <Redo2 size={14} />
           </button>
-          <button onClick={onClose} className={iconBtn} title={t('adjust.close')}>
-            <X size={15} />
-          </button>
         </div>
       </div>
 
-      {/* 几何 */}
+      {/* 几何(五等分铺满面板宽) */}
       <section>
         <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('adjust.geometry')}</div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="grid grid-cols-5 place-items-center">
           <button onClick={() => adjust.rotateBy(-1)} className={iconBtn} title={t('viewer.rotateLeft')}>
             <RotateCcw size={15} />
           </button>
@@ -147,7 +144,7 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
             className={cropMode ? iconBtnActive : iconBtn}
             title={t('adjust.crop')}
           >
-            <Scan size={15} />
+            <Crop size={15} />
           </button>
         </div>
 

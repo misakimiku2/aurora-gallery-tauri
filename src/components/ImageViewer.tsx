@@ -521,12 +521,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // 有参数(非调整中)或调整中 → 用 AdjustCanvas 全量渲染(与缩略图/烘焙同口径);
   // 幻灯片态维持 <img> 原管线(幻灯片不吃参数,见设计 §7 边界)。
   const adjustShowCanvas = !isVideo && !slideshowActive && (adjustOpen || hasAdjust);
+  // 切换闪动消除(2026-11-13 用户实测 #1):<img> 常驻底层,画布首帧绘出后才藏 img——
+  // 此前 img 卸载→画布异步加载之间有个真空档,表现为"点编辑图片闪一下"
+  const [adjustCanvasReady, setAdjustCanvasReady] = useState(false);
   // Portal 插槽(MetadataPanel 渲染;查看器打开图片时即存在于 DOM)
   const adjustSlotEl = adjustOpen && typeof document !== 'undefined'
     ? document.getElementById('aurora-adjust-slot')
     : null;
 
-  useEffect(() => { setAdjustUi({ open: false, cropMode: false }); }, [file.id]);
+  useEffect(() => { setAdjustUi({ open: false, cropMode: false }); setAdjustCanvasReady(false); }, [file.id]);
+  useEffect(() => { if (!adjustOpen) setAdjustCanvasReady(false); }, [adjustOpen]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [immersiveFlip, setImmersiveFlip] = useState<{
@@ -2288,20 +2292,22 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               showCropUI={adjustOpen && cropMode}
               cropAspect={cropAspect}
               onCropChange={adjust.setCropNorm}
+              onFirstPaint={() => setAdjustCanvasReady(true)}
               className="max-w-none absolute inset-0 m-auto"
               style={{
                 width: '100%',
                 height: '100%',
                 transformOrigin: 'center center',
                 pointerEvents: 'auto',
-                zIndex: 2,
+                // 画布压在 <img>(z=2)之上;img 在画布首帧绘出前保持可见,无缝交接
+                zIndex: 3,
                 opacity: lanFadeIn ? 0 : 1,
                 transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
                 transition: (isDragging || isWheeling) ? 'none' : 'transform 0.1s linear',
               }}
             />
           )}
-          {!isVideo && !adjustShowCanvas && (
+          {!isVideo && (
           <>
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
@@ -2378,7 +2384,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               transformOrigin: 'center center',
               pointerEvents: slideshowActive ? 'none' : 'auto',
               zIndex: 2,
-              opacity: lanFadeIn ? 0 : 1,
+              // 轻量快调:画布首帧绘出前 img 保持可见(消除切换闪动),绘出后让位
+              opacity: lanFadeIn ? 0 : (adjustShowCanvas && adjustCanvasReady ? 0 : 1),
               ...filterStyle
             }}
             draggable={false}
@@ -2445,7 +2452,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             exporting={exporting}
             onExport={handleExportAdjusted}
             onAutoEnhance={handleAutoEnhance}
-            onClose={() => setAdjustUi({ open: false, cropMode: false })}
           />,
           adjustSlotEl
         )}

@@ -21,6 +21,8 @@ export interface AdjustCanvasProps {
   /** 锁定裁剪宽高比 w/h;null = 自由 */
   cropAspect?: number | null;
   onCropChange?: (crop: AdjustCropNorm | null) => void;
+  /** 首帧实际绘出后回调一次(查看器用它把底层 <img> 藏起来,消除切换闪动) */
+  onFirstPaint?: () => void;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -54,6 +56,7 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   showCropUI = false,
   cropAspect = null,
   onCropChange,
+  onFirstPaint,
   className,
   style,
 }) => {
@@ -64,8 +67,9 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   const viewRef = useRef({ vx: 0, vy: 0, scale: 1, dpr: 1 });
   const dragRef = useRef<DragMode>({ kind: 'none' });
   const rafRef = useRef<number | null>(null);
-  const stateRef = useRef({ params, interactive, showCropUI, cropAspect, onCropChange });
-  stateRef.current = { params, interactive, showCropUI, cropAspect, onCropChange };
+  const firstPaintRef = useRef(false);
+  const stateRef = useRef({ params, interactive, showCropUI, cropAspect, onCropChange, onFirstPaint });
+  stateRef.current = { params, interactive, showCropUI, cropAspect, onCropChange, onFirstPaint };
 
   // 1) 加载位图
   useEffect(() => {
@@ -144,6 +148,12 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     if (filter !== 'none') ctx.filter = filter;
     ctx.drawImage(frame.canvas, sx, sy, sw, sh, vx, vy, sw * viewScale, sh * viewScale);
     ctx.restore();
+
+    // 首帧已实际绘出 → 通知宿主(切换闪动的交接信号,每次挂载只报一次)
+    if (!firstPaintRef.current) {
+      firstPaintRef.current = true;
+      stateRef.current.onFirstPaint?.();
+    }
 
     // 裁剪覆盖层(不被影调滤镜影响)
     if (it && cropUI && p.geo.cropNorm) {
@@ -392,6 +402,8 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        // 裁剪交互时拦 mousedown:容器的图片拖拽监听 mousedown,不拦会"裁剪拖拽+整图平移"同时发生
+        onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
       />
     </div>
   );
