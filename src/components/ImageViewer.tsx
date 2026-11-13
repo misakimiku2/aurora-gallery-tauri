@@ -533,6 +533,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => { setAdjustUi({ open: false, cropMode: false }); setAdjustCanvasReady(false); }, [file.id]);
   useEffect(() => { if (!adjustOpen) setAdjustCanvasReady(false); }, [adjustOpen]);
+  // Esc 处理器闭包里用 ref 取最新 resetHard(其身份随 fileId 变化)
+  const adjustResetHardRef = useRef(adjust.resetHard);
+  useEffect(() => { adjustResetHardRef.current = adjust.resetHard; });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [immersiveFlip, setImmersiveFlip] = useState<{
@@ -1639,14 +1642,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }
       }
 
-      if (e.key === 'ArrowRight') onNextRef.current();
-      if (e.key === 'ArrowLeft') onPrevRef.current();
+      // 调整态屏蔽左右切图(2026-11-13 用户拍板):编辑会话内箭头键不换图
+      if (e.key === 'ArrowRight' && !adjustOpen) onNextRef.current();
+      if (e.key === 'ArrowLeft' && !adjustOpen) onPrevRef.current();
       if (e.key === 'Escape') {
         if (isImmersiveModeRef.current) {
           return;
         }
         if (showSearch) setShowSearch(false);
-        else if (adjustOpen) setAdjustUi({ open: false, cropMode: false });
+        else if (adjustOpen) {
+          // Esc 关闭 = 取消调整(与顶部开关同口径):丢弃会话内调整
+          setAdjustUi({ open: false, cropMode: false });
+          adjustResetHardRef.current();
+        }
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
         else if (slideshowActive) stopSlideshow();
         else if (canGoBack) onNavigateBack();
@@ -2204,9 +2212,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               <button
                 onClick={() => {
                   const next = !adjustOpen;
-                  setAdjustUi({ open: next, cropMode: next ? cropMode : false });
-                  // 面板住在右栏(§7 修订):右栏没展开时顺手展开
-                  if (next && !layout.isMetadataVisible) onLayoutToggle('metadata');
+                  // 关闭 = 取消调整(2026-11-13 用户拍板):丢弃会话内调整,恢复原状态。
+                  // 硬复位会清参数行/撤销栈并失效缩略图缓存,查看器回到原图。
+                  if (next) {
+                    setAdjustUi({ open: true, cropMode: false });
+                    if (!layout.isMetadataVisible) onLayoutToggle('metadata');
+                  } else {
+                    setAdjustUi({ open: false, cropMode: false });
+                    adjust.resetHard();
+                  }
                 }}
                 className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${adjustOpen || hasAdjust ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
                 title={t('adjust.title')}
@@ -2493,7 +2507,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           adjustSlotEl
         )}
 
-        {!slideshowActive && (
+        {/* 调整态屏蔽左右切图:边缘悬停箭头一并隐藏 */}
+        {!slideshowActive && !adjustOpen && (
           <>
             <div className="absolute inset-y-0 left-0 w-24 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-black/30 to-transparent z-10 pointer-events-auto">
               <button

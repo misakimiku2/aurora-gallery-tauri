@@ -113,8 +113,10 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
       onWheel={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* 可滚动参数区;动作行钉在面板最底部(2026-11-13 用户拍板) */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+      {/* 可滚动参数区;动作行钉在面板最底部(2026-11-13 用户拍板)。
+          ⚠️ 内层滚动勿用 custom-scrollbar( gutter+负 margin 补偿是面板级专用,
+          嵌套会把右侧内容裁掉)——用 index.css 的 .adjust-inner-scroll */}
+      <div className="flex-1 min-h-0 adjust-inner-scroll flex flex-col gap-4">
       {/* 标题行(关闭走顶部工具栏的编辑开关/Esc,面板内不放关闭钮) */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('adjust.title')}</span>
@@ -259,16 +261,19 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
         {saveMenuOpen && (
           <>
             <div className="fixed inset-0 z-20" onClick={() => setSaveMenuOpen(false)} />
-            <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-lg bg-white dark:bg-[#2a2a2a] shadow-xl border border-gray-200 dark:border-gray-700 py-1">
+            {/* 与"另存为"同风格的蓝色按钮;不可用(非 JPG/PNG 源)时整钮置灰(2026-11-13 用户拍板) */}
+            <div className="absolute bottom-full left-0 right-0 mb-1 z-30">
               <button
                 onClick={() => { setSaveMenuOpen(false); onOverwrite(); }}
                 disabled={!canOverwrite || !hasChanges || exporting}
                 title={!canOverwrite ? t('adjust.overwriteUnsupported') : undefined}
-                className="w-full px-3 py-2 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 text-gray-700 dark:text-gray-200 transition-colors"
+                className={`w-full h-8 px-3 rounded-lg text-xs font-medium transition-colors ${
+                  !canOverwrite
+                    ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                    : 'bg-blue-500 hover:bg-blue-600 text-white'
+                }`}
               >
-                <Save size={13} />
-                {t('adjust.overwrite')}
-                {!canOverwrite && <span className="ml-auto text-[10px] text-gray-400">{t('adjust.overwriteUnsupported')}</span>}
+                {t('adjust.save')}
               </button>
             </div>
           </>
