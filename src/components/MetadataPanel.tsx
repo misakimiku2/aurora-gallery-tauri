@@ -1563,7 +1563,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 onCancelRename={cancelRename}
             />
 
-            <div className="p-5 space-y-6">
+            {/* 编辑态:内容区变 flex 列,调整插槽撑满剩余高度(动作行钉到面板最底) */}
+            <div className={`p-5 space-y-6 ${adjustUiOpen ? 'flex-1 min-h-0 flex flex-col' : ''}`}>
 
                 {/* Multi-Selection Composition Chart */}
                 {isMulti && (
@@ -1655,7 +1656,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* 轻量快调(设计 §7 修订):编辑态时本插槽以下切换为调整面板;
                     插槽内容由 ImageViewer 经 Portal 注入,关闭态 display:none 不占版面 */}
                 {!isMulti && file && file.type === FileType.IMAGE && (
-                    <div id="aurora-adjust-slot" style={{ display: adjustUiOpen ? 'block' : 'none' }} />
+                    <div
+                        id="aurora-adjust-slot"
+                        className={`flex flex-col ${adjustUiOpen ? 'flex-1 min-h-0' : ''}`}
+                        style={{ display: adjustUiOpen ? 'flex' : 'none' }}
+                    />
                 )}
 
                 {!adjustUiOpen && (

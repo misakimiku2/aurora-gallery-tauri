@@ -37,6 +37,8 @@ export interface ImageAdjustApi {
   setCropNorm: (crop: AdjustCropNorm | null) => void;
   applyAutoEnhance: (stats: AutoEnhanceStats) => void;
   resetAll: () => void;
+  /** 硬复位(不进撤销栈):覆盖原图后用——像素已烘焙,历史回退会二次套参 */
+  resetHard: () => void;
   undo: () => void;
   redo: () => void;
 }
@@ -204,6 +206,26 @@ export function useImageAdjust(fileId: string | undefined, filePath: string | un
     applyEdit(() => cloneDefault());
   }, [applyEdit]);
 
+  const resetHard = useCallback(() => {
+    pastRef.current = [];
+    futureRef.current = [];
+    lastHistoryAtRef.current = 0;
+    setParams(cloneDefault());
+    dirtyRef.current = false;
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    if (fileId) {
+      editClearParams(fileId)
+        .then(() => {
+          setAdjustParams(filePath, null);
+          if (filePath) invalidateAdjustedThumbnail(filePath);
+        })
+        .catch((e) => console.warn('[adjust] clear failed:', e));
+    }
+  }, [fileId, filePath]);
+
   const undo = useCallback(() => {
     const prev = pastRef.current.pop();
     if (!prev || !fileId) return;
@@ -239,6 +261,7 @@ export function useImageAdjust(fileId: string | undefined, filePath: string | un
     setCropNorm,
     applyAutoEnhance,
     resetAll,
+    resetHard,
     undo,
     redo,
   };

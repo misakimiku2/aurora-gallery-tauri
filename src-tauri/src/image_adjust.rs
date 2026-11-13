@@ -405,6 +405,11 @@ pub struct BakeOutcome {
 /// 导出/另存（设计 §9）：烘焙参数为像素并写**新文件**，原图与参数不动。
 /// 写盘后按 write_file_bytes_indexed 同款口径入 file_index（含显示宽高），并
 /// 发 `metadata-updated` 让网格即时可见。
+/// 导出/另存（设计 §9）：烘焙参数为像素并写**新文件**，原图与参数不动；
+/// `overwrite_original=true` 时改为**覆盖原图**（写回 src_path，烘焙后清参数行，
+/// 否则缩略图会对已烘焙的像素二次套参）——仅支持 JPG/PNG 源（格式随源扩展名，
+/// 防字节与扩展名错位）。写盘后按 write_file_bytes_indexed 同款口径入
+/// file_index（含显示宽高），并发 `metadata-updated` 让网格即时可见。
 #[tauri::command]
 pub async fn bake_edits(
     app: tauri::AppHandle,
@@ -413,9 +418,10 @@ pub async fn bake_edits(
     format: Option<String>,
     quality: Option<u8>,
     max_width: Option<u32>,
+    overwrite_original: Option<bool>,
 ) -> Result<BakeOutcome, String> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        bake_sync(&app, &src_path, &params_json, format.as_deref(), quality, max_width)
+        bake_sync(&app, &src_path, &params_json, format.as_deref(), quality, max_width, overwrite_original.unwrap_or(false))
     })
     .await
     .map_err(|e| format!("烘焙任务失败: {}", e))?;
@@ -429,6 +435,7 @@ fn bake_sync(
     format: Option<&str>,
     quality: Option<u8>,
     max_width: Option<u32>,
+    overwrite_original: bool,
 ) -> Result<BakeOutcome, String> {
     use aurora_core::db::file_index::FileIndexEntry;
     use aurora_core::db::{normalize_path, generate_id, AppDbPool};
@@ -438,6 +445,22 @@ fn bake_sync(
     if !Path::new(src_path).exists() {
         return Err(format!("源文件不存在: {}", src_path));
     }
+
+    let src_ext = Path::new(src_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    // 覆盖原图：格式随源扩展名（防扩展名与字节错位），仅 JPG/PNG
+    let fmt = if overwrite_original {
+        match src_ext.as_str() {
+            "jpg" | "jpeg" => "jpeg",
+            "png" => "png",
+            other => return Err(format!("该格式(.{})暂不支持覆盖保存（仅 JPG/PNG）", other)),
+        }
+    } else {
+        format.unwrap_or("jpeg")
+    };
 
     let img = render_adjusted(src_path, &params)?;
     // 导出尺寸控制：只缩不放（显式算目标高，避免 u32::MAX 溢出口径）
@@ -449,10 +472,13 @@ fn bake_sync(
         _ => img,
     };
 
-    let fmt = format.unwrap_or("jpeg");
     let (bytes, ext, out_w, out_h) = encode_dynamic(&img, fmt, quality.unwrap_or(90))?;
 
-    let out_path = next_export_path(src_path, ext);
+    let out_path = if overwrite_original {
+        PathBuf::from(src_path)
+    } else {
+        next_export_path(src_path, ext)
+    };
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("建目录失败: {}", e))?;
     }
@@ -503,6 +529,10 @@ fn bake_sync(
         let mut conn = app_db.get_connection();
         aurora_core::db::file_index::batch_upsert(&mut conn, &[entry.clone()])
             .map_err(|e| format!("入索引失败: {}", e))?;
+        // 覆盖原图：烘焙像素已含调整，参数行必须清除（否则缩略图对已烘焙像素二次套参）
+        if overwrite_original {
+            let _ = aurora_core::db::file_edits::clear_params(&mut conn, &entry.file_id);
+        }
     }
     use tauri::Emitter;
     let _ = app.emit("metadata-updated", &[entry.clone()]);

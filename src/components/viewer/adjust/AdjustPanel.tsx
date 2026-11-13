@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Crop,
   FlipHorizontal2,
@@ -8,10 +8,12 @@ import {
   Sparkles,
   Undo2,
   Redo2,
+  ChevronDown,
   Download,
   Loader2,
+  Save,
 } from 'lucide-react';
-import { AdjustParams, fitCropToAspect } from '../../../utils/adjust';
+import { AdjustParams, isDefaultAdjustParams, fitCropToAspect } from '../../../utils/adjust';
 import { ImageAdjustApi } from '../../../hooks/useImageAdjust';
 
 export interface AdjustPanelProps {
@@ -24,7 +26,11 @@ export interface AdjustPanelProps {
   onCropAspectChange: (aspect: number | null) => void;
   /** 导出中状态(由查看器持有) */
   exporting: boolean;
-  onExport: () => void;
+  /** 另存为:产 -edited 新文件 */
+  onSaveAs: () => void;
+  /** 覆盖原图:仅 JPG/PNG 源可用(查看器按扩展名判定) */
+  canOverwrite: boolean;
+  onOverwrite: () => void;
   onAutoEnhance: () => void;
 }
 
@@ -62,10 +68,15 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   cropAspect,
   onCropAspectChange,
   exporting,
-  onExport,
+  onSaveAs,
+  canOverwrite,
+  onOverwrite,
   onAutoEnhance,
 }) => {
   const { params } = adjust;
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+  // 无调整不可另存/覆盖(2026-11-13 用户拍板);撤销回默认也会重新置灰
+  const hasChanges = !isDefaultAdjustParams(params);
 
   const toggleCrop = (): void => {
     if (cropMode) {
@@ -94,7 +105,7 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
 
   return (
     <div
-      className="flex flex-col gap-4"
+      className="flex flex-col flex-1 min-h-0"
       // ⚠️ mousedown/pointerdown 都要拦:查看器容器的图片拖拽监听的是 mousedown,
       // 只拦 pointerdown 拦不住后续派发的 mousedown(冒泡到容器=拖图,滑杆拖不动)
       onPointerDown={(e) => e.stopPropagation()}
@@ -102,6 +113,8 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
       onWheel={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+      {/* 可滚动参数区;动作行钉在面板最底部(2026-11-13 用户拍板) */}
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
       {/* 标题行(关闭走顶部工具栏的编辑开关/Esc,面板内不放关闭钮) */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('adjust.title')}</span>
@@ -239,33 +252,64 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
         </div>
       </section>
 
-      {/* 动作行 */}
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          onClick={onAutoEnhance}
-          className="h-8 px-3 rounded-lg bg-amber-500/90 hover:bg-amber-500 text-white text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
-          title={t('adjust.autoEnhance')}
-        >
-          <Sparkles size={13} />
-          {t('adjust.autoEnhance')}
-        </button>
-        <button
-          onClick={onExport}
-          disabled={exporting}
-          className="flex-1 h-8 px-3 rounded-lg bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
-          title={t('adjust.export')}
-        >
-          {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          {exporting ? t('adjust.exporting') : t('adjust.export')}
-        </button>
-        <button
-          onClick={adjust.resetAll}
-          className="h-8 px-3 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
-          title={t('adjust.resetAll')}
-        >
-          <RotateCcw size={13} />
-          {t('adjust.resetAll')}
-        </button>
+      </div>
+
+      {/* 动作行:钉在右栏最底部;另存为 = 分体按钮(箭头展开"覆盖原图") */}
+      <div className="shrink-0 pt-3 relative">
+        {saveMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-20" onClick={() => setSaveMenuOpen(false)} />
+            <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-lg bg-white dark:bg-[#2a2a2a] shadow-xl border border-gray-200 dark:border-gray-700 py-1">
+              <button
+                onClick={() => { setSaveMenuOpen(false); onOverwrite(); }}
+                disabled={!canOverwrite || !hasChanges || exporting}
+                title={!canOverwrite ? t('adjust.overwriteUnsupported') : undefined}
+                className="w-full px-3 py-2 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 text-gray-700 dark:text-gray-200 transition-colors"
+              >
+                <Save size={13} />
+                {t('adjust.overwrite')}
+                {!canOverwrite && <span className="ml-auto text-[10px] text-gray-400">{t('adjust.overwriteUnsupported')}</span>}
+              </button>
+            </div>
+          </>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onAutoEnhance}
+            className="h-8 px-2.5 rounded-lg bg-amber-500/90 hover:bg-amber-500 text-white text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+            title={t('adjust.autoEnhance')}
+          >
+            <Sparkles size={13} />
+            {t('adjust.autoEnhance')}
+          </button>
+          <div className="flex-1 flex h-8 rounded-lg overflow-hidden">
+            <button
+              onClick={onSaveAs}
+              disabled={!hasChanges || exporting}
+              className="flex-1 min-w-0 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+              title={t('adjust.saveAs')}
+            >
+              {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              <span className="truncate">{exporting ? t('adjust.exporting') : t('adjust.saveAs')}</span>
+            </button>
+            <button
+              onClick={() => setSaveMenuOpen((v) => !v)}
+              disabled={!hasChanges || exporting}
+              className="w-7 shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 border-l border-blue-400/40 text-white flex items-center justify-center transition-colors"
+              title={t('adjust.saveOptions')}
+            >
+              <ChevronDown size={13} className={saveMenuOpen ? 'rotate-180' : ''} />
+            </button>
+          </div>
+          <button
+            onClick={adjust.resetAll}
+            className="h-8 px-2.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+            title={t('adjust.resetAll')}
+          >
+            <RotateCcw size={13} />
+            {t('adjust.resetAll')}
+          </button>
+        </div>
       </div>
     </div>
   );

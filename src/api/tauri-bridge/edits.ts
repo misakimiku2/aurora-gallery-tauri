@@ -25,6 +25,11 @@ export interface BakeOptions {
   quality?: number;
   /** 导出最大宽度(只缩不放) */
   maxWidth?: number;
+  /**
+   * 覆盖原图(2026-11-13 用户拍板):写回 src_path 本身,烘焙后 Rust 侧自动清参数行;
+   * 仅 JPG/PNG 源支持(格式随源),webp/gif 由 Rust 明确报错
+   */
+  overwriteOriginal?: boolean;
 }
 
 export function editGetParams(fileId: string): Promise<string | null> {
@@ -55,5 +60,6 @@ export function bakeEdits(srcPath: string, params: AdjustParams, opts?: BakeOpti
     format: opts?.format ?? null,
     quality: opts?.quality ?? null,
     maxWidth: opts?.maxWidth ?? null,
+    overwriteOriginal: opts?.overwriteOriginal ?? null,
   });
 }

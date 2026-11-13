@@ -524,6 +524,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // 切换闪动消除(2026-11-13 用户实测 #1):<img> 常驻底层,画布首帧绘出后才藏 img——
   // 此前 img 卸载→画布异步加载之间有个真空档,表现为"点编辑图片闪一下"
   const [adjustCanvasReady, setAdjustCanvasReady] = useState(false);
+  // 覆盖原图后冲缓存重读盘的触发器(displayUrl effect 依赖它重跑)
+  const [displayReloadTick, setDisplayReloadTick] = useState(0);
   // Portal 插槽(MetadataPanel 渲染;查看器打开图片时即存在于 DOM)
   const adjustSlotEl = adjustOpen && typeof document !== 'undefined'
     ? document.getElementById('aurora-adjust-slot')
@@ -984,7 +986,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }
       });
     }
-  }, [file.path, remoteEpoch, isVideo]);
+  }, [file.path, remoteEpoch, isVideo, displayReloadTick]);
 
   // 清理过渡计时器
   useEffect(() => {
@@ -1844,6 +1846,39 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
   };
 
+  // 覆盖原图(2026-11-13 用户拍板):烘焙写回原路径,Rust 侧清参数行;
+  // 前端硬复位 + 冲掉查看器 blob 缓存重读盘(否则看到的还是旧字节)
+  const bustOriginalCache = (path: string): void => {
+    const url = blobCache.get(path);
+    if (url && url.startsWith('blob:')) {
+      try { URL.revokeObjectURL(url); } catch { /* 已失效 */ }
+    }
+    blobCache.delete(path);
+    blobCacheSizes.delete(path);
+    loadingPromises.delete(path);
+  };
+
+  const handleOverwriteOriginal = async (): Promise<void> => {
+    if (isVideo || exporting) return;
+    const ext = (file.path.split('.').pop() || '').toLowerCase();
+    setAdjustUi({ exporting: true });
+    try {
+      await bakeEdits(file.path, adjust.params, {
+        format: ext === 'png' ? 'png' : 'jpeg',
+        quality: 90,
+        overwriteOriginal: true,
+      });
+      adjust.resetHard();
+      bustOriginalCache(file.path);
+      setDisplayReloadTick((t) => t + 1);
+      showFrameToast(t('adjust.overwriteDone'));
+    } catch (e) {
+      showFrameToast(`${t('adjust.exportFailed')}: ${String(e)}`);
+    } finally {
+      setAdjustUi({ exporting: false });
+    }
+  };
+
   const rotate = (deg: number) => setRotation(r => r + deg);
 
   // 当前媒体元素（图片或视频），供缩放/平移类操作共用
@@ -2439,8 +2474,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
         )}
 
-        {/* 调整面板(轻量快调 §7 修订):Portal 注入右侧面板插槽("打开所在文件夹"以下),
-            不再浮窗;Esc/关闭按钮经 store 关闭 */}
+        {/* 调整面板(轻量快调 §7 修订):Portal 注入右侧面板插槽("打开所在文件夹"以下,
+            已精简为只剩预览/主色调/调整),不再浮窗;Esc/顶部编辑开关经 store 关闭 */}
         {adjustOpen && !isVideo && !slideshowActive && adjustSlotEl && createPortal(
           <AdjustPanel
             t={t}
@@ -2450,7 +2485,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             cropAspect={cropAspect}
             onCropAspectChange={(a) => setAdjustUi({ cropAspect: a })}
             exporting={exporting}
-            onExport={handleExportAdjusted}
+            onSaveAs={handleExportAdjusted}
+            canOverwrite={['jpg', 'jpeg', 'png'].includes((file.path.split('.').pop() || '').toLowerCase())}
+            onOverwrite={handleOverwriteOriginal}
             onAutoEnhance={handleAutoEnhance}
           />,
           adjustSlotEl
