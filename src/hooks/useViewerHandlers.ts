@@ -1,7 +1,9 @@
 import type { AppState, TabState } from '../types';
 import { FileType } from '../types';
+import { useEffect, useRef } from 'react';
 import { info as logInfo } from '../utils/logger';
 import { useNavigation } from './useNavigation';
+import { discardAdjustViewerSession } from './useImageAdjust';
 
 interface UseViewerHandlersParams {
   activeTab: TabState;
@@ -23,6 +25,21 @@ export const useViewerHandlers = ({
   updateActiveTab,
   pushHistory,
 }: UseViewerHandlersParams) => {
+  // ── 调整会话治理(轻量编辑器,2026-11-14 用户拍板)────────────────────────
+  // 关查看器的所有路径(后退钮=onNavigateBack 历史弹栈/Esc/关闭钮/closeViewer/
+  // 原生桥)最终都表现为 activeTab.viewingFileId 非空 → 空。盯这个过渡统一收口:
+  // 丢弃本会话全部未保存调整(参数行+网格角标/缩略图联动)+ 关编辑面板。
+  // 换图(A→B)不触发;强杀应用遗留的参数行由 useImageAdjust 的加载登记在下次
+  // 打开+关闭时自愈。丢弃的幂等性使 StrictMode 双跑无害。
+  const prevViewingRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevViewingRef.current;
+    prevViewingRef.current = activeTab.viewingFileId;
+    if (prev && prev !== activeTab.viewingFileId && !activeTab.viewingFileId) {
+      discardAdjustViewerSession();
+    }
+  }, [activeTab.viewingFileId]);
+
   const closeViewer = () => {
     const currentScroll = selectionRef.current?.scrollTop || 0;
     if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) {

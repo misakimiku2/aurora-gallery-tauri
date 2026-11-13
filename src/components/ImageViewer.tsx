@@ -1884,6 +1884,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     setAdjustUi({ exporting: true });
     try {
       const out = await bakeEdits(file.path, adjust.params, { format, quality: 90 });
+      // 另存为 = 成果已烘焙进 -edited 新文件,原图立即复位(2026-11-14 用户实测:
+      // 参数若保留,网格缩略图/再次打开/编辑会话全按未烘焙参数呈现裁剪结果,极易误读成原图被改)。
+      // resetHard 清持久化参数行 + 同步 adjustStore + 失效缩略图缓存 → 原图处处回原样。
+      adjust.resetHard();
       showFrameToast(`${t('adjust.exportDone')}: ${out.outPath.replace(/^.*[\\/]/, '')}`);
     } catch (e) {
       showFrameToast(`${t('adjust.exportFailed')}: ${String(e)}`);

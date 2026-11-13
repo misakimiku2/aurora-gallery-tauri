@@ -603,7 +603,12 @@ export const App: React.FC = () => {
             let changed = false;
 
             updatedEntries.forEach(entry => {
-              const fileId = entry.fileId;
+              // Rust FileIndexEntry 未加 serde rename → 实际是 snake_case(file_id 等);
+              // 兼容 camelCase 读取,防 Rust 侧日后补 rename 后这里静默失效。
+              const fileId: string | undefined = entry.file_id ?? entry.fileId;
+              if (!fileId) return;
+              const parentId: string | null = entry.parent_id ?? entry.parentId ?? null;
+
               if (nextFiles[fileId]) {
                 const current = nextFiles[fileId];
                 // Only update if width/height changed from 0
@@ -620,7 +625,43 @@ export const App: React.FC = () => {
                   };
                   changed = true;
                 }
+                return;
               }
+
+              // 新文件入网格(2026-11-14 用户实测:bake_edits 另存为产出的 -edited 文件
+              // 之前必须手动刷新才可见)。Rust 已入 file_index 并携带完整索引字段;
+              // 这里把父文件夹**已加载**的图片条目即时建成节点挂进 children,
+              // 父文件夹不在 state.files(未浏览过)则跳过,留给下次扫描自然带上。
+              if (entry.file_type !== 'Image' && entry.fileType !== 'Image') return;
+              const parent = parentId ? nextFiles[parentId] : undefined;
+              if (!parent) return;
+              const toIso = (sec?: number | null): string | undefined => {
+                if (!sec || sec <= 0) return undefined;
+                try { return new Date(sec * 1000).toISOString(); } catch { return undefined; }
+              };
+              nextFiles[fileId] = {
+                id: fileId,
+                parentId,
+                name: entry.name ?? '',
+                type: FileType.IMAGE,
+                path: entry.path ?? '',
+                size: entry.size ?? 0,
+                tags: [],
+                createdAt: toIso(entry.created_at ?? entry.createdAt),
+                updatedAt: toIso(entry.modified_at ?? entry.modifiedAt),
+                meta: {
+                  width: entry.width ?? 0,
+                  height: entry.height ?? 0,
+                  sizeKb: Math.round((entry.size ?? 0) / 1024),
+                  created: toIso(entry.created_at ?? entry.createdAt) ?? '',
+                  modified: toIso(entry.modified_at ?? entry.modifiedAt) ?? '',
+                  format: entry.format ?? '',
+                },
+              };
+              if (!parent.children?.includes(fileId)) {
+                nextFiles[parent.id] = { ...parent, children: [...(parent.children || []), fileId] };
+              }
+              changed = true;
             });
 
             return changed ? { ...prev, files: nextFiles } : prev;

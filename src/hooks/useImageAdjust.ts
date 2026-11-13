@@ -15,7 +15,7 @@ import {
   isDefaultAdjustParams,
   sanitizeAdjustParams,
 } from '../utils/adjust';
-import { setAdjustParams } from '../utils/adjustStore';
+import { setAdjustParams, setAdjustUi } from '../utils/adjustStore';
 import { invalidateAdjustedThumbnail } from '../api/tauri-bridge/thumbnail';
 import { editClearParams, editGetParams, editSetParams } from '../api/tauri-bridge/edits';
 import { AutoEnhanceStats } from '../utils/adjustCanvasDraw';
@@ -23,6 +23,42 @@ import { AutoEnhanceStats } from '../utils/adjustCanvasDraw';
 const HISTORY_LIMIT = 50;
 const PERSIST_DEBOUNCE_MS = 500;
 const HISTORY_MERGE_MS = 400;
+
+// ── 查看器会话治理(2026-11-14 用户拍板:轻量小编辑器)────────────────────────
+// 语义:调整会话只在查看器存续期内有效,**关查看器 = 会话结束**,未烘焙的调整
+// 一律丢弃(参数行清除 + 网格角标/缩略图回原样 + 编辑面板关闭)——"弄的东西没了就没了"。
+// 另存为/覆盖原图各自烘焙+复位,不受影响;换图(A→B)不清,会话内翻回去还能接着看。
+// 登记两路:加载到活参数行(含应用杀进程遗留的行,下次关闭自愈)+ 本会话内落盘过参数。
+
+const sessionFiles = new Map<string, string | undefined>(); // fileId -> filePath
+
+export function trackAdjustSessionFile(fileId: string, filePath?: string): void {
+  if (fileId) sessionFiles.set(fileId, filePath);
+}
+
+/** 关查看器:丢弃本会话全部未保存调整并复位编辑面板开关。closeViewer 唯一出口调用。 */
+export function discardAdjustViewerSession(): void {
+  setAdjustUi({ open: false, cropMode: false, cropAspect: null });
+  if (sessionFiles.size === 0) return;
+  const jobs: Array<Promise<unknown>> = [];
+  for (const [fileId, path] of sessionFiles) {
+    jobs.push(
+      editClearParams(fileId)
+        .then(() => {
+          setAdjustParams(path ?? null, null);
+          if (path) invalidateAdjustedThumbnail(path);
+        })
+        .catch((e) => console.warn('[adjust] session discard failed:', fileId, e))
+    );
+  }
+  const ids = Array.from(sessionFiles.keys());
+  sessionFiles.clear();
+  // 二次清:首批 clear 与在途 editSetParams(500ms 防抖刚触发)的完成序不保证,
+  // 首批完成后再清一轮,把可能后到的写回抹掉(残余竞态由下次打开+关闭自愈兜底)。
+  void Promise.all(jobs).then(() => {
+    void Promise.all(ids.map((id) => editClearParams(id).catch(() => {})));
+  });
+}
 
 export interface ImageAdjustApi {
   params: AdjustParams;
@@ -81,6 +117,7 @@ export function useImageAdjust(fileId: string | undefined, filePath: string | un
             })
             .catch((e) => console.warn('[adjust] clear failed:', e));
         } else {
+          trackAdjustSessionFile(fileIdVal, path);
           editSetParams(fileIdVal, next)
             .then(() => {
               setAdjustParams(path, next);
@@ -113,6 +150,8 @@ export function useImageAdjust(fileId: string | undefined, filePath: string | un
       .then((json) => {
         if (cancelled) return;
         const next = json ? sanitizeAdjustParams(JSON.parse(json)) : cloneDefault();
+        // 有活参数行就登记进查看器会话(含应用强杀遗留的行):关查看器统一丢弃,自愈残留
+        if (json) trackAdjustSessionFile(fileId, filePath);
         setParams(next);
         dirtyRef.current = !isDefaultAdjustParams(next);
         setAdjustParams(filePath, isDefaultAdjustParams(next) ? null : next);
