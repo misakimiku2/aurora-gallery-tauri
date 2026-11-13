@@ -4,7 +4,8 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download, Play,
+  SlidersHorizontal
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
@@ -63,6 +64,8 @@ interface ContextMenuProps {
   handleSearchSimilarImages?: (imageId: string) => void;
   openClipSettings?: () => void;
   handleDownloadAndroidFiles?: (ids: string[]) => void;
+  /** 编辑图片:打开查看器并直达调整态(文件右键菜单,2026-11-14 用户口径) */
+  onEditImage?: (id: string) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -109,7 +112,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handleCopyImageToClipboard,
   handleSearchSimilarImages,
   openClipSettings,
-  handleDownloadAndroidFiles
+  handleDownloadAndroidFiles,
+  onEditImage
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -279,6 +283,13 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
         {/* 视频播放UI设计 §7.1：复制图片仅对图片（视频隐藏该项 —— 复制的是静态位图）。
             TODO(P1.5 抽帧后)：视频接「复制封面/复制当前帧」（§7.2/§7.4），届时放开为 !== FOLDER 并替换图标文案。 */}
+        {/* 编辑图片:打开查看器并直达调整态(仅单张图片;在"复制图片"上方,2026-11-14 用户口径) */}
+        {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && onEditImage && (
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onEditImage(contextMenu.targetId!); closeContextMenu(); }}>
+            <SlidersHorizontal size={iconSize} className="mr-2 opacity-70" />
+            {t('adjust.editImage')}
+          </div>
+        )}
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && (
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCopyImageToClipboard(contextMenu.targetId!); closeContextMenu(); }}>
             <Clipboard size={iconSize} className="mr-2 opacity-70" />

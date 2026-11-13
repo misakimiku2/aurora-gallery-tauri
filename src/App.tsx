@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { setAdjustUi } from './utils/adjustStore';
 import { lanClientApi } from './components/lan-client/lanClientApi';
 import { androidClientRegistry, androidDeviceKeyOf } from './components/android-client/androidClientApi';
 import * as remoteSourceUtil from './utils/remoteSource';
@@ -2112,6 +2113,11 @@ export const App: React.FC = () => {
       enterViewer(id);
     }
   }, [getFileNode, handleNavigateFolder, enterViewer]);
+  // 右键「编辑图片」:打开查看器并直达调整态(查看器首挂守卫保证 open 不被吞,2026-11-14)
+  const handleEditImage = useCallback((id: string) => {
+    enterViewer(id);
+    setAdjustUi({ open: true, cropMode: false });
+  }, [enterViewer]);
   const closeViewerRef = useRef(closeViewer);
   closeViewerRef.current = closeViewer;
   const performSearchRef = useRef(handlePerformSearch);
@@ -3066,6 +3072,7 @@ export const App: React.FC = () => {
         handleSearchSimilarImages={handleSearchSimilarImages}
         openClipSettings={openClipSettings}
         handleDownloadAndroidFiles={handleDownloadAndroidFiles}
+        onEditImage={handleEditImage}
       />
     </div>
   );

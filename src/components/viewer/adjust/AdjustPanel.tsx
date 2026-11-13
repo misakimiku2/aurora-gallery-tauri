@@ -1,17 +1,25 @@
 import React, { useState } from 'react';
 import {
+  Contrast,
   Crop,
+  Droplet,
   FlipHorizontal2,
   FlipVertical2,
+  Palette,
   RotateCcw,
   RotateCw,
-  Sparkles,
+  Ruler,
+  Wand2,
+  Sun,
+  Thermometer,
   Undo2,
   Redo2,
   ChevronDown,
   Download,
   Loader2,
   Save,
+  X,
+  type LucideIcon,
 } from 'lucide-react';
 import { AdjustParams, isDefaultAdjustParams } from '../../../utils/adjust';
 import { ImageAdjustApi } from '../../../hooks/useImageAdjust';
@@ -21,9 +29,8 @@ export interface AdjustPanelProps {
   adjust: ImageAdjustApi;
   /** 裁剪交互态(与 AdjustCanvas 的 showCropUI 联动) */
   cropMode: boolean;
-  onCropModeChange: (on: boolean) => void;
-  cropAspect: number | null;
-  onCropAspectChange: (aspect: number | null) => void;
+  /** 裁剪开关(进/出裁剪态;进态快照/自动框/退出语义在查看器侧统一处理) */
+  onCropToggle: () => void;
   /** 导出中状态(由查看器持有) */
   exporting: boolean;
   /** 另存为:产 -edited 新文件 */
@@ -32,22 +39,16 @@ export interface AdjustPanelProps {
   canOverwrite: boolean;
   onOverwrite: () => void;
   onAutoEnhance: () => void;
+  /** 取消=关闭调整面板(丢弃会话内调整,查看器侧 resetHard) */
+  onCancel: () => void;
 }
 
-const TONE_KEYS: Array<{ key: keyof AdjustParams['tone']; labelKey: string }> = [
-  { key: 'brightness', labelKey: 'adjust.brightness' },
-  { key: 'contrast', labelKey: 'adjust.contrast' },
-  { key: 'saturation', labelKey: 'adjust.saturation' },
-  { key: 'temperature', labelKey: 'adjust.temperature' },
-  { key: 'tint', labelKey: 'adjust.tint' },
-];
-
-const ASPECT_PRESETS: Array<{ label: string; value: number | null }> = [
-  { label: 'Free', value: null },
-  { label: '1:1', value: 1 },
-  { label: '4:3', value: 4 / 3 },
-  { label: '3:2', value: 3 / 2 },
-  { label: '16:9', value: 16 / 9 },
+const TONE_KEYS: Array<{ key: keyof AdjustParams['tone']; labelKey: string; Icon: LucideIcon }> = [
+  { key: 'brightness', labelKey: 'adjust.brightness', Icon: Sun },
+  { key: 'contrast', labelKey: 'adjust.contrast', Icon: Contrast },
+  { key: 'saturation', labelKey: 'adjust.saturation', Icon: Droplet },
+  { key: 'temperature', labelKey: 'adjust.temperature', Icon: Thermometer },
+  { key: 'tint', labelKey: 'adjust.tint', Icon: Palette },
 ];
 
 const sliderCls = 'flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer';
@@ -64,41 +65,18 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   t,
   adjust,
   cropMode,
-  onCropModeChange,
-  cropAspect,
-  onCropAspectChange,
+  onCropToggle,
   exporting,
   onSaveAs,
   canOverwrite,
   onOverwrite,
   onAutoEnhance,
+  onCancel,
 }) => {
   const { params } = adjust;
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   // 无调整不可另存/覆盖(2026-11-13 用户拍板);撤销回默认也会重新置灰
   const hasChanges = !isDefaultAdjustParams(params);
-
-  const toggleCrop = (): void => {
-    if (cropMode) {
-      onCropModeChange(false);
-    } else {
-      onCropModeChange(true);
-      if (!params.geo.cropNorm) {
-        // 进裁剪态先给一个居中 80% 的框
-        adjust.setCropNorm({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
-      }
-    }
-  };
-
-  const pickAspect = (value: number | null): void => {
-    // 只记比例;现有裁剪框的像素比重排由 AdjustCanvas 的 cropAspect effect 负责
-    onCropAspectChange(value);
-  };
-
-  const clearCrop = (): void => {
-    // 清除后**留在裁剪态**(2026-11-14:清完即可重画,退出裁剪走裁剪钮切换)
-    adjust.setCropNorm(null);
-  };
 
   return (
     <div
@@ -114,10 +92,15 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
           ⚠️ 内层滚动勿用 custom-scrollbar( gutter+负 margin 补偿是面板级专用,
           嵌套会把右侧内容裁掉)——用 index.css 的 .adjust-inner-scroll */}
       <div className="flex-1 min-h-0 adjust-inner-scroll flex flex-col gap-4">
-      {/* 标题行(关闭走顶部工具栏的编辑开关/Esc,面板内不放关闭钮) */}
+      {/* 标题行:自动增强(图形化,2026-11-14 从动作行上移)+ 撤销/重做;
+          关闭走顶部工具栏的编辑开关/Esc/右下角取消钮 */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('adjust.title')}</span>
         <div className="flex items-center gap-0.5">
+          {/* 自动增强用 Wand2 魔棒:Sparkles 与右栏"氛围搜索"的紫色图标撞脸(2026-11-14 用户反馈) */}
+          <button onClick={onAutoEnhance} className={iconBtn} title={t('adjust.autoEnhance')}>
+            <Wand2 size={14} />
+          </button>
           <button onClick={adjust.undo} disabled={!adjust.canUndo} className={`${iconBtn} disabled:opacity-30`} title={t('adjust.undo')}>
             <Undo2 size={14} />
           </button>
@@ -152,7 +135,7 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
             <FlipVertical2 size={15} />
           </button>
           <button
-            onClick={toggleCrop}
+            onClick={onCropToggle}
             className={cropMode ? iconBtnActive : iconBtn}
             title={t('adjust.crop')}
           >
@@ -163,7 +146,10 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
         {/* 拉直 */}
         <div className="mt-3">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-gray-500 dark:text-gray-400">{t('adjust.straighten')}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+              <Ruler size={12} className="mr-1.5 text-gray-400" />
+              {t('adjust.straighten')}
+            </span>
             <span className="text-xs tabular-nums text-gray-400">
               {params.geo.straightenDeg !== 0 ? `${params.geo.straightenDeg.toFixed(1)}°` : ''}
             </span>
@@ -181,48 +167,26 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
             />
             <button
               onClick={() => adjust.setStraighten(0)}
-              className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 w-6 text-center shrink-0"
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 w-6 flex justify-center shrink-0"
               title={t('adjust.resetOne')}
             >
-              ×
+              <RotateCcw size={12} />
             </button>
           </div>
         </div>
-
-        {/* 裁剪比例(仅裁剪态显示) */}
-        {cropMode && (
-          <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-            {ASPECT_PRESETS.map((p) => (
-              <button
-                key={p.label}
-                onClick={() => pickAspect(p.value)}
-                className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
-                  cropAspect === p.value
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                {p.value === null ? t('adjust.cropFree') : p.label}
-              </button>
-            ))}
-            <button
-              onClick={clearCrop}
-              className="px-2 py-0.5 text-xs rounded-md bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600"
-            >
-              {t('adjust.clearCrop')}
-            </button>
-          </div>
-        )}
       </section>
 
       {/* 影调 */}
       <section>
         <div className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{t('adjust.tone')}</div>
         <div className="space-y-2.5">
-          {TONE_KEYS.map(({ key, labelKey }) => (
+          {TONE_KEYS.map(({ key, labelKey, Icon }) => (
             <div key={key}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500 dark:text-gray-400">{t(labelKey)}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                  <Icon size={12} className="mr-1.5 text-gray-400" />
+                  {t(labelKey)}
+                </span>
                 <span className="text-xs tabular-nums text-gray-400">
                   {params.tone[key] !== 0 ? params.tone[key].toFixed(2) : ''}
                 </span>
@@ -240,10 +204,10 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
                 />
                 <button
                   onClick={() => adjust.setToneParam(key, 0)}
-                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 w-6 text-center shrink-0"
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 w-6 flex justify-center shrink-0"
                   title={t('adjust.resetOne')}
                 >
-                  ×
+                  <RotateCcw size={12} />
                 </button>
               </div>
             </div>
@@ -253,17 +217,11 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
 
       </div>
 
-      {/* 动作行:钉在右栏最底部;另存为 = 分体按钮(箭头展开"覆盖原图") */}
+      {/* 动作行:钉在右栏最底部;另存为 = 分体按钮(箭头展开"覆盖原图");
+          取消在右下角=关闭调整面板(丢弃会话内调整,2026-11-14 用户口径);
+          自动增强已上移到标题行(图形化) */}
       <div className="shrink-0 pt-3 relative">
         <div className="flex items-center gap-2">
-          <button
-            onClick={onAutoEnhance}
-            className="h-8 px-2.5 rounded-lg bg-amber-500/90 hover:bg-amber-500 text-white text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
-            title={t('adjust.autoEnhance')}
-          >
-            <Sparkles size={13} />
-            {t('adjust.autoEnhance')}
-          </button>
           {/* relative 包一层:保存菜单从"另存为"正上方滑出,宽度与另存为一致(2026-11-14) */}
           <div className="flex-1 relative">
             {saveMenuOpen && (
@@ -314,6 +272,14 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
           >
             <RotateCcw size={13} />
             {t('adjust.resetAll')}
+          </button>
+          <button
+            onClick={onCancel}
+            className="h-8 px-2.5 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+            title={t('adjust.cancel')}
+          >
+            <X size={13} />
+            {t('adjust.cancel')}
           </button>
         </div>
       </div>

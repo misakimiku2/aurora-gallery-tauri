@@ -65,7 +65,7 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const frameRef = useRef<AdjustedFrame | null>(null);
-  const viewRef = useRef({ vx: 0, vy: 0, scale: 1, dpr: 1 });
+  const viewRef = useRef({ vx: 0, vy: 0, scale: 1, dpr: 1, cssScale: 1 });
   const dragRef = useRef<DragMode>({ kind: 'none' });
   const rafRef = useRef<number | null>(null);
   const firstPaintRef = useRef(false);
@@ -133,14 +133,16 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     if (!frame) return;
 
     const { params: p, interactive: it, showCropUI: cropUI } = stateRef.current;
-    // 交互态画完整帧(裁剪覆盖层叠加);非交互态直接呈现裁剪结果
-    const { sx, sy, sw, sh } = it
+    // 交互态分两样:裁剪态画完整帧(叠加裁剪覆盖层);调整态(含应用裁剪后)
+    // 呈现**裁剪结果**——所见即导出,后续影调都作用在裁剪后的图上
+    // (2026-11-14 用户口径:应用裁剪 → 裁剪后的图片继续进行调整)。
+    const { sx, sy, sw, sh } = (it && cropUI)
       ? { sx: 0, sy: 0, sw: frame.width, sh: frame.height }
       : frameCropRect(frame, p);
     const viewScale = Math.min(cw / sw, ch / sh);
     const vx = (cw - sw * viewScale) / 2;
     const vy = (ch - sh * viewScale) / 2;
-    viewRef.current = { vx, vy, scale: viewScale, dpr };
+    viewRef.current = { vx, vy, scale: viewScale, dpr, cssScale: viewRef.current.cssScale };
 
     ctx.save();
     ctx.imageSmoothingEnabled = true;
@@ -149,6 +151,11 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     if (filter !== 'none') ctx.filter = filter;
     ctx.drawImage(frame.canvas, sx, sy, sw, sh, vx, vy, sw * viewScale, sh * viewScale);
     ctx.restore();
+
+    // 冒烟调试钩子:视口映射 + 图像显示矩形(画布设备px 口径),CDP 直读
+    (window as unknown as Record<string, unknown>).__adjustView = {
+      vx, vy, scale: viewScale, bw: cw, bh: ch, ix: vx, iy: vy, iw: sw * viewScale, ih: sh * viewScale,
+    };
 
     // 首帧已实际绘出 → 通知宿主(切换闪动的交接信号,每次挂载只报一次)
     if (!firstPaintRef.current) {
@@ -163,11 +170,12 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
       const y = vy + crop.y * frame.height * viewScale;
       const w = crop.w * frame.width * viewScale;
       const h = crop.h * frame.height * viewScale;
-      // ① 整画布压暗(含信箱区——2026-11-14 用户拍板:整个背景都变深色)
-      ctx.save();
+      // ① 只压暗图像区。整幅查看器背景(信箱区+缩放后露出的四周)由宿主的
+      //    非变换暗化层兜底(ImageViewer 裁剪态渲染)——本画布带着查看器的
+      //    scale 变换,缩小图时画布自身盖不满视口,这里若画满会跟着缩进去,
+      //    两层各画 0.55 会叠黑。图像区只归本画布管,暗度恰为单层 0.55。
       ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.fillRect(0, 0, cw, ch);
-      ctx.restore();
+      ctx.fillRect(vx, vy, sw * viewScale, sh * viewScale);
       // ② 裁剪矩形区域重绘亮图(带影调滤镜)
       ctx.save();
       ctx.imageSmoothingEnabled = true;
@@ -247,11 +255,59 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   }, [cropAspect]);
 
   // ── 裁剪交互 ──────────────────────────────────────────────────────────────
+  // 宿主(ImageViewer)把查看器的 translate/rotate/scale 叠在本组件的**包裹 div**
+  // 上(AdjustCanvas 的 style prop 落在容器,canvas 只是容器的子元素;canvas
+  // 自身 computed transform 恒为 none)。getBoundingClientRect 是变换后的包围
+  // 盒:直接拿它映射指针,缩放≠1 时整体错位(缩小图拉框出现在指针左上、手柄
+  // 全失灵的根因)。这里沿祖先链合成全部线性部分做逆变换:client → 画布布局
+  // 坐标 → 设备像素。锚点用「包围盒中心 ↔ 布局中心」:translate/rotate/scale
+  // 链无剪切,矩形中心必映到包围盒中心,故平移/各元素 transform-origin 全部
+  // 被锚点吸收,只剩线性部分。
   const toCanvasPx = (clientX: number, clientY: number): { x: number; y: number } => {
     const cv = canvasRef.current!;
-    const rect = cv.getBoundingClientRect();
     const dpr = viewRef.current.dpr;
-    return { x: (clientX - rect.left) * dpr, y: (clientY - rect.top) * dpr };
+    const lw = cv.clientWidth || 1;
+    const lh = cv.clientHeight || 1;
+    const rect = cv.getBoundingClientRect();
+    let dx = clientX - (rect.left + rect.width / 2);
+    let dy = clientY - (rect.top + rect.height / 2);
+    let ma = 1, mb = 0, mc = 0, md = 1;
+    try {
+      for (let el: HTMLElement | null = cv; el && el !== document.body; el = el.parentElement) {
+        const t = window.getComputedStyle(el).transform;
+        if (!t || t === 'none') continue;
+        const m = new DOMMatrix(t);
+        if (m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1) continue;
+        // 先祖在左合成:L = M_anc × L_acc(平移分量已被中心锚点吸收,只留线性)
+        const na = m.a * ma + m.c * mb;
+        const nb = m.b * ma + m.d * mb;
+        const nc = m.a * mc + m.c * md;
+        const nd = m.b * mc + m.d * md;
+        ma = na; mb = nb; mc = nc; md = nd;
+      }
+    } catch {
+      // DOMMatrix 不可用 → 退化恒等(宿主未缩放时本就正确)
+    }
+    const det = ma * md - mb * mc;
+    if (Math.abs(det) > 1e-9) {
+      viewRef.current.cssScale = Math.sqrt(Math.abs(det)); // |scale|,旋转下同样成立
+      const ux = (md * dx - mc * dy) / det;
+      const uy = (-mb * dx + ma * dy) / det;
+      dx = ux;
+      dy = uy;
+    }
+    return { x: (lw / 2 + dx) * dpr, y: (lh / 2 + dy) * dpr };
+  };
+
+  const cursorForHit = (hit: string | null): string => {
+    switch (hit) {
+      case 'nw': case 'se': return 'nwse-resize';
+      case 'ne': case 'sw': return 'nesw-resize';
+      case 'n': case 's': return 'ns-resize';
+      case 'e': case 'w': return 'ew-resize';
+      case 'inside': return 'move';
+      default: return 'crosshair';
+    }
   };
 
   const hitTestHandle = (px: number, py: number): string | null => {
@@ -263,7 +319,9 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     const y = vy + crop.y * frame.height * scale;
     const w = crop.w * frame.width * scale;
     const h = crop.h * frame.height * scale;
-    const tol = HANDLE_HIT * viewRef.current.dpr;
+    // 命中半径按**视觉**恒定:画布被宿主缩放 cssScale 倍,布局半径要除回来
+    // (否则缩小图时手柄/三分线的可点区跟着缩没,放大图时又大得离谱)
+    const tol = (HANDLE_HIT * viewRef.current.dpr) / Math.max(viewRef.current.cssScale, 0.05);
     const pts: Array<[string, number, number]> = [
       ['nw', x, y], ['n', x + w / 2, y], ['ne', x + w, y],
       ['w', x, y + h / 2], ['e', x + w, y + h / 2],
@@ -271,6 +329,16 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     ];
     for (const [name, hx, hy] of pts) {
       if (Math.abs(px - hx) <= tol && Math.abs(py - hy) <= tol) return name;
+    }
+    // 三分线拖边(九宫格调形,对齐"画布"对比的直拖手感):
+    // 竖 1/3 线→左缘、2/3 线→右缘;横 1/3 线→上缘、2/3 线→下缘
+    if (py >= y && py <= y + h) {
+      if (Math.abs(px - (x + w / 3)) <= tol) return 'w';
+      if (Math.abs(px - (x + (2 * w) / 3)) <= tol) return 'e';
+    }
+    if (px >= x && px <= x + w) {
+      if (Math.abs(py - (y + h / 3)) <= tol) return 'n';
+      if (Math.abs(py - (y + (2 * h) / 3)) <= tol) return 's';
     }
     if (px >= x && px <= x + w && py >= y && py <= y + h) return 'inside';
     return null;
@@ -287,6 +355,8 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     const hit = hitTestHandle(px, py);
     const frame = frameRef.current;
     if (!frame) return;
+    // 捕获后 hover 不再更新,按下即锁定本次操作的光标
+    cv.style.cursor = cursorForHit(hit);
     if (hit && hit !== 'inside') {
       const crop = p.geo.cropNorm!;
       // 固定对角锚点(像素坐标,配合锁比例换算)
@@ -335,7 +405,16 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>): void => {
     const drag = dragRef.current;
-    if (drag.kind === 'none') return;
+    if (drag.kind === 'none') {
+      // 悬停光标反馈(手柄/三分线/框内各自成形,对齐"画布"对比的直拖手感)
+      const { interactive: it, showCropUI: cropUI } = stateRef.current;
+      const cv = canvasRef.current;
+      if (it && cropUI && frameRef.current && cv) {
+        const { x: px, y: py } = toCanvasPx(e.clientX, e.clientY);
+        cv.style.cursor = cursorForHit(hitTestHandle(px, py));
+      }
+      return;
+    }
     if (drag.kind === 'move') {
       const frame = frameRef.current;
       if (!frame) return;
@@ -386,25 +465,52 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
       return;
     }
     if (drag.corner === 'e' || drag.corner === 'w') {
-      // 宽随指针、高/纵向保持
-      const w = Math.abs(p.x - ax);
+      // 宽随指针;锁比例时高按像素比推导、纵向保中心(此前锁 1:1 拖边
+      // 会画出长方形,2026-11-14 修)
+      const aspect = drag.aspect;
+      const frameAspect = frame.width / frame.height;
+      const maxW = p.x >= ax ? 1 - ax : ax;
+      let w = Math.min(Math.abs(p.x - ax), maxW);
+      let y = drag.startRect.y;
+      let h = drag.startRect.h;
+      if (aspect && w > 0.001) {
+        h = (w * frameAspect) / aspect;
+        y = Math.max(0, drag.startRect.y + drag.startRect.h / 2 - h / 2);
+        if (y + h > 1) {
+          h = 1 - y;
+          w = Math.min(w, (h * aspect) / frameAspect);
+        }
+      }
       if (w > 0.001) {
         stateRef.current.onCropChange?.({
           x: p.x >= ax ? ax : ax - w,
-          y: drag.startRect.y,
+          y,
           w,
-          h: drag.startRect.h,
+          h,
         });
       }
       return;
     }
-    // n / s:高随指针、宽/横向保持
-    const h = Math.abs(p.y - ay);
+    // n / s:高随指针;锁比例时宽按像素比推导、横向保中心
+    const aspect = drag.aspect;
+    const frameAspect = frame.width / frame.height;
+    const maxH = p.y >= ay ? 1 - ay : ay;
+    let h = Math.min(Math.abs(p.y - ay), maxH);
+    let x = drag.startRect.x;
+    let w = drag.startRect.w;
+    if (aspect && h > 0.001) {
+      w = (h * aspect) / frameAspect;
+      x = Math.max(0, drag.startRect.x + drag.startRect.w / 2 - w / 2);
+      if (x + w > 1) {
+        w = 1 - x;
+        h = Math.min(h, (w * frameAspect) / aspect);
+      }
+    }
     if (h > 0.001) {
       stateRef.current.onCropChange?.({
-        x: drag.startRect.x,
+        x,
         y: p.y >= ay ? ay : ay - h,
-        w: drag.startRect.w,
+        w,
         h,
       });
     }

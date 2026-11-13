@@ -179,23 +179,19 @@ body {
   --scrollbar-thumb-rgb: 82, 82, 82; /* 深色 #525252 */
 }
 
-/* 轻量快调·调整面板内层滚动区(2026-11-13):
+/* 轻量快调·调整面板内层滚动区(2026-11-13;2026-11-14 改为无可见滚动条):
    ⚠️ 不能复用 .custom-scrollbar —— 它带 scrollbar-gutter: stable both-edges +
    `> *` 负 margin 补偿,那套是给面板级布局设计的;嵌套第二层时补偿被打穿,
-   右侧内容(数值/× 按钮)会被裁掉。这里用独立的极简细滚动条,无 gutter、无补偿。 */
+   右侧内容(数值/× 按钮)会被裁掉。2026-11-14 用户口径:右侧面板无滚动条,
+   调整面板同观感 —— 完全隐藏滚动条,滚轮/触摸仍可滚。 */
 .adjust-inner-scroll {
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 旧 Edge */
 }
 .adjust-inner-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-.adjust-inner-scroll::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.4);
-  border-radius: 3px;
-}
-.adjust-inner-scroll::-webkit-scrollbar-track {
-  background: transparent;
+  display: none; /* Chromium / WebView2 */
 }
 
 /* 滚动中：淡入显示（正常尺寸） */

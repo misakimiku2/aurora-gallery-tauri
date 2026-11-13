@@ -12,8 +12,9 @@ import { SlidersHorizontal } from 'lucide-react';
 import { AdjustCanvas } from './viewer/adjust/AdjustCanvas';
 import { AdjustPanel } from './viewer/adjust/AdjustPanel';
 import { AdjustFilterDefs } from './viewer/adjust/AdjustFilterDefs';
+import { CropToolbar } from './viewer/adjust/CropToolbar';
 import { useImageAdjust } from '../hooks/useImageAdjust';
-import { isDefaultAdjustParams } from '../utils/adjust';
+import { AdjustCropNorm, isDefaultAdjustParams } from '../utils/adjust';
 import { computeAutoEnhanceStats } from '../utils/adjustCanvasDraw';
 import { bakeEdits } from '../api/tauri-bridge/edits';
 import { useAdjustUi, setAdjustUi } from '../utils/adjustStore';
@@ -518,6 +519,31 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const { open: adjustOpen, cropMode, cropAspect, exporting } = adjustUi;
   const adjust = useImageAdjust(file.id, file.path, !isVideo);
   const hasAdjust = adjust.loaded && !isDefaultAdjustParams(adjust.params);
+  // 裁剪会话:进裁剪态时快照 cropNorm(「取消裁剪」回退到这里);
+  // 应用=保留裁剪退出,取消=回退退出;比例预设随会话作废(避免 80% 默认框错配残留预设)
+  const cropEntryRef = useRef<AdjustCropNorm | null>(null);
+  const handleCropExit = (revert: boolean): void => {
+    if (revert) adjust.setCropNorm(cropEntryRef.current);
+    setAdjustUi({ cropAspect: null, cropMode: false });
+  };
+  const handleCropToggle = (): void => {
+    if (cropMode) {
+      // 裁剪钮退出=应用(与裁剪栏「应用裁剪」同语义)
+      handleCropExit(false);
+      return;
+    }
+    cropEntryRef.current = adjust.params.geo.cropNorm;
+    setAdjustUi({ cropMode: true });
+    if (!adjust.params.geo.cropNorm) {
+      // 进裁剪态先给一个居中 80% 的框
+      adjust.setCropNorm({ x: 0.1, y: 0.1, w: 0.8, h: 0.8 });
+    }
+  };
+  // 取消调整 = 关闭面板并丢弃会话内调整(与顶部编辑开关关闭同语义;面板右下角取消钮共用)
+  const handleAdjustCancel = (): void => {
+    setAdjustUi({ open: false, cropMode: false });
+    adjust.resetHard();
+  };
   // 有参数(非调整中)或调整中 → 用 AdjustCanvas 全量渲染(与缩略图/烘焙同口径);
   // 幻灯片态维持 <img> 原管线(幻灯片不吃参数,见设计 §7 边界)。
   const adjustShowCanvas = !isVideo && !slideshowActive && (adjustOpen || hasAdjust);
@@ -531,7 +557,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     ? document.getElementById('aurora-adjust-slot')
     : null;
 
-  useEffect(() => { setAdjustUi({ open: false, cropMode: false }); setAdjustCanvasReady(false); }, [file.id]);
+  // 换图时关调整(既有语义);**打开**不关——文件网格右键「编辑图片」先置
+  // adjustUi.open 再 enterViewer,直达的调整态不能被吞(2026-11-14)。
+  // 守卫按 file.id 变化判定而非"首挂布尔":StrictMode dev 会双跑挂载 effect,
+  // 布尔首挂守卫第一跑就消耗掉、第二跑照常重置(实测正是"只开图不进编辑"的根因)。
+  // null→A = 打开(不重置);A→B = 换图(重置);A→A = StrictMode 重复跑(去重跳过)。
+  const lastAdjustFileRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastAdjustFileRef.current !== null && lastAdjustFileRef.current !== file.id) {
+      setAdjustUi({ open: false, cropMode: false });
+      setAdjustCanvasReady(false);
+    }
+    lastAdjustFileRef.current = file.id;
+  }, [file.id]);
   useEffect(() => { if (!adjustOpen) setAdjustCanvasReady(false); }, [adjustOpen]);
   // Esc 处理器闭包里用 ref 取最新 resetHard(其身份随 fileId 变化)
   const adjustResetHardRef = useRef(adjust.resetHard);
@@ -2223,7 +2261,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   }
                 }}
                 className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${adjustOpen || hasAdjust ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
-                title={t('adjust.title')}
+                title={t('adjust.editImage')}
               >
                 <SlidersHorizontal size={18} />
               </button>
@@ -2249,6 +2287,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           )}
         </div>
       </div>
+
+      {/* 裁剪调整栏:进裁剪态时出现在顶部工具栏下方(比例/清除/应用/取消,
+          2026-11-14 用户口径:裁剪相关选项不挤右栏) */}
+      {adjustOpen && cropMode && !isVideo && !slideshowActive && !chromeOverlay && (
+        <CropToolbar
+          t={t}
+          cropAspect={cropAspect}
+          onPickAspect={(a) => setAdjustUi({ cropAspect: a })}
+          onClear={() => adjust.setCropNorm(null)}
+          onApply={() => handleCropExit(false)}
+          onCancel={() => handleCropExit(true)}
+        />
+      )}
 
       <div
         ref={containerRef}
@@ -2441,6 +2492,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           />
           </>
           )}
+
+          {/* 裁剪态背景压暗:整个查看器背景(信箱区+缩放后露出的四周)统一变深。
+              必须是独立于变换的层 —— AdjustCanvas 带着宿主 scale 变换,缩小图时
+              画布自身盖不满视口(表现为"只有图片周围一圈变黑");画布内因此只压
+              图像区,两层各 0.55 不叠加。层级:img(z2,DOM 在前) < 本层(z2) <
+              AdjustCanvas(z3,裁剪框亮区重绘在其上) */}
+          {!isVideo && adjustShowCanvas && adjustOpen && cropMode && (
+            <div
+              data-crop-dim="1"
+              className="absolute inset-0 pointer-events-none"
+              style={{ background: 'rgba(0, 0, 0, 0.55)', zIndex: 2 }}
+            />
+          )}
         </div>
 
         {/* 视频缓冲/seek 等待遮罩：1MB 分片上限使大文件 seek 有等待，必须给反馈（§3）；
@@ -2495,14 +2559,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             t={t}
             adjust={adjust}
             cropMode={cropMode}
-            onCropModeChange={(on) => setAdjustUi({ cropMode: on })}
-            cropAspect={cropAspect}
-            onCropAspectChange={(a) => setAdjustUi({ cropAspect: a })}
+            onCropToggle={handleCropToggle}
             exporting={exporting}
             onSaveAs={handleExportAdjusted}
             canOverwrite={['jpg', 'jpeg', 'png'].includes((file.path.split('.').pop() || '').toLowerCase())}
             onOverwrite={handleOverwriteOriginal}
             onAutoEnhance={handleAutoEnhance}
+            onCancel={handleAdjustCancel}
           />,
           adjustSlotEl
         )}
@@ -2624,6 +2687,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
           {/* 复制图片 / 复制当前帧：视频改为抓取当前播放位置的画面（§7.2） */}
+          {/* 编辑图片:打开调整面板(仅图片;在"复制图片"上方,2026-11-14 用户口径) */}
+          {!isVideo && (
+            <div className={menuItemClass} onClick={() => {
+              setAdjustUi({ open: true, cropMode: false });
+              if (!layout.isMetadataVisible) onLayoutToggle('metadata');
+              closeMenu();
+            }}>
+              <SlidersHorizontal size={iconSize} className="mr-2 opacity-70" /> {t('adjust.editImage')}
+            </div>
+          )}
           <div className={menuItemClass} onClick={() => { isVideo ? handleCopyVideoFrame() : handleCopyImage(); closeMenu(); }}>
             <Clipboard size={iconSize} className="mr-2 opacity-70" /> {isVideo ? t('video.copyFrame') : t('context.copyImage')}
           </div>
