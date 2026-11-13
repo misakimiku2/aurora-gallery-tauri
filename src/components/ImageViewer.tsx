@@ -2257,7 +2257,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             // 视频全屏：一进全屏就是纯黑底，不跟随工具条显隐（因此这里不需要颜色过渡）
             ? 'bg-black duration-0'
             : `${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'} duration-300`
-        } ${!slideshowActive && !isVideo ? 'cursor-grab active:cursor-grabbing' : ''}`}
+        } ${!slideshowActive && !isVideo && !adjustOpen ? 'cursor-grab active:cursor-grabbing' : ''} ${adjustOpen && cropMode ? 'cursor-crosshair' : adjustOpen ? 'cursor-default' : ''}`}
         style={{
           ...(slideshowActive ? { cursor: 'none' } : {}),
         }}

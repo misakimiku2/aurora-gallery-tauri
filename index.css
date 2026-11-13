@@ -542,6 +542,22 @@ input[type=range]::-webkit-slider-runnable-track {
   animation: zoom-in 0.2s ease-out forwards;
 }
 
+/* Slide Up Animation(轻量快调·另存为菜单自下而上滑出,2026-11-14) */
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.18s ease-out forwards;
+}
+
 /* Fade In Animation */
 @keyframes fade-in {
   from {

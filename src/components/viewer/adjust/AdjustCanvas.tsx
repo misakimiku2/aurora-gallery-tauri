@@ -3,6 +3,7 @@ import {
   AdjustCropNorm,
   AdjustParams,
   cssFilterForTone,
+  fitCropToAspectPx,
 } from '../../../utils/adjust';
 import {
   AdjustedFrame,
@@ -162,13 +163,25 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
       const y = vy + crop.y * frame.height * viewScale;
       const w = crop.w * frame.width * viewScale;
       const h = crop.h * frame.height * viewScale;
+      // ① 整画布压暗(含信箱区——2026-11-14 用户拍板:整个背景都变深色)
       ctx.save();
       ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.beginPath();
-      ctx.rect(0, 0, cw, ch);
-      ctx.rect(x, y, w, h);
-      ctx.fill('evenodd');
-      // 边框 + 九宫格
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.restore();
+      // ② 裁剪矩形区域重绘亮图(带影调滤镜)
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const regionFilter = cssFilterForTone(p.tone);
+      if (regionFilter !== 'none') ctx.filter = regionFilter;
+      ctx.drawImage(
+        frame.canvas,
+        crop.x * frame.width, crop.y * frame.height, crop.w * frame.width, crop.h * frame.height,
+        x, y, w, h
+      );
+      ctx.restore();
+      // ③ 边框 + 九宫格
+      ctx.save();
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = Math.max(1, 1.5 * dpr);
       ctx.strokeRect(x, y, w, h);
@@ -216,6 +229,17 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   useEffect(() => {
     scheduleDraw();
   }, [params, interactive, showCropUI, scheduleDraw]);
+
+  // 比例预设切换 → 按像素比重排现有裁剪框(像素空间语义,2026-11-14 修)
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (cropAspect == null || !frame || !interactive) return;
+    const crop = stateRef.current.params.geo.cropNorm;
+    if (!crop) return;
+    const fitted = fitCropToAspectPx(crop, cropAspect, frame.width / frame.height);
+    stateRef.current.onCropChange?.(fitted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cropAspect]);
 
   // ── 裁剪交互 ──────────────────────────────────────────────────────────────
   const toCanvasPx = (clientX: number, clientY: number): { x: number; y: number } => {
@@ -282,11 +306,11 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     } else if (hit === 'inside') {
       dragRef.current = { kind: 'move', start: { ...p.geo.cropNorm! }, grabX: px, grabY: py };
     } else {
-      // 空白处按下 = 从锚点拉新框
+      // 空白处按下 = 从按点拉新框('new' = 方向实时,框随指针起落)
       const { x: nx, y: ny } = frameNormFromCanvas(px, py);
       dragRef.current = {
         kind: 'resize',
-        corner: 'se',
+        corner: 'new',
         anchor: { x: nx * frame.width, y: ny * frame.height },
         startRect: { x: clamp01(nx), y: clamp01(ny), w: 0.001, h: 0.001 },
         aspect: stateRef.current.cropAspect,
@@ -327,7 +351,9 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     const p = frameNormFromCanvas(px, py);
     const ax = drag.anchor.x / frame.width;
     const ay = drag.anchor.y / frame.height;
-    const isCorner = ['nw', 'ne', 'sw', 'se'].includes(drag.corner);
+    // 角/新拉框:方向**实时取自指针**(允许跨越锚点翻转——手柄拖拽不再变扭;
+    // 新拉框框随指针起落,不再固定往右下)
+    const isCorner = ['nw', 'ne', 'sw', 'se', 'new'].includes(drag.corner);
     if (isCorner) {
       const right = drag.corner === 'se' || drag.corner === 'ne' ? true
         : drag.corner === 'sw' || drag.corner === 'nw' ? false
@@ -338,14 +364,15 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
       let w = Math.abs(p.x - ax);
       let h = Math.abs(p.y - ay);
       const aspect = drag.aspect;
+      const frameAspect = frame.width / frame.height;
       if (aspect && w > 0) {
-        // 锁比例:宽随指针、高按比例,双向夹进 [0,1] 盒
+        // 锁**像素比**:w_norm/h_norm = aspect / frameAspect
+        // (2026-11-14 修:归一化坐标比在非方图上不等于屏幕比,1:1 会画出长方形)
         const maxW = right ? 1 - ax : ax;
         const maxH = down ? 1 - ay : ay;
-        w = Math.min(w, maxW, maxH * aspect);
-        h = w / aspect;
+        w = Math.min(w, maxW, (maxH * aspect) / frameAspect);
+        h = (w * frameAspect) / aspect;
       } else {
-        w = Math.abs(p.x - ax);
         h = Math.abs(p.y - ay);
       }
       if (w > 0.001 && h > 0.001) {
@@ -393,17 +420,18 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
   };
 
   return (
-    <div ref={containerRef} className={className} style={{ ...style, position: 'relative' }}>
+    <div ref={containerRef} className={className} style={style}>
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: 'none', cursor: showCropUI ? 'crosshair' : 'default' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        // 裁剪交互时拦 mousedown:容器的图片拖拽监听 mousedown,不拦会"裁剪拖拽+整图平移"同时发生
-        onMouseDown={(e) => { if (interactive) e.stopPropagation(); }}
+        // 仅裁剪态拦 mousedown:容器的图片平移监听 mousedown;非裁剪放行 =
+        // 调整态下按住画布任意处(图内/图外)都能平移(2026-11-14 用户实测修)
+        onMouseDown={(e) => { if (showCropUI) e.stopPropagation(); }}
       />
     </div>
   );

@@ -192,24 +192,32 @@ export function autoEnhanceFromStats(
   return { brightness, contrast, saturation: 0, temperature, tint: 0 };
 }
 
-/** 把已有裁剪框调整为锁定比例(以保持 w 不变、居中缩放 h;超出边界则回推 w)。 */
-export function fitCropToAspect(
+/**
+ * 把已有裁剪框调整为锁定比例(**像素空间**:w_px/h_px = aspect,2026-11-14 修——
+ * 归一化坐标比在非方图上不等于屏幕比,1:1 会画出长方形)。
+ * frameAspect = 帧宽/帧高;保持中心,贴边回推。
+ */
+export function fitCropToAspectPx(
   crop: AdjustCropNorm,
-  aspect: number // w/h
+  aspect: number, // w/h,像素口径
+  frameAspect: number // 帧宽/帧高
 ): AdjustCropNorm {
-  // 先按当前 w 推 h
+  // w_norm/h_norm = aspect / frameAspect
   let w = crop.w;
-  let h = w / aspect;
+  let h = (w * frameAspect) / aspect;
   if (h > 1 - crop.y) {
     h = 1 - crop.y;
-    w = h * aspect;
-    if (w > 1 - crop.x) {
-      w = 1 - crop.x;
-      h = w / aspect;
-    }
+    w = (h * aspect) / frameAspect;
   }
-  if (h <= 0 || w <= 0) return { x: 0, y: 0, w: 1, h: 1 };
-  // 保持中心
+  if (w > 1 - crop.x) {
+    w = 1 - crop.x;
+    h = (w * frameAspect) / aspect;
+  }
+  if (h > 1 - crop.y) {
+    h = 1 - crop.y;
+    w = (h * aspect) / frameAspect;
+  }
+  if (w <= 0 || h <= 0) return { x: 0, y: 0, w: 1, h: 1 };
   const cx = crop.x + crop.w / 2;
   const cy = crop.y + crop.h / 2;
   const x = clamp(cx - w / 2, 0, 1 - w);

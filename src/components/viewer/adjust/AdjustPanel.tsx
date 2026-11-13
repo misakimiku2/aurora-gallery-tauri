@@ -13,7 +13,7 @@ import {
   Loader2,
   Save,
 } from 'lucide-react';
-import { AdjustParams, isDefaultAdjustParams, fitCropToAspect } from '../../../utils/adjust';
+import { AdjustParams, isDefaultAdjustParams } from '../../../utils/adjust';
 import { ImageAdjustApi } from '../../../hooks/useImageAdjust';
 
 export interface AdjustPanelProps {
@@ -91,11 +91,8 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   };
 
   const pickAspect = (value: number | null): void => {
+    // 只记比例;现有裁剪框的像素比重排由 AdjustCanvas 的 cropAspect effect 负责
     onCropAspectChange(value);
-    const crop = params.geo.cropNorm;
-    if (value && crop) {
-      adjust.setCropNorm(fitCropToAspect(crop, value));
-    }
   };
 
   const clearCrop = (): void => {
@@ -287,24 +284,47 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
             <Sparkles size={13} />
             {t('adjust.autoEnhance')}
           </button>
-          <div className="flex-1 flex h-8 rounded-lg overflow-hidden">
-            <button
-              onClick={onSaveAs}
-              disabled={!hasChanges || exporting}
-              className="flex-1 min-w-0 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
-              title={t('adjust.saveAs')}
-            >
-              {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-              <span className="truncate">{exporting ? t('adjust.exporting') : t('adjust.saveAs')}</span>
-            </button>
-            <button
-              onClick={() => setSaveMenuOpen((v) => !v)}
-              disabled={!hasChanges || exporting}
-              className="w-7 shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 border-l border-blue-400/40 text-white flex items-center justify-center transition-colors"
-              title={t('adjust.saveOptions')}
-            >
-              <ChevronDown size={13} className={saveMenuOpen ? 'rotate-180' : ''} />
-            </button>
+          {/* relative 包一层:保存菜单从"另存为"正上方滑出,宽度与另存为一致(2026-11-14) */}
+          <div className="flex-1 relative">
+            {saveMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setSaveMenuOpen(false)} />
+                <div className="absolute bottom-full left-0 right-0 mb-1.5 z-30 animate-slide-up">
+                  <button
+                    onClick={() => { setSaveMenuOpen(false); onOverwrite(); }}
+                    disabled={!canOverwrite || !hasChanges || exporting}
+                    title={!canOverwrite ? t('adjust.overwriteUnsupported') : undefined}
+                    className={`w-full h-8 px-3 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                      !canOverwrite
+                        ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-blue-500 hover:bg-blue-600 text-white shadow-lg'
+                    }`}
+                  >
+                    <Save size={13} />
+                    {t('adjust.save')}
+                  </button>
+                </div>
+              </>
+            )}
+            <div className="flex h-8 rounded-lg overflow-hidden">
+              <button
+                onClick={onSaveAs}
+                disabled={!hasChanges || exporting}
+                className="flex-1 min-w-0 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
+                title={t('adjust.saveAs')}
+              >
+                {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                <span className="truncate">{exporting ? t('adjust.exporting') : t('adjust.saveAs')}</span>
+              </button>
+              <button
+                onClick={() => setSaveMenuOpen((v) => !v)}
+                disabled={!hasChanges || exporting}
+                className="w-7 shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 border-l border-blue-400/40 text-white flex items-center justify-center transition-colors"
+                title={t('adjust.saveOptions')}
+              >
+                <ChevronDown size={13} className={saveMenuOpen ? 'rotate-180' : ''} />
+              </button>
+            </div>
           </div>
           <button
             onClick={adjust.resetAll}

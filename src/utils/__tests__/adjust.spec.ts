@@ -10,7 +10,7 @@ import {
   autoEnhanceFromStats,
   cloneDefault,
   cssFilterForTone,
-  fitCropToAspect,
+  fitCropToAspectPx,
   inscribedRect,
   isDefaultAdjustParams,
   sanitizeAdjustParams,
@@ -159,20 +159,29 @@ describe('autoEnhanceFromStats(直方图拉伸 + 灰世界)', () => {
   });
 });
 
-describe('fitCropToAspect(锁定比例)', () => {
-  test('正方形保持、2:1 以宽推高并居中', () => {
+describe('fitCropToAspectPx(锁定像素比——归一化比在非方图≠屏幕比,2026-11-14 修)', () => {
+  test('方帧(frameAspect=1):正方形保持、2:1 以宽推高并居中', () => {
     const c: AdjustCropNorm = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
-    expect(fitCropToAspect(c, 1)).toEqual({ x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
-    const wide = fitCropToAspect(c, 2);
+    expect(fitCropToAspectPx(c, 1, 1)).toEqual({ x: 0.25, y: 0.25, w: 0.5, h: 0.5 });
+    const wide = fitCropToAspectPx(c, 2, 1);
     expect(wide.w).toBeCloseTo(0.5, 10);
     expect(wide.h).toBeCloseTo(0.25, 10);
     expect(wide.x).toBeCloseTo(0.25, 10);
     expect(wide.y).toBeCloseTo(0.375, 10);
   });
 
-  test('贴边回推:贴右边时以高定宽', () => {
+  test('宽帧(frameAspect=2)+ 1:1:归一化上高是宽的 2 倍,像素比为 1', () => {
+    const c: AdjustCropNorm = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+    const r = fitCropToAspectPx(c, 1, 2);
+    // 像素比 = (w*2)/h = 1
+    expect((r.w * 2) / r.h).toBeCloseTo(1, 6);
+    expect(r.x + r.w).toBeLessThanOrEqual(1 + 1e-9);
+    expect(r.y + r.h).toBeLessThanOrEqual(1 + 1e-9);
+  });
+
+  test('贴边回推:纵横双向夹进 [0,1] 且保持像素比', () => {
     const c: AdjustCropNorm = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
-    const r = fitCropToAspect(c, 2);
+    const r = fitCropToAspectPx(c, 2, 1);
     expect(r.x + r.w).toBeLessThanOrEqual(1 + 1e-9);
     expect(r.y + r.h).toBeLessThanOrEqual(1 + 1e-9);
     expect(r.w / r.h).toBeCloseTo(2, 6);
