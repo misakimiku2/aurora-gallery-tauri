@@ -96,8 +96,8 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
   };
 
   const clearCrop = (): void => {
+    // 清除后**留在裁剪态**(2026-11-14:清完即可重画,退出裁剪走裁剪钮切换)
     adjust.setCropNorm(null);
-    onCropModeChange(false);
   };
 
   return (
@@ -255,26 +255,6 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
 
       {/* 动作行:钉在右栏最底部;另存为 = 分体按钮(箭头展开"覆盖原图") */}
       <div className="shrink-0 pt-3 relative">
-        {saveMenuOpen && (
-          <>
-            <div className="fixed inset-0 z-20" onClick={() => setSaveMenuOpen(false)} />
-            {/* 与"另存为"同风格的蓝色按钮;不可用(非 JPG/PNG 源)时整钮置灰(2026-11-13 用户拍板) */}
-            <div className="absolute bottom-full left-0 right-0 mb-1 z-30">
-              <button
-                onClick={() => { setSaveMenuOpen(false); onOverwrite(); }}
-                disabled={!canOverwrite || !hasChanges || exporting}
-                title={!canOverwrite ? t('adjust.overwriteUnsupported') : undefined}
-                className={`w-full h-8 px-3 rounded-lg text-xs font-medium transition-colors ${
-                  !canOverwrite
-                    ? 'bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                    : 'bg-blue-500 hover:bg-blue-600 text-white'
-                }`}
-              >
-                {t('adjust.save')}
-              </button>
-            </div>
-          </>
-        )}
         <div className="flex items-center gap-2">
           <button
             onClick={onAutoEnhance}
