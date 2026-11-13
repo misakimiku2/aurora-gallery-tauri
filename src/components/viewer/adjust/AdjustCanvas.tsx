@@ -182,6 +182,11 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
       ctx.restore();
       // ③ 边框 + 九宫格
       ctx.save();
+      // 冒烟调试钩子(沿用 __editorStoreLive 先例):裁剪矩形 + 帧尺寸,CDP 直读
+      (window as unknown as Record<string, unknown>).__adjustCropRect = {
+        x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h),
+        frameW: frame.width, frameH: frame.height,
+      };
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.lineWidth = Math.max(1, 1.5 * dpr);
       ctx.strokeRect(x, y, w, h);
@@ -423,6 +428,7 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     <div ref={containerRef} className={className} style={style}>
       <canvas
         ref={canvasRef}
+        data-adjust-canvas="1"
         className="absolute inset-0 w-full h-full"
         style={{ touchAction: 'none', cursor: showCropUI ? 'crosshair' : 'default' }}
         onPointerDown={handlePointerDown}

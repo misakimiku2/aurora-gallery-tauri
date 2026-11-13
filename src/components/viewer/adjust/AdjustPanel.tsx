@@ -291,6 +291,7 @@ export const AdjustPanel: React.FC<AdjustPanelProps> = ({
                 <div className="fixed inset-0 z-20" onClick={() => setSaveMenuOpen(false)} />
                 <div className="absolute bottom-full left-0 right-0 mb-1.5 z-30 animate-slide-up">
                   <button
+                    data-smoke-marker="adjust-menu-v2"
                     onClick={() => { setSaveMenuOpen(false); onOverwrite(); }}
                     disabled={!canOverwrite || !hasChanges || exporting}
                     title={!canOverwrite ? t('adjust.overwriteUnsupported') : undefined}
