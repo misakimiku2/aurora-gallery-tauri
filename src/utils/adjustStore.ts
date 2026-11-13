@@ -85,3 +85,46 @@ export function useAdjustVersion(path?: string | null): number {
   }, [path]);
   return v;
 }
+
+// ── 编辑态 UI 开关(2026-11-13 §7 修订:调整面板集成进右侧面板)──────────────
+// 查看器(持有 hook/处理器)与右侧面板(MetadataPanel,提供插槽)之间解耦通信:
+// 双方都订阅本 store,面板内容用 Portal 注入插槽。
+
+export interface AdjustUiState {
+  open: boolean;
+  cropMode: boolean;
+  cropAspect: number | null;
+  exporting: boolean;
+}
+
+let uiState: AdjustUiState = { open: false, cropMode: false, cropAspect: null, exporting: false };
+const uiListeners = new Set<() => void>();
+const notifyUi = (): void => {
+  uiListeners.forEach((fn) => fn());
+};
+
+export function getAdjustUi(): AdjustUiState {
+  return uiState;
+}
+
+export function setAdjustUi(patch: Partial<AdjustUiState>): void {
+  uiState = { ...uiState, ...patch };
+  notifyUi();
+}
+
+export function subscribeAdjustUi(fn: () => void): () => void {
+  uiListeners.add(fn);
+  return () => {
+    uiListeners.delete(fn);
+  };
+}
+
+export function useAdjustUi(): AdjustUiState {
+  const [s, setS] = useState<AdjustUiState>(uiState);
+  useEffect(() => {
+    const update = () => setS({ ...uiState });
+    update();
+    return subscribeAdjustUi(update);
+  }, []);
+  return s;
+}

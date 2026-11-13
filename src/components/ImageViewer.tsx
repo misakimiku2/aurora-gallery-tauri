@@ -10,12 +10,13 @@ import { VideoControls } from './viewer/VideoControls';
 // 轻量快调(2026-11-13 设计:docs/superpowers/specs/2026-11-13-lightweight-image-adjust-design.md)
 import { SlidersHorizontal } from 'lucide-react';
 import { AdjustCanvas } from './viewer/adjust/AdjustCanvas';
-import { AdjustDrawer } from './viewer/adjust/AdjustDrawer';
+import { AdjustPanel } from './viewer/adjust/AdjustPanel';
 import { AdjustFilterDefs } from './viewer/adjust/AdjustFilterDefs';
 import { useImageAdjust } from '../hooks/useImageAdjust';
 import { isDefaultAdjustParams } from '../utils/adjust';
 import { computeAutoEnhanceStats } from '../utils/adjustCanvasDraw';
 import { bakeEdits } from '../api/tauri-bridge/edits';
+import { useAdjustUi, setAdjustUi } from '../utils/adjustStore';
 import { useToasts } from '../hooks/useToasts';
 import { isWebDecodableVideo } from '../utils/mediaExtensions';
 import { isAndroidSync } from '../utils/androidPlatform';
@@ -512,17 +513,20 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [showSlideshowSettings, setShowSlideshowSettings] = useState(false);
 
   // ── 轻量快调(一期:几何+影调+自动增强+导出,原图永不写回)──
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [cropMode, setCropMode] = useState(false);
-  const [cropAspect, setCropAspect] = useState<number | null>(null);
-  const [exporting, setExporting] = useState(false);
+  // UI 开关走模块 store(§7 修订:调整面板集成进右侧面板,经 Portal 注入插槽)
+  const adjustUi = useAdjustUi();
+  const { open: adjustOpen, cropMode, cropAspect, exporting } = adjustUi;
   const adjust = useImageAdjust(file.id, file.path, !isVideo);
   const hasAdjust = adjust.loaded && !isDefaultAdjustParams(adjust.params);
   // 有参数(非调整中)或调整中 → 用 AdjustCanvas 全量渲染(与缩略图/烘焙同口径);
   // 幻灯片态维持 <img> 原管线(幻灯片不吃参数,见设计 §7 边界)。
   const adjustShowCanvas = !isVideo && !slideshowActive && (adjustOpen || hasAdjust);
+  // Portal 插槽(MetadataPanel 渲染;查看器打开图片时即存在于 DOM)
+  const adjustSlotEl = adjustOpen && typeof document !== 'undefined'
+    ? document.getElementById('aurora-adjust-slot')
+    : null;
 
-  useEffect(() => { setAdjustOpen(false); setCropMode(false); }, [file.id]);
+  useEffect(() => { setAdjustUi({ open: false, cropMode: false }); }, [file.id]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [immersiveFlip, setImmersiveFlip] = useState<{
@@ -1636,7 +1640,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           return;
         }
         if (showSearch) setShowSearch(false);
-        else if (adjustOpen) setAdjustOpen(false);
+        else if (adjustOpen) setAdjustUi({ open: false, cropMode: false });
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
         else if (slideshowActive) stopSlideshow();
         else if (canGoBack) onNavigateBack();
@@ -1825,14 +1829,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const ext = (file.path.split('.').pop() || '').toLowerCase();
     // 一期导出口径(设计 §9):png/jpeg;照片类源 → jpeg q90,其余 → png 无损
     const format = ['jpg', 'jpeg', 'webp', 'gif'].includes(ext) ? 'jpeg' : 'png';
-    setExporting(true);
+    setAdjustUi({ exporting: true });
     try {
       const out = await bakeEdits(file.path, adjust.params, { format, quality: 90 });
       showFrameToast(`${t('adjust.exportDone')}: ${out.outPath.replace(/^.*[\\/]/, '')}`);
     } catch (e) {
       showFrameToast(`${t('adjust.exportFailed')}: ${String(e)}`);
     } finally {
-      setExporting(false);
+      setAdjustUi({ exporting: false });
     }
   };
 
@@ -2159,7 +2163,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </button>
             {!isVideo && (
               <button
-                onClick={() => setAdjustOpen((v) => !v)}
+                onClick={() => {
+                  const next = !adjustOpen;
+                  setAdjustUi({ open: next, cropMode: next ? cropMode : false });
+                  // 面板住在右栏(§7 修订):右栏没展开时顺手展开
+                  if (next && !layout.isMetadataVisible) onLayoutToggle('metadata');
+                }}
                 className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${adjustOpen || hasAdjust ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
                 title={t('adjust.title')}
               >
@@ -2423,20 +2432,22 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
         )}
 
-        {/* 调整抽屉(轻量快调):右侧浮层,滑杆实时生效 */}
-        {adjustOpen && !isVideo && !slideshowActive && (
-          <AdjustDrawer
+        {/* 调整面板(轻量快调 §7 修订):Portal 注入右侧面板插槽("打开所在文件夹"以下),
+            不再浮窗;Esc/关闭按钮经 store 关闭 */}
+        {adjustOpen && !isVideo && !slideshowActive && adjustSlotEl && createPortal(
+          <AdjustPanel
             t={t}
             adjust={adjust}
             cropMode={cropMode}
-            onCropModeChange={setCropMode}
+            onCropModeChange={(on) => setAdjustUi({ cropMode: on })}
             cropAspect={cropAspect}
-            onCropAspectChange={setCropAspect}
+            onCropAspectChange={(a) => setAdjustUi({ cropAspect: a })}
             exporting={exporting}
             onExport={handleExportAdjusted}
             onAutoEnhance={handleAutoEnhance}
-            onClose={() => setAdjustOpen(false)}
-          />
+            onClose={() => setAdjustUi({ open: false, cropMode: false })}
+          />,
+          adjustSlotEl
         )}
 
         {!slideshowActive && (

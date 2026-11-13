@@ -6,6 +6,8 @@ import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic, AppSettings, AppState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout, Activity, Gauge, Clapperboard, RotateCw } from 'lucide-react';
+// 轻量快调(设计 §7 修订):编辑态时本面板"打开所在文件夹"以下区域切换为调整面板
+import { useAdjustUi } from '../utils/adjustStore';
 import { useAIRename } from '../hooks/useAIRename';
 import ImagePreview from './metadata/ImagePreview';
 import FileCoverImg from './metadata/FileCoverImg';
@@ -65,6 +67,8 @@ interface MetadataProps {
 
 export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus }) => {
     const isMulti = selectedFileIds.length > 1;
+    // 轻量快调:编辑态开关(与查看器经模块 store 解耦;内容由 Portal 注入插槽)
+    const adjustUiOpen = useAdjustUi().open;
     const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
 
     // AI 重命名功能
@@ -1643,6 +1647,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     </button>
                 )}
 
+                {/* 轻量快调(设计 §7 修订):编辑态时本插槽以下切换为调整面板;
+                    插槽内容由 ImageViewer 经 Portal 注入,关闭态 display:none 不占版面 */}
+                {!isMulti && file && file.type === FileType.IMAGE && (
+                    <div id="aurora-adjust-slot" style={{ display: adjustUiOpen ? 'block' : 'none' }} />
+                )}
+
+                {!adjustUiOpen && (
+                <>
                 {/* Detailed Info Grid */}
                 {!isMulti && file && (
                     <div>
@@ -1833,6 +1845,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     onUpdateMeta={handleUpdateMeta}
                     t={t}
                 />
+                </>
+                )}
             </div>
 
             {/* Palette Context Menu */}

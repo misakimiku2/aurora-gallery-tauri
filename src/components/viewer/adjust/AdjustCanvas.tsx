@@ -81,7 +81,9 @@ export const AdjustCanvas: React.FC<AdjustCanvasProps> = ({
     img.onload = () => {
       if (cancelled) return;
       imgRef.current = img;
-      frameRef.current = null; // 触发重建
+      // ⚠️ 帧必须在这里重建:参数 effect 只在 params 变化时跑,异步加载完成时它早已
+      // 跳过(imgRef 当时还是 null)——否则画布空白,直到用户动一下几何参数才显形。
+      frameRef.current = buildAdjustedFrame(img, stateRef.current.params);
       scheduleDraw();
     };
     img.onerror = () => {
