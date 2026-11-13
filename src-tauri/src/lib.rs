@@ -2301,6 +2301,31 @@ pub fn run() {
                 app.manage(Some(tray));
             }
             
+            // 全局屏蔽 WebView2 默认右键菜单与表单自动填充：前端 preventDefault
+            // 拦不到滚动条、输入框等原生 UI 上的菜单，直接关 WebView2 的原生开关。
+            // 与 window_commands.rs 截图同理，with_webview 闭包在 WebView2 UI 线程执行。
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.with_webview(|webview| {
+                        let result = (|| {
+                            let core_webview = unsafe { webview.controller().CoreWebView2() }?;
+                            let settings = unsafe { core_webview.Settings() }?;
+                            unsafe { settings.SetAreDefaultContextMenusEnabled(false) }?;
+                            // 关掉 General Autofill：搜索框等输入框点击时不再弹
+                            // “保存的信息”历史下拉（Chromium 表单历史记录）。
+                            use windows::core::Interface;
+                            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
+                            let settings9 = settings.cast::<ICoreWebView2Settings9>()?;
+                            unsafe { settings9.SetIsGeneralAutofillEnabled(false) }
+                        })();
+                        if let Err(e) = result {
+                            log::warn!("[Setup] disable webview context menu/autofill: {e:?}");
+                        }
+                    });
+                }
+            }
+
             let (db_path, app_db_path) = get_initial_db_paths(app.handle());
             log::info!("[Setup] opening color DB at {}", db_path.display());
             

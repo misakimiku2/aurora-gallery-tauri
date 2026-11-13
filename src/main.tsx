@@ -31,6 +31,10 @@ const configureTauriLogs = async () => {
 // Configure logs first
 typeof window !== 'undefined' && configureTauriLogs();
 
+// 全局屏蔽浏览器默认右键菜单：capture 阶段拦截，业务侧自定义右键菜单
+// （contextmenu 事件仍派发到目标元素）不受影响；桌面端另有 WebView2 原生开关兜底。
+document.addEventListener('contextmenu', (e) => e.preventDefault(), true);
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
