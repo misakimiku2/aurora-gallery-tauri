@@ -37,8 +37,13 @@ pub async fn save_user_data(app_handle: tauri::AppHandle, data: serde_json::Valu
     
     let config_path = app_data_dir.join("user_data.json");
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    fs::write(config_path, json).map_err(|e| e.to_string())?;
-    
+    // 原子写(2026-11-14 启动治理):先落临时文件再改名。直接 fs::write 是截断+覆盖,
+    // 自动保存每秒一次,进程被杀/断电正好落在写入窗口就会留下截断 JSON——下次启动
+    // 解析失败,启动流程被打进 mock 兜底,库根被 mock 数据顶掉(实测发生过)。
+    let tmp_path = app_data_dir.join("user_data.json.tmp");
+    fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, &config_path).map_err(|e| e.to_string())?;
+
     Ok(true)
 }
 
@@ -47,15 +52,32 @@ pub async fn load_user_data(app_handle: tauri::AppHandle) -> Result<Option<serde
     let start = std::time::Instant::now();
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let config_path = app_data_dir.join("user_data.json");
-    
+
     if !config_path.exists() {
         log::info!("[DBCommands] load_user_data: no user_data.json in {:?}", start.elapsed());
         return Ok(None);
     }
-    
-    let json_str = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
-    let data = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
-    
+
+    let json_str = match fs::read_to_string(&config_path) {
+        Ok(s) => s,
+        Err(e) => {
+            // 读失败(权限/被占用):按无数据处理走欢迎流程,不向上抛——
+            // 抛错会把启动打进 mock 兜底,后随自动保存污染 user_data.json。
+            log::error!("[DBCommands] user_data.json 读取失败,按无历史数据处理: {e}");
+            return Ok(None);
+        }
+    };
+    let data = match serde_json::from_str(&json_str) {
+        Ok(d) => d,
+        Err(e) => {
+            // 解析失败=文件损坏(历史非原子写的遗留伤):备份现场后按无数据处理。
+            // 绝不向上抛错——那会把启动打进 mock 兜底(mock 根会被当真库持久化)。
+            log::error!("[DBCommands] user_data.json 解析失败,备份为 .corrupt 后按无历史数据处理: {e}");
+            let _ = fs::rename(&config_path, app_data_dir.join("user_data.json.corrupt"));
+            return Ok(None);
+        }
+    };
+
     log::info!("[DBCommands] load_user_data: {} bytes in {:?}", json_str.len(), start.elapsed());
     Ok(Some(data))
 }

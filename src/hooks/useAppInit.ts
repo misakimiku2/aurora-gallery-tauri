@@ -694,7 +694,19 @@ export const useAppInit = ({
                 }, 500);
                 return;
               } else {
-                isSavedDataLoaded = false;
+                // 库根全部扫描失败(路径不存在/盘未挂载/瞬时 IO 错误,2026-11-14 启动治理):
+                // **绝不把 isSavedDataLoaded 翻 false 落进 mock 兜底**——mock 根(C:/Photos)
+                // 会被 usePersistence 一秒后当真库持久化,顶掉 user_data.json 里的用户库根
+                // (实测 rootPaths 被改写成 C:/Photos 的根因,且"更改多了就坏"高发)。
+                // 设置已应用(上面 setState),这里只关启动屏给空库;真根仍留在盘上,
+                // 盘恢复后重启或"设置→添加文件夹"即可回来。
+                logStep('库根全部不可访问，显示空库（根配置保留在 user_data.json）');
+                console.warn('[useAppInit] all root scans failed; keeping saved rootPaths, entering empty library');
+                setIsLoading(false);
+                setTimeout(() => {
+                  setShowSplash(false);
+                }, 500);
+                return;
               }
             }
           } catch (e) {

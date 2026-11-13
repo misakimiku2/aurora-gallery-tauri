@@ -136,7 +136,14 @@ export const createMockFile = (parentId: string, name: string, isFolder: boolean
   };
 };
 
+// mock 文件系统激活标记(2026-11-14 启动治理):initializeFileSystem 一旦跑过就置位。
+// usePersistence 据此拒绝对 mock 态做自动持久化——mock 根(C:/Photos)曾被"扫描全失败
+// → mock 兜底 → 自动保存"链条写进 user_data.json 顶掉用户真实库根,详见该处注释。
+let mockActive = false;
+export const isMockFileSystemActive = (): boolean => mockActive;
+
 export const initializeFileSystem = (): { roots: string[], files: Record<string, FileNode> } => {
+  mockActive = true;
   const files: Record<string, FileNode> = {};
   const roots: string[] = [];
 
