@@ -11,6 +11,10 @@ import { AdjustToneParams } from '../../../utils/adjust';
  * ⚠️ 必须 colorInterpolationFilters="sRGB":SVG 滤镜默认在 linearRGB 里算,
  * 不显式指定会与 Rust/CSS 的 sRGB 数值语义错位(整张图发灰)。
  * feColorMatrix 输出自动 clamp [0,1],与 Rust 每步 clamp 口径一致。
+ *
+ * ⚠️⚠️ alpha 行必须是 `0 0 0 1 0`(透传):写 `0 0 0 0 1`(强制不透明)时,
+ * canvas ctx.filter / CSS filter 引用本滤镜会把**信箱区等透明像素染成不透明纯黑**
+ * (RGB=0 + A=1),表现为"拖色温/色调后四周变纯黑"(2026-11-13 用户实测)。
  */
 export const AdjustFilterDefs: React.FC<{ tone: AdjustToneParams }> = ({ tone }) => {
   const rGain = 1 + tone.temperature * 0.25;
@@ -20,7 +24,7 @@ export const AdjustFilterDefs: React.FC<{ tone: AdjustToneParams }> = ({ tone })
     rGain.toFixed(6), '0', '0', '0', '0',
     '0', gGain.toFixed(6), '0', '0', '0',
     '0', '0', bGain.toFixed(6), '0', '0',
-    '0', '0', '0', '0', '1',
+    '0', '0', '0', '1', '0',
   ].join(' ');
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true" focusable="false">
