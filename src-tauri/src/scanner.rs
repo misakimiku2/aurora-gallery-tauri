@@ -1,6 +1,18 @@
 use crate::db::{self, generate_id, normalize_path, AppDbPool};
 use crate::file_types::{FileType, FileNode, ImageMeta, ScanProgress, is_supported_image, is_supported_video};
+// ffmpeg 时长复核是桌面能力（ffmpeg_cover 为桌面专属模块）。Android target 也要能
+// 编译本模块（android/server 复用 lib）：兜底 = 不判可疑、原值返回（该扫描路径在
+// 安卓发布物里不运行——安卓端走 core crate + MediaStore）。
+#[cfg(not(target_os = "android"))]
 use crate::ffmpeg_cover::{is_suspicious_duration, sane_video_duration_ms};
+#[cfg(target_os = "android")]
+fn is_suspicious_duration(_duration_ms: i64, _file_size: u64) -> bool {
+    false
+}
+#[cfg(target_os = "android")]
+fn sane_video_duration_ms(_file_path: &str, _file_size: u64, duration_ms: Option<i64>) -> Option<i64> {
+    duration_ms
+}
 use crate::video_metadata::read_video_metadata;
 use crate::image_utils::get_image_dimensions;
 use rayon::prelude::*;
@@ -178,10 +190,12 @@ fn sort_children(all_files: &mut HashMap<String, FileNode>) {
                 match (a_node, b_node) {
                     (Some(a_n), Some(b_n)) => {
                         match (&a_n.r#type, &b_n.r#type) {
-                            (FileType::Folder, FileType::Folder) => a_n.name.cmp(&b_n.name),
+                            (FileType::Folder, FileType::Folder) => {
+                                crate::natural_sort::compare_natural_names(&a_n.name, &b_n.name)
+                            }
                             (FileType::Folder, _) => std::cmp::Ordering::Less,
                             (_, FileType::Folder) => std::cmp::Ordering::Greater,
-                            _ => a_n.name.cmp(&b_n.name),
+                            _ => crate::natural_sort::compare_natural_names(&a_n.name, &b_n.name),
                         }
                     }
                     _ => std::cmp::Ordering::Equal,

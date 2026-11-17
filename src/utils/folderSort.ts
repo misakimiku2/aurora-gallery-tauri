@@ -5,7 +5,9 @@
 // 抽到这里统一维护。
 //
 // 语义约定（与 useFileSearch 主管道完全一致）：
-//   - name：lowercase localeCompare
+//   - name：lowercase localeCompare + numeric 自然序（1.jpg < 2.jpg < 10.jpg，
+//     否则字典序会给 1、10、11、2…；TreeSidebar / FoldersOverview / NetworkSection /
+//     LAN BrowseScreen 的名字排序必须同样走 compareNaturalNames）
 //   - date：createdAt 字符串比较
 //   - size：meta.sizeKb 数值比较
 //   - asc 乘 1 / desc 乘 -1
@@ -64,6 +66,14 @@ export const buildFolderDateKeys = (
 };
 
 /**
+ * 自然序名字比较：数字段按数值比较（1.jpg < 2.jpg < 10.jpg），
+ * 大小写不敏感。所有按名字排文件/文件夹的地方统一走这里，
+ * 禁止内联 lowercase localeCompare（会退化成 1、10、11、2… 的字典序）。
+ */
+export const compareNaturalNames = (a: string, b: string): number =>
+  (a || '').toLowerCase().localeCompare((b || '').toLowerCase(), undefined, { numeric: true });
+
+/**
  * 同类型节点按 (sortBy, sortDirection) 比较 —— 封面选图等图片间比较统一走这里。
  */
 export const compareNodesBySort = (
@@ -75,7 +85,7 @@ export const compareNodesBySort = (
   let res = 0;
   if (sortBy === 'date') res = (a.createdAt || '').localeCompare(b.createdAt || '');
   else if (sortBy === 'size') res = (a.meta?.sizeKb || 0) - (b.meta?.sizeKb || 0);
-  else res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+  else res = compareNaturalNames(a.name || '', b.name || '');
   return res * (sortDirection === 'asc' ? 1 : -1);
 };
 

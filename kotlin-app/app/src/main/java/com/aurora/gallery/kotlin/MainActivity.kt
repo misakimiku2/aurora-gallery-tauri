@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.LayoutMode
 import com.aurora.gallery.kotlin.ui.components.WelcomeFlow
 import com.aurora.gallery.kotlin.ui.components.CreateTopicDialog
 import com.aurora.gallery.kotlin.ui.components.EditTagsDialog
@@ -163,6 +164,17 @@ class MainActivity : ComponentActivity() {
 
     /** M4b 2.1 设置面板开合（侧栏「设置」行触发；对话框在 setContent 里渲染）。 */
     private var showSettings by mutableStateOf(false)
+
+    /**
+     * 设置页的缓存体积文案（2026-11-17 用户报障「开设置卡几秒」）：此前在组合里同步调
+     * [computeCacheSizeText]，主线程递归走 cacheDir 文件树（缩略图+查看器缓存，29k 库
+     * = 数万个小文件）要好几秒——不仅每次打开卡，设置页每次重组（改任意设置项）都重走
+     * 一遍。改为打开/清理缓存后在 IO 线程统计，主线程只读文案；null = 统计中。
+     */
+    private var cacheSizeTextState by mutableStateOf<String?>(null)
+
+    /** 缓存清理完成信号：bump 触发重统计。 */
+    private var cacheSizeTick by mutableStateOf(0)
 
     /**
      * 设置面板打开时直接落的分类（null = 默认入口）。仅侧栏「网络」行未连接跳转时
@@ -722,6 +734,10 @@ class MainActivity : ComponentActivity() {
                         // 侧栏「网络」行已连接：进 LAN 文件夹总览（2026-09-26 二轮反馈）
                         onLanOverviewClick = { viewModel.appState.openLanOverview() },
                         onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
+                        onFileSortApply = { by, dir -> viewModel.applyDefaultSort(by, dir) },
+                        onFolderSortApply = { by, dir -> viewModel.applyDefaultFolderSort(by, dir) },
+                        onGroupByApply = { viewModel.applyDefaultGroupBy(it) },
+                        onLayoutApply = { viewModel.applyDefaultLayout(it) },
                         onLoadPickerImages = viewModel::loadCanvasPickerImages,
                         // 画布沉浸开关（M5 4）：进=会话隐藏、退=还原。画布不经查看器的
                         // onClose，退出必须走还原分支，否则导航栏卡在隐藏
@@ -953,10 +969,18 @@ class MainActivity : ComponentActivity() {
                     ensureViewer().lanVocab = viewModel.lanVocab.value
                 }
                 // M4c：设置宿主（平板 ≥600dp 桌面式双栏对话框 / 手机全屏设置页，D21 双形态）
+                // 缓存体积走后台统计（见 cacheSizeTextState 注释）；打开与清缓存后各刷一次
+                LaunchedEffect(showSettings, cacheSizeTick) {
+                    if (showSettings) {
+                        cacheSizeTextState = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            computeCacheSizeText()
+                        }
+                    }
+                }
                 if (showSettings) {
                     SettingsHost(
                         settings = viewModel.settings.value,
-                        cacheSizeText = computeCacheSizeText(),
+                        cacheSizeText = cacheSizeTextState ?: "统计中…",
                         appVersion = appVersion,
                         // D50：更新检查状态机（关于页「软件更新」区与更新弹窗共用）
                         update = viewModel.updateController,
@@ -969,9 +993,8 @@ class MainActivity : ComponentActivity() {
                         onAiSettingsChange = { viewModel.updateAiSettings(it) },
                         onThemeChange = { viewModel.setTheme(it) },
                         onDefaultLayoutChange = { viewModel.applyDefaultLayout(it) },
-                        onDefaultSortChange = { by, dir -> viewModel.applyDefaultSort(by, dir) },
                         onDefaultGroupByChange = { viewModel.applyDefaultGroupBy(it) },
-                        onClearCache = { clearCache() },
+                        onClearCache = { clearCache { cacheSizeTick++ } },
                         onExportBackup = { exportBackup() },
                         onImportBackup = { importBackupLauncher.launch(arrayOf("application/json")) },
                         onOpenUrl = { openExternalUrl(it) },
@@ -1351,6 +1374,16 @@ fun App(
     onLanOverviewClick: () -> Unit = {},
     /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
     onPullRefresh: ((onComplete: () -> Unit) -> Unit),
+    /**
+     * 2026-11-17 视图项持久化：顶栏改「排序/分组/布局」的落盘通道（宿主转 VM 的
+     * apply*——即时写 SharedPreferences 并应用会话态）。此前顶栏这些操作只写
+     * AppState 会话态，重启即丢（用户拍板：选了瀑布流/排序，重启必须还在）；
+     * 排序分离后文件与文件夹各走各的回调。
+     */
+    onFileSortApply: (SortOption, SortDirection) -> Unit,
+    onFolderSortApply: (SortOption, SortDirection) -> Unit,
+    onGroupByApply: (GroupBy) -> Unit,
+    onLayoutApply: (LayoutMode) -> Unit,
     /** M5 3.1：选中集加入画布（宿主解析 FFI 源 + 落 store + 反馈）；[onDone] 报告是否真有加入。 */
     onAddSelectionToCanvas: (Collection<String>, onDone: (Boolean) -> Unit) -> Unit = { _, _ -> },
     /** M5 3.3：添加图片弹窗的四类数据源取数（宿主转 GalleryViewModel）。 */
@@ -1791,12 +1824,14 @@ fun App(
     // 键（max(内容最新, 活动时间)）——写操作 bump 落地即重排，「操作过就排前面」。
     val displayFolders = remember(
         folders, localCoverOverrides, folderActivityAt,
-        tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection,
+        tab.searchQuery, tab.dateFilter, state.folderSortBy, state.folderSortDirection,
     ) {
         val covered = if (localCoverOverrides.isEmpty()) folders
         else folders.map { f -> localCoverOverrides[f.id]?.let { f.copy(coverUri = it) } ?: f }
         filterFolders(
-            sortFolders(covered, state.sortBy, state.sortDirection) { folderActivityAt[it] ?: 0L },
+            // 2026-11-17 排序分离：总览排文件夹走独立的 folderSort 对，不再蹭文件网格的
+            // sortBy（在文件夹里改排序会把总览连带打乱的老问题由此而来）
+            sortFolders(covered, state.folderSortBy, state.folderSortDirection) { folderActivityAt[it] ?: 0L },
             tab.searchQuery,
             tab.dateFilter,
         )
@@ -1806,9 +1841,11 @@ fun App(
     // 「根目录图片」置顶的规则对 __lan_root_images__ 虚拟根天然生效，对齐 React 置顶行为）。
     // 搜索/日期筛选入口在 LAN 视图隐藏，实际是恒等管道；保留形态为的是复用同一组件。
     val displayLanFolders =
-        remember(lanOverviewFolders, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+        remember(lanOverviewFolders, tab.searchQuery, tab.dateFilter, state.folderSortBy, state.folderSortDirection) {
             filterFolders(
-                sortFolders(lanOverviewFolders, state.sortBy, state.sortDirection),
+                // 2026-11-17 排序分离：LAN 总览与本地总览同走 folderSort 对（排序语义是
+                // 「文件夹卡片」，两处必须同口径）
+                sortFolders(lanOverviewFolders, state.folderSortBy, state.folderSortDirection),
                 tab.searchQuery,
                 tab.dateFilter,
             )
@@ -2167,17 +2204,37 @@ fun App(
                     onToggleColorPanel = { state.toggleColorPicker() },
                     dateFilter = tab.dateFilter,
                     onDateFilterChange = { state.setDateFilter(it) },
-                    sortBy = state.sortBy,
-                    onSortChange = { state.sortBy = it },
-                    sortDirection = state.sortDirection,
+                    // 2026-11-17 排序分离 + 视图项持久化：总览态（本地/LAN）读写文件夹
+                    // 排序对（folderSort），网格态读写文件排序对（sortBy），两对互不牵连；
+                    // 全部经 onFileSortApply/onFolderSortApply/onGroupByApply/onLayoutApply
+                    // 即时落盘——顶栏改的排序/分组/布局重启还在（此前只写会话态，杀进程
+                    // 即丢）。人物/专题视图的排序体在 sortMenuContent 注入，不走这两个回调。
+                    sortBy = if (inFoldersOverview || inLanOverview) state.folderSortBy else state.sortBy,
+                    onSortChange = {
+                        if (inFoldersOverview || inLanOverview) {
+                            onFolderSortApply(it, state.folderSortDirection)
+                        } else {
+                            onFileSortApply(it, state.sortDirection)
+                        }
+                    },
+                    sortDirection = if (inFoldersOverview || inLanOverview) state.folderSortDirection else state.sortDirection,
                     onSortDirectionToggle = {
-                        state.sortDirection =
-                            if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+                        if (inFoldersOverview || inLanOverview) {
+                            onFolderSortApply(
+                                state.folderSortBy,
+                                if (state.folderSortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC,
+                            )
+                        } else {
+                            onFileSortApply(
+                                state.sortBy,
+                                if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC,
+                            )
+                        }
                     },
                     groupBy = state.groupBy,
-                    onGroupByChange = { state.groupBy = it },
+                    onGroupByChange = { onGroupByApply(it) },
                     layoutMode = tab.layoutMode,
-                    onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+                    onLayoutModeChange = { mode -> onLayoutApply(mode) },
                     // 标签弹层与侧栏标签区同一份数据、同一个点击行为（M4a 3.1 / 4.1）。
                     // 2026-10-11：LAN 态换远端词表/远端单选语义——chip 点击进远端 tag
                     // 筛选虚拟目录（TreeSidebar 远端标签行同款），选中态高亮当前 lanTagTitle

@@ -68,6 +68,14 @@ class MoreMenuPopup(
     private val anchor: View,
     private val menuItems: List<MoreMenuItem>,
     /**
+     * 垂直锚（2026-11-17 与图库 AuroraDropdown 统一落点）：非 null 时菜单 y = 该 View
+     * 底边 + 4dp（传宿主顶栏=「贴工具栏下缘」）；null 时退回锚点按钮底边 + 8dp 旧口径。
+     * x 恒锚 [anchor]（按钮右缘右对齐）。2026-11-17 拍板：查看器顶栏对齐图库卡片线
+     * （TOP_BAR_TOP_GAP_DP 0→8dp）后，两处菜单统一「工具栏下缘 + 4dp」，按钮盒高度差
+     * （图库 44dp vs 查看器 48dp）不再影响落点。
+     */
+    private val toolbar: View? = null,
+    /**
      * 关闭回调（2026-10-22）：调用点用它解除对宿主工具栏自动收起的「按住」——
      * 菜单是独立 Dialog，开着时顶栏若滑走，菜单就悬空且锚点丢失。
      */
@@ -199,15 +207,19 @@ class MoreMenuPopup(
         val screenHeight = context.resources.displayMetrics.heightPixels
 
         /**
-         * 落点：锚点正下方右对齐 + 屏边夹取；gap 8dp 菜单贴按钮正下方，与 AuroraDropdown
-         * 的 gap = 8.dp 一致（原 4dp）。锚点坐标**每次现读**——初算用一次、显示后的自校准
-         * 再用一次，两次之间锚点动过（视频态系统栏回弹会挪顶栏）就跟到新位，不会钉在旧锚上。
+         * 落点：右对齐锚点按钮 + 垂直锚「工具栏下缘 + 4dp」（2026-11-17 与 AuroraDropdown
+         * 统一口径；toolbar=null 退回按钮底边 + 8dp 旧口径）。坐标**每次现读**——初算用
+         * 一次、显示后的自校准再用一次，两次之间锚点动过（视频态系统栏回弹会挪顶栏）就
+         * 跟到新位，不会钉在旧锚上。
          */
         val menuPos = {
             val loc = IntArray(2)
             anchor.getLocationOnScreen(loc)
             var x = loc[0] + anchor.width - measuredWidth
-            var y = loc[1] + anchor.height + (density * 8).toInt()
+            val vAnchor = toolbar ?: anchor
+            val vLoc = IntArray(2)
+            vAnchor.getLocationOnScreen(vLoc)
+            var y = vLoc[1] + vAnchor.height + (density * 4).toInt()
             if (x < 0) x = 0
             if (x + measuredWidth > screenWidth) x = screenWidth - measuredWidth
             if (y + measuredHeight > screenHeight) y = screenHeight - measuredHeight

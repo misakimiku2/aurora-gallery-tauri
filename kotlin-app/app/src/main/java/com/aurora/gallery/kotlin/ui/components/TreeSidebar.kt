@@ -294,8 +294,8 @@ fun TreeSidebar(
 
     val sortedFolders = remember(folders, folderSort) {
         when (folderSort) {
-            FolderSort.NAME_ASC -> folders.sortedBy { it.name.lowercase() }
-            FolderSort.NAME_DESC -> folders.sortedByDescending { it.name.lowercase() }
+            FolderSort.NAME_ASC -> folders.sortedWith(naturalNameComparator<Folder> { it.name })
+            FolderSort.NAME_DESC -> folders.sortedWith(naturalNameComparator<Folder> { it.name }.reversed())
             FolderSort.DATE_DESC -> folders.sortedByDescending { it.modifiedAt }
             FolderSort.DATE_ASC -> folders.sortedBy { it.modifiedAt }
         }

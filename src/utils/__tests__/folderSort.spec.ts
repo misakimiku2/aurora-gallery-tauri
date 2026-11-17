@@ -4,6 +4,7 @@ import {
   buildFolderDateKeys,
   compareNodesBySort,
   compareInMainPipeline,
+  compareNaturalNames,
 } from '../folderSort';
 import { findImagesDeeply, clearFolderCoverCache } from '../folderCoverImages';
 import { FileNode, FileType, SortOption, SortDirection } from '../../types';
@@ -116,6 +117,38 @@ describe('compareInMainPipeline（主排序管道：无日期恒最后 + 文件�
     const newImg = img('i-new', { createdAt: '2025-01-01T00:00:00Z' });
     expect(compareInMainPipeline(oldImg, newImg, 'date', 'asc', null)).toBeLessThan(0);
     expect(compareInMainPipeline(oldImg, newImg, 'date', 'desc', null)).toBeGreaterThan(0);
+  });
+});
+
+describe('compareNaturalNames（名字自然序：数字段按数值比较）', () => {
+  it('1.jpg < 2.jpg < 10.jpg < 11.jpg（字典序会给出 1、10、11、2…）', () => {
+    const names = ['10.jpg', '1.jpg', '11.jpg', '2.jpg'];
+    expect([...names].sort(compareNaturalNames)).toEqual(['1.jpg', '2.jpg', '10.jpg', '11.jpg']);
+  });
+
+  it('多位数与前导零：img2 < img10，img01 与 img1 视为并列', () => {
+    expect(compareNaturalNames('img2.jpg', 'img10.jpg')).toBeLessThan(0);
+    expect(compareNaturalNames('img10.jpg', 'img2.jpg')).toBeGreaterThan(0);
+    expect(compareNaturalNames('img01.jpg', 'img1.jpg')).toBe(0);
+  });
+
+  it('多数字段逐段比较：img2-2 < img2-10', () => {
+    expect(compareNaturalNames('img2-2.jpg', 'img2-10.jpg')).toBeLessThan(0);
+    expect(compareNaturalNames('img2-10.jpg', 'img2-2.jpg')).toBeGreaterThan(0);
+  });
+
+  it('大小写不敏感（沿用历史语义）', () => {
+    expect(compareNaturalNames('Apple.jpg', 'banana.JPG')).toBeLessThan(0);
+    expect(compareNaturalNames('BANANA.jpg', 'apple.jpg')).toBeGreaterThan(0);
+  });
+
+  it('compareNodesBySort 的 name 分支走自然序', () => {
+    const a = img('1.jpg', { name: '1.jpg' });
+    const b = img('10.jpg', { name: '10.jpg' });
+    const c = img('2.jpg', { name: '2.jpg' });
+    expect(compareNodesBySort(a, c, 'name', 'asc')).toBeLessThan(0);
+    expect(compareNodesBySort(c, b, 'name', 'asc')).toBeLessThan(0);
+    expect(compareNodesBySort(b, a, 'name', 'asc')).toBeGreaterThan(0);
   });
 });
 

@@ -7,6 +7,7 @@ pub mod video_metadata;
 pub use aurora_core::file_types;
 pub mod image_utils;
 pub mod image_adjust;
+pub mod natural_sort;
 pub mod scanner;
 pub mod file_operations;
 pub mod db_commands;

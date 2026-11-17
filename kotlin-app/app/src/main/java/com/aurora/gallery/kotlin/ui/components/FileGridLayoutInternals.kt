@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import androidx.recyclerview.widget.StaggeredSpanAccess
+import com.aurora.gallery.kotlin.DiagLog
 import com.aurora.gallery.kotlin.ThumbnailLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -680,6 +681,9 @@ internal class FileGridAdapter(
     private var layoutMode: LayoutMode = LayoutMode.GRID
     private var cellWidthPx: Int = 0
 
+    /** 2026-11-17 取证：本批数据的缩略图上屏计数（submit 换数据时清零）。 */
+    private val diagShownThumbs = java.util.concurrent.atomic.AtomicLong()
+
     /** adaptive 档位的目标行高 px（不含文件名文字区）；bind 写封面 lp 高度用。 */
     private var rowHeightPx: Int = 0
     private var gapPx: Int = 0
@@ -737,6 +741,7 @@ internal class FileGridAdapter(
         gapPx = gap
         collapsedIds = collapsed
         headerPositions = items.mapIndexedNotNull { i, it -> if (it is GridItem.Header) i else null }
+        diagShownThumbs.set(0)
         notifyDataSetChanged()
         return true
     }
@@ -1132,9 +1137,24 @@ internal class FileGridAdapter(
         Log.i(TAG, "[ImgLoad] pos=$pos id=$imageId ASYNC-RELOAD（闪现候选）")
         cover.setImageBitmap(null)
         cover.tag = imageId
+        // 2026-11-17 取证：sinceLoad = 这张图从发起加载到位图上屏的耗时
+        val tLoadStart = android.os.SystemClock.elapsedRealtime()
         return scope.launch {
             val bmp = loader.loadFastLimited(imageId, isVideo)
-            if (stillValid()) cover.setImageBitmap(bmp)
+            if (stillValid()) {
+                cover.setImageBitmap(bmp)
+                if (bmp != null) {
+                    val shown = diagShownThumbs.incrementAndGet()
+                    if (shown == 1L || shown == 5L || shown == 15L || shown == 30L || shown == 60L) {
+                        DiagLog.log(
+                            "[Grid] 缩略图上屏 #$shown pos=$pos id=$imageId " +
+                                "sinceLoad=${android.os.SystemClock.elapsedRealtime() - tLoadStart}ms",
+                        )
+                    }
+                } else if (diagShownThumbs.get() < 5) {
+                    DiagLog.log("[Grid] 缩略图加载失败 pos=$pos id=$imageId")
+                }
+            }
             // 按需高清升级：仅当系统缩略图偏小/缺失（<200px）才为这张图生成 HD（Rust 解码
             // 原图 ~145ms/张），512px 系统缩略图不触发——正常滚动零后台解码，不再整夹预热。
             // 视频项不做 HD 升级：那条路是「按 id 解原图」，喂 mp4 只会白跑一次解码。

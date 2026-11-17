@@ -84,6 +84,10 @@ suspend fun GalleryViewModel.reloadImages() {
         imagesPending.value = true
     }
     loadedImagesKey = key
+    // 2026-11-17 取证锚点：start→end 的差值包含 Rust 查询本身 + DB 连接锁等待
+    //（冷启扫描的对账事务持锁时，这里会表现出数秒的 took）
+    val tLoadStart = android.os.SystemClock.elapsedRealtime()
+    debugLog("[Load] start folder=${tab.folderId} byTag=$byTag topic=$topicId person=$personId")
     val imgs = try {
         withContext(Dispatchers.IO) {
             when {
@@ -113,7 +117,10 @@ suspend fun GalleryViewModel.reloadImages() {
         imagesPending.value = false
         // 诊断（2026-10-07 复制可见性排查）：每次取数落一条，folder + 条数 +
         // 是否含刚复制的行（由调用方上下文推断）。华为吞 logcat，这是唯一取证面。
-        debugLog("reloadImages: folder=${tab.folderId} tags=$byTag topic=$topicId person=$personId n=${imgs.size}")
+        debugLog(
+            "reloadImages: folder=${tab.folderId} tags=$byTag topic=$topicId person=$personId " +
+                "n=${imgs.size} took=${android.os.SystemClock.elapsedRealtime() - tLoadStart}ms",
+        )
     }
 }
 
@@ -207,6 +214,9 @@ private fun GalleryViewModel.pickCoverBySort(imgs: List<Image>, sortBy: SortOpti
     sortImages(imgs, sortBy, direction).firstOrNull()?.contentUri
 
 fun GalleryViewModel.openFolder(folder: Folder) {
+    // 2026-11-17「进文件夹缩略图要好几秒」取证锚点：点击处理在主线程，这条的时间戳
+    // 与 diag 前后锚点（[Load] / [Thumb] / [Grid]）相减就是导航本身的位置。
+    debugLog("[Nav] openFolder id=${folder.id} name=${folder.name} cached=${imagesCacheByKey.containsKey(if (folder.id.startsWith(LAN_FOLDER_ID_PREFIX) || folder.id == LAN_SEARCH_FOLDER_ID) lanSequenceKey(folder.id) else sequenceKey(folder.id, emptyList(), null))}")
     // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder。
     // 取数不在这里：M4a 4.1 起统一由组合根的 LaunchedEffect(viewMode, folderId,
     // activeTags) 触发 [reloadImages]，导航与筛选共用一个触发点。

@@ -19,6 +19,7 @@ import { pauseColorExtraction, resumeColorExtraction, getThumbnail, isAndroidPla
 import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { isRemotePath, getRemoteThumbnailUrl } from '../utils/remoteSource';
+import { compareNaturalNames } from '../utils/folderSort';
 import NetworkSection from './lan-client/NetworkSection';
 import MarqueeText from './MarqueeText';
 import { PeopleCanvas } from './PeopleCanvas';
@@ -1667,7 +1668,7 @@ export const Sidebar: React.FC<{
           
           let res = 0;
           if (folderSortMode === 'name') {
-            res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+            res = compareNaturalNames(a.name || '', b.name || '');
           } else {
             const atime = Number(a.meta?.modified) || 0;
             const btime = Number(b.meta?.modified) || 0;

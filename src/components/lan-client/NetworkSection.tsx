@@ -5,6 +5,7 @@ import { LAN_ROOT_IMAGES_ID, ANDROID_ROOT_IMAGES_ID } from '../../constants';
 import { FileNode, FileType } from '../../types';
 import MarqueeText from '../MarqueeText';
 import { AndroidDeviceInfo } from '../android-client/androidClientTypes';
+import { compareNaturalNames } from '../../utils/folderSort';
 
 interface NetworkSectionProps {
   onNavigateHome: () => void;
@@ -124,7 +125,7 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
         const diff = nodeSortTime(a) - nodeSortTime(b);
         if (diff !== 0) return sortOrder === 'asc' ? diff : -diff;
       }
-      const res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+      const res = compareNaturalNames(a.name || '', b.name || '');
       return sortOrder === 'asc' ? res : -res;
     }, [sortMode, sortOrder]);
 
@@ -145,7 +146,7 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
           const diff = timeOf(a) - timeOf(b);
           if (diff !== 0) return sortOrder === 'asc' ? diff : -diff;
         }
-        const res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+        const res = compareNaturalNames(a.name || '', b.name || '');
         return sortOrder === 'asc' ? res : -res;
       });
       return list;

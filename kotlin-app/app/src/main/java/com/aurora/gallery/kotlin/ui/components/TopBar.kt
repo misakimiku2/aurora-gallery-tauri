@@ -282,9 +282,14 @@ fun TopBar(
     // 二级子菜单态（M8b 验收反馈：排序方式/分组方式拆成二级菜单）：0=主菜单 1=排序 2=分组
     var moreSubmenu by remember { mutableStateOf(0) }
     var moreAnchor by remember { mutableStateOf(Rect.Zero) }
+    // 工具栏底边（窗口系，2026-11-17）：顶栏的两处下拉（排序/更多）统一改锚「工具栏
+    // 下缘 + 4dp」——此前锚在各按钮盒底，按钮盒高度差（图库 44dp vs 查看器 48dp）与
+    // 查看器顶栏错位会让两处菜单落点漂移；统一到工具栏线后与查看器弹窗逐像素同位。
+    var toolbarBottomPx by remember { mutableStateOf(0f) }
 
     Row(
         modifier = modifier
+            .onGloballyPositioned { toolbarBottomPx = it.boundsInWindow().bottom }
             .fillMaxWidth()
             .height(56.dp)
             .background(colors.panel)
@@ -407,10 +412,13 @@ fun TopBar(
                     )
                 }
                 // 桌面同款弹出面板（对齐 React 桌面 sortMenu 的 w-48 + panel/90 + border +
-                // 大柔和投影 + 小节标题 + 蓝底悬停项）；毛玻璃 = 原生小窗口的窗口级背景模糊
+                // 大柔和投影 + 小节标题 + 蓝底悬停项）；毛玻璃 = 原生小窗口的窗口级背景模糊。
+                // 落点 2026-11-17 统一：锚点 bottom 覆写为工具栏下缘（x 仍贴按钮右缘），
+                // 与「更多」菜单、查看器弹窗同线（见 toolbarBottomPx 注释）
                 AuroraDropdown(
                     expanded = sortMenuOpen,
-                    anchorBoundsInWindow = sortAnchor,
+                    anchorBoundsInWindow = Rect(sortAnchor.left, sortAnchor.top, sortAnchor.right, toolbarBottomPx),
+                    gapDp = 4f,
                     onDismissRequest = { sortMenuOpen = false },
                 ) {
                     // 视图自带排序语义时（人物总览）整节换成注入的菜单体；否则走图片排序
@@ -554,7 +562,10 @@ fun TopBar(
                 }
                 AuroraDropdown(
                     expanded = moreMenuOpen,
-                    anchorBoundsInWindow = moreAnchor,
+                    // 落点 2026-11-17 统一：锚点 bottom 覆写为工具栏下缘（x 仍贴按钮右缘），
+                    // 与排序菜单、查看器弹窗同线（见 toolbarBottomPx 注释）
+                    anchorBoundsInWindow = Rect(moreAnchor.left, moreAnchor.top, moreAnchor.right, toolbarBottomPx),
+                    gapDp = 4f,
                     onDismissRequest = {
                         moreMenuOpen = false
                         moreSubmenu = 0

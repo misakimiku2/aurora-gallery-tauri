@@ -63,6 +63,15 @@ class ThumbnailLoader(context: Context) {
     // URL 分支（LAN）与本地分支共用同一信号量：滚动时远端 HTTP 请求同样不许挤爆。
     private val fastSemaphore = Semaphore(FAST_MAX_CONCURRENCY)
 
+    // —— 2026-11-17 诊断计数（DiagLog 镜像的数字来源；多线程取图，全部原子）——
+    private val diagLoads = java.util.concurrent.atomic.AtomicLong()
+    private val diagMemHits = java.util.concurrent.atomic.AtomicLong()
+    private val diagDiskHits = java.util.concurrent.atomic.AtomicLong()
+    private val diagDecodeN = java.util.concurrent.atomic.AtomicLong()
+    private val diagDecodeMs = java.util.concurrent.atomic.AtomicLong()
+    private val diagDecodeMax = java.util.concurrent.atomic.AtomicLong()
+    private val diagDecodeMiss = java.util.concurrent.atomic.AtomicLong()
+
     // 内存缓存：key -> Bitmap（maxSize 单位为 KB）。**同一个池**装两类 key：
     // 本地图 = "id:<MediaStore id>"，LAN 缩略图 = "u:<完整 URL>"（前缀杜绝两类 key
     // 互撞；此前是 LruCache<Long, Bitmap>，阶段 4 起 LAN 以 URL 为 key 才并成 String）。
@@ -365,8 +374,19 @@ class ThumbnailLoader(context: Context) {
      * 命中内存/高清磁盘缓存则直接返回；否则**降采样解码**原图；再退到系统缩略图。
      */
     fun loadFast(imageId: Long, video: Boolean = false): Bitmap? {
+        // 2026-11-17「进夹缩略图要好几秒」取证：滚动/进夹的每次取图都会过这里，滚动
+        // 计数做 25 一次的汇总，逐条只落慢的（≥50ms），避免 250 张的文件夹刷爆诊断文件。
+        val loadSeq = diagLoads.incrementAndGet()
+        if (loadSeq % 25L == 0L) {
+            DiagLog.log(
+                "[Thumb] stats loads=$loadSeq memHits=${diagMemHits.get()} diskHits=${diagDiskHits.get()} " +
+                    "decodeN=${diagDecodeN.get()} decodeMs=${diagDecodeMs.get()} decodeMax=${diagDecodeMax.get()}ms " +
+                    "decodeMiss=${diagDecodeMiss.get()}",
+            )
+        }
         val key = if (video) videoKey(imageId) else localKey(imageId)
         memoryCache.get(key)?.let {
+            diagMemHits.incrementAndGet()
             return it
         }
 
@@ -374,7 +394,13 @@ class ThumbnailLoader(context: Context) {
         // 「按 id 解原图」的语义——喂 mp4 只会白跑一次解码。见 A5.5 那段。
         val diskFile = hdFile(imageId)
         if (!video && diskFile.exists()) {
+            val tDisk = SystemClock.elapsedRealtime()
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
+                diagDiskHits.incrementAndGet()
+                val diskCost = SystemClock.elapsedRealtime() - tDisk
+                if (diskCost >= SLOW_LOG_MS) {
+                    DiagLog.log("[Thumb] 磁盘缓存解码 id=$imageId cost=${diskCost}ms")
+                }
                 memoryCache.put(key, it)
                 return it
             }
@@ -395,13 +421,22 @@ class ThumbnailLoader(context: Context) {
             val sub = decodeSubsampled(uri, THUMB_SIZE)
             val subCost = SystemClock.elapsedRealtime() - t0
             if (sub != null) {
+                diagDecodeN.incrementAndGet()
+                diagDecodeMs.addAndGet(subCost)
+                diagDecodeMax.updateAndGet { prev -> if (subCost > prev) subCost else prev }
                 if (subCost >= SLOW_LOG_MS) {
                     Log.w(TAG, "[Thumb] 降采样 id=$imageId ${sub.width}x${sub.height} cost=${subCost}ms")
+                }
+                // 诊断镜像只落 ≥50ms 的解码（冷启首屏每个格子的第一跳都在这条路上）
+                if (subCost >= SLOW_DIAG_MS) {
+                    DiagLog.log("[Thumb] 降采样 id=$imageId ${sub.width}x${sub.height} cost=${subCost}ms")
                 }
                 memoryCache.put(key, sub)
                 persistToDisk(diskFile, sub)
                 return sub
             }
+            diagDecodeMiss.incrementAndGet()
+            DiagLog.log("[Thumb] 降采样失败 id=$imageId cost=${subCost}ms → 回退系统 loadThumbnail")
         }
 
         // 视频 P3-A5.5：封面优先级排在自己头上——**手挑 > 自抽 > 系统兜底**。
@@ -690,6 +725,7 @@ class ThumbnailLoader(context: Context) {
         private const val HD_MAX_CONCURRENCY = 2 // 高清生成并发上限
         private const val HD_MAX_SOURCE_PIXELS = 40_000_000L // 超过此像素数不走 Rust 全解码
         private const val SLOW_LOG_MS = 200L // 慢解码诊断阈值（只在超阈值时打日志）
+        private const val SLOW_DIAG_MS = 50L // DiagLog 镜像阈值：低于它不逐条落盘（防刷爆诊断文件）
     }
 }
 

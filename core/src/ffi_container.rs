@@ -109,13 +109,27 @@ pub fn repair_video_container(path: String, origin: String) -> FfiContainerRepai
 ///
 /// 单文件写失败不会中断整批 —— `repair_file` 内部把错误收进 `status`/`error`，
 /// 不会因为一个只读盘/被占用的文件就让整轮扫描报错。
+///
+/// 2026-11-17「进文件夹卡好几秒」修复：原先这里一把抓着连接互斥锁跑完整批**文件
+/// 解析**（冷启首扫 ~700 只 mp4 的 box 链 + moov 读盘 ≈3.3s），期间用户点进任何
+/// 文件夹，`list_images` 就得排在整批解析后面（真机实测 `[Load] took=2454ms`，
+/// 用户体感「重启后点进文件夹要等好几秒才出图」）。现在分三段：快照台账（持锁
+/// ~ms，台账表只有真修过的文件才有行）→ 文件 IO 批（**全程不持锁**）→ 批内新账
+/// 回写（持锁 ~ms，通常为空）。台账语义不变：批内读快照 ∪ 批内新记，累加合并
+/// 与旧账优先的规则原样保留在 `repair_ledger` 里。
 #[uniffi::export]
 pub fn repair_video_containers(paths: Vec<String>, origin: String) -> Vec<FfiContainerRepair> {
-    let mut conn = pool().get_connection();
-    paths
-        .iter()
-        .map(|p| container_repair::repair_file(&mut conn, Path::new(p), &origin).into())
-        .collect()
+    let snapshot = {
+        let conn = pool().get_connection();
+        container_repairs::list(&conn).unwrap_or_default()
+    };
+    let (outcomes, ledger) =
+        container_repair::repair_ledger_for_batch(&paths, &origin, snapshot);
+    if ledger.has_pending() {
+        let conn = pool().get_connection();
+        let _ = ledger.flush(&conn);
+    }
+    outcomes.into_iter().map(Into::into).collect()
 }
 
 /// 按台账把某文件逐字节还原。**没有台账的文件一律拒绝**（不猜偏移写用户文件）。

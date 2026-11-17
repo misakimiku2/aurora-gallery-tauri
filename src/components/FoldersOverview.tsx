@@ -14,7 +14,7 @@ import MarqueeText from './MarqueeText';
 import { nearestAndroidLevelIndex, getAndroidThumbnailPresets } from '../utils/androidThumbnailSizes';
 import { onMultiTouch } from '../utils/touchGestureGuard';
 import { debounce } from '../utils/debounce';
-import { buildFolderDateKeys, compareNodesBySort, FileNodeLookup } from '../utils/folderSort';
+import { buildFolderDateKeys, compareNodesBySort, compareNaturalNames, FileNodeLookup } from '../utils/folderSort';
 
 // 过渡期（捏合改档 / 面板开合）的渲染窗口 buffer（与 FileGrid 同源）。
 // 窗口 = 视口 + 上下各 buffer，决定了每次换卡要卸载+挂载多少张卡片。400 是为滚动
@@ -657,7 +657,7 @@ const FoldersOverview = React.memo(({
         } else if (sortBy === 'size') {
           res = ((a.imageCount ?? a.size ?? 0) - (b.imageCount ?? b.size ?? 0));
         } else {
-          res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+          res = compareNaturalNames(a.name || '', b.name || '');
         }
         return res * (sortDirection === 'asc' ? 1 : -1);
       });

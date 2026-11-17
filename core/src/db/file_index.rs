@@ -1,8 +1,9 @@
 use rusqlite::{params, Connection, Result};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileIndexEntry {
     pub file_id: String,
     pub parent_id: Option<String>,
@@ -552,6 +553,48 @@ mod reconcile_tests {
         assert_eq!(count, 2, "重复对账不产生累积或丢失");
     }
 
+    /// 差量闸门（2026-11-17）：第二轮快照混合变更时，未变的行按原值保留（差量跳过），
+    /// 快照外旧行照常当幽灵清理，新行照常写入——语义与旧版无条件全量一致。
+    #[test]
+    fn reconcile_diff_writes_only_changed_rows_and_still_prunes() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        crate::db::init_db(&conn).expect("init db");
+
+        let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
+        let images = vec![
+            entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
+            entry("a2", Some("A"), "uri://a2", "a2.jpg", "Image"),
+        ];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images, &[]).expect("first run");
+
+        // 第二轮：a1 完全没变（应被差量跳过）；a2 从快照消失（EMUI 改名=新 bucket 派生，
+        // 旧行成幽灵，照删）；a2b/a3 是新行，照写
+        let images2 = vec![
+            entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
+            entry("a2b", Some("A"), "uri://a2b", "a2b.jpg", "Image"),
+            entry("a3", Some("A"), "uri://a3", "a3.jpg", "Image"),
+        ];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images2, &[]).expect("second run");
+
+        let all = get_all_entries(&conn).expect("read back");
+        let mut ids: Vec<String> = all.iter().map(|e| e.file_id.clone()).collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "A".to_string(),
+                "a1".to_string(),
+                "a2b".to_string(),
+                "a3".to_string()
+            ]
+        );
+
+        // a1 的字段未被第二轮触碰：差量跳过 = 原值原样，不允许意外重写
+        let a1 = all.iter().find(|e| e.file_id == "a1").expect("a1 present");
+        assert_eq!(a1.name, "a1.jpg");
+        assert_eq!(a1.parent_id.as_deref(), Some("A"));
+    }
+
     /// 2026-10-12 实测回归（视频 P1 连带发现）：对子文件夹执行扫描（前端「刷新」）后，
     /// 该文件夹**自身的行必须保留** —— 旧实现把 root 自身当删除候选（`path = ?1 OR path LIKE ?2`），
     /// 而 existing_paths 不含 root（walk 跳过扫描根），导致 root 行被误删、子行沦为孤儿。
@@ -821,15 +864,16 @@ mod bench_tests {
     }
 }
 
-/// MediaStore 全量对账写入：单事务内完成「upsert 当前快照 + 清理快照外的陈旧行」。
+/// MediaStore 全量对账写入：单事务内完成「**差量** upsert 当前快照 + 清理快照外的陈旧行」。
 ///
 /// Kotlin 扫描的 MediaStore 是设备当前的全量快照，`upsert_media_images` 传入后：
-/// 1. upsert 快照里的全部 bucket 文件夹与图片行；
-/// 2. 把快照的合法 file_id 存入连接级临时表（2 万行的 NOT IN 参数列表会撞变量上限，
-///    临时表走子查询不走绑定参数）；
-/// 3. 删除不在快照中的 Folder / Image 行——被删除/改名的相册（bucket_id 随路径派生，
-///    改名即新 id、旧行成幽灵）、已消失的图片。不做对账索引只增不减，总览会留下
-///    点进去为空的幽灵文件夹。
+/// 1. 先把索引里 MediaStore 管辖（Folder/Image/Video）的现有行整表读回，与快照**逐行
+///    比对，只写真正有差异的行**（2026-11-17 差量闸门，详见块内注释）——快照里 2.9 万行
+///    在两次对账之间几乎全都没变，无条件全量 upsert 是老机 5s/轮的纯浪费；
+/// 2. 幽灵行（索引有、快照无的 Folder/Image/Video 行）在内存里求差集后按块删除——
+///    被删除/改名的相册（bucket_id 随路径派生，改名即新 id、旧行成幽灵）、已消失的
+///    图片。不做对账索引只增不减，总览会留下点进去为空的幽灵文件夹；
+/// 3. 真的动了行才顺带清理 topic_files 孤儿成员并回填 topics.file_count。
 ///
 /// `protected_image_ids`（M8b 复制即时可见的护栏）：刚由 `upsert_media_image` 单行
 /// 登记、但**不在本次快照里**的图片行。EMUI 实测全量查询的快照固定在查询起点，而
@@ -849,7 +893,51 @@ pub fn reconcile_mediastore_snapshot(
     protected_image_ids: &[String],
 ) -> Result<()> {
     let tx = conn.transaction()?;
-    {
+    let (changed_rows, ghost_rows) = {
+        // —— 差量闸门（2026-11-17 用户报障「下拉刷新卡几十秒」的 Rust 侧半边）——
+        // 先把 MediaStore 管辖的现有行整表读回，与快照逐行比对，只写有差异的行。
+        // 之前无条件 2.9 万行 ON CONFLICT DO UPDATE，每行都付一遍主键 + path 唯一索引
+        // 的维护成本，老机热刷新实测 ≈5s/轮；而 Kotlin 侧已有 MediaStore 代数闸门，
+        // EMUI 却会周期性（2-3 分钟）触碰 MediaStore 顶开代数、行数据其实没变——
+        // 每次都得白付这 5s。整表读回 ≈0.3s，换来无变化时 0 次写；有真实变更时行为
+        // 与此前完全一致（差量行照写、幽灵行照清、孤儿照理）。
+        let mut existing: HashMap<String, FileIndexEntry> =
+            HashMap::with_capacity(folder_entries.len() + image_entries.len());
+        {
+            let mut stmt = tx.prepare(
+                "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at,
+                        width, height, format, duration_ms, frame_rate, rotation,
+                        video_codec, bit_rate, orientation
+                 FROM file_index WHERE file_type IN ('Folder', 'Image', 'Video')",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(FileIndexEntry {
+                    file_id: row.get(0)?,
+                    parent_id: row.get(1)?,
+                    path: row.get(2)?,
+                    name: row.get(3)?,
+                    file_type: row.get(4)?,
+                    // 存储列是 INTEGER，u64 字段按 i64 读回（写入侧永不为负，钳 0 防脏数据）
+                    size: row.get::<_, i64>(5)?.max(0) as u64,
+                    created_at: row.get(6)?,
+                    modified_at: row.get(7)?,
+                    width: row.get::<_, Option<i64>>(8)?.map(|v| v.max(0) as u32),
+                    height: row.get::<_, Option<i64>>(9)?.map(|v| v.max(0) as u32),
+                    format: row.get(10)?,
+                    duration_ms: row.get(11)?,
+                    frame_rate: row.get(12)?,
+                    rotation: row.get(13)?,
+                    video_codec: row.get(14)?,
+                    bit_rate: row.get(15)?,
+                    orientation: row.get(16)?,
+                })
+            })?;
+            for row in rows {
+                let entry = row?;
+                existing.insert(entry.file_id.clone(), entry);
+            }
+        }
+
         let mut upsert = tx.prepare(
             "INSERT INTO file_index (
                 file_id, parent_id, path, name, file_type, size,
@@ -874,7 +962,13 @@ pub fn reconcile_mediastore_snapshot(
                 bit_rate = excluded.bit_rate,
                 orientation = excluded.orientation"
         )?;
+        let mut changed_rows = 0usize;
         for entry in folder_entries.iter().chain(image_entries) {
+            // 与索引现有行完全一致 → 跳过（0 次写）；有任何字段差异 → 照常 upsert
+            if existing.get(&entry.file_id) == Some(entry) {
+                continue;
+            }
+            changed_rows += 1;
             upsert.execute(params![
                 entry.file_id,
                 entry.parent_id,
@@ -896,45 +990,41 @@ pub fn reconcile_mediastore_snapshot(
             ])?;
         }
 
-        tx.execute(
-            "CREATE TEMP TABLE IF NOT EXISTS current_snapshot_ids(id TEXT PRIMARY KEY)",
-            [],
-        )?;
-        tx.execute("DELETE FROM current_snapshot_ids", [])?;
-        let mut insert_id =
-            tx.prepare("INSERT OR IGNORE INTO current_snapshot_ids(id) VALUES (?1)")?;
-        for entry in folder_entries.iter().chain(image_entries) {
-            insert_id.execute(params![entry.file_id])?;
-        }
-
-        // 受保护行（单行登记但快照漏掉、文件仍在磁盘）临时表：数量是个位数，逐行插。
-        tx.execute(
-            "CREATE TEMP TABLE IF NOT EXISTS protected_media_ids(id TEXT PRIMARY KEY)",
-            [],
-        )?;
-        tx.execute("DELETE FROM protected_media_ids", [])?;
-        for id in protected_image_ids {
+        // 幽灵行（索引有、快照无的 Folder/Image/Video 行）：现有 id 集合已经在内存里
+        // （上面的整表读回），直接求差集按块删——替代原来的连接级临时表 + NOT IN
+        // 子查询（2.9 万行逐行插临时表本身也要 ~1s，省掉）。protected 行（单行登记
+        // 但快照漏掉、文件仍在磁盘的媒体）从幽灵集合里豁免，语义与旧版一致。
+        let snapshot_ids: HashSet<&str> = folder_entries
+            .iter()
+            .chain(image_entries.iter())
+            .map(|e| e.file_id.as_str())
+            .collect();
+        let protected: HashSet<&str> =
+            protected_image_ids.iter().map(|s| s.as_str()).collect();
+        let ghosts: Vec<String> = existing
+            .keys()
+            .filter(|id| !snapshot_ids.contains(id.as_str()) && !protected.contains(id.as_str()))
+            .cloned()
+            .collect();
+        for chunk in ghosts.chunks(900) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             tx.execute(
-                "INSERT OR IGNORE INTO protected_media_ids(id) VALUES (?1)",
-                params![id],
+                &format!("DELETE FROM file_index WHERE file_id IN ({})", placeholders),
+                rusqlite::params_from_iter(chunk.iter()),
             )?;
         }
+        (changed_rows, ghosts.len())
+    };
 
-        tx.execute(
-            "DELETE FROM file_index WHERE file_type = 'Folder' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
-            [],
-        )?;
-        tx.execute(
-            "DELETE FROM file_index WHERE file_type IN ('Image', 'Video') AND file_id NOT IN (SELECT id FROM current_snapshot_ids) AND file_id NOT IN (SELECT id FROM protected_media_ids)",
-            [],
-        )?;
-
-        // M4b 1.2 顺手核对（M4a 顺延项 7）：图片从索引消失（被删/被对账清掉）后，
-        // topic_files 里的成员行没人清——「卡片 fileCount 2 vs 详情 1」的偏大方向即
-        // 由此而来（卡片数 = 缓存列 = 原始行数，详情 = list_images_by_ids 静默跳过
-        // 缺行）。这里清掉孤儿成员并把 file_count 缓存对齐实际成员数。此函数只有
-        // 安卓 MediaStore 对账调用（桌面走文件系统同步，不经这里）。
-        // 视频 P1：成员口径同步放开到 Video（专题成员网格已纳入视频）。
+    // M4b 1.2 顺手核对（M4a 顺延项 7）：图片从索引消失（被删/被对账清掉）后，
+    // topic_files 里的成员行没人清——「卡片 fileCount 2 vs 详情 1」的偏大方向即
+    // 由此而来（卡片数 = 缓存列 = 原始行数，详情 = list_images_by_ids 静默跳过
+    // 缺行）。这里清掉孤儿成员并把 file_count 缓存对齐实际成员数。此函数只有
+    // 安卓 MediaStore 对账调用（桌面走文件系统同步，不经这里）。
+    // 视频 P1：成员口径同步放开到 Video（专题成员网格已纳入视频）。
+    // 差量闸门下只在真的动了行时才跑：无变化对账（EMUI 周期噪声顶开代数闸门的
+    // 整轮重跑）里这两个全表语句是纯开销。
+    if changed_rows > 0 || ghost_rows > 0 {
         tx.execute(
             "DELETE FROM topic_files WHERE file_id NOT IN (
                 SELECT file_id FROM file_index WHERE file_type IN ('Image', 'Video'))",

@@ -824,6 +824,7 @@ const GroupContent = React.memo(({
   settings,
   containerRect,
   scrollTop, // 接收父级滚动位置
+  collapsedGroups, // 任意分组收展都会改变本组 offsetTop，须触发重测
   t,
   resourceRoot,
   cachePath,
@@ -856,11 +857,13 @@ const GroupContent = React.memo(({
   );
 
   // 测量分组相对于容器顶部的偏移，用于内部虚拟滚动过滤
+  // 依赖 collapsedGroups：兄弟分组收起/展开会移动本组 DOM，offsetTop 若不重测，
+  // 虚拟窗口会整体错位，导致本组内容被误判为视口外而整组空白。
   useLayoutEffect(() => {
       if (groupRef.current) {
           setOffsetTop(groupRef.current.offsetTop);
       }
-  }, [layout, containerRect.width]);
+  }, [layout, containerRect.width, collapsedGroups]);
 
   // 根据全局滚动位置，动态计算当前分组内容中可见的项目
   const visibleItems = useMemo(() => {
@@ -2639,6 +2642,7 @@ export const FileGrid = React.memo(({
                                   settings={settings}
                                   containerRect={containerRect}
                                   scrollTop={scrollTop}
+                                  collapsedGroups={collapsedGroups}
                                   t={t}
                                   resourceRoot={effectiveResourceRoot}
                                   cachePath={effectiveCachePath}

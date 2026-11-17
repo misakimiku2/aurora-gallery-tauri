@@ -110,21 +110,25 @@ internal fun AuroraDropdown(
      * 右对齐公式（锚点右缘−192dp）在手机上会算出负 x 把菜单推出屏外。
      */
     alignToAnchorEnd: Boolean = true,
+    /**
+     * 菜单顶边与锚点底边的间距（dp）。默认 8dp=按钮盒下方的悬浮距；顶栏的工具栏菜单
+     * （锚点 bottom=工具栏下缘）传 4dp——2026-11-17 与查看器 MoreMenuPopup 统一「工具
+     * 栏下缘 + 4dp」的落点口径，顶栏按钮盒高度差（44dp vs 48dp）不再影响落点。
+     */
+    gapDp: Float = 8f,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
     val density = LocalDensity.current
-    // 状态栏 inset 修正（M8b 验收反馈）：锚点 boundsInWindow() 以主窗口（targetSdk 35
-    // 强制 edge-to-edge，frame=[0,0][屏]）为原点，而 Dialog 应用子窗口的 y 相对父窗口
-    // 内容框（状态栏之下，dumpsys 实测 parent=[0,142]…）——不扣除状态栏高度，菜单整体
-    // 下坠一个状态栏（avd_ai1 实测 142px≈54dp）。
-    val statusTopPx = remember {
-        runCatching {
-            androidx.core.view.WindowInsetsCompat.toWindowInsetsCompat(view.rootWindowInsets)
-                .getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
-        }.getOrDefault(0)
-    }
+    // 窗口框偏移（2026-11-17 用户报障：荣耀 API29「更多菜单出现在工具栏一半高度」）。
+    // 原 M8b 修正固定扣除 statusTopPx，但 Dialog 窗口框是否给状态栏让位随 API/OEM 而
+    // 异：模拟器（API 34+）让位（y 相对状态栏之下，彼时扣 statusTopPx 恰好校正），
+    // 而荣耀 API29 上 LAYOUT_FULLSCREEN 反而令框原点=屏幕原点，扣除把菜单顶高一条
+    // 状态栏（≈工具栏一半高度）。固定值永远只对一台设备正确——改为**实测校准**：
+    // show 后量内容视图的实际屏幕落点，与期望落点（宿主原点 + 锚点坐标）作差反推
+    // 偏移，首帧不可见防错位闪现，任何设备一次到位。
+    val frameOffset = remember { mutableStateOf(android.graphics.Point(0, 0)) }
     val latestOnDismiss by rememberUpdatedState(onDismissRequest)
     val latestContent by rememberUpdatedState(content)
     val latestAnchor by rememberUpdatedState(anchorBoundsInWindow)
@@ -144,7 +148,7 @@ internal fun AuroraDropdown(
     // 逐帧变化，作为 key 会让窗口反复重建）
     DisposableEffect(expanded) {
         val menuWidth = with(density) { 192.dp.roundToPx() }
-        val gap = with(density) { 8.dp.roundToPx() }
+        val gap = with(density) { gapDp.dp.roundToPx() }
         val outlineRadius = with(density) { 8.dp.toPx() }
         val elevation = with(density) { 8.dp.toPx() }
 
@@ -215,7 +219,7 @@ internal fun AuroraDropdown(
                         // 屏高是全屏系，宿主 edge-to-edge 两系原点一致，statusTop 不用扣。
                         val menuMaxHeight = with(density) {
                             val bottomMargin = 16.dp.toPx()
-                            val gapPx = 8.dp.toPx()
+                            val gapPx = gapDp.dp.toPx()
                             (context.resources.displayMetrics.heightPixels -
                                 latestAnchor.bottom.roundToInt() - gapPx - bottomMargin)
                                 .coerceAtLeast(with(density) { 120.dp.toPx() })
@@ -278,11 +282,6 @@ internal fun AuroraDropdown(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             )
-            w.attributes.x = (
-                if (alignToAnchorEnd) anchorBoundsInWindow.right - menuWidth
-                else anchorBoundsInWindow.left
-                ).roundToInt().coerceAtLeast(0)
-            w.attributes.y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
             // 圆角窗口投影（Compose shadow 会画在窗口外被裁掉，改用窗口级 elevation）
             w.decorView.outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(v: View, outline: Outline) {
@@ -290,9 +289,46 @@ internal fun AuroraDropdown(
                 }
             }
             w.setElevation(elevation)
+            // 基准位置（宿主窗口系锚点直接映射，不再扣 statusTopPx——校准会量出真实偏移）
+            val baseX = (
+                if (alignToAnchorEnd) anchorBoundsInWindow.right - menuWidth
+                else anchorBoundsInWindow.left
+                ).roundToInt().coerceAtLeast(0)
+            val baseY = anchorBoundsInWindow.bottom.roundToInt() + gap
+            w.attributes.x = baseX
+            w.attributes.y = baseY
+            // 首帧不可见：校准完成后才显形，避免错位闪现（校准不跑=菜单不显，必现易抓）
+            w.attributes.alpha = 0f
         }
         dialogRef.value = dialog
         dialog.show()
+
+        // 实测校准（见 frameOffset 注释）：post 在首帧布局后执行。期望落点 = 锚点坐标
+        // 原样（全屏窗口下 boundsInWindow 与屏幕坐标系原点重合，dumpsys 实测锚点值与
+        // 点击命中位置吻合）；实际落点 = composeView 屏幕位置（含窗口框的 inset 行为，
+        // 荣耀 API29 decor=[0,96]、模拟器 API34+ parent=[0,142]）。差值即窗口框偏移，
+        // 反推后显形。
+        dialog.window?.decorView?.post {
+            val actual = IntArray(2)
+            composeView.getLocationOnScreen(actual)
+            val menuWidth = with(density) { 192.dp.roundToPx() }
+            val gap = with(density) { 8.dp.roundToPx() }
+            val baseX = (
+                if (alignToAnchorEnd) latestAnchor.right - menuWidth
+                else latestAnchor.left
+                ).roundToInt().coerceAtLeast(0)
+            val baseY = latestAnchor.bottom.roundToInt() + gap
+            val dx = baseX - actual[0]
+            val dy = baseY - actual[1]
+            frameOffset.value = android.graphics.Point(dx, dy)
+            dialog.window?.let { ww ->
+                ww.attributes = ww.attributes.apply {
+                    x += dx
+                    y += dy
+                    alpha = 1f
+                }
+            }
+        }
 
         onDispose {
             dialog.dismiss()
@@ -300,17 +336,17 @@ internal fun AuroraDropdown(
         }
     }
 
-    // 锚点位移（侧栏开合把按钮推移）时跟随窗口位置
+    // 锚点位移（侧栏开合把按钮推移）时跟随窗口位置（带上实测校准出的窗口框偏移）
     LaunchedEffect(anchorBoundsInWindow) {
         dialogRef.value?.window?.let { w ->
             val menuWidth = with(density) { 192.dp.roundToPx() }
-            val gap = with(density) { 8.dp.roundToPx() }
+            val gap = with(density) { gapDp.dp.roundToPx() }
             w.attributes = w.attributes.apply {
                 x = (
                     if (alignToAnchorEnd) anchorBoundsInWindow.right - menuWidth
                     else anchorBoundsInWindow.left
-                    ).roundToInt().coerceAtLeast(0)
-                y = (anchorBoundsInWindow.bottom - statusTopPx).roundToInt() + gap
+                    ).roundToInt().coerceAtLeast(0) + frameOffset.value.x
+                y = anchorBoundsInWindow.bottom.roundToInt() + gap + frameOffset.value.y
             }
         }
     }

@@ -20,6 +20,50 @@ import kotlin.math.max
 internal const val ROOT_FOLDER_DISPLAY_NAME = "根目录图片"
 
 /**
+ * 自然序名字比较：数字段按数值比较（1.jpg < 2.jpg < 10.jpg），大小写不敏感，
+ * 数值相等视为并列（img01 == img1）。对齐 React 版 `folderSort.ts` 的
+ * `compareNaturalNames`（ICU numeric collation）。所有按名字排文件/文件夹的
+ * 地方统一走这里，禁止内联 lowercase 码位比较（会退化成 1、10、11、2… 的字典序）。
+ *
+ * 非数字段沿用码位比较（历史口径：对 ASCII 与中文文件名的差异可忽略，
+ * 避免 Collator 在 1~2 万条上的开销）。
+ */
+fun compareNaturalNames(a: String, b: String): Int {
+    val la = a.lowercase(Locale.US)
+    val lb = b.lowercase(Locale.US)
+    var i = 0
+    var j = 0
+    while (i < la.length && j < lb.length) {
+        val ca = la[i]
+        val cb = lb[j]
+        if (ca.isDigit() && cb.isDigit()) {
+            var ea = i
+            while (ea < la.length && la[ea].isDigit()) ea++
+            var eb = j
+            while (eb < lb.length && lb[eb].isDigit()) eb++
+            // 去前导零后先比位数再比码位，即十进制数值比较；去零后相等则整段跳过
+            val na = la.substring(i, ea).trimStart('0')
+            val nb = lb.substring(j, eb).trimStart('0')
+            val cmp = if (na.length != nb.length) na.length - nb.length else na.compareTo(nb)
+            if (cmp != 0) return cmp
+            i = ea
+            j = eb
+        } else {
+            val cmp = ca.compareTo(cb)
+            if (cmp != 0) return cmp
+            i++
+            j++
+        }
+    }
+    // 前缀情形：短者在前（"img" < "img2"）
+    return (la.length - i) - (lb.length - j)
+}
+
+/** 按名字自然序比较的通用 [Comparator]（[compareNaturalNames] 的适配器）。 */
+inline fun <T> naturalNameComparator(crossinline name: (T) -> String): Comparator<T> =
+    Comparator { a, b -> compareNaturalNames(name(a), name(b)) }
+
+/**
  * 布局模式。
  *
  * **不含 list**——对齐 React 版安卓端：`src/components/TopBar.tsx` 的 `isAndroid` 分支
@@ -111,10 +155,12 @@ fun filterImages(
 /**
  * 排序（3.2 TopBar 的数据管道第二步）。
  *
- * 对齐 React `useFileSearch.ts` 169-172 行：name = 文件名小写比较、date = createdAt、
- * size = 字节数；asc/desc 翻转。React 用 `localeCompare`（locale 感知），Kotlin 用
- * 码位比较——对 ASCII 与中文文件名的差异可忽略，避免 Collator 在 1~2 万条上的开销。
- * 排序稳定，同键保持 `list_images` 的 modified DESC 原序。
+ * 对齐 React `useFileSearch.ts` 169-172 行：name = 文件名**自然序**（数字段按数值，
+ * 1 < 2 < 10，[compareNaturalNames]；对齐 React `compareNaturalNames` 的 ICU numeric
+ * collation）、date = createdAt、size = 字节数；asc/desc 翻转。React 的 localeCompare
+ * 带 `numeric: true`，Kotlin 非数字段仍用码位比较——对 ASCII 与中文文件名的差异可
+ * 忽略，避免 Collator 在 1~2 万条上的开销。排序稳定，同键保持 `list_images` 的
+ * modified DESC 原序。
  *
  * date 语义（2026-10 排序改造后）：createdAt = **图片自身**的创建时间——本地模式是
  * MediaStore `date_added`（`list_images` 直供，未变）；LAN 模式是服务端 `created_at`
@@ -124,7 +170,7 @@ fun filterImages(
 fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection): List<Image> {
     if (images.size < 2) return images
     val comparator = when (sortBy) {
-        SortOption.NAME -> compareBy<Image> { it.name.lowercase(Locale.US) }
+        SortOption.NAME -> naturalNameComparator<Image> { it.name }
         SortOption.DATE -> compareBy { it.createdAt }
         SortOption.SIZE -> compareBy { it.size }
     }
@@ -138,7 +184,8 @@ fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection
 /**
  * 总览文件夹排序（2026-09-17 总览 TopBar 接入排序菜单）。
  *
- * 语义对齐 React `FoldersOverview.tsx` 的 `sortedFolderIds` memo：name = 名称小写比较、
+ * 语义对齐 React `FoldersOverview.tsx` 的 `sortedFolderIds` memo：name = 名称**自然序**
+ * （数字段按数值，1 < 2 < 10，[naturalNameComparator]；与 sortImages/React 三端同口径）、
  * size = 图片数（React 用 `imageCount ?? size`）、date = 文件夹的**直接子图最新创建时间**
  * （「按时间排序 = 内容最新」；2026-10 排序改造起 Rust `list_folders` 的 `Folder.createdAt`
  * 从 MIN(created_at) 改为 **MAX(created_at)**，LAN 侧由服务端 `latest_created_at` 填入，
@@ -178,7 +225,7 @@ fun sortFolders(
             else dated.sortedWith(comparator.reversed()) + undated
         }
         else -> {
-            val comparator = compareBy<Folder> { it.name.lowercase(Locale.US) }
+            val comparator = naturalNameComparator<Folder> { it.name }
             if (direction == SortDirection.ASC) folders.sortedWith(comparator)
             else folders.sortedWith(comparator.reversed())
         }

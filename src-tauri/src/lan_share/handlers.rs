@@ -25,6 +25,7 @@ use super::metadata::{
 use super::session::SessionManager;
 use super::types::*;
 use crate::db::AppDbPool;
+use crate::natural_sort::compare_natural_names;
 
 /// 可热更新的共享根路径。桌面端切根（switch_root_database）后原地更新，运行中的
 /// LAN 服务器无需重启、已配对会话保持。必须与 AppDbPool 的共享切换同步进行，
@@ -1306,8 +1307,8 @@ pub async fn handle_browse(
                             }
                         }
 
-                        folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-                        images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                        folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
+                        images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
                         return Some((folders, images));
                     }
@@ -1509,8 +1510,8 @@ pub async fn handle_browse(
     };
 
     let mut folders = folders;
-    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
+    images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
     // 跳过 fill_image_palette（同数据库路径，文件夹浏览不需要颜色数据）
 
     log::info!("[LAN Share] 浏览成功 (文件系统) - 返回 {} 个文件夹, {} 张图片 | 耗时: {}ms",
@@ -1616,8 +1617,8 @@ fn get_folder_info_fast_sorted(
 
     // 内存排序（与 DB 路径同口径：name 不区分大小写、date=created、size=字节）
     match (sort.sort_by, sort.sort_dir) {
-        ("name", "asc") => direct_images.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase())),
-        ("name", "desc") => direct_images.sort_by(|a, b| b.1.to_lowercase().cmp(&a.1.to_lowercase())),
+        ("name", "asc") => direct_images.sort_by(|a, b| compare_natural_names(&a.1, &b.1)),
+        ("name", "desc") => direct_images.sort_by(|a, b| compare_natural_names(&b.1, &a.1)),
         ("date", "asc") => direct_images.sort_by_key(|i| i.3.unwrap_or(0)),
         ("date", "desc") => direct_images.sort_by_key(|i| std::cmp::Reverse(i.3.unwrap_or(0))),
         ("size", "asc") => direct_images.sort_by_key(|i| i.2),
@@ -2145,8 +2146,8 @@ pub async fn handle_search(
                         }
                     }
                     
-                    found_folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-                    found_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    found_folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
+                    found_images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
                     
                     (found_folders, found_images)
                 }
@@ -2266,8 +2267,8 @@ pub async fn handle_search(
 
             search_recursive(&root_path, &root_path, &search_term_clone, &scope_clone, &mut found_folders, &mut found_images);
             
-            found_folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-            found_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            found_folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
+            found_images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
             
             (found_folders, found_images)
         }).await.unwrap_or((Vec::new(), Vec::new()))
@@ -2361,7 +2362,7 @@ pub async fn handle_all_image_folders(
                             });
                         }
                     }
-                    root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    root_images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
                     // 为每个含媒体（图片或视频）的文件夹构建 BrowseItem
                     for (parent_id, imgs) in &folder_map {
@@ -2398,15 +2399,15 @@ pub async fn handle_all_image_folders(
                         let mut sorted_imgs: Vec<&&crate::db::file_index::FileIndexEntry> = imgs.iter().collect();
                         match preview_sort {
                             Some(s) => match (s.sort_by, s.sort_dir) {
-                                ("name", "asc") => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                                ("name", "desc") => sorted_imgs.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                                ("name", "asc") => sorted_imgs.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
+                                ("name", "desc") => sorted_imgs.sort_by(|a, b| compare_natural_names(&b.name, &a.name)),
                                 ("date", "asc") => sorted_imgs.sort_by_key(|e| e.created_at),
                                 ("date", "desc") => sorted_imgs.sort_by_key(|e| std::cmp::Reverse(e.created_at)),
                                 ("size", "asc") => sorted_imgs.sort_by_key(|e| e.size),
                                 ("size", "desc") => sorted_imgs.sort_by_key(|e| std::cmp::Reverse(e.size)),
-                                _ => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                                _ => sorted_imgs.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
                             },
-                            None => sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                            None => sorted_imgs.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
                         }
 
                         let preview_paths: Vec<String> = sorted_imgs.iter().take(3)
@@ -2498,7 +2499,7 @@ pub async fn handle_all_image_folders(
                         }
                     }
 
-                    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
                     log::info!("[LAN Share] all_image_folders (数据库) - {} 个含媒体文件夹, {} 项根级散图/散视频", folders.len(), root_images.len());
                     return Some((folders, root_images));
@@ -2698,15 +2699,15 @@ fn all_image_folders_filesystem(
             // 预览排序：缺省 = 既有行为（名称不区分大小写升序）；带 sort 参数 = 协议口径
             match sort {
                 Some(s) => match (s.sort_by, s.sort_dir) {
-                    ("name", "asc") => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-                    ("name", "desc") => media_entries.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+                    ("name", "asc") => media_entries.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
+                    ("name", "desc") => media_entries.sort_by(|a, b| compare_natural_names(&b.name, &a.name)),
                     ("date", "asc") => media_entries.sort_by_key(|i| i.created.unwrap_or(0)),
                     ("date", "desc") => media_entries.sort_by_key(|i| std::cmp::Reverse(i.created.unwrap_or(0))),
                     ("size", "asc") => media_entries.sort_by_key(|i| i.size.unwrap_or(0)),
                     ("size", "desc") => media_entries.sort_by_key(|i| std::cmp::Reverse(i.size.unwrap_or(0))),
-                    _ => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                    _ => media_entries.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
                 },
-                None => media_entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+                None => media_entries.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
             }
 
             let preview_paths: Vec<String> = media_entries.iter().take(3).map(|i| i.rel_path.clone()).collect();
@@ -2757,8 +2758,8 @@ fn all_image_folders_filesystem(
     }
 
     scan_dir(root_path, root_path, &root_path_str, &mut folders, &mut root_images, true, sort);
-    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
+    root_images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
     log::info!("[LAN Share] all_image_folders (文件系统) - {} 个含媒体文件夹, {} 项根级散图/散视频", folders.len(), root_images.len());
     (folders, root_images)

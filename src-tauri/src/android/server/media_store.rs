@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use crate::android::{AndroidImageInfo, AndroidFolderInfo, AndroidScanAllResult};
 use crate::lan_share::BrowseItem;
+use crate::natural_sort::compare_natural_names;
 
 /// 附加当前线程到 JVM 并执行闭包。适用于任意线程（包括 tokio spawn_blocking 线程）。
 /// 闭包要求 env 与 activity 使用同一生命周期（与 MediaStore 查询函数签名一致）。
@@ -79,14 +80,16 @@ fn image_to_browse_item(info: &AndroidImageInfo) -> BrowseItem {
         },
         latest_created_at: None,
         palette: None,
+        // 视频时长（协议 2026-10 视频支持）：MediaStore 查询不带 duration，置 None
+        duration_ms: None,
     }
 }
 
 /// 按协议排序口径（sort_by/sort_dir）对文件夹的直接子图引用排序，供 preview 重选。
 fn sort_image_refs_by(imgs: &mut Vec<&AndroidImageInfo>, sort: crate::db::file_index::FolderPreviewSort) {
     match (sort.sort_by, sort.sort_dir) {
-        ("name", "asc") => imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-        ("name", "desc") => imgs.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+        ("name", "asc") => imgs.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
+        ("name", "desc") => imgs.sort_by(|a, b| compare_natural_names(&b.name, &a.name)),
         ("date", "asc") => imgs.sort_by_key(|i| i.date_added),
         ("date", "desc") => imgs.sort_by_key(|i| std::cmp::Reverse(i.date_added)),
         ("size", "asc") => imgs.sort_by_key(|i| i.size),
@@ -191,16 +194,17 @@ pub fn scan_all(
             created_at: None,
             latest_created_at,
             palette: None,
+            duration_ms: None,
         });
     }
-    folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    folders.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
     for img in &images {
         if is_root_level_image(&img.path) {
             root_images.push(image_to_browse_item(img));
         }
     }
-    root_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    root_images.sort_by(|a, b| compare_natural_names(&a.name, &b.name));
 
     log::info!(
         "[LAN Share Android] scan_all: {} 个文件夹, {} 张根目录图片",
@@ -458,8 +462,8 @@ pub fn browse_bucket(
     let mut items: Vec<BrowseItem> = images.iter().map(image_to_browse_item).collect();
     match sort {
         Some(s) => match (s.sort_by, s.sort_dir) {
-            ("name", "asc") => items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
-            ("name", "desc") => items.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase())),
+            ("name", "asc") => items.sort_by(|a, b| compare_natural_names(&a.name, &b.name)),
+            ("name", "desc") => items.sort_by(|a, b| compare_natural_names(&b.name, &a.name)),
             ("date", "asc") => items.sort_by_key(|i| i.created_at.unwrap_or(0)),
             ("date", "desc") => items.sort_by_key(|i| std::cmp::Reverse(i.created_at.unwrap_or(0))),
             ("size", "asc") => items.sort_by_key(|i| i.size.unwrap_or(0)),

@@ -341,6 +341,17 @@ class AppState(
 
     var sortDirection by mutableStateOf(SortDirection.ASC)
 
+    /**
+     * 文件夹总览的排序（2026-11-17 与文件网格**分离**）：[sortBy]/[sortDirection] 从此
+     * 只管图片网格（文件夹内/标签/专题/搜索序列），这两个字段只管总览与 LAN 总览的
+     * 文件夹卡片排序（sortFolders 管道 + 封面重选）。此前两者共用一对，总览的排序
+     * 会被文件夹内改排序连带打乱。落盘走 AppSettings.defaultFolderSort*（VM
+     * applyDefaultFolderSort），会话内的修改即时持久化。
+     */
+    var folderSortBy by mutableStateOf(SortOption.NAME)
+
+    var folderSortDirection by mutableStateOf(SortDirection.ASC)
+
     /** 三档捏合档位：0=小、1=中、2=大（默认中档）。应用级共享：总览与文件夹网格同一个档位。 */
     var gridLevel by mutableIntStateOf(1)
 

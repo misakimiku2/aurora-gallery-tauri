@@ -12,6 +12,7 @@ import android.util.Size
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import com.aurora.gallery.kotlin.ui.components.naturalNameComparator
 
 /**
  * M6a 阶段 7：服务端 MediaStore 数据面（对齐 `src-tauri/src/android/server/media_store.rs`，
@@ -54,7 +55,8 @@ object LanMediaSource {
      * == 存储根（/storage/emulated/0 或 /sdcard）→ 根级散图；否则按 BUCKET_ID 归相册
      * （bucket_display_name 为 blank 但父目录非根的罕见行也归相册，名字兜底 bucketId）。
      * 查询已按 date_modified DESC → 每个 bucket 首个出现的行就是最新一张（封面元数据 +
-     * preview_images 前 3 个 id）。两类列表均按 name lowercase 升序（Rust 同款稳定排序）。
+     * preview_images 前 3 个 id）。两类列表均按 name **自然序**升序（1 < 2 < 10；
+     * 对齐 Rust media_store.rs 的 compare_natural_names，勿退回 lowercase 字典序）。
      */
     fun scanAll(context: Context): Pair<List<JSONObject>, List<JSONObject>> {
         val rows = queryMedia(context, null, emptyList())
@@ -76,9 +78,9 @@ object LanMediaSource {
                 previews = imgs.take(3).map { pathOf(it) },
                 cover = newest,
             )
-        }.sortedBy { it.optString("name").lowercase() }
+        }.sortedWith(naturalNameComparator<JSONObject> { it.optString("name") })
         val rootImages = rootRows.map { imageBrowseItem(it) }
-            .sortedBy { it.optString("name").lowercase() }
+            .sortedWith(naturalNameComparator<JSONObject> { it.optString("name") })
         Log.i(TAG, "[LanServer] scanAll: ${folders.size} 个文件夹, ${rootImages.size} 张根目录图片")
         return folders to rootImages
     }

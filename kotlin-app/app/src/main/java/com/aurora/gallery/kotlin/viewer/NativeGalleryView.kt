@@ -2301,6 +2301,7 @@ class NativeGalleryView @JvmOverloads constructor(
             context = context,
             theme = this,
             anchor = anchor,
+            toolbar = topBar,
             menuItems = if (item.isLan) {
                 // M6a 阶段 6：LAN 项的菜单——「保存到设备」（D34）与「幻灯片设置」之外，
                 // 编辑门禁位直通时补上「删除」（本地同款确认弹窗 → confirmDelete，宿主
@@ -2654,10 +2655,13 @@ class NativeGalleryView @JvmOverloads constructor(
         internal const val DRAWER_TOP_PAD_DP = 12f
         /**
          * 顶栏顶边与状态栏底边之间的间距（dp）。2026-10-07 用户拍板「状态栏下方就是顶部
-         * 工具栏、中间不要有空隙」→ 0。原 8dp 是 2026-09-27 对齐图库卡片形制的内缩。
+         * 工具栏、中间不要有空隙」→ 0；2026-11-17 用户拍板「查看器与文件夹的顶栏弹窗
+         * 位置要统一」→ 回到 8dp：图库主界面在 8dp 悬浮卡片壳内（PhoneSidebarDrawerHost
+         * 的 cardInset），其顶栏线 = 状态栏底 + 8dp，查看器贴死状态栏使两处 ⋮ 的弹窗
+         * 落点差 6dp。对齐后查看器顶栏线与全应用一致。
          */
         // internal：抽屉装配簇已拆到 NativeGalleryViewDrawer.kt（第 22 刀）
-        internal const val TOP_BAR_TOP_GAP_DP = 0f
+        internal const val TOP_BAR_TOP_GAP_DP = 8f
     }
 
     /** 翻页间隔的像素值 */

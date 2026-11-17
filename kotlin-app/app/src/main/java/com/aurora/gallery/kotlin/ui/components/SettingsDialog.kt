@@ -84,8 +84,6 @@ import com.aurora.gallery.kotlin.R
 import com.aurora.gallery.kotlin.state.AiSettings
 import com.aurora.gallery.kotlin.state.AppSettings
 import com.aurora.gallery.kotlin.state.LanSavedServer
-import com.aurora.gallery.kotlin.state.SortDirection
-import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.toAiConfig
 import com.aurora.gallery.kotlin.update.UpdateController
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
@@ -134,7 +132,6 @@ internal fun SettingsHost(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
-    onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
@@ -178,7 +175,6 @@ internal fun SettingsHost(
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
-            onDefaultSortChange = onDefaultSortChange,
             onDefaultGroupByChange = onDefaultGroupByChange,
             onClearCache = onClearCache,
             onExportBackup = onExportBackup,
@@ -212,7 +208,6 @@ internal fun SettingsHost(
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
-            onDefaultSortChange = onDefaultSortChange,
             onDefaultGroupByChange = onDefaultGroupByChange,
             onClearCache = onClearCache,
             onExportBackup = onExportBackup,
@@ -278,7 +273,6 @@ private fun CategoryContent(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
-    onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
@@ -308,7 +302,6 @@ private fun CategoryContent(
             onLanguageChange = onLanguageChange,
             onThemeChange = onThemeChange,
             onDefaultLayoutChange = onDefaultLayoutChange,
-            onDefaultSortChange = onDefaultSortChange,
             onDefaultGroupByChange = onDefaultGroupByChange,
         )
     }
@@ -1036,7 +1029,6 @@ private fun GeneralContent(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
-    onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
 ) {
     if (includeSectionHeaders) {
@@ -1134,55 +1126,8 @@ private fun GeneralContent(
         )
     }
 
-    // 排序方式 + 排序方向双列（对齐桌面 grid-cols-2；手机 411dp 宽下单列 ~180dp 仍放得下）
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(top = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            SettingsLabel("默认排序方式")
-            Column(Modifier.padding(top = 8.dp)) {
-                SettingsOptionButton(
-                    icon = IconType,
-                    label = "按名称",
-                    selected = settings.defaultSortBy == SortOption.NAME,
-                    onClick = { onDefaultSortChange(SortOption.NAME, settings.defaultSortDirection) },
-                )
-                SettingsOptionButton(
-                    icon = IconCalendarDays,
-                    label = "按时间",
-                    selected = settings.defaultSortBy == SortOption.DATE,
-                    onClick = { onDefaultSortChange(SortOption.DATE, settings.defaultSortDirection) },
-                )
-                SettingsOptionButton(
-                    icon = IconHardDrive,
-                    label = "按大小",
-                    selected = settings.defaultSortBy == SortOption.SIZE,
-                    onClick = { onDefaultSortChange(SortOption.SIZE, settings.defaultSortDirection) },
-                )
-            }
-        }
-        Column(Modifier.weight(1f)) {
-            SettingsLabel("默认排序方向")
-            Column(Modifier.padding(top = 8.dp)) {
-                SettingsOptionButton(
-                    icon = IconArrowUp,
-                    label = "升序",
-                    selected = settings.defaultSortDirection == SortDirection.ASC,
-                    onClick = { onDefaultSortChange(settings.defaultSortBy, SortDirection.ASC) },
-                )
-                SettingsOptionButton(
-                    icon = IconArrowDown,
-                    label = "降序",
-                    selected = settings.defaultSortDirection == SortDirection.DESC,
-                    onClick = { onDefaultSortChange(settings.defaultSortBy, SortDirection.DESC) },
-                )
-            }
-        }
-    }
-
+    // 2026-11-17 用户拍板：「默认排序」设置行移除——排序分离后顶栏的排序即改即存，
+    // 这行只剩误导（它实际只管文件网格，用户会以为是管总览的）。
     SettingsLabel("默认分组方式", topPadding = 16)
     Row(
         Modifier
@@ -1978,7 +1923,6 @@ private fun SettingsTabletDialog(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
-    onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
@@ -2106,7 +2050,6 @@ private fun SettingsTabletDialog(
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
-                        onDefaultSortChange = onDefaultSortChange,
                         onDefaultGroupByChange = onDefaultGroupByChange,
                         onClearCache = onClearCache,
                         onExportBackup = onExportBackup,
@@ -2147,7 +2090,6 @@ private fun SettingsPhonePage(
     onLanguageChange: (String) -> Unit,
     onThemeChange: (String) -> Unit,
     onDefaultLayoutChange: (LayoutMode) -> Unit,
-    onDefaultSortChange: (SortOption, SortDirection) -> Unit,
     onDefaultGroupByChange: (GroupBy) -> Unit,
     onClearCache: () -> Unit,
     onExportBackup: () -> Unit,
@@ -2284,7 +2226,6 @@ private fun SettingsPhonePage(
                         onLanguageChange = onLanguageChange,
                         onThemeChange = onThemeChange,
                         onDefaultLayoutChange = onDefaultLayoutChange,
-                        onDefaultSortChange = onDefaultSortChange,
                         onDefaultGroupByChange = onDefaultGroupByChange,
                         onClearCache = onClearCache,
                         onExportBackup = onExportBackup,

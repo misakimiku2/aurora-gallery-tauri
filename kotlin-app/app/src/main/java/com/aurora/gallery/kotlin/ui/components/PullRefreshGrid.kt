@@ -192,6 +192,12 @@ internal class PullToRefreshListener(
 
     private fun triggerRefresh(rv: RecyclerView) {
         pulling = false
+        // 2026-11-17 用户报障「下拉的圆环卡在上面不转」的根因：这里从没把 isRefreshing
+        // 置真过（全仓唯一的赋值是 [finishPullToRefresh] 的复位），指示器整个刷新期走
+        // 的是「满进度静止」分支——12 点全亮钉在半拉位置，轮转相位（`if (state.isRefreshing)`
+        // 才推进）永远不前进。置位后：圆点轮转、刷新期新手势全被掐掉（intercept 的
+        // isRefreshing 守卫开始生效）、刷新中再松手也不会二次触发 onRefresh。
+        state.isRefreshing = true
         state.pullDistance = thresholdPx.toFloat()
         // 先停掉可能仍在跑的弹回动画，再把内容钉到阈值（React：refreshing 时 translateY
         // = threshold）等完成回调；顺序反了会被动画在本帧覆盖回半途。

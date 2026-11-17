@@ -7,6 +7,10 @@ import uniffi.aurora_core.MediaImage
 import uniffi.aurora_core.repairVideoContainers
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+
+/** MediaStore 报值与容器采样表视为「已对上号」的舍入容差（EMUI 毫秒向上取整噪声，见 stale 过滤）。 */
+private const val DURATION_CONVERGENCE_TOLERANCE_MS = 200L
 
 /**
  * MP4 容器原位修复的安卓侧接入（2026-10-19，两种形态共用一次调用）。
@@ -31,6 +35,9 @@ import java.util.concurrent.TimeUnit
  * 3. 修不动的（没直写权限 / 只读 / 被占用）只报日志，**时长一律不动**（下面有解释）。
  */
 internal fun GalleryViewModel.repairMp4Containers(imgs: List<MediaImage>): List<MediaImage> {
+    // 清单懒载入（2026-11-17 持久化）：必须在 toCheck 判定**之前**——放 init 里异步载
+    // 会与首轮扫描竞速，载入没完成就开扫等于每次冷启都全量重检 784 只视频。
+    ensureVideoRepairManifestLoaded()
     // 只碰 MP4 族容器；其余交给既有转封装路径，不做字节级改写。
     // ⚠️ 必须「是视频 MIME」且「扩展名属于 MP4 族」两个条件同时成立——上一版这里写成
     // `mime && endsWith(mp4) || endsWith(m4v) || endsWith(mov)`，`&&` 优先级高于 `||`，
@@ -41,8 +48,23 @@ internal fun GalleryViewModel.repairMp4Containers(imgs: List<MediaImage>): List<
     }
     if (videos.isEmpty()) return imgs
 
+    // 差量修复（2026-11-17，分段耗时锚点实测 repair ≈3.3s/轮）：检测要读每个视频的
+    // 顶层 box 链和 moov，而文件没变（size+mtime 同上次检测）容器就不可能变、检测结论
+    // 也不会变——只把新出现的/变过的视频交给 Rust，没变的从清单里放行。FFI 失败不
+    // 标记（下轮重试）。
+    //
+    // ⚠️ 清单第三位记**容器时长真值**（tableMs）：已修好但 MediaStore 缓存时长还没被
+    // 扫描器更新的文件，全量检测时代靠每轮的 alreadyRepaired 覆盖维持正确时长（见下方
+    // 69-73 行的历史教训注释）；差量放行后 results 里没有它们，必须拿清单里记下的真值
+    // 继续覆盖，否则 MediaStore 的修前旧值会被灌回索引。
+    val manifest = videoRepairManifest
+    val toCheck = videos.filter {
+        manifest[it.path]?.let { (size, mtime, _) -> size == it.size && mtime == it.dateModified } != true
+    }
+    if (toCheck.isEmpty()) return imgs
+
     val results = runCatching {
-        repairVideoContainers(videos.map { it.path }, "android")
+        repairVideoContainers(toCheck.map { it.path }, "android")
     }.getOrElse {
         // FFI 抛回来也不能打断扫描（本函数在 scanAndReconcile 的主路径上）
         Log.w(GalleryViewModel.TAG, "[ContainerRepair] FFI 调用失败，跳过本轮: ${it.message}")
@@ -50,6 +72,14 @@ internal fun GalleryViewModel.repairMp4Containers(imgs: List<MediaImage>): List<
     }
 
     val byPath = results.associateBy { it.path }
+    // 检测结果入清单：size/mtime + 容器时长真值（见上方 ⚠️ 注释）。落盘异步跟上
+    //（2026-11-17 持久化：冷启首轮全量检测的结果存下来，下个进程不再重付 3.3s 读盘）
+    for (v in toCheck) {
+        val truthMs = byPath[v.path]?.tableMs?.takeIf { it > 0 }
+        manifest[v.path] = Triple(v.size, v.dateModified, truthMs)
+    }
+    videoRepairManifestDirty = true
+    persistVideoRepairManifestAsync()
     val repaired = results.filter { it.status == "repaired" }
     val notFixed = results.filter {
         it.status == "failed" || it.status == "maskedNoLedger"
@@ -84,18 +114,30 @@ internal fun GalleryViewModel.repairMp4Containers(imgs: List<MediaImage>): List<
     }
     // 只对「文件已修好、但 MediaStore 还报着旧值」的触发重扫；已经对上号的不重复扫，
     // 免得每次刷新都把媒体扫描器叫一遍。
-    val stale = fixed.filter { (storeDuration[it.path] ?: -1L) != it.tableMs }
+    //
+    // 「对上号」必须留舍入容差（2026-11-17 真机日志）：EMUI 的 DURATION 是毫秒向上
+    // 取整口径（容器采样表 55400ms ↔ MediaStore 55416ms、21000 ↔ 21069，差 16~69ms），
+    // 严格 != 永远不等 → stale 每轮非空 → 每次刷新都 scanFile → MediaStore 代数 +1
+    // → scanAndReconcile 的代数闸门被顶开 → 「全量对账 → 重扫 → 全量对账」死循环，
+    // 用户体感就是「没新增图片，下拉刷新照样卡几十秒」。真没对上号的是截断时长
+    // （分钟级差距），200ms 容差不会误判。
+    val stale = fixed.filter {
+        abs((storeDuration[it.path] ?: -1L) - it.tableMs) > DURATION_CONVERGENCE_TOLERANCE_MS
+    }
     val freshDuration: Map<String, Long> =
         if (stale.isEmpty()) emptyMap() else rescanAndReadDurations(stale.map { it.path })
 
     return imgs.map { img ->
-        val r = byPath[img.path] ?: return@map img
-        when {
-            // 已修好：优先用重扫回来的新值，拿不到就用容器采样表口径。
-            r.status == "repaired" || r.status == "alreadyRepaired" -> {
-                val want = freshDuration[img.path] ?: r.tableMs.takeIf { t -> t > 0 }
-                if (want != null && want != img.durationMs) img.copy(durationMs = want) else img
-            }
+        val r = byPath[img.path]
+        // 时长覆盖的唯一出口：本轮检测到的（已修好）→ 重扫新值优先、容器采样表兜底；
+        // 清单放行（本轮没检测）的 → 上次检测记下的容器真值兜底，MediaStore 的缓存
+        // 时长可能还是修前旧值，不能灌回索引；修不动的 → 一律不动时长。
+        val want = when {
+            r != null && (r.status == "repaired" || r.status == "alreadyRepaired") ->
+                freshDuration[img.path] ?: r.tableMs.takeIf { t -> t > 0 }
+
+            r == null -> manifest[img.path]?.third
+
             // 修不动（没权限/只读/被占用）：**不动时长**。
             // ⚠️ 这里原先写的是「夹到 elst 口径」，是错的：真机实测 MediaStore 本来报的
             // 就是全片时长（4174578ms），夹小反而把唯一正确的值覆盖成 9:51，
@@ -103,8 +145,9 @@ internal fun GalleryViewModel.repairMp4Containers(imgs: List<MediaImage>): List<
             // 安卓的时长与可访问范围是两回事（MediaExtractor 取帧受 edit list 限制、
             // 时长却按 mdhd 报全片），所以时长没有"改小才对"这回事。
             // 失败只需要报出来 —— 授权引导由调用方在扫描结束后统一处理。
-            else -> img
+            else -> null
         }
+        if (want != null && want != img.durationMs) img.copy(durationMs = want) else img
     }
 }
 

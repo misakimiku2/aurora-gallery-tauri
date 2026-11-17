@@ -23,6 +23,13 @@ data class AppSettings(
     val defaultLayout: LayoutMode = LayoutMode.GRID,
     val defaultSortBy: SortOption = SortOption.DATE,
     val defaultSortDirection: SortDirection = SortDirection.DESC,
+    /**
+     * 文件夹总览的排序（2026-11-17 用户拍板：与文件网格的排序**分开**——总览排文件夹、
+     * 网格排图片，互不牵连）。默认 DATE/DESC 与分离前的实际行为一致（总览此前一直
+     * 蹭 defaultSortBy），老用户升级无跳变。
+     */
+    val defaultFolderSortBy: SortOption = SortOption.DATE,
+    val defaultFolderSortDirection: SortDirection = SortDirection.DESC,
     /** 默认分组方式（M4c，对齐桌面 GeneralPanel 的 defaultLayoutSettings.groupBy；无 SIZE，见 GroupBy KDoc）。 */
     val defaultGroupBy: GroupBy = GroupBy.NONE,
     /** M6b 阶段 2（D38 子集）：AI provider 与任务开关（单键 JSON 持久化）。 */
@@ -141,6 +148,16 @@ class SettingsStore(context: Context) {
         defaultLayout = prefs.getString(KEY_LAYOUT, null)?.let { layoutFromName(it) } ?: LayoutMode.GRID,
         defaultSortBy = prefs.getString(KEY_SORT_BY, null)?.let { sortFromName(it) } ?: SortOption.DATE,
         defaultSortDirection = if (prefs.getBoolean(KEY_SORT_ASC, false)) SortDirection.ASC else SortDirection.DESC,
+        // 文件夹排序键缺失（2026-11-17 分离前的老存档）回落到 defaultSortBy 的读出值：
+        // 总览此前一直蹭文件排序的值，回落即「升级前后总览排序不变」
+        defaultFolderSortBy = prefs.getString(KEY_FOLDER_SORT_BY, null)
+            ?.let { sortFromName(it) }
+            ?: (prefs.getString(KEY_SORT_BY, null)?.let { sortFromName(it) } ?: SortOption.DATE),
+        defaultFolderSortDirection = when {
+            prefs.contains(KEY_FOLDER_SORT_ASC) ->
+                if (prefs.getBoolean(KEY_FOLDER_SORT_ASC, false)) SortDirection.ASC else SortDirection.DESC
+            else -> if (prefs.getBoolean(KEY_SORT_ASC, false)) SortDirection.ASC else SortDirection.DESC
+        },
         defaultGroupBy = prefs.getString(KEY_GROUP_BY, null)?.let { groupFromName(it) } ?: GroupBy.NONE,
         ai = aiSettingsFromJson(prefs.getString(KEY_AI, null)),
         aiSearchEnabled = prefs.getBoolean(KEY_AI_SEARCH_ENABLED, false),
@@ -154,6 +171,8 @@ class SettingsStore(context: Context) {
             .putString(KEY_LAYOUT, settings.defaultLayout.name)
             .putString(KEY_SORT_BY, settings.defaultSortBy.name)
             .putBoolean(KEY_SORT_ASC, settings.defaultSortDirection == SortDirection.ASC)
+            .putString(KEY_FOLDER_SORT_BY, settings.defaultFolderSortBy.name)
+            .putBoolean(KEY_FOLDER_SORT_ASC, settings.defaultFolderSortDirection == SortDirection.ASC)
             .putString(KEY_GROUP_BY, settings.defaultGroupBy.name)
             .putString(KEY_AI, aiSettingsToJson(settings.ai))
             .putBoolean(KEY_AI_SEARCH_ENABLED, settings.aiSearchEnabled)
@@ -349,6 +368,9 @@ class SettingsStore(context: Context) {
         const val KEY_LAYOUT = "defaultLayout"
         const val KEY_SORT_BY = "defaultSortBy"
         const val KEY_SORT_ASC = "defaultSortAscending"
+        // 文件夹总览的排序（与文件网格分离，2026-11-17）
+        const val KEY_FOLDER_SORT_BY = "folderSortBy"
+        const val KEY_FOLDER_SORT_ASC = "folderSortAscending"
         const val KEY_GROUP_BY = "defaultGroupBy"
         const val KEY_TOPIC_SORT_BY_NAME = "topicSortByName"
         const val KEY_TOPIC_SORT_ASC = "topicSortAscending"

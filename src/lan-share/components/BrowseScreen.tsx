@@ -5,6 +5,7 @@ import { FileGrid } from '@/shared/components/Grid';
 import { SharedTopBar } from '@/shared/components/TopBar';
 import { HttpAdapter } from '@/shared/api/adapters/HttpAdapter';
 import { LayoutMode, SortOption, SortDirection, SearchScope } from '@/shared/api/types';
+import { compareNaturalNames } from '@/utils/folderSort';
 
 interface BrowseScreenProps {
   currentPath: string;
@@ -145,7 +146,7 @@ const BrowseScreen: React.FC<BrowseScreenProps> = ({
         let comparison = 0;
         switch (sortBy) {
           case 'name':
-            comparison = a.name.localeCompare(b.name);
+            comparison = compareNaturalNames(a.name, b.name);
             break;
           case 'date':
             comparison = 0;

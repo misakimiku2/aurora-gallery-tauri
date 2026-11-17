@@ -28,7 +28,7 @@ internal fun MainActivity.computeCacheSizeText(): String {
     }
 }
 
-internal fun MainActivity.clearCache() {
+internal fun MainActivity.clearCache(onDone: () -> Unit = {}) {
     lifecycleScope.launch {
         val freed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             fun dirSize(dir: java.io.File): Long =
@@ -43,6 +43,7 @@ internal fun MainActivity.clearCache() {
             "缓存已清理（释放 %.1f MB）".format(freed.toDouble() / (1L shl 20)),
             Toast.LENGTH_SHORT,
         ).show()
+        onDone()
     }
 }
 

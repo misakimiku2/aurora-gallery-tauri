@@ -393,6 +393,95 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 串行化「扫描 → 对账 → 刷新」管道：初始扫描与热刷新不并发写库。 */
     private val scanMutex = Mutex()
 
+    /**
+     * 容器修复的进程内「已检测清单」（path → 检测时的 size/mtime + 容器时长真值）：
+     * 容器检测要读每个视频的顶层 box 链，784 个视频真机实测 ≈3.3s，而文件没变
+     * （size+mtime 同上次检测）容器就不可能变、结论也不会变——每次手动刷新全量重读
+     * 纯属浪费。只把新出现的/变过的视频交给 Rust（2026-11-17 差量修复）；真值随清单
+     * 保留，供放行文件继续覆盖 MediaStore 的修前旧时长。
+     *
+     * 2026-11-17 起清单**持久化**（[ensureVideoRepairManifestLoaded] 载入 /
+     * [persistVideoRepairManifestAsync] 落盘）：不持久化的话每次冷启首轮都对 784 只
+     * 视频全量重检——3.3s 的读盘风暴正好落在「用户点进文件夹」的窗口里（真机实测
+     * `[Load] took=2454ms`，配合 Rust 侧 repair_video_containers 持锁批处理的旧实现
+     * 直接把文件夹查询堵死几秒）。文件变更由 size+mtime 守卫，陈旧条目无害。
+     */
+    // internal 而非 private：VideoContainerRepair.kt（扩展函数）里要用
+    internal var videoRepairManifest: MutableMap<String, Triple<Long, Long, Long?>> =
+        mutableMapOf()
+
+    /** 清单是否已从磁盘载入（懒加载，修复管道第一跳触发，见 [ensureVideoRepairManifestLoaded]）。 */
+    private var videoRepairManifestLoaded = false
+
+    /** 清单是否有未落盘的变更（[VideoContainerRepair.repairMp4Containers] 检测后置位）。 */
+    // internal 而非 private：VideoContainerRepair.kt（扩展函数）检测后要置位
+    internal var videoRepairManifestDirty = false
+
+    /**
+     * 从 filesDir 载入检测清单（JSON，tmp+rename 原子写）。**在修复管道的 IO 上下文里
+     * 调**（repairMp4Containers 第一跳）：不能放 init 里异步载——init 的 launch 与
+     * startScanIfNeeded 的首轮扫描是竞速，载入没完成就开扫等于清单白载。
+     * 损坏/缺文件静默按空清单处理（等于回退到全量重检，语义安全）。
+     */
+    internal fun ensureVideoRepairManifestLoaded() {
+        if (videoRepairManifestLoaded) return
+        videoRepairManifestLoaded = true
+        runCatching {
+            val f = java.io.File(appContext.filesDir, "video_repair_manifest.json")
+            if (!f.exists()) return
+            val rows = org.json.JSONObject(f.readText()).optJSONArray("entries") ?: return
+            for (i in 0 until rows.length()) {
+                val row = rows.getJSONArray(i)
+                val truth = if (row.isNull(3)) null else row.getLong(3)
+                videoRepairManifest[row.getString(0)] =
+                    Triple(row.getLong(1), row.getLong(2), truth)
+            }
+            Log.i(
+                TAG,
+                "[ContainerRepair] 检测清单已载入 ${videoRepairManifest.size} 条（file=${f.length()}B）",
+            )
+        }.onFailure {
+            Log.w(TAG, "[ContainerRepair] 检测清单载入失败（按空清单处理）: ${it.message}")
+        }
+    }
+
+    /**
+     * 清单落盘（异步，不阻塞扫描管道）。JSON 组装在调用方线程（本就处在 IO 上下文，
+     * ~120KB/784 条 ≈10ms），只有文件写出进独立协程。tmp+rename 原子替换。
+     */
+    internal fun persistVideoRepairManifestAsync() {
+        if (!videoRepairManifestDirty) return
+        videoRepairManifestDirty = false
+        val payload = runCatching {
+            val rows = org.json.JSONArray()
+            for ((path, t) in videoRepairManifest) {
+                val row = org.json.JSONArray()
+                row.put(path)
+                row.put(t.first)
+                row.put(t.second)
+                row.put(t.third ?: org.json.JSONObject.NULL)
+                rows.put(row)
+            }
+            org.json.JSONObject().put("v", 1).put("entries", rows).toString()
+        }.getOrNull() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val f = java.io.File(appContext.filesDir, "video_repair_manifest.json")
+                val tmp = java.io.File(f.absolutePath + ".tmp")
+                tmp.writeText(payload)
+                if (!tmp.renameTo(f)) tmp.delete()
+                Log.i(TAG, "[ContainerRepair] 检测清单落盘 ${videoRepairManifest.size} 条")
+            }
+        }
+    }
+
+    /**
+     * 上一次全量对账起跑时的 MediaStore 代数（`getGeneration(VOLUME_EXTERNAL_PRIMARY)`，
+     * API 29+）：库内任何媒体变化都令它 +1。null = 无基线（进程刚起 / API<29 / 读取失败）
+     * → 闸门常开。作为「库没变 → 整条管道免跑」的廉价判据，见 [scanAndReconcile]。
+     */
+    private var lastSyncGeneration: Long? = null
+
     /** MediaStore 变更通知的防抖协程：通知风暴只留最后一次，平静 [MEDIA_CHANGE_DEBOUNCE_MS] 后对账一次。 */
     private var mediaChangeJob: Job? = null
 
@@ -462,11 +551,20 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         appState.updateActiveTab { it.copy(layoutMode = settings.value.defaultLayout) }
         // M4c：默认分组同理（GroupBy 渲染能力 M1 已有，这里只补持久化默认值）
         appState.groupBy = settings.value.defaultGroupBy
+        // 2026-11-17：文件夹总览的排序独立成对（defaultFolderSort*），与文件网格分开
+        appState.folderSortBy = settings.value.defaultFolderSortBy
+        appState.folderSortDirection = settings.value.defaultFolderSortDirection
+        debugLog(
+            "[View] 启动应用默认: layout=${settings.value.defaultLayout} " +
+                "fileSort=${settings.value.defaultSortBy}/${settings.value.defaultSortDirection} " +
+                "folderSort=${settings.value.defaultFolderSortBy}/${settings.value.defaultFolderSortDirection}",
+        )
         // 2026-10 排序改造：本地总览封面随排序重选。订阅排序与文件夹列表的变化
         // （Compose snapshot 状态），变化即触发一次逐文件夹重算（内部有 key 守卫，
         // 重复发射与首帧发射都幂等；本地空库/LAN 模式下 folders 为空，重算空转）。
+        // 2026-11-17 订阅键改文件夹排序对：封面是总览概念，跟随 folderSort 而非 fileSort。
         viewModelScope.launch {
-            snapshotFlow { Triple(appState.sortBy, appState.sortDirection, folders.value) }
+            snapshotFlow { Triple(appState.folderSortBy, appState.folderSortDirection, folders.value) }
                 .collect { (by, dir, fs) -> refreshLocalOverviewCovers(by, dir, fs) }
         }
         // M6a 阶段 3：有持久化 LAN 连接（token 未过期场景）就静默验证并自动恢复
@@ -682,14 +780,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         settings.value = settings.value.copy(defaultLayout = layout)
         settingsStore.save(settings.value)
         appState.updateActiveTab { it.copy(layoutMode = layout) }
+        debugLog("[View] 布局落盘: $layout")
     }
 
-    /** 默认排序变更：同上。 */
+    /** 默认排序变更（文件网格：文件夹内/标签/专题/搜索序列共用）：同上。 */
     fun applyDefaultSort(by: com.aurora.gallery.kotlin.state.SortOption, direction: com.aurora.gallery.kotlin.state.SortDirection) {
         settings.value = settings.value.copy(defaultSortBy = by, defaultSortDirection = direction)
         settingsStore.save(settings.value)
         appState.sortBy = by
         appState.sortDirection = direction
+        debugLog("[View] 文件排序落盘: $by/$direction")
+    }
+
+    /**
+     * 文件夹总览的排序变更（2026-11-17 与文件排序分离后的落盘入口）：顶栏在总览态改
+     * 排序走这里，[applyDefaultSort] 从此只管图片网格。两对互不牵连，各自持久化。
+     */
+    fun applyDefaultFolderSort(by: com.aurora.gallery.kotlin.state.SortOption, direction: com.aurora.gallery.kotlin.state.SortDirection) {
+        settings.value = settings.value.copy(defaultFolderSortBy = by, defaultFolderSortDirection = direction)
+        settingsStore.save(settings.value)
+        appState.folderSortBy = by
+        appState.folderSortDirection = direction
+        debugLog("[View] 文件夹排序落盘: $by/$direction")
     }
 
     /** 默认分组变更：同上（M4c，即时应用到当前网格 + 重启还在）。 */
@@ -920,21 +1032,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     // internal 而非 private：人物簇已拆到 GalleryViewModelPeople.kt（扩展函数），
     // 那边要用它落诊断
     internal fun debugLog(msg: String) {
-        try {
-            java.io.File(appContext.filesDir, "debug_fileop.log").appendText("$msg\n")
-        } catch (_: Exception) {
-        }
-        // 镜像到共享存储：华为间歇吞第三方 logcat（实时流也吞），run-as 又读不了
-        // 非 debuggable 包的 filesDir——外部存储这份是唯一可靠取证面（排查完删）。
-        try {
-            if (Build.VERSION.SDK_INT == 29 && android.os.Environment.isExternalStorageLegacy()) {
-                java.io.File(
-                    android.os.Environment.getExternalStorageDirectory(),
-                    "aurora_diag_debug.log",
-                ).appendText("${System.currentTimeMillis()} $msg\n")
-            }
-        } catch (_: Exception) {
-        }
+        // 2026-11-17：实现下沉到 [DiagLog]——缩略图管线/网格适配器没有 VM 持有链，
+        // 也要落同一份诊断文件，单例共享同一目的地。
+        DiagLog.log(msg)
     }
 
     /**
@@ -967,6 +1067,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     val folderActivityAt = mutableStateOf<Map<String, Long>>(emptyMap())
 
     init {
+        DiagLog.init(appContext.filesDir)
         folderActivityAt.value = loadFolderActivity()
     }
 
@@ -989,24 +1090,67 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
             android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * MediaStore 代数探针：读取代价 ≈0（框架内存态，不是查询）。API < 29 或读取失败
+     * 返回 null = 闸门常开、每轮都全量对账（保守回退，不赌框架行为）。
+     */
+    private fun readMediaGeneration(): Long? =
+        if (Build.VERSION.SDK_INT >= 29) {
+            runCatching { MediaStore.getGeneration(appContext, MediaStore.VOLUME_EXTERNAL_PRIMARY) }
+                .getOrNull()
+        } else {
+            null
+        }
+
     /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表 + 标签快照。
      *
      * [notifyScan] = true 时走阶段 5 的扫描通知（初始扫描与手动刷新；热刷新不通知）。
+     *
+     * **代数闸门（2026-11-17 用户报障「下拉刷新卡几十秒」）**：起跑前先读 MediaStore
+     * 代数，与基线相同 = 自上轮对账以来库一个字节都没变，整条管道（全量查询 ~0.8s +
+     * 视频容器逐个检测 + 2.9 万行 upsert ~4s + 快照重算）原样重跑纯属浪费——真机日志：
+     * 一次手动刷新（5.8s）后面还跟着 observer 防抖排进来的两轮热刷新（9.9s + 8.6s），
+     * 三连跑 ≈25s 把这台老机拖死，网格反复重绑、缩略图反复重解码。闸门后这些「没变的
+     * 对账」都是毫秒级返回。基线在读到代数的那一刻落定：扫描期间库若再变，代数越过
+     * 基线，下一轮闸门照样放行（对账期间的新变化永远不会被吞）；管道失败清基线强制
+     * 下轮重试。
      */
     // internal 而非 private：序列源与重载簇已拆到 GalleryViewModelSequences.kt（扩展函数）里要用
     internal suspend fun scanAndReconcile(notifyScan: Boolean = false) = scanMutex.withLock {
+        val generation = withContext(Dispatchers.IO) { readMediaGeneration() }
+        if (generation != null && generation == lastSyncGeneration) {
+            Log.i(TAG, "[Scan] MediaStore 代数未变（gen=$generation），跳过全量对账")
+            return@withLock
+        }
+        lastSyncGeneration = generation
+        try {
+            scanAndReconcileInner(notifyScan)
+        } catch (e: Exception) {
+            // 对账没跑成（查询/upsert 抛出）：基线作废，下一轮闸门放行全量重试
+            lastSyncGeneration = null
+            throw e
+        }
+    }
+
+    private suspend fun scanAndReconcileInner(notifyScan: Boolean) {
         val t0 = android.os.SystemClock.elapsedRealtime()
         val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
+        val tQuery = android.os.SystemClock.elapsedRealtime() - t0
         if (notifyScan) scanNotifier.progress()
-        Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+        Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${tQuery}ms")
         // MP4 容器原位修复（2026-10-19，撒谎 edit list + 碎片 mdat 链，详见 VideoContainerRepair.kt）。
         // 只在**初始扫描/手动刷新**这一路做，不挂在每次 reconcile 上：任何应用触碰
         // MediaStore 都会触发对账（见下方 M8b-23 注释），而检测要读每个视频的顶层 box 链
         // 和 moov，放进热路径等于把「进夹秒开」拖慢。新下载的片子最迟在一次手动刷新时被修掉。
         val rows = if (notifyScan) withContext(Dispatchers.IO) { repairMp4Containers(imgs) } else imgs
+        val tRepair = android.os.SystemClock.elapsedRealtime() - t0 - tQuery
         withContext(Dispatchers.IO) { upsertMediaImages(rows) }
+        val tUpsert = android.os.SystemClock.elapsedRealtime() - t0 - tQuery - tRepair
+        // 分段耗时锚点（2026-11-17 差量对账调优）：Log.i 会被华为间歇吞，镜像诊断文件
+        // 是唯一可靠取证面
+        Log.i(TAG, "[Scan] 分段: query=${tQuery}ms repair=${tRepair}ms upsert=${tUpsert}ms")
         debugLog(
-            "[Scan] rows=${rows.size} upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms",
+            "[Scan] rows=${rows.size} query=${tQuery} repair=${tRepair} upsert=${tUpsert}",
         )
         // 首发缓存**不**随对账清空（M8b-23 真机反馈二轮：任何应用触碰 MediaStore 都会
         // 触发对账，整表清空等于把「进夹秒开」打回每次都闪空白）。缓存在这里只承担

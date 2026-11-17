@@ -14,6 +14,7 @@
 //! - `mdat` 合并：管**点开要等多久**（Chromium 沿顶层 box 链走几千个头，等于把整只
 //!   文件读一遍才起播；实测 5406 ms → 154 ms）。
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -132,13 +133,87 @@ pub fn plan_patches(path: &Path) -> Vec<BytePatch> {
     planned_patches(path, &mp4_editlist::inspect(path))
 }
 
+/// 台账访问的窄接口：修复编排层只见「读账 / 记账」两件事，不见连接。
+///
+/// 为什么要有它（2026-11-17「进文件夹卡好几秒」根因）：安卓批量修复
+/// `repair_video_containers` 原本一把抓着连接互斥锁跑完整批**文件解析**
+///（~700 只 mp4 的 box 链 + moov 读盘 ≈3.3s）——期间用户点进任何文件夹，
+/// `list_images` 就得排在整批解析后面排队（真机实测 `[Load] took=2454ms`）。
+/// 台账读写只在每个文件的头/尾各一次、每次几毫秒，把它从文件 IO 里摘出来，
+/// 连接就能跟文件 IO 分时复用。
+pub trait RepairLedger {
+    /// 读某文件的修复账（无账 = `None`）。
+    fn get(&self, path: &str) -> rusqlite::Result<Option<ContainerRepair>>;
+    /// 记/更新某文件的修复账（UPSERT 语义）。
+    fn record(&mut self, entry: &ContainerRepair) -> rusqlite::Result<()>;
+}
+
+/// 现场连接的台账实现（桌面单文件 / 预览路径）。
+struct ConnLedger<'a> {
+    conn: &'a Connection,
+}
+
+impl RepairLedger for ConnLedger<'_> {
+    fn get(&self, path: &str) -> rusqlite::Result<Option<ContainerRepair>> {
+        container_repairs::get(self.conn, path)
+    }
+    fn record(&mut self, entry: &ContainerRepair) -> rusqlite::Result<()> {
+        container_repairs::record(self.conn, entry)
+    }
+}
+
+/// 批量修复的台账实现：开批前一次性快照整表（只有真修过的文件才有行，几十行量级），
+/// 批内读「快照 ∪ 批内新记」，写只进 pending，批尾统一回写 —— **文件 IO 全程不持锁**。
+pub struct BatchLedger {
+    snapshot: HashMap<String, ContainerRepair>,
+    pending: HashMap<String, ContainerRepair>,
+}
+
+impl BatchLedger {
+    pub fn new(snapshot: Vec<ContainerRepair>) -> Self {
+        Self {
+            snapshot: snapshot.into_iter().map(|r| (r.path.clone(), r)).collect(),
+            pending: HashMap::new(),
+        }
+    }
+
+    /// 批内是否记过新账（决定批尾要不要回写）。
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// 批尾把批内新账统一回写。批中途崩溃的代价 = 本次真修过的文件没账（下轮
+    /// 扫描报 `maskedNoLedger`），换取的是整批文件 IO 不占连接——可接受的取舍。
+    pub fn flush(self, conn: &Connection) -> rusqlite::Result<()> {
+        for entry in self.pending.values() {
+            container_repairs::record(conn, entry)?;
+        }
+        Ok(())
+    }
+}
+
+impl RepairLedger for BatchLedger {
+    fn get(&self, path: &str) -> rusqlite::Result<Option<ContainerRepair>> {
+        Ok(self
+            .pending
+            .get(path)
+            .or_else(|| self.snapshot.get(path))
+            .cloned())
+    }
+    fn record(&mut self, entry: &ContainerRepair) -> rusqlite::Result<()> {
+        self.pending.insert(entry.path.clone(), entry.clone());
+        Ok(())
+    }
+}
+
 /// 检测并（必要时）原位修复一个文件，成功则写台账。
 ///
 /// 幂等：已修过的文件返回 `alreadyRepaired`，不会再写一次字节。
 /// 失败不 panic、不返回 Err —— 扫描器要在拿不到写权限时**继续干活**，
 /// 所以错误一律收进 `status="failed"` + `error`。
 pub fn repair_file(conn: &Connection, path: &Path, origin: &str) -> RepairOutcome {
-    repair_impl(conn, path, origin, false)
+    let mut ledger = ConnLedger { conn };
+    repair_ledger(path, origin, false, &mut ledger)
 }
 
 /// 只检测、**绝不写盘**。给「先数出有多少要修」这类预览场景用。
@@ -146,7 +221,24 @@ pub fn repair_file(conn: &Connection, path: &Path, origin: &str) -> RepairOutcom
 /// 与 [`repair_file`] 共用同一套判定，因此预览看到的 `status` 和真去修的结果一致，
 /// 唯一的区别是该动手的形态报 `needsRepair` 而不是真的动手。
 pub fn preview_file(conn: &Connection, path: &Path) -> RepairOutcome {
-    repair_impl(conn, path, "preview", true)
+    let mut ledger = ConnLedger { conn };
+    repair_ledger(path, "preview", true, &mut ledger)
+}
+
+/// 批量修复的编排入口：先快照台账，再逐文件跑 [`repair_ledger`]（全程不持连接），
+/// 批尾由调用方（ffi 层，握着连接池）`flush` 回写。给安卓的
+/// `repair_video_containers` 用——桌面单文件走 [`repair_file`]，语义不变。
+pub(crate) fn repair_ledger_for_batch(
+    paths: &[String],
+    origin: &str,
+    snapshot: Vec<ContainerRepair>,
+) -> (Vec<RepairOutcome>, BatchLedger) {
+    let mut ledger = BatchLedger::new(snapshot);
+    let outcomes = paths
+        .iter()
+        .map(|p| repair_ledger(Path::new(p), origin, false, &mut ledger))
+        .collect();
+    (outcomes, ledger)
 }
 
 fn outcome(
@@ -171,7 +263,14 @@ fn outcome(
     }
 }
 
-fn repair_impl(conn: &Connection, path: &Path, origin: &str, dry_run: bool) -> RepairOutcome {
+/// 修复编排的真正实现。`ledger` 参数见 [RepairLedger] 模块注释：台账读写与文件 IO
+/// 在这里解耦，调用方决定怎么拿连接（现场连接 / 批量快照）。
+fn repair_ledger(
+    path: &Path,
+    origin: &str,
+    dry_run: bool,
+    ledger: &mut dyn RepairLedger,
+) -> RepairOutcome {
     let path_str = path.to_string_lossy().into_owned();
     let verdict = mp4_editlist::inspect(path);
     let table_ms = min_table_ms(&verdict);
@@ -208,8 +307,8 @@ fn repair_impl(conn: &Connection, path: &Path, origin: &str, dry_run: bool) -> R
 
     if patches.is_empty() {
         // 没有该动的地方。是「本来就健康」还是「早就修好了」，看台账和形态。
-        let ledger = container_repairs::get(conn, &path_str).ok().flatten();
-        if ledger.is_some() {
+        let prev = ledger.get(&path_str).ok().flatten();
+        if prev.is_some() {
             return outcome(
                 path_str,
                 "alreadyRepaired",
@@ -276,7 +375,7 @@ fn repair_impl(conn: &Connection, path: &Path, origin: &str, dry_run: bool) -> R
             // 上一版程序修完 edit list 记了账，这一版只规划出 mdat 一笔，UPSERT 一覆盖，
             // elst 那 8 个字节改前的值就再也找不回来，`revert` 只能还原一半。
             // 同一偏移上**旧账优先**：它存的才是文件原本的值。
-            let prev = container_repairs::get(conn, &path_str).ok().flatten();
+            let prev = ledger.get(&path_str).ok().flatten();
             let mut ledger_patches: Vec<BytePatch> = Vec::new();
             if let Some(p) = &prev {
                 if p.patches.is_empty() {
@@ -308,7 +407,7 @@ fn repair_impl(conn: &Connection, path: &Path, origin: &str, dry_run: bool) -> R
             };
             // 台账写失败不能把已经改掉的字节回滚掉（文件此时已经是修好的状态），
             // 但必须报出来 —— 没账就没法还原。
-            let ledger_err = container_repairs::record(conn, &entry)
+            let ledger_err = ledger.record(&entry)
                 .err()
                 .map(|e| format!("{e}（已改 {} 处，但台账未写入，无法还原）", patches.len()));
             outcome(
