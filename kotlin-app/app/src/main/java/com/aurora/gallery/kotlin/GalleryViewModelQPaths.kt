@@ -1,6 +1,7 @@
 package com.aurora.gallery.kotlin
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
@@ -48,10 +49,32 @@ private fun GalleryViewModel.isQLegacyFileStorage(): Boolean =
     Build.VERSION.SDK_INT == 29 && appContext.applicationInfo.targetSdkVersion <= 29
 
 /** 行的 DATA 全路径（传统视图下可读）。 */
-private fun GalleryViewModel.queryDataPath(uri: android.net.Uri): String? =
+// internal 而非 private：文件夹改名的时间戳登记（MainActivityFileOps）按旧路径派生
+// 新路径要用
+internal fun GalleryViewModel.queryDataPath(uri: android.net.Uri): String? =
     appContext.contentResolver.query(
         uri, arrayOf(MediaStore.Images.Media.DATA), null, null, null,
     )?.use { if (it.moveToFirst()) it.getString(0) else null }
+
+/** 按绝对路径（_data）现查行条目 uri（图片/视频两集合都扫，canonical 形式与
+ *  scanMediaStore 同构——generateId 必须同值）。两集合都没有 = 行不存在，返回 null。 */
+// internal 而非 private：改名时间戳重灌（reapplyRenamedRowStamps）要用
+internal fun GalleryViewModel.queryRowUriByDataPath(path: String): android.net.Uri? {
+    val collections = listOf(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+    )
+    for (coll in collections) {
+        val id = runCatching {
+            appContext.contentResolver.query(
+                coll, arrayOf(MediaStore.Images.Media._ID),
+                "${MediaStore.MediaColumns.DATA}=?", arrayOf(path), null,
+            )?.use { c -> if (c.moveToFirst()) c.getLong(0) else null }
+        }.getOrNull() ?: continue
+        return ContentUris.withAppendedId(coll, id)
+    }
+    return null
+}
 
 /** 共享存储根 + RELATIVE_PATH 语义 → 目录 File（legacyDataPath 的 File 版）。 */
 private fun GalleryViewModel.qRelDir(relPath: String): java.io.File =
@@ -78,6 +101,22 @@ private fun GalleryViewModel.resolveConflictName(dir: java.io.File, name: String
  * 轮询两轮：每轮 scanFile 后按 _data 短间隔查询三次；全部落空返回 null（调用方
  * 决定回滚/重试——复制场景文件已拷贝，只有确认扫不出才回收）。
  */
+/** scanner 回调 uri 归一化（八轮根因修复，2026-11-18）：MediaScannerConnection 回调
+ *  给的是 `external_primary` 形态，全量扫描（scanMediaStore）拼的是 `external` 形态
+ *  ——file_id 按 content_uri 字符串算，同一行两种形态两个 id → 索引重复行，且单行
+ *  upsert 进的台账（RECENT_MEDIA_UPSERTS，文件在就保）让幻影**整场会话存活**：
+ *  用户视角「文件夹数字翻倍」（Eh/image 120 文件卡片显示 240 实案），app 重启后台账
+ *  清空、下一次对账才收敛回真身数。按路径段判集合后重拼成全量同款。 */
+private fun canonicalMediaUri(uri: android.net.Uri): android.net.Uri? {
+    val id = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return null
+    val coll = if (uri.pathSegments.contains("video")) {
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+    } else {
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+    }
+    return ContentUris.withAppendedId(coll, id)
+}
+
 private fun GalleryViewModel.scanFileSync(file: java.io.File): android.net.Uri? {
     val path = file.absolutePath
     var result: android.net.Uri? = null
@@ -86,7 +125,7 @@ private fun GalleryViewModel.scanFileSync(file: java.io.File): android.net.Uri? 
         android.media.MediaScannerConnection.scanFile(
             appContext, arrayOf(path), arrayOf("image/*"),
         ) { _, uri ->
-            result = uri
+            result = uri?.let { canonicalMediaUri(it) }
             latch2.countDown()
         }
         if (latch2.await(10, java.util.concurrent.TimeUnit.SECONDS) && result != null) {
@@ -105,18 +144,25 @@ private fun GalleryViewModel.scanFileSync(file: java.io.File): android.net.Uri? 
     return queryRowUriByPath(path)
 }
 
-/** 按 DATA 全路径查行的规范 uri（EMUI 拼的 external 形式）。 */
-private fun GalleryViewModel.queryRowUriByPath(path: String): android.net.Uri? =
-    appContext.contentResolver.query(
+/** 按 DATA 全路径查行的规范 uri（external 形式，与全量扫描同款——八轮起 images 查
+ *  不到再查 video：scanFileSync 的兜底路径对视频行原来必落空，回调丢了就登记失败）。 */
+private fun GalleryViewModel.queryRowUriByPath(path: String): android.net.Uri? {
+    for (coll in arrayOf(
         MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-        arrayOf(MediaStore.Images.Media._ID),
-        "${MediaStore.Images.Media.DATA}=?",
-        arrayOf(path), null,
-    )?.use { c ->
-        if (c.moveToFirst()) ContentUris.withAppendedId(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(0),
-        ) else null
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+    )) {
+        val uri = appContext.contentResolver.query(
+            coll,
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DATA}=?",
+            arrayOf(path), null,
+        )?.use { c ->
+            if (c.moveToFirst()) ContentUris.withAppendedId(coll, c.getLong(0)) else null
+        }
+        if (uri != null) return uri
     }
+    return null
+}
 
 /**
  * 旧 id 的元数据/标签（[includeTopic]=true 时再加专题成员关系）搬到新 uri。
@@ -176,9 +222,22 @@ internal fun GalleryViewModel.legacyRenameViaFile(uri: android.net.Uri, newName:
     return true
 }
 
-/** Q 传统视图移动：跨目录 renameTo（同卷）+ 元数据搬家；行登记/旧行清理后台。 */
+/** Q 传统视图移动：跨目录 renameTo（同卷）+ 元数据搬家；行登记/旧行清理后台。
+ *  [stamps]：文件夹改名复用本函数时传改前行时间戳——重建行走 MediaScanner 登记，
+ *  两列时间都会变成登记时刻（DATE_ADDED 是总览时间排序键的直接来源，见
+ *  [MovedRowStamps]），不保真改名照样置顶。保真三棒：文件 mtime 对齐（扫描更新按
+ *  mtime 回填 date_modified）+ 行列追写 + 索引 upsert 值覆盖
+ *  （见 [registerRowAndMigrateAsync]）。
+ *  [bumpActivity]：moveFiles 的开关穿透——目录改名换 bucket 后聚合必变（源减目标
+ *  增），registerRow 的「聚合变了就 bump」会把改名当移动戳 now 再经过户带到新
+ *  id → 照样置顶（2026-11-18 三轮实测抓到），改名传 false。 */
 // internal 而非 private：文件操作簇在 GalleryViewModelFileOps.kt（扩展函数）里要用
-internal fun GalleryViewModel.legacyMoveViaFile(uri: android.net.Uri, relPath: String): Boolean {
+internal fun GalleryViewModel.legacyMoveViaFile(
+    uri: android.net.Uri,
+    relPath: String,
+    stamps: MovedRowStamps? = null,
+    bumpActivity: Boolean = true,
+): Boolean {
     if (!isQLegacyFileStorage()) {
         Log.w(GalleryViewModel.TAG, "[FileOp] legacy move skipped: not Q legacy storage")
         return false
@@ -202,11 +261,19 @@ internal fun GalleryViewModel.legacyMoveViaFile(uri: android.net.Uri, relPath: S
         return false
     }
     val dst = resolveConflictName(dstDir, src.name)
+    // 八轮实测（2026-11-18）：EMUI 对第三方删视频行弹「检测到极光图库删除了视频，已
+    // 成功拦截」——重建路径删旧行每视频触发一次，但文件是 renameTo 挪走的、从未删除，
+    // 通知是纯提示。试过 DATA 单列原地更新绕开删除：华为 provider 对 DATA 变更返回
+    // 成功后**异步搬文件**，与调用方任何后续文件操作赛跑，赛输即行被 provider 一致性
+    // 回收（实测两行全灭、文件裸奔磁盘）——此路不通，维持 renameTo+重建口径。
     if (!src.renameTo(dst)) {
         Log.w(GalleryViewModel.TAG, "[FileOp] legacy move: renameTo failed ${src.absolutePath} -> ${dst.absolutePath}")
         return false
     }
-    registerRowAndMigrateAsync(uri, dst, includeTopic = true, deleteSource = true)
+    registerRowAndMigrateAsync(
+        uri, dst, includeTopic = true, deleteSource = true,
+        stampsOverride = stamps, bumpActivity = bumpActivity,
+    )
     return true
 }
 
@@ -261,6 +328,10 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
     includeTopic: Boolean,
     deleteSource: Boolean,
     optimisticInsertIntoView: Boolean = false,
+    /** 文件夹改名的内容时间保真（见 [legacyMoveViaFile] doc）；null = 不干预。 */
+    stampsOverride: MovedRowStamps? = null,
+    /** 聚合变化时是否 bump 活动时间（见 [legacyMoveViaFile] doc）；改名传 false。 */
+    bumpActivity: Boolean = true,
 ) {
     viewModelScope.launch(Dispatchers.IO) {
         val t0 = android.os.SystemClock.elapsedRealtime()
@@ -268,6 +339,15 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
         // 有先例：resolveSelectionFileIds 同样在 withContext(IO) 里读 folders.value。
         val beforeFolders = folders.value
         val newUri = try {
+            // 内容时间保真第一棒：把搬移后文件的 mtime 对齐改前 DATE_MODIFIED——实测
+            // provider 的扫描登记/扫描更新按**文件 mtime** 回填 date_modified（shell
+            // 探针验证：touch 改 mtime → 扫描 → 行值跟着变），renameTo 本就保留 mtime，
+            // 绝大多数情况两者同值，这里强制对齐行值保证一致。非标准目录上行列追写
+            // 受华为白名单限制时，这条 mtime 路线是唯一可靠回填通道。
+            if (stampsOverride != null) {
+                runCatching { dstFile.setLastModified(stampsOverride.modified * 1000) }
+                    .onFailure { Log.w(GalleryViewModel.TAG, "[FileOp] mtime restore failed: ${dstFile.absolutePath}", it) }
+            }
             scanFileSync(dstFile)
         } catch (e: Exception) {
             Log.w(GalleryViewModel.TAG, "[FileOp] row register scan threw: ${dstFile.absolutePath}", e)
@@ -276,6 +356,29 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
         if (newUri == null) {
             Log.w(GalleryViewModel.TAG, "[FileOp] row register failed after retries: ${dstFile.absolutePath}")
             return@launch
+        }
+        // 内容时间保真第二棒：MediaScanner 重建的新行两列时间 = 登记时刻（date_modified
+        // 即便有 mtime 对齐，insert 仍用 now——实测），追写回改前值。否则下一次全量对账
+        // 读 MediaStore 把 now 灌进索引，改名卡片再次置顶（索引层的覆盖只能撑到对账）。
+        // 追写被拦时重扫一次：mtime 已对齐，扫描更新按 mtime 回填 date_modified。
+        if (stampsOverride != null) {
+            val cur = queryRowStamps(newUri)
+            if (cur != null && (cur.modified != stampsOverride.modified || cur.added != stampsOverride.added)) {
+                runCatching {
+                    appContext.contentResolver.update(
+                        newUri,
+                        ContentValues().apply {
+                            put(MediaStore.Images.Media.DATE_MODIFIED, stampsOverride.modified)
+                            put(MediaStore.Images.Media.DATE_ADDED, stampsOverride.added)
+                        },
+                        null, null,
+                    )
+                }.onFailure { Log.w(GalleryViewModel.TAG, "[FileOp] date stamps restore failed: $newUri", it) }
+                val cur2 = queryRowStamps(newUri)
+                if (cur2 != null && cur2.modified != stampsOverride.modified) {
+                    runCatching { scanFileSync(dstFile) }
+                }
+            }
         }
         if (deleteSource) {
             // 只适用于 rename/move：旧路径上的文件已随 renameTo 消失，旧行是死行，
@@ -290,6 +393,10 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
         // 显示」。scanner 一登记就地入库，随后打开目标文件夹即时可见；陈旧行仍
         // 归全量对账清理（upsert_media_image 不做快照清理，见其 doc）。
         val img = runCatching { mediaImageOf(newUri) }.getOrNull()
+            ?.let {
+                if (stampsOverride != null) it.copy(dateModified = stampsOverride.modified, dateAdded = stampsOverride.added)
+                else it
+            }
         if (img != null) {
             runCatching { upsertMediaImage(img) }
                 .onFailure { Log.w(GalleryViewModel.TAG, "[FileOp] single-row upsert failed: $newUri", it) }
@@ -304,19 +411,59 @@ internal fun GalleryViewModel.registerRowAndMigrateAsync(
         migrateMetadataAndTagsToNewUri(srcUri, newUri, includeTopic)
         if (deleteSource) {
             // move/rename：旧路径的行随 MediaStore 删除已消失，索引里还是死行
-            // （源文件夹计数虚高、封面可能指着死行）——立即摘掉并重算总览卡片，
-            // 当帧回正；对账稍后以权威快照覆盖（幂等）。
+            // （源文件夹计数虚高、封面可能指着死行）——立即摘掉；对账稍后以权威
+            // 快照覆盖（幂等）。
             runCatching { deleteIndexEntries(listOf(generateId(srcUri.toString()))) }
                 .onFailure { Log.w(GalleryViewModel.TAG, "[FileOp] old index row delete failed: $srcUri", it) }
-            refreshFolderCards()
+            // 十一轮：改名流程（stampsOverride != null）**不逐行重算总览卡片**——桥接卡
+            // 已冻结显示，每行一次 listFolders（~百毫秒）纯属性能税（313 张实案 ≈ 300
+            // 次重算），还放大迁移期的网格 recomposition 抖动；settle 由对账驱动
+            // （mergeRenameBridge），卡片稳如老狗。普通移动没有桥接，源卡片计数必须
+            // 逐行回正，照旧刷。
+            if (stampsOverride == null) refreshFolderCards()
             // 移动的源与目标文件夹计数一减一增，diff 双双命中；重命名不改变聚合
             // （同文件夹同文件数），不 bump——它的内容时间也未变，排序位置不动。
-            bumpActivityForChangedFolders(beforeFolders)
+            // 2026-11-18 补：目录改名（legacy 重建行走新 bucket）聚合**会**变（源减
+            // 目标增），diff 必命中 → 曾经每行 bump 一次 now，再经过户把 now 带给新
+            // id → 改名卡片置顶（三轮实测抓到）。bump 与否交给调用方（moveFiles 的
+            // bumpActivity 开关）：移动照旧 bump，改名不 bump。
+            if (bumpActivity) bumpActivityForChangedFolders(beforeFolders)
         }
         // 正停在某个本地视图就地刷新（之后才进目标文件夹的场景由 openFolder 首发+重查覆盖）
         withContext(Dispatchers.Main) { reloadImages() }
     }
 }
+
+/** 行级时间戳对现查（DATE_MODIFIED/DATE_ADDED，秒，一次查询）：文件夹改名的「内容
+ *  时间保真」源/校验两用。行没了返回 null。 */
+// internal 而非 private：文件操作簇在 GalleryViewModelFileOps.kt（扩展函数）里要用
+internal fun GalleryViewModel.queryRowStamps(uri: android.net.Uri): MovedRowStamps? =
+    runCatching {
+        appContext.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.Images.Media.DATE_MODIFIED, MediaStore.Images.Media.DATE_ADDED),
+            null, null, null,
+        )?.use { c ->
+            if (c.moveToFirst()) MovedRowStamps(
+                modified = if (c.isNull(0)) 0L else c.getLong(0),
+                added = if (c.isNull(1)) 0L else c.getLong(1),
+            ) else null
+        }
+    }.getOrNull()
+
+/** 行级 BUCKET_ID 现查（字符串化，generate_id 口径同 Rust 对账）：文件夹改名的
+ *  新 folder id 现查用。行没了（legacy 重建后旧 uri 已删）返回 null。 */
+// internal 而非 private：文件操作簇在 MainActivityFileOps.kt（扩展函数）里要用
+internal fun GalleryViewModel.queryBucketId(uri: android.net.Uri): String? =
+    runCatching {
+        appContext.contentResolver.query(
+            uri,
+            arrayOf(MediaStore.Images.Media.BUCKET_ID),
+            null, null, null,
+        )?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0).toString() else null
+        }
+    }.getOrNull()
 
 /**
  * 单行查询 → [MediaImage]（[registerRowAndMigrateAsync] 增量 upsert 用）。投影与
@@ -450,6 +597,8 @@ internal suspend fun GalleryViewModel.refreshFolderCards(force: Boolean = false)
     if (!force && now - lastFolderCardsRefreshAt < 500) return
     lastFolderCardsRefreshAt = now
     val refreshed = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
-    folders.value = refreshed
-    debugLog("refreshFolderCards: n=${refreshed.size}")
+    // 桥接合并：改名后到对账建好新 Folder 行之前，索引里查不到改名后的卡片——
+    // 不补回会出现「改名后卡片消失好一会才回来」（2026-11-18 用户实测）
+    folders.value = mergeRenameBridge(refreshed)
+    debugLog("refreshFolderCards: n=${folders.value.size}")
 }

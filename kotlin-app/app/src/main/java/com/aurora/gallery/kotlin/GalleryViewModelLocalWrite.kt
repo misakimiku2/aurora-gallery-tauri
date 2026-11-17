@@ -4,11 +4,18 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
+import android.widget.Toast
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import uniffi.aurora_core.Folder
+import uniffi.aurora_core.deleteIndexEntries
+import uniffi.aurora_core.generateId
 import uniffi.aurora_core.listImagesByIds
+import uniffi.aurora_core.upsertMediaImage
 
 // 2026-10-10 从 `GalleryViewModel.kt` 拆出（第 11 刀）：「写操作的乐观内存更新」与
 // 「文件夹活动时间」两簇整体搬到这里，用**扩展函数**落（套路同 GalleryViewModelFileOps.kt
@@ -194,6 +201,162 @@ internal fun GalleryViewModel.bumpFolderActivity(folderIds: Collection<String>) 
         folderActivityPrefs.edit().putString(FOLDER_ACTIVITY_KEY, obj.toString()).apply()
     }
     debugLog("folderActivity: bump n=${folderIds.size} at=$nowSec ids=$folderIds")
+}
+
+/**
+ * 文件夹重命名的活动时间**过户**（2026-11-18）：旧 folder id 的活动时间原值挪给新 id。
+ * 排序键 = max(内容最新时间, 活动时间)，改名不 bump（[GalleryViewModelFileOps.moveFiles]
+ * 的 bumpActivity=false）也不丢历史活动——旧 id 若有活动记录（此前复制/删除过文件），
+ * 不过户的话卡片会从「活动托起的位置」跌回内容时间位置，改名前后位置还是变了。
+ * 旧 id 无记录时不动（多数文件夹没有活动层，位置本来就只由内容时间决定）。
+ */
+// internal 而非 private：宿主收尾簇在 MainActivityFileOps.kt（扩展函数）里要用
+internal fun GalleryViewModel.transferFolderActivity(oldId: String, newId: String) {
+    if (oldId == newId) return
+    val at = folderActivityAt.value[oldId] ?: return
+    val merged = (folderActivityAt.value - oldId) + (newId to at)
+    folderActivityAt.value = merged
+    runCatching {
+        val obj = JSONObject()
+        merged.forEach { (id, t) -> obj.put(id, t) }
+        folderActivityPrefs.edit().putString(FOLDER_ACTIVITY_KEY, obj.toString()).apply()
+    }
+    debugLog("folderActivity: transfer $oldId -> $newId at=$at")
+}
+
+/**
+ * 文件夹改名内容时间保真的**终棒**（每次全量对账 upsert 之后、listFolders 聚合之前
+ * 调，2026-11-18 四轮）：按 [GalleryViewModel.renamedRowStamps] 登记表把改前行时间戳
+ * 重灌回索引。为什么需要：legacy 重建行的 DATE_ADDED 无法经 update 写回（provider 对
+ * app 丢弃该列，实测探针 +1s 已是登记时刻），对账 upsert 每轮都会把登记时刻灌进
+ * created_at → 时间排序键 max(createdAt, 活动) 跳到 now → 改名文件夹置顶；本函数在
+ * 聚合前纠正，跳变对用户不可见。行消失（文件夹被删/路径再变）时惰性注销登记。
+ */
+// internal 而非 private：scanAndReconcileInner（GalleryViewModel.kt）要调
+internal fun GalleryViewModel.reapplyRenamedRowStamps() {
+    if (renamedRowStamps.isEmpty()) return
+    val it = renamedRowStamps.entries.iterator()
+    var fixed = 0
+    while (it.hasNext()) {
+        val entry = it.next()
+        val rowUri = queryRowUriByDataPath(entry.key)
+        if (rowUri == null) {
+            it.remove()
+            continue
+        }
+        val img = runCatching { mediaImageOf(rowUri) }.getOrNull()
+        if (img == null) {
+            it.remove()
+            continue
+        }
+        if (img.dateModified != entry.value.modified || img.dateAdded != entry.value.added) {
+            runCatching {
+                upsertMediaImage(img.copy(dateModified = entry.value.modified, dateAdded = entry.value.added))
+            }
+            fixed++
+        }
+    }
+    if (fixed > 0) debugLog("reapplyRenamedRowStamps: fixed=$fixed registered=${renamedRowStamps.size}")
+}
+
+/**
+ * 死行全量审计（2026-11-18，用户 QQ→QQid 实案驱动）：把媒体库里「记录在案但文件早已
+ * 不存在」的行清出去。为什么需要：这台设备（EMUI Q legacy）的 MediaProvider **从不
+ * 清理死行**（MmsCamera 2020 年的行躺到 2026），而应用按记录列表渲染、不验文件存在
+ * → 幽灵文件夹可以显示数年；改名碰到全死行 = 死行清理 + 卡片就地消失，用户当数据
+ * 丢失报障。审计让应用视图对齐其他应用（图库/文件管理都验存在，早就不显示死行）。
+ *
+ * 时机：授权后的首次对账跑一次（SP 无记录即跑），之后每 30 天一次；返回值 -1 = 未
+ * 到期跳过。改名/搬移进行中（renameBridges/renamedRowStamps 非空）**必须跳过**——
+ * 搬移中的行 _data 尚在旧路径而文件已到新路径，验存在会误判死行、把活行当尸体清掉。
+ * 只审计主卷（/storage/emulated/0/）：外置卷卸载时 exists()=false 会误杀活行。
+ * 删除与 moveFiles 死行分支同口径（媒体库行 + 索引行都摘；文件本就不存在 → EMUI
+ * 拦截无事可拦，QQ 实案 54 条死行删除全程零通知）。SP 旗标在**跑完后**落——中断
+ * （进程被杀）下次重跑幂等，已清的行自然跳过。
+ */
+// internal 而非 private：scanAndReconcileInner（GalleryViewModel.kt）要调
+internal suspend fun GalleryViewModel.auditDeadMediaRows(): Int = withContext(Dispatchers.IO) {
+    if (renameBridges.isNotEmpty() || renamedRowStamps.isNotEmpty()) return@withContext -1
+    val prefs = appContext.getSharedPreferences("aurora_dead_row_audit", android.content.Context.MODE_PRIVATE)
+    val last = prefs.getLong("lastAt", 0L)
+    if (last != 0L && System.currentTimeMillis() - last < 30L * 24 * 3600 * 1000) return@withContext -1
+    val root = android.os.Environment.getExternalStorageDirectory().absolutePath + "/"
+    var dead = 0
+    val t0 = android.os.SystemClock.elapsedRealtime()
+    for (coll in listOf(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+    )) {
+        runCatching {
+            appContext.contentResolver.query(
+                coll,
+                arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATA),
+                null, null, null,
+            )?.use { c ->
+                val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val dataCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATA)
+                while (c.moveToNext()) {
+                    val data = c.getString(dataCol) ?: continue
+                    if (!data.startsWith(root)) continue
+                    if (java.io.File(data).exists()) continue
+                    val uri = ContentUris.withAppendedId(coll, c.getLong(idCol))
+                    val removed = runCatching { appContext.contentResolver.delete(uri, null, null) }
+                        .onFailure { Log.w(GalleryViewModel.TAG, "[DeadRowAudit] delete failed: $uri", it) }
+                        .getOrDefault(0)
+                    if (removed > 0) {
+                        dead++
+                        runCatching { deleteIndexEntries(listOf(generateId(uri.toString()))) }
+                        if (dead % 200 == 0) debugLog("[DeadRowAudit] progress dead=$dead")
+                    }
+                }
+            }
+        }.onFailure { Log.w(GalleryViewModel.TAG, "[DeadRowAudit] collection scan failed: $coll", it) }
+    }
+    prefs.edit().putLong("lastAt", System.currentTimeMillis()).apply()
+    debugLog("[DeadRowAudit] done dead=$dead cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+    dead
+}
+
+/**
+ * 桥接卡片合并（2026-11-18 五/六轮）：文件夹改名是逐行迁移（大文件夹 ~10s），期间
+ * 索引处于半迁移态——本函数让所有 listFolders 驱动的刷新（refreshFolderCards 与对账
+ * 聚合两个调用点）对迁移无感：摘除正在退场的旧壳卡（按桥接 key=旧 id）、补回桥接卡
+ * （新名/新路径/旧计数封面时间恒定显示）。「新路径真身落地 + 旧路径壳退场」同时满足
+ * 时桥接自愈清除（真身 = 对账建的新 Folder 行，stamps 已被 reapplyRenamedRowStamps
+ * 纠正，位置/计数/封面全对）。删除文件夹流程无条件清空桥接表（防僵尸卡片）。
+ */
+// internal 而非 private：refreshFolderCards（QPaths）与 scanAndReconcileInner（本类）要调
+internal fun GalleryViewModel.mergeRenameBridge(list: List<Folder>): List<Folder> {
+    if (renameBridges.isEmpty()) return list
+    var out = list
+    val entries = renameBridges.entries.iterator()
+    var touched = false
+    while (entries.hasNext()) {
+        val en = entries.next()
+        val bridge = en.value
+        val newIn = out.any { it.path == bridge.card.path }
+        val oldGone = out.none { it.path == bridge.oldPath }
+        if (newIn && oldGone) {
+            // 真身落地 + 旧壳退场：桥接完成，真身已在列表里
+            entries.remove()
+            touched = true
+            // 十一轮：settle 时若用户正看着旧 id 的文件夹（改名迁移期进入的），视图
+            // 原位接管到真身 id 并重载——否则对账摘掉旧行后正看着的网格停在空态，
+            // 得返回再进才恢复（313 张实案）。接管是原位换 id 不推栈（返回键语义不变）。
+            val realId = out.firstOrNull { it.path == bridge.card.path }?.id
+            if (realId != null && appState.repointFolderView(en.key, realId)) {
+                debugLog("renameBridge: view repointed ${en.key} -> $realId")
+                viewModelScope.launch { reloadImages() }
+            }
+            continue
+        }
+        // 迁移中：旧壳摘除 + 桥接卡补回（列表里已有同路径卡=合并进既有相册的场景，不重复加）
+        out = out.filter { it.id != en.key }
+        if (out.none { it.path == bridge.card.path }) out = out + listOf(bridge.card)
+        touched = true
+    }
+    if (touched) debugLog("renameBridge: active=${renameBridges.size} list=${out.size}")
+    return out
 }
 
 /**

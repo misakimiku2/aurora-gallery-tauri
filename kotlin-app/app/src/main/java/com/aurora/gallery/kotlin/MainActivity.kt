@@ -724,6 +724,12 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         },
+                        // 2026-11-18 文件夹重命名（选中集菜单「重命名…」→ 宿主弹窗+管线）
+                        onFolderRename = { folderId ->
+                            viewModel.folders.value.firstOrNull { it.id == folderId }?.let {
+                                showFolderRenameDialog(it)
+                            }
+                        },
                         // 普通设置入口：重置跳转落点（只有侧栏「网络」行会带 LAN）
                         onOpenSettings = { settingsInitialCategory = null; showSettings = true },
                         // 侧栏「网络」行未连接：开设置并落在局域网共享页（2026-09-26 验收反馈）
@@ -1360,6 +1366,12 @@ fun App(
     onResolveSelectionFileIds: (Set<String>, (List<String>) -> Unit) -> Unit = { _, _ -> },
     /** 网格重命名（1.4 单选菜单项；宿主过写授权后改 DISPLAY_NAME）。 */
     onRenameFile: (fileId: String, newName: String) -> Unit = { _, _ -> },
+    /**
+     * 2026-11-18 文件夹重命名（总览选中集菜单「重命名…」，单选文件夹卡片时出现）：
+     * folderId → 宿主查 VM folders 快照弹 RenameDialog 并走重命名管线（App() 顶层
+     * 组合拿不到 VM，能力只能回调注入）。
+     */
+    onFolderRename: (folderId: String) -> Unit = {},
     /** 打开设置面板（M4b 2.1；对话框由宿主层渲染）。 */
     onOpenSettings: () -> Unit = {},
     /**
@@ -1809,6 +1821,12 @@ fun App(
                 }
             })
             add(SelectionMoreAction("删除", IconTrash2) { showDeleteConfirm = true })
+            // 2026-11-18 文件夹重命名（桌面 folder-single 右键「重命名」的触屏同位）：
+            // 仅单选且该 id 确实是文件夹卡片时出现（选中集可能混入图片 id——例如
+            // 跨视图保留的选择，混选没有单一改名目标，「不适用的项不出现」）
+            if (tab.selectedFileIds.size == 1 && folders.any { it.id == tab.selectedFileIds.first() }) {
+                add(SelectionMoreAction("重命名…", IconPencil) { onFolderRename(tab.selectedFileIds.first()) })
+            }
         }
         else -> emptyList()
     }
@@ -1879,6 +1897,8 @@ fun App(
     }
     val onFolderCardLongPress: (Folder) -> Unit = { folder ->
         when {
+            // 2026-11-18 用户拍板：文件夹长按与图片同款——非选择态长按=进选择模式，
+            // 已选中项长按=开选择栏「更多」菜单；重命名是该菜单的单选项（总览分支）
             !state.selectionMode -> state.enterSelectionMode(folder.id)
             folder.id !in tab.selectedFileIds -> state.rangeSelect(folder.id, currentFolderIds.value)
             // 已选中卡片长按 = 打开选中集菜单（M4b 1.4：复制到/移动到/删除；此前

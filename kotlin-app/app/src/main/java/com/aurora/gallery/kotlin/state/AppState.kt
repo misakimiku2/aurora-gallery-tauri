@@ -453,6 +453,30 @@ class AppState(
     }
 
     /**
+     * 改名桥接 settle 时的**视图接管**（2026-11-18 十一轮）：用户在改名迁移期间进入
+     * 了文件夹（tab.folderId 还是旧 id），settle（真身落地、旧壳退场）后旧 id 的行
+     * 已被摘除——不接管的话正看着的网格停在空态，得返回再进才恢复（313 张实案）。
+     * 把 BROWSER 位置里引用旧 id 的条目**原位**换成真身 id（不推栈，返回键语义不变），
+     * tab.folderId 一并换。命中当前视图返回 true。
+     */
+    fun repointFolderView(oldId: String, newId: String): Boolean {
+        var hit = false
+        updateActiveTab { tab ->
+            if (tab.folderId != oldId) return@updateActiveTab tab
+            val newStack = tab.history.stack.mapIndexed { i, item ->
+                if (item.folderId == oldId && item.viewMode == ViewMode.BROWSER) {
+                    if (i == tab.history.currentIndex) hit = true
+                    item.copy(folderId = newId)
+                } else {
+                    item
+                }
+            }
+            tab.copy(folderId = newId, history = HistoryStack(newStack, tab.history.currentIndex))
+        }
+        return hit
+    }
+
+    /**
      * 进入总览视图（M4a 3.2：侧栏人物/标签/专题 Section 头部点击，对齐 React
      * `handleNavigateAllPeople` / `handleNavigateAllTags` / `handleNavigateTopics`——
      * pushHistory 保留当前 folderId，搜索与筛选复位，选中清空）。

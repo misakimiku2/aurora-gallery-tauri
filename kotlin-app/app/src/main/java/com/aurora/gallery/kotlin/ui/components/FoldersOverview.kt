@@ -166,7 +166,9 @@ fun FoldersOverview(
     folders: List<Folder>,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
-    /** 长按回调（4.1）：总览进选择模式 / 范围选择，语义同 FileGrid（宿主侧决定）。 */
+    /** 长按回调（4.1）：总览进选择模式 / 范围选择，语义同 FileGrid（宿主侧决定）。
+     *  重命名不挂在这里——2026-11-18 用户拍板：文件夹长按与图片同款（长按=进选择，
+     *  长按已选中项=开选择栏「更多」菜单），重命名是选中集菜单的一项（单选时出现）。 */
     onFolderLongClick: (Folder) -> Unit = {},
     modifier: Modifier = Modifier,
     /**

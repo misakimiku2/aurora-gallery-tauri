@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
@@ -996,6 +997,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                 onBlocked = onBlocked,
                 optimistic = { okItems ->
                     optimisticRemoveFromGrid(okItems)
+                    // 桥接清空：被删的若是刚改名的文件夹，桥接卡不能以僵尸形态补回
+                    // （2026-11-18 五/六轮；其余场景桥接由 mergeRenameBridge 自愈）
+                    renameBridges.clear()
                     // 索引即时收尾：把实际删掉的这批行从索引摘除 + 重算总览卡片
                     // （封面回退到剩余最新图、计数-1、时间戳回退、按时间排序的位置
                     // 归位）——不等全量对账（1s 防抖 + 2.4s 扫描），否则删除后卡片
@@ -1008,6 +1012,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                                 .onFailure { Log.w(TAG, "[Delete] index cleanup failed", it) }
                         }
                         refreshFolderCards(force = true)
+                        // 2026-11-18（用户实测报障：删除文件夹后缩略图先消失、空壳卡片
+                        // 挂好几秒才走）：被删空文件夹的 Folder 行也是对账才清——卡片
+                        // 空壳（无封面）挂在原地。count=0 的 Folder 行在快照语义下必然
+                        // 是死行（有行才有卡），就地摘除，卡片即时消失；与对账幂等。
+                        val emptyFolderIds = folders.value.filter { it.imageCount == 0L }.map { it.id }
+                        if (emptyFolderIds.isNotEmpty()) {
+                            withContext(Dispatchers.IO) {
+                                runCatching { deleteIndexEntries(emptyFolderIds) }
+                                    .onFailure { Log.w(TAG, "[Delete] empty folder cleanup failed", it) }
+                            }
+                            refreshFolderCards(force = true)
+                        }
                         // 删除也是「操作过文件夹」：内容时间会掉回去，活动时间托在前面
                         bumpActivityForChangedFolders(beforeFolders)
                     }
@@ -1065,6 +1081,28 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /** folderId → 活动时间（epoch 秒）。Compose state：总览排序的 remember 键之一。 */
     val folderActivityAt = mutableStateOf<Map<String, Long>>(emptyMap())
+
+    /**
+     * 文件夹改名的内容时间保真登记（新绝对路径 → 改前行时间戳）。2026-11-18 四轮：
+     * legacy 重建行的 DATE_ADDED 无法经 update 写回（provider 对 app 丢弃该列，实测
+     * +1s 探针），每次全量对账都会把登记时刻灌进索引 created_at，而时间排序键 =
+     * max(createdAt, 活动时间) → 改名文件夹在对账落地时（典型体感：进入再返回）
+     * 置顶。scanAndReconcileInner 在对账 upsert 之后、listFolders 聚合之前按此表
+     * 重灌（[reapplyRenamedRowStamps]）；行消失（文件夹被删/再改名）时惰性注销。
+     * 内存占用：每次改名每行一条，量级为个位数。
+     */
+    internal val renamedRowStamps = java.util.concurrent.ConcurrentHashMap<String, MovedRowStamps>()
+
+    /**
+     * 文件夹改名的**桥接卡片**表（2026-11-18 五/六轮）：key = 旧卡片 id。改名是逐行
+     * 迁移（legacy 重建：每行等扫描回调 + 删旧行 + upsert 新行），120 行要 ~10s——
+     * 期间索引处于半迁移态，任何 listFolders 驱动的刷新都会暴露旧卡计数递减/封面
+     * 轮换/新旧卡交替（用户实测报障）。桥接卡在改名确认瞬间设置（新名/新路径/旧计数
+     * 封面时间），refreshFolderCards 与对账聚合经 [mergeRenameBridge] 维稳：摘除旧壳
+     * 卡、补回桥接卡；「新路径真身落地 + 旧路径壳退场」时桥接自愈清除。删除文件夹
+     * 流程无条件清空（防僵尸）。
+     */
+    internal val renameBridges = java.util.concurrent.ConcurrentHashMap<String, RenameBridge>()
 
     init {
         DiagLog.init(appContext.filesDir)
@@ -1146,6 +1184,26 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         val tRepair = android.os.SystemClock.elapsedRealtime() - t0 - tQuery
         withContext(Dispatchers.IO) { upsertMediaImages(rows) }
         val tUpsert = android.os.SystemClock.elapsedRealtime() - t0 - tQuery - tRepair
+        // 文件夹改名的内容时间保真终棒（2026-11-18 四轮）：对账 upsert 会把重建行的
+        // DATE_ADDED=登记时刻灌进索引（app 无法 update 写回该列），必须在 listFolders
+        // 聚合**之前**按登记表重灌，时间排序键才不会在对账落地时跳变（典型体感：改名
+        // 后「进入再返回」置顶）。行已消失的登记在此惰性注销。
+        withContext(Dispatchers.IO) { reapplyRenamedRowStamps() }
+        // 死行全量审计（2026-11-18，QQ→QQid 实案驱动）：授权后首跑 + 每 30 天一次，
+        // 把「记录在案但文件早已不存在」的死行清掉——这台设备的 MediaProvider 从不清
+        // 死行，幽灵文件夹会显示数年，改名碰到它＝卡片就地消失，用户当数据丢失报障。
+        // 未到期/搬移进行中返回 -1 静默跳过；清了就在主线程提示（对齐图库/文件管理
+        // 的真实视图）。清掉的行已同步摘索引行，本轮 listFolders 聚合即所见即所得。
+        val deadAudited = auditDeadMediaRows()
+        if (deadAudited > 0) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    appContext,
+                    "已清理 $deadAudited 条失效媒体记录（文件早已不存在）",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
         // 分段耗时锚点（2026-11-17 差量对账调优）：Log.i 会被华为间歇吞，镜像诊断文件
         // 是唯一可靠取证面
         Log.i(TAG, "[Scan] 分段: query=${tQuery}ms repair=${tRepair}ms upsert=${tUpsert}ms")
@@ -1157,7 +1215,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         // 首帧预览，每次进夹 reloadImages 都会重查对账，已删/已挪的项落地后一帧内
         // 自愈——拿一瞬的旧快照换稳定的零空白进夹，值。
         Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
-        folders.value = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
+        folders.value = withContext(Dispatchers.IO) {
+            mergeRenameBridge(orderFoldersForOverview(listFolders()))
+        }
         Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
         // 对账可能清掉孤儿行（含 file_tags 指向的 file_id），标签快照跟着重算，
         // 否则侧栏会数出几个网格里点不出来的标签。专题成员同理（topic_files 的孤儿），

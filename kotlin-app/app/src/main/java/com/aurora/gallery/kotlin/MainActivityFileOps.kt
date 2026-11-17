@@ -11,7 +11,17 @@ import android.widget.Toast
 import org.json.JSONArray
 import androidx.activity.result.IntentSenderRequest
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewModelScope
+import com.aurora.gallery.kotlin.viewer.dialogs.RenameDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import uniffi.aurora_core.Folder
+import uniffi.aurora_core.deleteIndexEntries
+import uniffi.aurora_core.generateId
+import uniffi.aurora_core.listImages
 
 // 文件操作宿主执行簇（拆分清单第 27 刀，⑥ 第 2 刀）：M4b 1.1 批量授权（createWriteRequest /
 // WRITE 运行时权限 /「所有文件」免弹窗引导 + SP 待执行操作）+ M4b 1.4/1.3 复制/移动宿主执行
@@ -337,5 +347,293 @@ internal fun MainActivity.requestDelete(uris: List<Uri>) {
             }
         },
     )
+}
+
+// ===== 2026-11-18 文件夹重命名（总览选中集菜单「重命名…」，单选文件夹卡片时出现）=====
+//
+// 交互口径（用户拍板）：文件夹长按与图片同款——长按=进选择模式，长按已选中项=开
+// 选择栏「更多」菜单；重命名是总览分支菜单的一项（第一版锚在卡片上的 MoreMenuPopup
+// 弹层被否，形制与图片长按不一致）。菜单项在 App() 的 moreActions 总览分支，经
+// onFolderRename 回调落到这里。
+//
+// 执行 = 逐文件改 RELATIVE_PATH 复用 moveFiles 管线，不走「目录 File.renameTo 整树
+// 改名」：后者在 Q legacy 下整夹换 _id，标签/专题/元数据要逐文件搬家，EMUI 扫描回调
+// 迟到几十秒；前者 _id 与 content_uri 不变 → file_id 不变 → 元数据零迁移（规划五要点
+// ②），授权兜底（writeConsentFor）与「操作过就排前面」的活动时间 bump 全部白得。
+
+/** 「重命名」→ RenameDialog（复用查看器文件重命名同款弹窗；AI 按钮不传——AI 提案
+ *  管线读本机图片字节，对文件夹无意义）。 */
+internal fun MainActivity.showFolderRenameDialog(folder: Folder) {
+    DiagLog.log("[FolderRename] dialog opened folder=${folder.id} name=${folder.name} path=${folder.path}")
+    // onConfirm 走命名参数：尾随 lambda 只能绑定声明的最后一个参数，RenameDialog 的
+    // 最后一位是 onAiRename（null=不显示 AI 按钮，文件夹重命名不传）——尾随写法会把
+    // 确认回调错绑到 AI 按钮上（编译实测踩过）
+    RenameDialog(
+        context = this,
+        currentName = folder.name,
+        onConfirm = { newName ->
+            DiagLog.log("[FolderRename] confirmed folder=${folder.id} ${folder.name} -> $newName")
+            performFolderRename(folder, newName)
+        },
+    ).show()
+}
+
+/**
+ * 执行文件夹重命名：bucket X 改名 = 把直属文件（`list_images` 只取 parent_id 直属行，
+ * 子相册不在内）逐个移到 `X'`。旧 RELATIVE_PATH 由 resolveFolderRelPath 现场解析
+ * （总览快照 Folder.path 换前缀，零成本），名字合法性见 [deriveRenamedRelPath]。
+ *
+ * 根目录散图（path = 外部存储根 → relPath `/`）不可改名；被系统拦下的行走
+ * writeConsentFor（「所有文件」引导或 createWriteRequest，SP 待执行操作的 move 回放
+ * 路径现成）。
+ *
+ * 2026-11-18 二轮修复（用户实测三报障）：
+ *  - 置顶：moveFiles 传 dateModifiedPreserve 保真内容时间 + bumpActivity=false；
+ *  - 卡片名字要等好几秒：索引 Folder 行只有全量对账才重写，单行 upsert 不建卡——
+ *    onSettled（moveFiles 内部收尾完成）后做乐观补丁，卡片就地换名换路径；
+ *  - 旧卡片空壳滞留：bucket 变了（legacy 重建行）时旧 Folder 行 count 归 0 但要等
+ *    对账才清，就地摘除。
+ */
+internal fun MainActivity.performFolderRename(folder: Folder, newName: String) {
+    viewModel.resolveFolderRelPath(folder.id) { oldRel ->
+        val newRel = oldRel?.let { deriveRenamedRelPath(it, newName) }
+        when {
+            oldRel == null -> Toast.makeText(
+                this,
+                if (folder.path.startsWith(
+                        android.os.Environment.getExternalStorageDirectory().absolutePath,
+                    )
+                ) {
+                    "无法解析文件夹路径"
+                } else {
+                    // 八轮 Movies 实案：/hw_product 预置媒体（固件分区，只读）也会进
+                    // MediaStore 出卡片——「无法解析」让人摸不着头脑
+                    "系统只读目录（${folder.path}）不能重命名"
+                },
+                Toast.LENGTH_LONG,
+            ).show()
+            // oldRel 有值而 newRel 为 null 只剩两种：根目录（"/"）或名字非法（改名弹窗
+            // 已挡空名/同名，这里兜改不出合法路径的残局）
+            newRel == null -> Toast.makeText(
+                this,
+                if (oldRel == "/") "根目录（散图）不能重命名" else "文件夹名不能包含 / \\ 等路径字符",
+                Toast.LENGTH_SHORT,
+            ).show()
+            else -> viewModel.resolveSelectionFileIds(setOf(folder.id)) { ids ->
+                viewModel.resolveFileUris(ids) { uris ->
+                    DiagLog.log("[FolderRename] begin rel=$oldRel -> $newRel uris=${uris.size}/${ids.size}")
+                    if (uris.isEmpty()) {
+                        Toast.makeText(this, "文件夹为空或无法读取", Toast.LENGTH_SHORT).show()
+                        return@resolveFileUris
+                    }
+                    // 改前卡片快照（主线程）：乐观补丁的锚（计数/封面/时间全沿用）
+                    val oldCard = viewModel.folders.value.firstOrNull { it.id == folder.id } ?: folder
+                    val newAbsPath = java.io.File(folder.path).parentFile
+                        ?.let { java.io.File(it, newName).absolutePath }
+                        ?: (folder.path.trimEnd('/') + "/" + newName)
+                    // 桥接早置（六轮）：改名是逐行迁移（大文件夹 ~10s），确认瞬间就把卡片
+                    // 换成新名/新路径的桥接卡，迁移期所有中间刷新由 mergeRenameBridge 维稳
+                    // （旧壳摘除、桥接卡补回）——迁移对用户完全不可见
+                    val bridgeCard = oldCard.copy(name = newName, path = newAbsPath)
+                    viewModel.renameBridges[oldCard.id] = RenameBridge(bridgeCard, folder.path)
+                    viewModel.folders.value = viewModel.folders.value.map {
+                        if (it.id == oldCard.id) bridgeCard else it
+                    }
+                    viewModel.viewModelScope.launch {
+                        // 逐行预抓改前行时间戳（DATE_MODIFIED + DATE_ADDED）：移动/改行会让
+                        // provider 把两列刷成 now/登记时刻，而总览时间排序键 = max(createdAt,
+                        // 活动时间)（GridModels.sortFolders，createdAt=MAX(DATE_ADDED)）——
+                        // 两列都不保真改个名就置顶。DATE_ADDED 实测无法经 update 写回
+                        // （provider 对 app 丢弃该列），除行级追写外还要按新路径登记进
+                        // renamedRowStamps，让每次对账聚合前重灌（见 GalleryViewModel 字段 doc）
+                        val preserve = HashMap<String, MovedRowStamps>()
+                        val pathStamps = HashMap<String, MovedRowStamps>()
+                        var liveCount = 0
+                        withContext(Dispatchers.IO) {
+                            for (uri in uris) {
+                                val stamps = viewModel.queryRowStamps(uri) ?: continue
+                                preserve[uri.toString()] = stamps
+                                // 新绝对路径 = 新目录 + 旧文件名（renameTo/RELATIVE_PATH 语义：文件名不变）
+                                viewModel.queryDataPath(uri)?.let { data ->
+                                    pathStamps["$newAbsPath/${data.substringAfterLast('/')}"] = stamps
+                                    if (java.io.File(data).exists()) liveCount++
+                                }
+                            }
+                        }
+                        viewModel.renamedRowStamps.putAll(pathStamps)
+                        DiagLog.log("[FolderRename] stamps registered n=${pathStamps.size} live=$liveCount")
+                        viewModel.moveFiles(
+                            uris,
+                            newRel,
+                            onDone = { n ->
+                                DiagLog.log("[FolderRename] moved=$n/${uris.size} -> $newRel")
+                                Toast.makeText(
+                                    this@performFolderRename,
+                                    when {
+                                        n <= 0 -> "重命名失败"
+                                        // 全空壳（八轮 QQ 实案：54 条记录的文件体早已不在
+                                        // ——QQ 自己清的，MediaStore 死行残留）：改名实为
+                                        // 死行清理，卡片会随 finalize 摘除。「已重命名」
+                                        // 配上文件夹消失＝用户当数据丢失恐慌
+                                        liveCount == 0 ->
+                                            "空壳文件夹已清理：${uris.size} 条记录的文件早已不存在"
+                                        else -> "已重命名"
+                                    },
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                                if (n > 0) {
+                                    // 改名完成即退出选择态：选中集里是旧 folder id，卡片
+                                    // 已随改名消失，留着是幽灵选择
+                                    viewModel.appState.exitSelectionMode()
+                                } else {
+                                    // 改名失败：拆桥复位（桥接卡是当前唯一显示态，不拆会
+                                    // 以新名挂在旧内容上）
+                                    viewModel.renameBridges.remove(oldCard.id)
+                                    viewModel.folders.value = viewModel.folders.value.map {
+                                        if (it.id == oldCard.id) oldCard else it
+                                    }
+                                }
+                            },
+                            onBlocked = writeConsentFor { blocked ->
+                                opJson("move", blocked).put("relPath", newRel)
+                            },
+                            // 改名不 bump「操作过就排前面」：时间排序下改个名不该把卡片顶到最上面
+                            bumpActivity = false,
+                            dateStampsPreserve = preserve,
+                            onSettled = { finalizeFolderRename(oldCard, newName, newAbsPath, newRel, uris, liveCount) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 改名收尾（moveFiles 内部收尾**完成之后**经 onSettled 调，2026-11-18 二轮）：
+ *  1. 新 folder id 现查：新路径下的行 BUCKET_ID（legacy 重建行走新 bucket；update
+ *     路径 bucket 稳定 → 与旧 id 同值，Q legacy 实测 provider 更新 relative_path
+ *     不重算 bucket_id，folder 身份天然延续）。
+ *  2. 卡片乐观补丁：就地换名/换路径（bucket 变了则整体换 id），计数/封面/时间全
+ *     沿用改前卡片——索引 Folder 行要等对账才重写（单行 upsert 不建卡），不补丁
+ *     卡片名要挂好几秒。补丁与对账幂等（对账稍后以权威数据覆盖同一结果）。
+ *  3. 旧 Folder 行摘除：bucket 变了且旧 bucket 里已无直属行（部分失败时不摘，那
+ *     不是死行）——否则旧卡片以 count=0 空壳挂到对账为止。
+ *  4. 活动时间过户 + 旧目录空则清理。
+ */
+private fun MainActivity.finalizeFolderRename(
+    oldCard: Folder,
+    newName: String,
+    newAbsPath: String,
+    newRel: String,
+    uris: List<Uri>,
+    liveCount: Int,
+) {
+    viewModel.viewModelScope.launch(Dispatchers.IO) {
+        // 新 folder id 现查，两段式：
+        //  ① update 路径（Q legacy bucket 稳定/R+）：行 uri 不变，直接按 uri 查；
+        //  ② legacy 重建路径：旧 uri 已删，按新目录前缀跨图片/视频集合查——移动的
+        //     行可能是视频（图片集合查不到），必须两集合都扫。
+        // 重建行登记是异步的（registerRow 协程还在等扫描回调，100~300ms+），finalize
+        // 可能跑在它前面——有活行的文件夹短轮询等它落地，查不到才会落「幽灵」分支
+        // （2026-11-18 五轮：Oplayer 改名卡片消失好一会，就是轮询缺失时误判幽灵）。
+        fun lookupNewId(): String? =
+            runCatching {
+                uris.firstNotNullOfOrNull { viewModel.queryBucketId(it) }
+            }.getOrNull() ?: runCatching {
+                listOf(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                ).firstNotNullOfOrNull { coll ->
+                    contentResolver.query(
+                        coll,
+                        arrayOf(MediaStore.MediaColumns.BUCKET_ID),
+                        "${MediaStore.MediaColumns.DATA} LIKE ?",
+                        arrayOf("$newAbsPath/%"),
+                        null,
+                    )?.use { c ->
+                        if (c.moveToFirst()) generateId(c.getLong(0).toString()) else null
+                    }
+                }
+            }.getOrNull()
+        var newFolderId = lookupNewId()
+        if (newFolderId == null && liveCount > 0) {
+            var attempts = 0
+            while (newFolderId == null && attempts < 5) {
+                delay(250)
+                newFolderId = lookupNewId()
+                attempts++
+            }
+        }
+        DiagLog.log("[FolderRename] settled oldId=${oldCard.id} newId=$newFolderId rel=$newRel live=$liveCount")
+
+        // 旧 bucket 里若还有直属行（部分失败/非媒体遗留索引），旧 Folder 行不是死行，不摘
+        val oldBucketEmpty = withContext(Dispatchers.IO) { listImages(oldCard.id).isEmpty() }
+
+        // 全死行（没有任何活行落到新路径）：文件夹本就不在盘上——清桥接 + 卡片就地
+        // 消失（死行的 MediaStore 行/索引行已在 moveFiles 摘除）。有活行时卡片由桥接
+        // 维稳到对账落地（mergeRenameBridge 自愈），这里不再动 folders.value。
+        if (liveCount == 0 && newFolderId == null) {
+            viewModel.renameBridges.remove(oldCard.id)
+            withContext(Dispatchers.Main) {
+                viewModel.folders.value = viewModel.folders.value.filter { it.id != oldCard.id }
+                // 卡片就地消失必须有解释（八轮 QQ 实案：用户只看到文件夹没了，刷新
+                // 也不回来，当数据丢失报障）——onDone 的 toast 可能已被顶掉，这里再
+                // 落一句结论
+                Toast.makeText(
+                    this@finalizeFolderRename,
+                    "「${oldCard.name}」是空壳（文件早已不存在），已就地清理",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+        // 旧 Folder 行摘除：bucket 变了（legacy 重建）或全死行（新 id 查不到）且旧 bucket
+        // 已无直属行（部分失败时还有活行挂着，不摘，那不是死行）
+        if (oldBucketEmpty && (newFolderId == null || newFolderId != oldCard.id)) {
+            runCatching { deleteIndexEntries(listOf(oldCard.id)) }
+                .onFailure { Log.w(GalleryViewModel.TAG, "[FolderRename] old folder row delete failed: ${oldCard.id}", it) }
+        }
+        viewModel.transferFolderActivity(oldCard.id, newFolderId ?: oldCard.id)
+
+        // 部分失败兜底：迁移全部结束（含异步 registerRow）后旧 bucket 仍有行 → 改名
+        // 部分失败，桥接不能一直压着旧卡（里面的行会从 UI 消失）——拆桥让新旧两卡
+        // 如实显示。全量迁移完成（旧 bucket 空）的文件夹走 mergeRenameBridge 自愈，
+        // 不经过这里。
+        if (liveCount > 0 && !oldBucketEmpty) {
+            viewModel.viewModelScope.launch(Dispatchers.IO) {
+                delay(20_000)
+                val stillHasRows = listImages(oldCard.id).isNotEmpty()
+                if (stillHasRows && viewModel.renameBridges.remove(oldCard.id) != null) {
+                    DiagLog.log("[FolderRename] partial-failure bridge teardown oldId=${oldCard.id}")
+                }
+            }
+        }
+
+        // 旧 bucket 目录清空后的就地删除（best-effort）：File.delete 只对空目录成功——
+        // 还压着子相册（嵌套 bucket 的行仍指向其下）或非媒体文件时静默保留，这正是
+        // 嵌套场景的正确行为
+        val dir = java.io.File(oldCard.path)
+        val removed = runCatching {
+            dir.isDirectory && dir.list()?.isEmpty() == true && dir.delete()
+        }.getOrDefault(false)
+        DiagLog.log("[FolderRename] old-dir cleanup ${dir.absolutePath} removed=$removed patched=${newFolderId != null}")
+    }
+}
+
+/**
+ * 由旧 RELATIVE_PATH 派生改名后的新 RELATIVE_PATH（纯函数，单元测试钉住）。
+ * `Pictures/X/` + `Y` → `Pictures/Y/`；顶层 `X/` → `Y/`。根（`/`，根目录散图）与
+ * 非法名字（空 / `.` / `..` / 含路径分隔符）返回 null，由调用方提示不执行。
+ */
+internal fun deriveRenamedRelPath(oldRelPath: String, newName: String): String? {
+    if (oldRelPath == "/") return null
+    val name = newName.trim()
+    if (name.isEmpty() || name == "." || name == ".." ||
+        name.contains('/') || name.contains('\\')
+    ) {
+        return null
+    }
+    val parent = oldRelPath.trimEnd('/').substringBeforeLast('/', missingDelimiterValue = "")
+    return if (parent.isEmpty()) "$name/" else "$parent/$name/"
 }
 

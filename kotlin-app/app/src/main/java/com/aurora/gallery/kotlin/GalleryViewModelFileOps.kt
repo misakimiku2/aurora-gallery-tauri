@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import uniffi.aurora_core.Folder
+import uniffi.aurora_core.deleteIndexEntries
 import uniffi.aurora_core.generateId
 import uniffi.aurora_core.listImages
 import uniffi.aurora_core.upsertMediaImage
@@ -207,11 +209,44 @@ fun GalleryViewModel.renameFiles(
  * 时间，与 Q 路径移动（[GalleryViewModelQPaths.registerRowAndMigrateAsync]）一致 ——
  * 「操作过就排前面」的排序语义对移动同样成立。
  */
+/**
+ * 改前行时间戳对（秒）：文件夹改名「内容时间保真」的源值。DATE_MODIFIED 之外还要
+ * DATE_ADDED——总览文件夹时间排序键 = max(createdAt, 活动时间)（GridModels.sortFolders），
+ * createdAt = MAX(成员 DATE_ADDED)；legacy 重建行的 DATE_ADDED = 登记时刻，不保真改名
+ * 照样置顶（2026-11-18 四轮实测抓到：三修只保 DATE_MODIFIED 没治本）。
+ */
+data class MovedRowStamps(val modified: Long, val added: Long)
+
+/** 文件夹改名桥接（见 GalleryViewModel.renameBridges doc）：card = 对外展示的桥接卡
+ *  （新名/新路径/改前计数封面时间），oldPath = 旧目录（旧壳退场检测用）。 */
+data class RenameBridge(val card: Folder, val oldPath: String)
+
 fun GalleryViewModel.moveFiles(
     uris: List<android.net.Uri>,
     targetRelPath: String,
     onDone: (Int) -> Unit = {},
     onBlocked: (List<android.net.Uri>, retry: () -> Unit) -> Unit = { _, _ -> },
+    /**
+     * 是否 bump「操作过就排前面」（2026-11-18 文件夹重命名复用本管线时传 false）：
+     * 移动文件是用户主动整理，目标文件夹该浮上去；改名只是换个名字，时间排序下
+     * 不该改变卡片位置（用户实测报障：改个名卡片飞到最上面）。
+     */
+    bumpActivity: Boolean = true,
+    /**
+     * 2026-11-18 文件夹重命名的**内容时间保真**：uri → 改前行时间戳（DATE_MODIFIED +
+     * DATE_ADDED，见 [MovedRowStamps]）。移动/改行会让 provider 把 DATE_MODIFIED 刷成
+     * now、legacy 重建行两列都会变 now，而总览时间排序键 = max(createdAt, 活动时间)
+     * ——两列都不保真改个名就置顶。实测本机 provider 尊重客户端写入的这两列
+     * （insert/update 均验证）：随移动一并写回原值；被覆写时用单列 update 追写兜底
+     * （实测有效）。legacy 直写路径的重建行走 [legacyMoveViaFile] 的同名参数。
+     */
+    dateStampsPreserve: Map<String, MovedRowStamps>? = null,
+    /**
+     * 内部收尾（单行 upsert + 卡片重算）**完成后**的回调：文件夹改名的乐观补丁
+     * （卡片就地换名）必须在这次 refreshFolderCards 之后落，否则被它用陈旧索引
+     * 覆盖。null = 不需要（普通移动）。
+     */
+    onSettled: (() -> Unit)? = null,
 ) {
     if (uris.isEmpty()) {
         onDone(0)
@@ -235,6 +270,36 @@ fun GalleryViewModel.moveFiles(
                     val name = queryDisplayName(uri) ?: return@write false
                     values.put(MediaStore.Images.Media.DATA, legacyDataPath(relPath, name))
                 }
+                // 内容时间保真（见 [dateStampsPreserve] doc）：随移动写回原两列
+                val pre = dateStampsPreserve?.get(uri.toString())
+                // 死行处理（2026-11-18 用户实测：MmsCamera 全死行文件夹改名片失败）：
+                // 行的 _data 文件已不存在（EMUI 扫描从不清这类死行）——移动无文件可搬，
+                // update/legacy 双双失败 → moved=0 报「重命名失败」。照 deleteDirect 的
+                // 幂等口径改为「直删死行（MediaStore 行 + 索引行）计为成功」：全死行
+                // 文件夹改名 = 幽灵卡片就地清理；部分死行顺带清理、活行照常搬。
+                // 仅改名流程启用（dateStampsPreserve 非空）：普通移动保持原语义，避免
+                // 存储异常态下误删面扩大。
+                if (pre != null) {
+                    val srcData = queryDataPath(uri)
+                    val srcExists = srcData != null && java.io.File(srcData).exists()
+                    if (!srcExists) {
+                        Log.w(
+                            GalleryViewModel.TAG,
+                            "[FileOp] move: dead row (file missing at $srcData), delete as success: $uri",
+                        )
+                        // 八轮补：Log.w 只进 logcat（轮转快），diag 才是取证面——空壳
+                        // 文件夹报障（QQ→QQid 实案）必须有 diag 锚点可查
+                        debugLog("move: dead row (file missing at $srcData), delete as success: $uri")
+                        runCatching { appContext.contentResolver.delete(uri, null, null) }
+                            .onFailure { Log.w(GalleryViewModel.TAG, "[FileOp] dead row delete failed: $uri", it) }
+                        runCatching { deleteIndexEntries(listOf(generateId(uri.toString()))) }
+                        return@write true
+                    }
+                }
+                pre?.let {
+                    values.put(MediaStore.Images.Media.DATE_MODIFIED, it.modified)
+                    values.put(MediaStore.Images.Media.DATE_ADDED, it.added)
+                }
                 // 与 renameFiles 同款：MediaStore 被华为 Q 白名单拒绝时走文件路径直写
                 val mediaOk = try {
                     appContext.contentResolver.update(uri, values, null, null).also {
@@ -245,7 +310,24 @@ fun GalleryViewModel.moveFiles(
                     Log.w(GalleryViewModel.TAG, "[FileOp] update threw, fallback to file: $uri", e)
                     false
                 }
-                mediaOk || legacyMoveViaFile(uri, relPath)
+                if (mediaOk && pre != null) {
+                    // provider 若在路径变更时覆写了时间列，用单列 update 追写（实测有效）；
+                    // 已是原值就省一次写
+                    val cur = queryRowStamps(uri)
+                    if (cur != null && (cur.modified != pre.modified || cur.added != pre.added)) {
+                        runCatching {
+                            appContext.contentResolver.update(
+                                uri,
+                                ContentValues().apply {
+                                    put(MediaStore.Images.Media.DATE_MODIFIED, pre.modified)
+                                    put(MediaStore.Images.Media.DATE_ADDED, pre.added)
+                                },
+                                null, null,
+                            )
+                        }
+                    }
+                }
+                mediaOk || legacyMoveViaFile(uri, relPath, pre, bumpActivity)
             },
             onDone = { n ->
                 Log.i(GalleryViewModel.TAG, "[FileOp] moved=$n/${uris.size} -> $relPath")
@@ -276,7 +358,8 @@ fun GalleryViewModel.moveFiles(
                         }
                         // force=true 同删除路径：走防抖会跳过重算，那样 diff 还是拿不到新卡片
                         refreshFolderCards(force = true)
-                        bumpActivityForChangedFolders(beforeFolders)
+                        if (bumpActivity) bumpActivityForChangedFolders(beforeFolders)
+                        onSettled?.invoke()
                     }
                 }
                 onDone(n)
